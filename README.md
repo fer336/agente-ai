@@ -50,6 +50,15 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
+Or, using the values from `APP_HOST`/`APP_PORT` in your `.env`:
+
+```bash
+python -m app.main
+```
+
+Once running, `GET /health` reports liveness (no dependency checks) and
+`GET /ready` reports readiness (checks Postgres and Redis connectivity).
+
 ## Run tests
 
 ```bash
