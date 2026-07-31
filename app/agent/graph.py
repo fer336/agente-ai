@@ -10,7 +10,12 @@ from app.domain.repositories.gateways import AppointmentGateway
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from psycopg import AsyncConnection
     from psycopg_pool import AsyncConnectionPool
+
+    #: Pool typed with the dict row factory `AsyncPostgresSaver` requires —
+    #: matches what `create_postgres_checkpointer_pool` actually constructs.
+    PostgresCheckpointerPool = AsyncConnectionPool[AsyncConnection[dict[str, Any]]]
 
 #: Name of the example tool→use-case→gateway node (architecture doc §5.2).
 SEARCH_AVAILABILITY_NODE = "search_availability"
@@ -48,7 +53,7 @@ def compile_graph(
     return build_graph(gateway).compile(checkpointer=checkpointer)
 
 
-def create_postgres_checkpointer_pool(conninfo: str) -> "AsyncConnectionPool":
+def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPool":
     """Creates a dedicated psycopg async connection pool for the LangGraph
     checkpointer.
 
@@ -59,13 +64,25 @@ def create_postgres_checkpointer_pool(conninfo: str) -> "AsyncConnectionPool":
     connection lifecycle end to end. The pool is returned closed (`open`
     must be awaited by the caller) so callers control connection timing
     (e.g. FastAPI lifespan startup/shutdown).
+
+    Connections are opened with ``autocommit=True`` because
+    `AsyncPostgresSaver.setup()` runs `CREATE INDEX CONCURRENTLY`, which
+    Postgres refuses to run inside a transaction block — this matches the
+    connection kwargs `AsyncPostgresSaver.from_conn_string` uses internally
+    (`autocommit=True, prepare_threshold=0, row_factory=dict_row`).
     """
+    from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
 
-    return AsyncConnectionPool(conninfo=conninfo, open=False)
+    pool: PostgresCheckpointerPool = AsyncConnectionPool(
+        conninfo=conninfo,
+        open=False,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+    )
+    return pool
 
 
-async def create_checkpointer(pool: "AsyncConnectionPool") -> "AsyncPostgresSaver":
+async def create_checkpointer(pool: "PostgresCheckpointerPool") -> "AsyncPostgresSaver":
     """Wraps an open psycopg pool in an `AsyncPostgresSaver` and ensures its
     checkpoint tables exist (`AsyncPostgresSaver.setup()`)."""
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
