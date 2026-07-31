@@ -24,7 +24,13 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-Edit `.env` if you need non-default `DATABASE_URL` / `REDIS_URL` values.
+`.env.example` documents discrete settings — `APP_HOST`/`APP_PORT` (the FastAPI
+bind address, since the app can run on your own server, not only via
+docker-compose), `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/
+`POSTGRES_PASSWORD`/`POSTGRES_DB`, and `REDIS_HOST`/`REDIS_PORT`. `DATABASE_URL`
+and `REDIS_URL` are derived automatically from those fields by
+`app.config.settings` — you don't need to set them directly. Edit `.env` if
+your Postgres/Redis run somewhere other than `localhost`.
 
 ## Start local services
 
