@@ -17,3 +17,11 @@ def test_create_redis_client_binds_a_different_url_correctly():
     assert client.connection_pool.connection_kwargs["host"] == "cache.internal"
     assert client.connection_pool.connection_kwargs["port"] == 6380
     assert client.connection_pool.connection_kwargs["db"] == 1
+
+
+def test_create_redis_client_binds_password_from_authenticated_url():
+    client = create_redis_client("redis://:s3cret@cache.internal:6380/0")
+
+    assert client.connection_pool.connection_kwargs["host"] == "cache.internal"
+    assert client.connection_pool.connection_kwargs["port"] == 6380
+    assert client.connection_pool.connection_kwargs["password"] == "s3cret"

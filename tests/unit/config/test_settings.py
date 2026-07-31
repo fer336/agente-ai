@@ -24,6 +24,7 @@ def test_settings_uses_defaults_and_derives_urls_when_no_env_vars(monkeypatch):
     assert settings.database_url == "postgresql+asyncpg://postgres:postgres@localhost:5432/clinic_ai_agent"
     assert settings.redis_host == "localhost"
     assert settings.redis_port == 6379
+    assert settings.redis_password is None
     assert settings.redis_url == "redis://localhost:6379/0"
 
 
@@ -48,3 +49,22 @@ def test_settings_reads_discrete_fields_from_env_and_derives_matching_urls(monke
 
 def test_get_settings_returns_the_same_cached_instance():
     assert get_settings() is get_settings()
+
+
+def test_redis_url_includes_password_when_redis_password_is_set(monkeypatch):
+    monkeypatch.setenv("REDIS_HOST", "cache.internal")
+    monkeypatch.setenv("REDIS_PORT", "6380")
+    monkeypatch.setenv("REDIS_PASSWORD", "s3cret")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redis_password == "s3cret"
+    assert settings.redis_url == "redis://:s3cret@cache.internal:6380/0"
+
+
+def test_settings_reads_redis_password_from_env(monkeypatch):
+    monkeypatch.setenv("REDIS_PASSWORD", "env-pass")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redis_password == "env-pass"
