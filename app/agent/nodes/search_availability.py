@@ -1,6 +1,6 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from app.agent.state import AgentState
 from app.application.appointments.search_availability import SearchAvailabilityUseCase
@@ -11,9 +11,21 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 _DEFAULT_SEARCH_WINDOW = timedelta(days=30)
 
 
+class SearchAvailabilityNode(Protocol):
+    """Callable shape LangGraph's `StateGraph.add_node` expects.
+
+    Declared as a `Protocol` (rather than `Callable[[AgentState], Awaitable[...]]`)
+    because LangGraph's `add_node` overloads are generic over the node's
+    `__call__` signature — a plain `Callable[...]` alias does not resolve
+    those overloads under mypy strict, while a matching `Protocol` does.
+    """
+
+    def __call__(self, state: AgentState) -> Awaitable[dict[str, Any]]: ...
+
+
 def create_search_availability_node(
     gateway: AppointmentGateway,
-) -> Callable[[AgentState], Awaitable[dict[str, Any]]]:
+) -> SearchAvailabilityNode:
     """Builds the `search_availability` LangGraph node bound to `gateway`.
 
     Demonstrates the tool → use case → gateway pattern (architecture doc
