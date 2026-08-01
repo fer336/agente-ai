@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <link rel="stylesheet" href="./theme.css" />
+    <script src="./vendor/gsap.min.js"></script>
+    <script src="./vendor/DrawSVGPlugin.min.js"></script>
+    <script src="./vendor/MotionPathPlugin.min.js"></script>
+    <style>
+      html, body { width: 1920px; height: 1080px; }
+
+      /* ── custom classes for this diagram (new classes, not overrides of the
+         standard .node/.region/.edge tokens — allowed by the authoring contract) ── */
+      #scene .pill > rect { fill: var(--bg-raise); }
+      #scene .pill--protocol > rect { stroke: var(--c-violet); stroke-width: 2.5px; rx: 12px; }
+      #scene .pill--fake > rect { stroke: var(--c-amber); stroke-width: 2.5px; stroke-dasharray: 7 5; rx: 12px; }
+      #scene .pill-title { text-anchor: middle; font-weight: 600; }
+
+      #scene .rule-badge > rect { fill: rgba(225,29,72,0.07); stroke: var(--c-rose); stroke-width: 2px; rx: 21px; }
+      #scene .rule-badge text { fill: var(--c-rose); font-weight: 600; }
+
+      #scene .reserved-badge > rect { fill: rgba(100,116,139,0.14); stroke: var(--text-muted); stroke-width: 1.5px; rx: 17px; }
+      #scene .reserved-badge text { fill: var(--text-muted); font-weight: 700; letter-spacing: 0.05em; }
+
+      #scene .node--reserved { opacity: 0.66; }
+      #scene .node--reserved > rect.node-shape { stroke-dasharray: 7 5; }
+
+      #scene .context-tag { fill: var(--text-muted); font-size: 22px; }
+      #scene .pattern-line { fill: none; stroke: var(--accent); stroke-width: 3px; stroke-linecap: round; }
+      #scene .pattern-label-main { fill: var(--accent); font-weight: 700; }
+      #scene .pattern-label-sub { fill: var(--text-muted); font-weight: 500; }
+      #scene .legend-text { font-size: 22px; fill: var(--text-muted); }
+      #scene .glow-copy { fill: none; stroke: var(--accent); stroke-width: 5px; opacity: 0; }
+      #scene .arrow-head { fill: var(--edge); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="14.4"
+      data-width="1920"
+      data-height="1080"
+    >
+      <svg id="scene" viewBox="0 0 1920 1080" width="1920" height="1080">
+        <defs>
+          <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="6" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+          <filter id="card-shadow" x="-30%" y="-30%" width="160%" height="160%">
+            <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.28" />
+          </filter>
+
+          <!-- Font Awesome 6 (CC-BY 4.0) — generic icons -->
+          <symbol id="icon-fa-server" viewBox="0 0 512 512"><path fill="currentColor" d="M64 32C28.7 32 0 60.7 0 96v64c0 35.3 28.7 64 64 64h384c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64zm280 72a24 24 0 1 1 0 48a24 24 0 1 1 0-48m48 24a24 24 0 1 1 48 0a24 24 0 1 1-48 0M64 288c-35.3 0-64 28.7-64 64v64c0 35.3 28.7 64 64 64h384c35.3 0 64-28.7 64-64v-64c0-35.3-28.7-64-64-64zm280 72a24 24 0 1 1 0 48a24 24 0 1 1 0-48m56 24a24 24 0 1 1 48 0a24 24 0 1 1-48 0"/></symbol>
+          <symbol id="icon-fa-robot" viewBox="0 0 640 512"><path fill="currentColor" d="M320 0c17.7 0 32 14.3 32 32v64h120c39.8 0 72 32.2 72 72v272c0 39.8-32.2 72-72 72H168c-39.8 0-72-32.2-72-72V168c0-39.8 32.2-72 72-72h120V32c0-17.7 14.3-32 32-32M208 384c-8.8 0-16 7.2-16 16s7.2 16 16 16h32c8.8 0 16-7.2 16-16s-7.2-16-16-16zm96 0c-8.8 0-16 7.2-16 16s7.2 16 16 16h32c8.8 0 16-7.2 16-16s-7.2-16-16-16zm96 0c-8.8 0-16 7.2-16 16s7.2 16 16 16h32c8.8 0 16-7.2 16-16s-7.2-16-16-16zM264 256a40 40 0 1 0-80 0a40 40 0 1 0 80 0m152 40a40 40 0 1 0 0-80a40 40 0 1 0 0 80M48 224h16v192H48c-26.5 0-48-21.5-48-48v-96c0-26.5 21.5-48 48-48m544 0c26.5 0 48 21.5 48 48v96c0 26.5-21.5 48-48 48h-16V224z"/></symbol>
+          <symbol id="icon-fa-gears" viewBox="0 0 640 512"><path fill="currentColor" d="M308.5 135.3c7.1-6.3 9.9-16.2 6.2-25c-2.3-5.3-4.8-10.5-7.6-15.5l-3.1-5.4c-3-5-6.3-9.9-9.8-14.6c-5.7-7.6-15.7-10.1-24.7-7.1L241.3 77c-10.7-8.8-23-16-36.2-20.9l-6.1-29c-1.9-9.3-9.1-16.7-18.5-17.8c-6.6-.9-13.3-1.3-20.1-1.3h-.7q-10.2 0-20.1 1.2c-9.4 1.1-16.6 8.6-18.5 17.8L115 56.1c-13.3 5-25.5 12.1-36.2 20.9l-28.3-9.2c-9-3-19-.5-24.7 7.1c-3.5 4.7-6.8 9.6-9.9 14.6l-3 5.3c-2.8 5-5.3 10.2-7.6 15.6c-3.7 8.7-.9 18.6 6.2 25l22.2 19.8c-1.1 6.7-1.7 13.7-1.7 20.8s.6 14.1 1.7 20.9l-22.2 19.8c-7.1 6.3-9.9 16.2-6.2 25c2.3 5.3 4.8 10.5 7.6 15.6l3 5.2c3 5.1 6.3 9.9 9.9 14.6c5.7 7.6 15.7 10.1 24.7 7.1l28.2-9.3c10.7 8.8 23 16 36.2 20.9l6.1 29.1c1.9 9.3 9.1 16.7 18.5 17.8q10.05 1.2 20.4 1.2c10.35 0 13.7-.4 20.4-1.2c9.4-1.1 16.6-8.6 18.5-17.8l6.1-29.1c13.3-5 25.5-12.1 36.2-20.9l28.2 9.3c9 3 19 .5 24.7-7.1c3.5-4.7 6.8-9.5 9.8-14.6l3.1-5.4c2.8-5 5.3-10.2 7.6-15.5c3.7-8.7.9-18.6-6.2-25l-22.2-19.8c1.1-6.8 1.7-13.8 1.7-20.9s-.6-14.1-1.7-20.9l22.2-19.8zM112 176a48 48 0 1 1 96 0a48 48 0 1 1-96 0m392.7 324.5c6.3 7.1 16.2 9.9 25 6.2c5.3-2.3 10.5-4.8 15.5-7.6l5.4-3.1c5-3 9.9-6.3 14.6-9.8c7.6-5.7 10.1-15.7 7.1-24.7l-9.3-28.2c8.8-10.7 16-23 20.9-36.2L613 391c9.3-1.9 16.7-9.1 17.8-18.5q1.2-10.05 1.2-20.4c0-10.35-.4-13.7-1.2-20.4c-1.1-9.4-8.6-16.6-17.8-18.5l-29.1-6.2c-5-13.3-12.1-25.5-20.9-36.2l9.3-28.2c3-9 .5-19-7.1-24.7c-4.7-3.5-9.6-6.8-14.6-9.9l-5.3-3c-5-2.8-10.2-5.3-15.6-7.6c-8.7-3.7-18.6-.9-25 6.2l-19.8 22.2c-6.8-1.1-13.8-1.7-20.9-1.7s-14.1.6-20.9 1.7l-19.8-22.2c-6.3-7.1-16.2-9.9-25-6.2c-5.3 2.3-10.5 4.8-15.6 7.6l-5.2 3c-5.1 3-9.9 6.3-14.6 9.9c-7.6 5.7-10.1 15.7-7.1 24.7l9.3 28.2c-8.8 10.7-16 23-20.9 36.2l-29.1 6c-9.3 1.9-16.7 9.1-17.8 18.5q-1.2 10.05-1.2 20.4c0 10.35.4 13.7 1.2 20.4c1.1 9.4 8.6 16.6 17.8 18.5l29.1 6.1c5 13.3 12.1 25.5 20.9 36.2l-9.3 28.2c-3 9-.5 19 7.1 24.7c4.7 3.5 9.5 6.8 14.6 9.8l5.4 3.1c5 2.8 10.2 5.3 15.5 7.6c8.7 3.7 18.6.9 25-6.2l19.8-22.2c6.8 1.1 13.8 1.7 20.9 1.7s14.1-.6 20.9-1.7l19.8 22.2zM464 304a48 48 0 1 1 0 96a48 48 0 1 1 0-96"/></symbol>
+          <symbol id="icon-fa-scale-balanced" viewBox="0 0 640 512"><path fill="currentColor" d="M384 32h128c17.7 0 32 14.3 32 32s-14.3 32-32 32H398.4c-5.2 25.8-22.9 47.1-46.4 57.3V448h160c17.7 0 32 14.3 32 32s-14.3 32-32 32H128c-17.7 0-32-14.3-32-32s14.3-32 32-32h160V153.3c-23.5-10.3-41.2-31.6-46.4-57.3H128c-17.7 0-32-14.3-32-32s14.3-32 32-32h128c14.6-19.4 37.8-32 64-32s49.4 12.6 64 32m55.6 288h144.9L512 195.8zm72.4 96c-62.9 0-115.2-34-126-78.9c-2.6-11 1-22.3 6.7-32.1l95.2-163.2c5-8.6 14.2-13.8 24.1-13.8s19.1 5.3 24.1 13.8L631.3 305c5.7 9.8 9.3 21.1 6.7 32.1C627.2 382 574.9 416 512 416M126.8 195.8L54.4 320h144.9zM.9 337.1c-2.6-11 1-22.3 6.7-32.1l95.2-163.2c5-8.6 14.2-13.8 24.1-13.8s19.1 5.3 24.1 13.8L246.2 305c5.7 9.8 9.3 21.1 6.7 32.1C242 382 189.7 416 126.8 416S11.7 382 .9 337.1"/></symbol>
+          <symbol id="icon-fa-network-wired" viewBox="0 0 640 512"><path fill="currentColor" d="M256 64h128v64H256zM240 0c-26.5 0-48 21.5-48 48v96c0 26.5 21.5 48 48 48h48v32H32c-17.7 0-32 14.3-32 32s14.3 32 32 32h96v32H80c-26.5 0-48 21.5-48 48v96c0 26.5 21.5 48 48 48h160c26.5 0 48-21.5 48-48v-96c0-26.5-21.5-48-48-48h-48v-32h256v32h-48c-26.5 0-48 21.5-48 48v96c0 26.5 21.5 48 48 48h160c26.5 0 48-21.5 48-48v-96c0-26.5-21.5-48-48-48h-48v-32h96c17.7 0 32-14.3 32-32s-14.3-32-32-32H352v-32h48c26.5 0 48-21.5 48-48V48c0-26.5-21.5-48-48-48zM96 448v-64h128v64zm320-64h128v64H416z"/></symbol>
+          <symbol id="icon-fa-magnifying-glass" viewBox="0 0 512 512"><path fill="currentColor" d="M416 208c0 45.9-14.9 88.3-40 122.7l126.6 126.7c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0s208 93.1 208 208M208 352a144 144 0 1 0 0-288a144 144 0 1 0 0 288"/></symbol>
+          <symbol id="icon-fa-shield-halved" viewBox="0 0 512 512"><path fill="currentColor" d="M256 0c4.6 0 9.2 1 13.4 2.9l188.3 79.9c22 9.3 38.4 31 38.3 57.2c-.5 99.2-41.3 280.7-213.6 363.2c-16.7 8-36.1 8-52.8 0C57.3 420.7 16.5 239.2 16 140c-.1-26.2 16.3-47.9 38.3-57.2L242.7 2.9C246.8 1 251.4 0 256 0m0 66.8v378.1C394 378 431.1 230.1 432 141.4z"/></symbol>
+
+          <!-- official vendor marks -->
+          <symbol id="clip-logos-postgresql" viewBox="0 0 256 264"><path d="M255.008 158.086c-1.535-4.649-5.556-7.887-10.756-8.664c-2.452-.366-5.26-.21-8.583.475c-5.792 1.195-10.089 1.65-13.225 1.738c11.837-19.985 21.462-42.775 27.003-64.228c8.96-34.689 4.172-50.492-1.423-57.64C233.217 10.847 211.614.683 185.552.372c-13.903-.17-26.108 2.575-32.475 4.549c-5.928-1.046-12.302-1.63-18.99-1.738c-12.537-.2-23.614 2.533-33.079 8.15c-5.24-1.772-13.65-4.27-23.362-5.864c-22.842-3.75-41.252-.828-54.718 8.685C6.622 25.672-.937 45.684.461 73.634c.444 8.874 5.408 35.874 13.224 61.48c4.492 14.718 9.282 26.94 14.237 36.33c7.027 13.315 14.546 21.156 22.987 23.972c4.731 1.576 13.327 2.68 22.368-4.85c1.146 1.388 2.675 2.767 4.704 4.048c2.577 1.625 5.728 2.953 8.875 3.74c11.341 2.835 21.964 2.126 31.027-1.848c.056 1.612.099 3.152.135 4.482c.06 2.157.12 4.272.199 6.25c.537 13.374 1.447 23.773 4.143 31.049c.148.4.347 1.01.557 1.657c1.345 4.118 3.594 11.012 9.316 16.411c5.925 5.593 13.092 7.308 19.656 7.308c3.292 0 6.433-.432 9.188-1.022c9.82-2.105 20.973-5.311 29.041-16.799c7.628-10.86 11.336-27.217 12.007-52.99q.13-1.094.244-2.088l.16-1.362l1.797.158l.463.031c10.002.456 22.232-1.665 29.743-5.154c5.935-2.754 24.954-12.795 20.476-26.351"/><path fill="#336791" d="M237.906 160.722c-29.74 6.135-31.785-3.934-31.785-3.934c31.4-46.593 44.527-105.736 33.2-120.211c-30.904-39.485-84.399-20.811-85.292-20.327l-.287.052c-5.876-1.22-12.451-1.946-19.842-2.067c-13.456-.22-23.664 3.528-31.41 9.402c0 0-95.43-39.314-90.991 49.444c.944 18.882 27.064 142.873 58.218 105.422c11.387-13.695 22.39-25.274 22.39-25.274c5.464 3.63 12.006 5.482 18.864 4.817l.533-.452c-.166 1.7-.09 3.363.213 5.332c-8.026 8.967-5.667 10.541-21.711 13.844c-16.235 3.346-6.698 9.302-.471 10.86c7.549 1.887 25.013 4.561 36.813-11.958l-.47 1.885c3.144 2.519 5.352 16.383 4.982 28.952c-.37 12.568-.617 21.197 1.86 27.937c2.479 6.74 4.948 21.905 26.04 17.386c17.623-3.777 26.756-13.564 28.027-29.89c.901-11.606 2.942-9.89 3.07-20.267l1.637-4.912c1.887-15.733.3-20.809 11.157-18.448l2.64.232c7.99.363 18.45-1.286 24.589-4.139c13.218-6.134 21.058-16.377 8.024-13.686z"/><path fill="#fff" d="M108.076 81.525c-2.68-.373-5.107-.028-6.335.902c-.69.523-.904 1.129-.962 1.546c-.154 1.105.62 2.327 1.096 2.957c1.346 1.784 3.312 3.01 5.258 3.28q.423.059.842.058c3.245 0 6.196-2.527 6.456-4.392c.325-2.336-3.066-3.893-6.355-4.35m88.784.073c-.256-1.831-3.514-2.353-6.606-1.923c-3.088.43-6.082 1.824-5.832 3.659c.2 1.427 2.777 3.863 5.827 3.863q.387 0 .78-.054c2.036-.282 3.53-1.575 4.24-2.32c1.08-1.136 1.706-2.402 1.591-3.225"/><path fill="#fff" d="M247.802 160.025c-1.134-3.429-4.784-4.532-10.848-3.28c-18.005 3.716-24.453 1.142-26.57-.417c13.995-21.32 25.508-47.092 31.719-71.137c2.942-11.39 4.567-21.968 4.7-30.59c.147-9.463-1.465-16.417-4.789-20.665c-13.402-17.125-33.072-26.311-56.882-26.563c-16.369-.184-30.199 4.005-32.88 5.183c-5.646-1.404-11.801-2.266-18.502-2.376c-12.288-.199-22.91 2.743-31.704 8.74c-3.82-1.422-13.692-4.811-25.765-6.756c-20.872-3.36-37.458-.814-49.294 7.571c-14.123 10.006-20.643 27.892-19.38 53.16c.425 8.501 5.269 34.653 12.913 59.698c10.062 32.964 21 51.625 32.508 55.464c1.347.449 2.9.763 4.613.763c4.198 0 9.345-1.892 14.7-8.33a530 530 0 0 1 20.261-22.926c4.524 2.428 9.494 3.784 14.577 3.92q.016.2.035.398a118 118 0 0 0-2.57 3.175c-3.522 4.471-4.255 5.402-15.592 7.736c-3.225.666-11.79 2.431-11.916 8.435c-.136 6.56 10.125 9.315 11.294 9.607c4.074 1.02 7.999 1.523 11.742 1.523c9.103 0 17.114-2.992 23.516-8.781c-.197 23.386.778 46.43 3.586 53.451c2.3 5.748 7.918 19.795 25.664 19.794c2.604 0 5.47-.303 8.623-.979c18.521-3.97 26.564-12.156 29.675-30.203c1.665-9.645 4.522-32.676 5.866-45.03c2.836.885 6.487 1.29 10.434 1.289c8.232 0 17.731-1.749 23.688-4.514c6.692-3.108 18.768-10.734 16.578-17.36m-44.106-83.48c-.061 3.647-.563 6.958-1.095 10.414c-.573 3.717-1.165 7.56-1.314 12.225c-.147 4.54.42 9.26.968 13.825c1.108 9.22 2.245 18.712-2.156 28.078a37 37 0 0 1-1.95-4.009c-.547-1.326-1.735-3.456-3.38-6.404c-6.399-11.476-21.384-38.35-13.713-49.316c2.285-3.264 8.084-6.62 22.64-4.813m-17.644-61.787c21.334.471 38.21 8.452 50.158 23.72c9.164 11.711-.927 64.998-30.14 110.969a171 171 0 0 0-.886-1.117l-.37-.462c7.549-12.467 6.073-24.802 4.759-35.738c-.54-4.488-1.05-8.727-.92-12.709c.134-4.22.692-7.84 1.232-11.34c.663-4.313 1.338-8.776 1.152-14.037c.139-.552.195-1.204.122-1.978c-.475-5.045-6.235-20.144-17.975-33.81c-6.422-7.475-15.787-15.84-28.574-21.482c5.5-1.14 13.021-2.203 21.442-2.016M66.674 175.778c-5.9 7.094-9.974 5.734-11.314 5.288c-8.73-2.912-18.86-21.364-27.791-50.624c-7.728-25.318-12.244-50.777-12.602-57.916c-1.128-22.578 4.345-38.313 16.268-46.769c19.404-13.76 51.306-5.524 64.125-1.347c-.184.182-.376.352-.558.537c-21.036 21.244-20.537 57.54-20.485 59.759c-.002.856.07 2.068.168 3.735c.362 6.105 1.036 17.467-.764 30.334c-1.672 11.957 2.014 23.66 10.111 32.109a36 36 0 0 0 2.617 2.468c-3.604 3.86-11.437 12.396-19.775 22.426m22.479-29.993c-6.526-6.81-9.49-16.282-8.133-25.99c1.9-13.592 1.199-25.43.822-31.79c-.053-.89-.1-1.67-.127-2.285c3.073-2.725 17.314-10.355 27.47-8.028c4.634 1.061 7.458 4.217 8.632 9.645c6.076 28.103.804 39.816-3.432 49.229c-.873 1.939-1.698 3.772-2.402 5.668l-.546 1.466c-1.382 3.706-2.668 7.152-3.465 10.424c-6.938-.02-13.687-2.984-18.819-8.34m1.065 37.9c-2.026-.506-3.848-1.385-4.917-2.114c.893-.42 2.482-.992 5.238-1.56c13.337-2.745 15.397-4.683 19.895-10.394c1.031-1.31 2.2-2.794 3.819-4.602l.002-.002c2.411-2.7 3.514-2.242 5.514-1.412c1.621.67 3.2 2.702 3.84 4.938c.303 1.056.643 3.06-.47 4.62c-9.396 13.156-23.088 12.987-32.921 10.526m69.799 64.952c-16.316 3.496-22.093-4.829-25.9-14.346c-2.457-6.144-3.665-33.85-2.808-64.447c.011-.407-.047-.8-.159-1.17a15.4 15.4 0 0 0-.456-2.162c-1.274-4.452-4.379-8.176-8.104-9.72c-1.48-.613-4.196-1.738-7.46-.903c.696-2.868 1.903-6.107 3.212-9.614l.549-1.475c.618-1.663 1.394-3.386 2.214-5.21c4.433-9.848 10.504-23.337 3.915-53.81c-2.468-11.414-10.71-16.988-23.204-15.693c-7.49.775-14.343 3.797-17.761 5.53c-.735.372-1.407.732-2.035 1.082c.954-11.5 4.558-32.992 18.04-46.59c8.489-8.56 19.794-12.788 33.568-12.56c27.14.444 44.544 14.372 54.366 25.979c8.464 10.001 13.047 20.076 14.876 25.51c-13.755-1.399-23.11 1.316-27.852 8.096c-10.317 14.748 5.644 43.372 13.315 57.129c1.407 2.521 2.621 4.7 3.003 5.626c2.498 6.054 5.732 10.096 8.093 13.046c.724.904 1.426 1.781 1.96 2.547c-4.166 1.201-11.649 3.976-10.967 17.847c-.55 6.96-4.461 39.546-6.448 51.059c-2.623 15.21-8.22 20.875-23.957 24.25m68.104-77.936c-4.26 1.977-11.389 3.46-18.161 3.779c-7.48.35-11.288-.838-12.184-1.569c-.42-8.644 2.797-9.547 6.202-10.503c.535-.15 1.057-.297 1.561-.473q.469.383 1.032.756c6.012 3.968 16.735 4.396 31.874 1.271l.166-.033c-2.042 1.909-5.536 4.471-10.49 6.772"/></symbol>
+          <symbol id="clip-logos-redis" viewBox="0 0 256 220"><path fill="#912626" d="M245.97 168.943c-13.662 7.121-84.434 36.22-99.501 44.075s-23.437 7.78-35.34 2.09c-11.902-5.69-87.216-36.112-100.783-42.597C3.566 169.271 0 166.535 0 163.951v-25.876s98.05-21.345 113.879-27.024c15.828-5.679 21.32-5.884 34.79-.95c13.472 4.936 94.018 19.468 107.331 24.344l-.006 25.51c.002 2.558-3.07 5.364-10.024 8.988"/><path fill="#c6302b" d="M245.965 143.22c-13.661 7.118-84.431 36.218-99.498 44.072c-15.066 7.857-23.436 7.78-35.338 2.09c-11.903-5.686-87.214-36.113-100.78-42.594c-13.566-6.485-13.85-10.948-.524-16.166c13.326-5.22 88.224-34.605 104.055-40.284c15.828-5.677 21.319-5.884 34.789-.948c13.471 4.934 83.819 32.935 97.13 37.81c13.316 4.881 13.827 8.9.166 16.02"/><path fill="#912626" d="M245.97 127.074c-13.662 7.122-84.434 36.22-99.501 44.078c-15.067 7.853-23.437 7.777-35.34 2.087c-11.903-5.687-87.216-36.112-100.783-42.597C3.566 127.402 0 124.67 0 122.085V96.206s98.05-21.344 113.879-27.023c15.828-5.679 21.32-5.885 34.79-.95C162.142 73.168 242.688 87.697 256 92.574l-.006 25.513c.002 2.557-3.07 5.363-10.024 8.987"/><path fill="#c6302b" d="M245.965 101.351c-13.661 7.12-84.431 36.218-99.498 44.075c-15.066 7.854-23.436 7.777-35.338 2.087c-11.903-5.686-87.214-36.112-100.78-42.594c-13.566-6.483-13.85-10.947-.524-16.167C23.151 83.535 98.05 54.148 113.88 48.47c15.828-5.678 21.319-5.884 34.789-.949c13.471 4.934 83.819 32.933 97.13 37.81c13.316 4.88 13.827 8.9.166 16.02"/><path fill="#912626" d="M245.97 83.653c-13.662 7.12-84.434 36.22-99.501 44.078c-15.067 7.854-23.437 7.777-35.34 2.087c-11.903-5.687-87.216-36.113-100.783-42.595C3.566 83.98 0 81.247 0 78.665v-25.88s98.05-21.343 113.879-27.021c15.828-5.68 21.32-5.884 34.79-.95C162.142 29.749 242.688 44.278 256 49.155l-.006 25.512c.002 2.555-3.07 5.361-10.024 8.986"/><path fill="#c6302b" d="M245.965 57.93c-13.661 7.12-84.431 36.22-99.498 44.074c-15.066 7.854-23.436 7.777-35.338 2.09C99.227 98.404 23.915 67.98 10.35 61.497S-3.5 50.55 9.825 45.331C23.151 40.113 98.05 10.73 113.88 5.05c15.828-5.679 21.319-5.883 34.789-.948s83.819 32.934 97.13 37.811c13.316 4.876 13.827 8.897.166 16.017"/><path fill="#fff" d="m159.283 32.757l-22.01 2.285l-4.927 11.856l-7.958-13.23l-25.415-2.284l18.964-6.839l-5.69-10.498l17.755 6.944l16.738-5.48l-4.524 10.855zm-28.251 57.518L89.955 73.238l58.86-9.035zm-56.95-50.928c17.375 0 31.46 5.46 31.46 12.194c0 6.736-14.085 12.195-31.46 12.195s-31.46-5.46-31.46-12.195c0-6.734 14.085-12.194 31.46-12.194"/><path fill="#621b1c" d="m185.295 35.998l34.836 13.766l-34.806 13.753z"/><path fill="#9a2928" d="m146.755 51.243l38.54-15.245l.03 27.519l-3.779 1.478z"/></symbol>
+        </defs>
+
+        <g id="camera">
+          <rect id="cam-anchor" x="0" y="0" width="0.01" height="0.01" fill="none" stroke="none"/>
+          <g id="layer-regions"></g>
+
+          <g id="layer-edges">
+            <path id="edge-api-agent" class="edge" d="M785,254 C785,265 785,273 785,284" />
+            <path id="head-api-agent" class="arrow-head" transform="translate(785,284) rotate(90)" d="M9,0 L-9,-7 L-9,7 Z" opacity="0"/>
+
+            <path id="edge-agent-application" class="edge" d="M785,424 C785,435 785,443 785,454" />
+            <path id="head-agent-application" class="arrow-head" transform="translate(785,454) rotate(90)" d="M9,0 L-9,-7 L-9,7 Z" opacity="0"/>
+
+            <path id="edge-application-domain" class="edge" d="M785,566 C785,577 785,585 785,596" />
+            <path id="head-application-domain" class="arrow-head" transform="translate(785,596) rotate(90)" d="M9,0 L-9,-7 L-9,7 Z" opacity="0"/>
+
+            <path id="edge-infra-domain" class="edge" d="M785,802 C785,791 785,783 785,772" />
+            <path id="head-infra-domain" class="arrow-head" transform="translate(785,772) rotate(-90)" d="M9,0 L-9,-7 L-9,7 Z" opacity="0"/>
+
+            <path id="edge-agent-postgres" class="edge" d="M1420,354 C1440,354 1442,354 1460,354" />
+            <path id="head-agent-postgres" class="arrow-head" transform="translate(1460,354) rotate(0)" d="M9,0 L-9,-7 L-9,7 Z" opacity="0"/>
+
+            <path id="edge-infra-postgres" class="edge--flow" style="stroke-dasharray:3 10; stroke-width:2.5px; opacity:0" d="M1420,890 C1580,890 1665,650 1665,428" />
+            <path id="edge-infra-redis" class="edge--flow" style="stroke-dasharray:3 10; stroke-width:2.5px; opacity:0" d="M1420,890 C1440,890 1442,891 1460,892" />
+          </g>
+
+          <g id="layer-nodes">
+            <!-- API -->
+            <g id="node-api" class="node" filter="url(#card-shadow)">
+              <rect class="node-shape" x="150" y="150" width="1270" height="104" />
+              <use href="#icon-fa-server" x="185" y="177" width="50" height="50" color="var(--c-blue)"/>
+              <text x="258" y="204" font-size="30" font-weight="650">API  ·  FastAPI</text>
+              <text x="258" y="236" class="label" font-size="22">/health  and  /ready  —  entry point</text>
+              <text id="label-context-api" class="context-tag" x="1385" y="204" text-anchor="end">context only — no flow shown here</text>
+            </g>
+
+            <!-- Agent -->
+            <g id="node-agent" class="node" filter="url(#card-shadow)">
+              <rect class="node-shape" x="150" y="284" width="1270" height="140" />
+              <use href="#icon-fa-robot" x="185" y="326" width="54" height="54" color="var(--c-blue)"/>
+              <text x="258" y="346" font-size="30" font-weight="650">Agent  ·  LangGraph</text>
+              <text x="258" y="378" class="label" font-size="22">conversation orchestrator</text>
+
+              <g id="node-tool-search" class="pill pill--protocol">
+                <rect x="755" y="314" width="625" height="96" />
+                <use href="#icon-fa-magnifying-glass" x="785" y="340" width="38" height="38" color="var(--node-stroke)"/>
+                <text x="845" y="368" font-size="26" font-weight="600">search_availability</text>
+                <text x="845" y="394" class="label" font-size="22">the graph's only node</text>
+              </g>
+            </g>
+
+            <!-- Application -->
+            <g id="node-application" class="node" filter="url(#card-shadow)">
+              <rect class="node-shape" x="150" y="454" width="1270" height="112" />
+              <use href="#icon-fa-gears" x="185" y="490" width="50" height="50" color="var(--c-blue)"/>
+              <text x="258" y="508" font-size="30" font-weight="650">Application  ·  use cases</text>
+              <text x="258" y="540" class="label" font-size="22">thin orchestration layer</text>
+
+              <g id="node-usecase-search" class="pill pill--protocol">
+                <rect x="755" y="470" width="625" height="80" />
+                <text x="1067" y="518" font-size="25" font-weight="600" text-anchor="middle">SearchAvailabilityUseCase</text>
+              </g>
+            </g>
+
+            <!-- Domain -->
+            <g id="node-domain" class="node" filter="url(#card-shadow)">
+              <rect class="node-shape" x="150" y="596" width="1270" height="176" />
+              <use href="#icon-fa-scale-balanced" x="185" y="618" width="50" height="50" color="var(--c-violet)"/>
+              <text x="258" y="638" font-size="28" font-weight="650">Domain  ·  pure Python, zero deps</text>
+              <text x="258" y="670" class="label" font-size="22">defines Protocols only — no framework imports</text>
+
+              <g id="badge-domain-rule" class="rule-badge">
+                <rect x="890" y="608" width="490" height="44" />
+                <use href="#icon-fa-shield-halved" x="906" y="619" width="22" height="22" color="var(--c-rose)"/>
+                <text x="938" y="636" font-size="21">NO outgoing deps — incoming only</text>
+              </g>
+
+              <g id="node-proto-appointment" class="pill pill--protocol">
+                <rect x="185" y="684" width="285" height="70" />
+                <text class="pill-title" x="327" y="712" font-size="22">Appointment</text>
+                <text class="pill-title" x="327" y="738" font-size="22">Gateway</text>
+              </g>
+              <g id="node-proto-messaging" class="pill pill--protocol">
+                <rect x="490" y="684" width="285" height="70" />
+                <text class="pill-title" x="632" y="712" font-size="22">Messaging</text>
+                <text class="pill-title" x="632" y="738" font-size="22">Gateway</text>
+              </g>
+              <g id="node-proto-handoff" class="pill pill--protocol">
+                <rect x="795" y="684" width="285" height="70" />
+                <text class="pill-title" x="937" y="712" font-size="22">HumanHandoff</text>
+                <text class="pill-title" x="937" y="738" font-size="22">Gateway</text>
+              </g>
+              <g id="node-proto-llm" class="pill pill--protocol">
+                <rect x="1100" y="684" width="285" height="70" />
+                <text class="pill-title" x="1242" y="712" font-size="22">LLM</text>
+                <text class="pill-title" x="1242" y="738" font-size="22">Provider</text>
+              </g>
+            </g>
+
+            <!-- Infrastructure -->
+            <g id="node-infra" class="node" filter="url(#card-shadow)">
+              <rect class="node-shape" x="150" y="802" width="1270" height="176" />
+              <use href="#icon-fa-network-wired" x="185" y="824" width="50" height="50" color="var(--c-amber)"/>
+              <text x="258" y="844" font-size="28" font-weight="650">Infrastructure  ·  adapters</text>
+              <text x="258" y="876" class="label" font-size="22">adapters (in-memory) — deliberate swap point</text>
+
+              <g id="badge-infra-rule" class="rule-badge">
+                <rect x="890" y="814" width="490" height="44" />
+                <text x="912" y="842" font-size="21">ALL FAKE — in-memory adapters</text>
+              </g>
+
+              <g id="node-fake-dentalink" class="pill pill--fake">
+                <rect x="185" y="890" width="285" height="70" />
+                <text class="pill-title" x="327" y="918" font-size="22">FakeDentalink</text>
+                <text class="pill-title" x="327" y="944" font-size="22">Gateway</text>
+              </g>
+              <g id="node-fake-whatsapp" class="pill pill--fake">
+                <rect x="490" y="890" width="285" height="70" />
+                <text class="pill-title" x="632" y="918" font-size="22">FakeWhatsApp</text>
+                <text class="pill-title" x="632" y="944" font-size="22">Gateway</text>
+              </g>
+              <g id="node-fake-chatwoot" class="pill pill--fake">
+                <rect x="795" y="890" width="285" height="70" />
+                <text class="pill-title" x="937" y="918" font-size="22">FakeChatwoot</text>
+                <text class="pill-title" x="937" y="944" font-size="22">Gateway</text>
+              </g>
+              <g id="node-fake-llm" class="pill pill--fake">
+                <rect x="1100" y="890" width="285" height="70" />
+                <text class="pill-title" x="1242" y="918" font-size="22">FakeLLM</text>
+                <text class="pill-title" x="1242" y="944" font-size="22">Provider</text>
+              </g>
+            </g>
+
+            <!-- PostgreSQL -->
+            <g id="node-postgres" class="node" filter="url(#card-shadow)">
+              <rect class="node-shape" x="1460" y="280" width="410" height="148" />
+              <use href="#clip-logos-postgresql" x="1490" y="316" width="78" height="80"/>
+              <text x="1590" y="336" font-size="27" font-weight="650">PostgreSQL</text>
+              <text x="1590" y="368" class="label" font-size="22">checkpointer (thread_id)</text>
+            </g>
+
+            <!-- Redis -->
+            <g id="node-redis" class="node node--reserved" filter="url(#card-shadow)">
+              <rect class="node-shape" x="1460" y="806" width="410" height="172" />
+              <use href="#clip-logos-redis" x="1490" y="854" width="78" height="67"/>
+              <text x="1590" y="874" font-size="27" font-weight="650">Redis</text>
+              <text x="1590" y="906" class="label" font-size="22">debounce · locks · rate-limit</text>
+              <g id="badge-redis-reserved" class="reserved-badge">
+                <rect x="1490" y="822" width="150" height="34" />
+                <text x="1565" y="845" font-size="20" text-anchor="middle">RESERVED</text>
+              </g>
+            </g>
+          </g>
+
+          <g id="layer-labels">
+            <path id="pattern-bracket-line" class="pattern-line" d="M55,284 L55,978" />
+            <text id="label-pattern-main" class="pattern-label-main" x="85" y="631" text-anchor="middle" transform="rotate(-90 85 631)" font-size="24" opacity="0">tool → use case → gateway pattern</text>
+            <text id="label-pattern-sub" class="pattern-label-sub" x="120" y="631" text-anchor="middle" transform="rotate(-90 120 631)" font-size="21" opacity="0">nodes never call infrastructure directly</text>
+
+            <text id="label-sqlalchemy-idle" class="label" x="1672" y="646" font-size="22" opacity="0">SQLAlchemy · idle</text>
+
+            <!-- legend -->
+            <g id="legend">
+              <rect x="150" y="1015" width="22" height="22" fill="var(--node-fill)" stroke="var(--node-stroke)" stroke-width="2.5" rx="6"/>
+              <text class="legend-text" x="182" y="1033">component / layer</text>
+
+              <rect x="470" y="1015" width="22" height="22" fill="var(--bg-raise)" stroke="var(--c-amber)" stroke-width="2.5" stroke-dasharray="6 4" rx="6"/>
+              <text class="legend-text" x="502" y="1033">FAKE adapter (swap point)</text>
+
+              <rect x="900" y="1015" width="22" height="22" fill="var(--bg-raise)" stroke="var(--text-muted)" stroke-width="1.8" stroke-dasharray="6 4" rx="6" opacity="0.66"/>
+              <text class="legend-text" x="932" y="1033">reserved (not active yet)</text>
+            </g>
+          </g>
+
+          <g id="layer-particles">
+            <circle id="pulse-main" class="pulse" r="9" opacity="0" filter="url(#glow)"/>
+            <circle id="pulse-pg" class="pulse" r="9" opacity="0" filter="url(#glow)"/>
+
+            <rect id="glow-agent" class="glow-copy" x="749" y="308" width="637" height="108" rx="16"/>
+            <rect id="glow-application" class="glow-copy" x="749" y="464" width="637" height="92" rx="14"/>
+            <rect id="glow-domain-appt" class="glow-copy" x="179" y="678" width="297" height="82" rx="16"/>
+            <rect id="glow-infra-dentalink" class="glow-copy" x="179" y="884" width="297" height="82" rx="16"/>
+            <rect id="glow-postgres" class="glow-copy" x="1454" y="274" width="422" height="160" rx="24"/>
+          </g>
+        </g>
+
+        <g id="hud">
+          <text id="hud-title" class="title" x="960" y="64" text-anchor="middle" opacity="0">Hexagonal Foundation</text>
+          <text id="hud-subtitle" class="subtitle" x="960" y="102" text-anchor="middle" opacity="0">Python · FastAPI · LangGraph — WhatsApp dental-clinic appointment agent</text>
+        </g>
+      </svg>
+    </div>
+
+    <script>
+      gsap.registerPlugin(DrawSVGPlugin, MotionPathPlugin);
+
+      const __root = document.getElementById("root");
+      const __W = +__root.dataset.width, __H = +__root.dataset.height;
+      const CAM_EASE = "power3.inOut";
+      function camFit(tl, sel, { zoom, at = ">", dur = 1.2, pad = 1.25, ease = CAM_EASE } = {}) {
+        const b = document.querySelector(sel).getBBox();
+        const z = zoom ?? Math.min(__W / (b.width * pad), __H / (b.height * pad), 2.2);
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        return tl.to("#camera", { scale: z, x: __W / 2 - cx * z, y: __H / 2 - cy * z,
+          transformOrigin: "0 0", duration: dur, ease }, at);
+      }
+      function camFitAll(tl, opts = {}) { return camFit(tl, "#camera", { pad: 1.08, ...opts }); }
+      function camHome(tl, { at = ">", dur = 1.1, ease = CAM_EASE } = {}) {
+        return tl.to("#camera", { scale: 1, x: 0, y: 0, duration: dur, ease }, at);
+      }
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+
+      // helper: one flash on a glow-copy element (bounded, in then out)
+      function flash(sel, at, { peak = 0.85, inDur = 0.15, outDur = 0.28 } = {}) {
+        tl.to(sel, { opacity: peak, duration: inDur, ease: "power2.out" }, at)
+          .to(sel, { opacity: 0, duration: outDur, ease: "power2.in" }, at + inDur);
+      }
+      // helper: one pulse hop riding an edge (forward or reversed)
+      function hop(sel, edgeSel, at, dur, reverse = false) {
+        const cfg = reverse ? { start: 1, end: 0 } : { start: 0, end: 1 };
+        tl.set(sel, { opacity: 1 }, at)
+          .to(sel, { motionPath: { path: edgeSel, align: edgeSel, alignOrigin: [0.5, 0.5], ...cfg },
+            duration: dur, ease: "none" }, at)
+          .set(sel, { opacity: 0 }, at + dur);
+      }
+
+      /* ── Act 1 · Establish ───────────────────────────────────────── */
+      tl.to("#hud-title", { opacity: 1, duration: 0.6 }, 0)
+        .to("#hud-subtitle", { opacity: 1, duration: 0.55 }, 0.15);
+
+      /* ── Act 2 · Build (narrative order: API → Agent → Application →
+         Domain(+protocols) → Infrastructure(+fakes) → Postgres → Redis) ── */
+      tl.from("#node-api", { opacity: 0, y: 22, scale: 0.92, transformOrigin: "50% 50%",
+        duration: 0.5, ease: "back.out(1.4)" }, 0.75)
+        .from("#node-agent", { opacity: 0, y: 22, scale: 0.92, transformOrigin: "50% 50%",
+          duration: 0.5, ease: "back.out(1.4)" }, 0.90)
+        .from("#node-application", { opacity: 0, y: 22, scale: 0.92, transformOrigin: "50% 50%",
+          duration: 0.5, ease: "back.out(1.4)" }, 1.05)
+        .from("#node-domain", { opacity: 0, y: 22, scale: 0.94, transformOrigin: "50% 50%",
+          duration: 0.5, ease: "back.out(1.4)" }, 1.20)
+        .from(["#node-proto-appointment", "#node-proto-messaging", "#node-proto-handoff", "#node-proto-llm"],
+          { opacity: 0, y: 14, scale: 0.85, transformOrigin: "50% 50%",
+            stagger: 0.07, duration: 0.4, ease: "back.out(1.4)" }, 1.45)
+        .from("#node-infra", { opacity: 0, y: 22, scale: 0.94, transformOrigin: "50% 50%",
+          duration: 0.5, ease: "back.out(1.4)" }, 1.90)
+        .from(["#node-fake-dentalink", "#node-fake-whatsapp", "#node-fake-chatwoot", "#node-fake-llm"],
+          { opacity: 0, y: 14, scale: 0.85, transformOrigin: "50% 50%",
+            stagger: 0.07, duration: 0.4, ease: "back.out(1.4)" }, 2.10)
+        .from("#node-postgres", { opacity: 0, y: 22, scale: 0.92, transformOrigin: "50% 50%",
+          duration: 0.5, ease: "back.out(1.4)" }, 2.55)
+        .from("#node-redis", { opacity: 0, y: 22, scale: 0.92, transformOrigin: "50% 50%",
+          duration: 0.5, ease: "back.out(1.4)" }, 2.75);
+
+      /* ── Act 3 · Connect (edges draw source → destination; heads pop) ── */
+      tl.from("#edge-api-agent", { drawSVG: "0%", duration: 0.35, ease: "power1.inOut" }, 3.30)
+        .fromTo("#head-api-agent", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, transformOrigin: "50% 50%",
+          duration: 0.22, ease: "back.out(2)" }, 3.58)
+
+        .from("#edge-agent-application", { drawSVG: "0%", duration: 0.4, ease: "power1.inOut" }, 3.65)
+        .fromTo("#head-agent-application", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, transformOrigin: "50% 50%",
+          duration: 0.22, ease: "back.out(2)" }, 3.98)
+
+        .from("#edge-application-domain", { drawSVG: "0%", duration: 0.4, ease: "power1.inOut" }, 4.05)
+        .fromTo("#head-application-domain", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, transformOrigin: "50% 50%",
+          duration: 0.22, ease: "back.out(2)" }, 4.38)
+        .from("#badge-domain-rule", { opacity: 0, scale: 0.8, transformOrigin: "50% 50%",
+          duration: 0.35, ease: "back.out(1.6)" }, 4.10)
+
+        .from("#edge-infra-domain", { drawSVG: "0%", duration: 0.4, ease: "power1.inOut" }, 4.45)
+        .fromTo("#head-infra-domain", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, transformOrigin: "50% 50%",
+          duration: 0.22, ease: "back.out(2)" }, 4.78)
+        .from("#badge-infra-rule", { opacity: 0, scale: 0.8, transformOrigin: "50% 50%",
+          duration: 0.35, ease: "back.out(1.6)" }, 4.55)
+
+        .from("#edge-agent-postgres", { drawSVG: "0%", duration: 0.4, ease: "power1.inOut" }, 4.95)
+        .fromTo("#head-agent-postgres", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, transformOrigin: "50% 50%",
+          duration: 0.22, ease: "back.out(2)" }, 5.28)
+
+        .to("#edge-infra-postgres", { opacity: 0.55, duration: 0.4, ease: "power2.out" }, 5.45)
+        .to("#label-sqlalchemy-idle", { opacity: 1, duration: 0.3, ease: "power2.out" }, 5.55)
+        .to("#edge-infra-redis", { opacity: 0.55, duration: 0.4, ease: "power2.out" }, 5.85);
+
+      /* ── Act 4 · Flow (the payoff: tool → use case → gateway pattern) ── */
+      tl.from("#pattern-bracket-line", { drawSVG: "0%", duration: 0.5, ease: "power1.inOut" }, 6.30)
+        .to("#label-pattern-main", { opacity: 1, duration: 0.4, ease: "power2.out" }, 6.45)
+        .to("#label-pattern-sub", { opacity: 1, duration: 0.4, ease: "power2.out" }, 6.55);
+
+      // call chain: node → use case (down)
+      hop("#pulse-main", "#edge-agent-application", 7.00, 0.8, false);
+      flash("#glow-application", 7.75);
+      // use case → protocol (down)
+      hop("#pulse-main", "#edge-application-domain", 7.85, 0.75, false);
+      flash("#glow-domain-appt", 8.55);
+      // protocol → fake adapter (reversed traversal of the dependency edge —
+      // control flow runs opposite the "implements" arrow: dependency inversion)
+      hop("#pulse-main", "#edge-infra-domain", 8.65, 0.75, true);
+      flash("#glow-infra-dentalink", 9.35);
+      // ...results return: adapter → protocol → use case → node
+      hop("#pulse-main", "#edge-infra-domain", 9.75, 0.65, false);
+      flash("#glow-domain-appt", 10.35, { peak: 0.6 });
+      hop("#pulse-main", "#edge-application-domain", 10.45, 0.65, true);
+      flash("#glow-application", 11.05, { peak: 0.6 });
+      hop("#pulse-main", "#edge-agent-application", 11.15, 0.65, true);
+      flash("#glow-agent", 11.75, { peak: 0.9, outDur: 0.35 });
+
+      // parallel: checkpointer persists conversation state after the node runs
+      hop("#pulse-pg", "#edge-agent-postgres", 11.90, 0.55, false);
+      flash("#glow-postgres", 12.45);
+      hop("#pulse-pg", "#edge-agent-postgres", 12.50, 0.55, true);
+      flash("#glow-agent", 13.05, { peak: 0.55, outDur: 0.2 });
+
+      /* ── Act 5 · Resolve — hold the complete diagram ─────────────── */
+      tl.to({}, { duration: 1.05 }, 13.35);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+
+      if (!window.__hyperframes && !navigator.webdriver) {
+        document.fonts.ready.then(() => tl.play());
+      }
+    </script>
+  </body>
+</html>

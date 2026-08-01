@@ -4,6 +4,18 @@ AI agent foundation for a dental clinic appointment assistant. Hexagonal
 architecture: `app/domain`, `app/application`, `app/infrastructure`,
 `app/api`, `app/agent`, `app/config`.
 
+## Architecture
+
+![Hexagonal architecture overview](animated-svg-hexagonal-foundation/renders/hexagonal-foundation.gif)
+
+Layered hexagonal design: `API → Agent (LangGraph) → Application (use cases)
+→ Domain (Protocols, zero deps) → Infrastructure (adapters)`, with PostgreSQL
+as the LangGraph checkpointer and Redis reserved for debounce/locks/rate-limit.
+All four infrastructure adapters (Dentalink, WhatsApp, Chatwoot, LLM) are
+in-memory fakes today — deliberate swap points for the real integrations.
+See [`docs/architecture.md`](docs/architecture.md) for the full breakdown of
+what's implemented, what's out of scope, and the next steps.
+
 ## Requirements
 
 - Python 3.11+
