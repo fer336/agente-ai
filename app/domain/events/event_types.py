@@ -1,0 +1,6 @@
+APPOINTMENT_CREATED = "appointment.created"
+APPOINTMENT_RESCHEDULED = "appointment.rescheduled"
+APPOINTMENT_CANCELLED = "appointment.cancelled"
+MESSAGE_REPLY_REQUESTED = "message.reply_requested"
+HUMAN_HANDOFF_REQUESTED = "human_handoff.requested"
+REMINDER_REQUESTED = "reminder.requested"
