@@ -39,16 +39,21 @@ class ChatwootMessageCreatedPayload(BaseModel):
         Callers must only invoke this after confirming the event passed the
         route's `event`/`message_type`/`private`/`inbox.id` filters — this
         method does not re-check them. `sender.phone_number` and `source_id`
-        have no silent default: a missing value raises explicitly rather
-        than producing a DTO with a fabricated phone number or an empty
-        `ExternalMessageId` (which `IngestMessageUseCase.execute()` would
-        otherwise reject with its own uncaught `ValueError`).
+        have no silent default: a missing OR whitespace-only value raises
+        explicitly rather than producing a DTO with a fabricated phone
+        number or an empty `ExternalMessageId` (which
+        `IngestMessageUseCase.execute()` would otherwise reject with its
+        own uncaught `ValueError`, outside this method's try-wrapped call
+        site in the route). The `.strip()`-based checks below deliberately
+        mirror `ExternalMessageId`'s and `PhoneNumber`'s own invariants —
+        a falsy-only check (`if not value`) is insufficient because a
+        whitespace-only string is truthy in Python.
         """
-        if not self.sender.phone_number:
+        if not self.sender.phone_number or not self.sender.phone_number.strip():
             raise ValueError(
                 "Chatwoot payload sender.phone_number is required to build InboundMessageDTO"
             )
-        if not self.source_id:
+        if not self.source_id.strip():
             raise ValueError(
                 "Chatwoot payload source_id is required to build InboundMessageDTO"
             )

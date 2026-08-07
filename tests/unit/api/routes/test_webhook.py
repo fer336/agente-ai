@@ -193,6 +193,49 @@ async def test_valid_message_missing_source_id_acked_not_500():
     assert response.json() == {"status": "ignored"}
 
 
+@pytest.mark.asyncio
+async def test_valid_message_whitespace_only_source_id_acked_not_500():
+    # A whitespace-only `source_id` (e.g. "   ") is truthy, so it bypassed
+    # the falsy-only guard added by the previous corrective commit and
+    # reached `ExternalMessageId(dto.external_message_id)` at the top of
+    # `IngestMessageUseCase.execute()` — which is NOT wrapped by the
+    # route's try/except (that only wraps `to_inbound_message_dto()`) —
+    # producing an unhandled 500. `ExternalMessageId` itself validates via
+    # `.strip()`, not falsiness, so the guard must match that invariant
+    # exactly. `raise_app_exceptions=False` mirrors real deployed ASGI
+    # behavior (uncaught exceptions surface as a 500 response).
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
+            json=make_chatwoot_payload(source_id="   "),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
+async def test_valid_message_whitespace_only_sender_phone_number_acked_not_500():
+    # Sibling regression guard for `sender.phone_number`: a whitespace-only
+    # value is truthy, so it bypasses the falsy-only guard too. Unlike
+    # `source_id`, `PhoneNumber(self.sender.phone_number)` is constructed
+    # inside `to_inbound_message_dto()` itself (still inside the route's
+    # try/except), so this case was never actually reachable as a 500 —
+    # `PhoneNumber`'s own format validation (must start with "+") already
+    # rejects it there. This test locks in that existing safety after the
+    # guard was normalized to `.strip()` for defense-in-depth.
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
+            json=make_chatwoot_payload(sender={"phone_number": "   "}),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+
 def test_route_has_openapi_metadata():
     schema = app.openapi()
     operation = schema["paths"]["/webhooks/chatwoot/{secret}"]["post"]

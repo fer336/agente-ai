@@ -47,3 +47,22 @@ def test_to_inbound_message_dto_raises_when_source_id_is_missing():
 
     with pytest.raises(ValueError):
         payload.to_inbound_message_dto()
+
+
+def test_to_inbound_message_dto_raises_when_source_id_is_whitespace_only():
+    # `source_id="   "` is truthy, so the falsy-only guard let it through
+    # while `ExternalMessageId.__post_init__` rejects it via `.strip()` —
+    # the guard must match that invariant exactly.
+    raw = make_chatwoot_payload(source_id="   ")
+    payload = ChatwootMessageCreatedPayload.model_validate(raw)
+
+    with pytest.raises(ValueError):
+        payload.to_inbound_message_dto()
+
+
+def test_to_inbound_message_dto_raises_when_sender_phone_number_is_whitespace_only():
+    raw = make_chatwoot_payload(sender={"phone_number": "   "})
+    payload = ChatwootMessageCreatedPayload.model_validate(raw)
+
+    with pytest.raises(ValueError):
+        payload.to_inbound_message_dto()
