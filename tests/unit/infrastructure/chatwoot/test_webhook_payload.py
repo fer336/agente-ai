@@ -39,3 +39,11 @@ def test_to_inbound_message_dto_raises_when_sender_phone_number_is_missing():
 
     with pytest.raises(ValueError):
         payload.to_inbound_message_dto()
+
+
+def test_to_inbound_message_dto_raises_when_source_id_is_missing():
+    raw = make_chatwoot_payload(source_id="")
+    payload = ChatwootMessageCreatedPayload.model_validate(raw)
+
+    with pytest.raises(ValueError):
+        payload.to_inbound_message_dto()

@@ -169,6 +169,30 @@ async def test_valid_message_missing_sender_phone_number_acked_not_500():
     assert response.json() == {"status": "ignored"}
 
 
+@pytest.mark.asyncio
+async def test_valid_message_missing_source_id_acked_not_500():
+    # A payload that passes all four filters (message_created, incoming,
+    # non-private, matching inbox) and has a valid sender.phone_number but
+    # lacks source_id is a plausible-but-incomplete Chatwoot payload. It
+    # must never crash the handler with an unhandled 500 — Chatwoot retries
+    # 5xx responses, which could cause a retry storm. Mirrors
+    # `test_valid_message_missing_sender_phone_number_acked_not_500` above,
+    # extended to cover the sibling `source_id` field that
+    # `ExternalMessageId` also rejects when empty.
+    # `raise_app_exceptions=False` mirrors real deployed ASGI behavior
+    # (uncaught exceptions surface as a 500 response, not a Python
+    # exception).
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
+            json=make_chatwoot_payload(source_id=""),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+
 def test_route_has_openapi_metadata():
     schema = app.openapi()
     operation = schema["paths"]["/webhooks/chatwoot/{secret}"]["post"]
