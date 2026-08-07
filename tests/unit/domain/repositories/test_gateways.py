@@ -1,5 +1,6 @@
 from app.domain.repositories.gateways import (
     AppointmentGateway,
+    ChatwootConversationGateway,
     HumanHandoffGateway,
     MessagingGateway,
 )
@@ -62,3 +63,21 @@ def test_class_missing_request_handoff_does_not_satisfy_human_handoff_gateway_pr
             pass
 
     assert not isinstance(NonConformingHandoffGateway(), HumanHandoffGateway)
+
+
+def test_conforming_class_satisfies_chatwoot_conversation_gateway_protocol():
+    class ConformingChatwootConversationGateway:
+        async def mirror_message(self, chatwoot_conversation_id, text):
+            return None
+
+    assert isinstance(ConformingChatwootConversationGateway(), ChatwootConversationGateway)
+
+
+def test_class_missing_mirror_message_does_not_satisfy_chatwoot_conversation_gateway_protocol():
+    class NonConformingChatwootConversationGateway:
+        async def other_method(self):
+            pass
+
+    assert not isinstance(
+        NonConformingChatwootConversationGateway(), ChatwootConversationGateway
+    )

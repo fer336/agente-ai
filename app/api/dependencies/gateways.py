@@ -3,11 +3,15 @@ from functools import lru_cache
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.gateways import (
     AppointmentGateway,
+    ChatwootConversationGateway,
     HumanHandoffGateway,
     MessagingGateway,
 )
 from app.domain.repositories.llm_provider import LLMProvider
 from app.infrastructure.agent.not_implemented_agent_invoker import NotImplementedAgentInvoker
+from app.infrastructure.chatwoot.fake_chatwoot_conversation_gateway import (
+    FakeChatwootConversationGateway,
+)
 from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -72,6 +76,24 @@ def get_llm_provider() -> LLMProvider:
     `LLMProvider` Protocol.
     """
     return _get_fake_llm_provider()
+
+
+@lru_cache
+def _get_fake_chatwoot_conversation_gateway() -> FakeChatwootConversationGateway:
+    return FakeChatwootConversationGateway()
+
+
+def get_chatwoot_conversation_gateway() -> ChatwootConversationGateway:
+    """FastAPI dependency providing the `ChatwootConversationGateway` port.
+
+    Returns the in-memory `FakeChatwootConversationGateway` for now. This
+    is the swap point for the real, `httpx`-based
+    `app.infrastructure.chatwoot.chatwoot_conversation_gateway.ChatwootConversationGateway`
+    adapter (already implemented, not yet wired here — no live Chatwoot
+    credentials in dev this etapa) — callers only depend on the
+    `ChatwootConversationGateway` Protocol.
+    """
+    return _get_fake_chatwoot_conversation_gateway()
 
 
 @lru_cache

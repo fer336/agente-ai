@@ -54,3 +54,17 @@ class HumanHandoffGateway(Protocol):
     """Port to the human-in-the-loop escalation channel (e.g. Chatwoot)."""
 
     async def request_handoff(self, conversation_id: ConversationId, reason: str) -> None: ...
+
+
+@runtime_checkable
+class ChatwootConversationGateway(Protocol):
+    """Mirrors AI-sent replies into the Chatwoot conversation thread.
+
+    Distinct from `HumanHandoffGateway`: `request_handoff` is a one-shot
+    escalation notification, while `mirror_message` is called for every
+    single AI reply (high-frequency, single-purpose port). See the Etapa 4
+    design doc's "Outbound mirror port" ADR for why these are NOT merged
+    into one Protocol.
+    """
+
+    async def mirror_message(self, chatwoot_conversation_id: str, text: str) -> None: ...

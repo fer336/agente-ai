@@ -13,7 +13,7 @@ from app.infrastructure.database.fake_conversation_repository import FakeConvers
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
 from app.main import app
 from tests.fixtures.gateways import make_ingest_message_use_case
-from tests.fixtures.seed_objects import make_chatwoot_payload
+from tests.fixtures.seed_objects import make_chatwoot_payload, make_conversation
 
 _WEBHOOK_SECRET = "correct-secret"
 _INBOX_ID = "42"
@@ -116,6 +116,38 @@ async def test_outgoing_message_dropped():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
+async def test_mirrored_agent_bot_message_never_flips_mode_to_human(_override_webhook_settings):
+    # Phase 5 mode-flip regression test (task 5.8). Necessity check, made
+    # explicit rather than assumed: `_passes_filters()` (Phase 2) already
+    # drops EVERY payload with `message_type != "incoming"` before
+    # `IngestMessageUseCase` ever runs — an outgoing Chatwoot event (our
+    # own `ChatwootConversationGateway.mirror_message` write, OR a real
+    # human agent's reply typed in Chatwoot) can NEVER reach the ingestion
+    # pipeline at all, regardless of `sender.type`. This test therefore
+    # proves a structural guarantee that already existed since PR2/PR4 —
+    # it is NOT closing a live gap discovered in this phase. Separately:
+    # grepping the whole `app/` tree confirms `conversation.mode` is only
+    # ever WRITTEN as `"agent"` (at conversation creation) — there is no
+    # code path anywhere in this codebase, in this etapa, that sets it to
+    # `"human"` at all. "Real human agent reply flips mode to human" logic
+    # does not exist yet; per the spec's own "Out of Scope" section, that
+    # behavior is deferred to a later etapa (Etapa 5/10), not Etapa 4.
+    fakes = _override_webhook_settings
+    await fakes.conversation_repository.save(make_conversation(id_="chatwoot-100", mode="agent"))
+
+    response = await _post_webhook(
+        make_chatwoot_payload(message_type="outgoing", sender={"type": "agent_bot"})
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+    conversation = await fakes.conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
 
 
 @pytest.mark.asyncio

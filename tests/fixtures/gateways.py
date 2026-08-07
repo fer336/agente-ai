@@ -9,8 +9,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
+from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
+from app.infrastructure.chatwoot.fake_chatwoot_conversation_gateway import (
+    FakeChatwootConversationGateway,
+)
 from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
@@ -54,6 +58,23 @@ def make_conversation_repository() -> FakeConversationRepository:
 
 def make_agent_invoker() -> FakeAgentInvoker:
     return FakeAgentInvoker()
+
+
+def make_chatwoot_conversation_gateway() -> FakeChatwootConversationGateway:
+    return FakeChatwootConversationGateway()
+
+
+def make_send_reply_use_case(
+    messaging_gateway: FakeWhatsAppGateway | None = None,
+    chatwoot_gateway: FakeChatwootConversationGateway | None = None,
+) -> SendReplyUseCase:
+    messaging_gateway = (
+        messaging_gateway if messaging_gateway is not None else make_whatsapp_gateway()
+    )
+    chatwoot_gateway = (
+        chatwoot_gateway if chatwoot_gateway is not None else make_chatwoot_conversation_gateway()
+    )
+    return SendReplyUseCase(messaging_gateway, chatwoot_gateway)
 
 
 def make_ingest_message_use_case(
