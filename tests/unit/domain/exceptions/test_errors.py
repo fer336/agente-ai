@@ -30,3 +30,10 @@ def test_domain_errors_are_subclasses_of_domain_error(error_class):
 
 def test_domain_error_is_a_plain_exception():
     assert issubclass(DomainError, Exception)
+
+
+def test_appointment_not_found_error_exposes_appointment_id_attribute():
+    exc = AppointmentNotFoundError("999")
+
+    assert exc.appointment_id == "999"
+    assert str(exc) == "Appointment 999 not found"

@@ -28,3 +28,7 @@ class InvalidConfirmationError(DomainError):
 
 class AppointmentNotFoundError(DomainError):
     """Raised when an appointment id has no matching record."""
+
+    def __init__(self, appointment_id: str) -> None:
+        self.appointment_id = appointment_id
+        super().__init__(f"Appointment {appointment_id} not found")

@@ -58,7 +58,7 @@ class FakeDentalinkGateway:
     ) -> Appointment:
         existing = self.get_appointment(appointment_id)
         if existing is None:
-            raise AppointmentNotFoundError(f"Appointment {appointment_id} not found")
+            raise AppointmentNotFoundError(appointment_id)
 
         rescheduled = Appointment(
             id=existing.id,
@@ -73,7 +73,7 @@ class FakeDentalinkGateway:
     async def cancel_appointment(self, appointment_id: str, idempotency_key: str) -> None:
         existing = self.get_appointment(appointment_id)
         if existing is None:
-            raise AppointmentNotFoundError(f"Appointment {appointment_id} not found")
+            raise AppointmentNotFoundError(appointment_id)
 
         cancelled = Appointment(
             id=existing.id,

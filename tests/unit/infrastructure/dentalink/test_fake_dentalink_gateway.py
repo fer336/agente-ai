@@ -84,8 +84,10 @@ async def test_reschedule_appointment_updates_the_slot_and_keeps_status_confirme
 async def test_reschedule_appointment_raises_when_appointment_id_is_unknown():
     gateway = make_dentalink_gateway()
 
-    with pytest.raises(AppointmentNotFoundError, match="not found"):
+    with pytest.raises(AppointmentNotFoundError, match="not found") as exc_info:
         await gateway.reschedule_appointment("missing-id", make_slot(), idempotency_key="key-1")
+
+    assert exc_info.value.appointment_id == "missing-id"
 
 
 @pytest.mark.asyncio
@@ -105,8 +107,10 @@ async def test_cancel_appointment_marks_the_appointment_status_cancelled():
 async def test_cancel_appointment_raises_when_appointment_id_is_unknown():
     gateway = make_dentalink_gateway()
 
-    with pytest.raises(AppointmentNotFoundError, match="not found"):
+    with pytest.raises(AppointmentNotFoundError, match="not found") as exc_info:
         await gateway.cancel_appointment("missing-id", idempotency_key="key-1")
+
+    assert exc_info.value.appointment_id == "missing-id"
 
 
 def test_fake_dentalink_gateway_satisfies_appointment_gateway_protocol():
