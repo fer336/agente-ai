@@ -12,6 +12,7 @@ def test_settings_uses_defaults_and_derives_urls_when_no_env_vars(monkeypatch):
         "POSTGRES_DB",
         "REDIS_HOST",
         "REDIS_PORT",
+        "REDIS_PASSWORD",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -38,6 +39,7 @@ def test_settings_reads_discrete_fields_from_env_and_derives_matching_urls(monke
     monkeypatch.setenv("POSTGRES_DB", "clinic_prod")
     monkeypatch.setenv("REDIS_HOST", "cache.internal")
     monkeypatch.setenv("REDIS_PORT", "6380")
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
 
     settings = Settings(_env_file=None)
 
