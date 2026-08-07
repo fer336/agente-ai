@@ -64,3 +64,24 @@ def make_contact(
     patient_id: str | None = None,
 ) -> Contact:
     return Contact(id=id_, phone=PhoneNumber(phone), patient_id=patient_id)
+
+
+def make_chatwoot_payload(**overrides: object) -> dict[str, object]:
+    """Raw Chatwoot `message_created` webhook JSON body, valid-by-default.
+
+    Callers override individual keys to build the filtered-out/malformed
+    variants exercised by the webhook route and payload-parsing tests, e.g.
+    `make_chatwoot_payload(message_type="outgoing")`.
+    """
+    payload: dict[str, object] = {
+        "event": "message_created",
+        "message_type": "incoming",
+        "private": False,
+        "source_id": "wamid.HBgLNTQ5MTEyMjMzNDQ1FQIAERgSMkQ5",
+        "content": "Hola, quiero agendar un turno",
+        "inbox": {"id": 42},
+        "sender": {"phone_number": "+5491122334455"},
+        "conversation": {"id": 100},
+    }
+    payload.update(overrides)
+    return payload
