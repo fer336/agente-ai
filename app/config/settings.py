@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_password: str | None = None
 
+    chatwoot_url: str = ""
+    chatwoot_api_token: str = ""
+    chatwoot_account_id: str = ""
+    chatwoot_inbox_id: str = ""
+    chatwoot_webhook_secret: str = ""
+
+    whatsapp_api_url: str = ""
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
+
+    message_debounce_seconds: int = 6
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:

@@ -7,6 +7,7 @@ matches the call shape of the inline `Fake*()` construction these replace.
 
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
+from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.whatsapp.fake_whatsapp_gateway import FakeWhatsAppGateway
@@ -28,3 +29,7 @@ def make_whatsapp_gateway() -> FakeWhatsAppGateway:
 
 def make_llm_provider() -> FakeLLMProvider:
     return FakeLLMProvider()
+
+
+def make_contact_repository() -> FakeContactRepository:
+    return FakeContactRepository()

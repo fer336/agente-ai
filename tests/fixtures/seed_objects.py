@@ -9,6 +9,7 @@ from datetime import datetime
 
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
+from app.domain.entities.contact import Contact
 from app.domain.entities.patient import Patient
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.conversation_id import ConversationId
@@ -55,3 +56,11 @@ def make_appointment(
 
 def make_conversation_id(value: str = "conv-1") -> ConversationId:
     return ConversationId(value)
+
+
+def make_contact(
+    id_: str = "contact-1",
+    phone: str = "+5491122334455",
+    patient_id: str | None = None,
+) -> Contact:
+    return Contact(id=id_, phone=PhoneNumber(phone), patient_id=patient_id)
