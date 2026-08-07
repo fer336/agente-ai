@@ -80,6 +80,27 @@ async def test_valid_incoming_message_forwarded_to_ingestion():
     assert response.json() == {"status": "accepted"}
 
 
+@pytest.mark.asyncio
+async def test_valid_message_missing_sender_phone_number_acked_not_500():
+    # A payload that passes all four filters (message_created, incoming,
+    # non-private, matching inbox) but lacks sender.phone_number is a
+    # plausible-but-incomplete Chatwoot payload (e.g. a contact record with
+    # no phone populated). It must never crash the handler with an unhandled
+    # 500 — Chatwoot retries 5xx responses, which could cause a retry storm.
+    # `raise_app_exceptions=False` mirrors real deployed ASGI behavior
+    # (uncaught exceptions surface as a 500 response, not a Python
+    # exception), matching how the verify agent reproduced the bug.
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
+            json=make_chatwoot_payload(sender={}),
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+
 def test_route_has_openapi_metadata():
     schema = app.openapi()
     operation = schema["paths"]["/webhooks/chatwoot/{secret}"]["post"]

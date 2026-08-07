@@ -51,7 +51,13 @@ async def receive_chatwoot_webhook(
     # Phase boundary: this change parses and filters only. Forwarding the
     # DTO to `IngestMessageUseCase` is wired in a later change (Etapa 4
     # Phase 4) once that use case exists.
-    payload.to_inbound_message_dto()
+    try:
+        payload.to_inbound_message_dto()
+    except ValueError:
+        # Plausible-but-incomplete payload (e.g. sender.phone_number
+        # missing) — ack-and-drop rather than a 500, so Chatwoot does not
+        # retry a request that will never succeed.
+        return WebhookAckResponse(status="ignored")
     return WebhookAckResponse(status="accepted")
 
 
