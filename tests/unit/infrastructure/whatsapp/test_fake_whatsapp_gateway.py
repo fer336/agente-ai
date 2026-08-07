@@ -3,11 +3,12 @@ import pytest
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.whatsapp.fake_whatsapp_gateway import FakeWhatsAppGateway
+from tests.fixtures.gateways import make_whatsapp_gateway
 
 
 @pytest.mark.asyncio
 async def test_send_text_message_returns_external_id_and_records_the_message():
-    gateway = FakeWhatsAppGateway()
+    gateway = make_whatsapp_gateway()
     to = PhoneNumber("+5491122334455")
 
     external_id = await gateway.send_text_message(to, "Hola, tu turno es mañana")
@@ -18,7 +19,7 @@ async def test_send_text_message_returns_external_id_and_records_the_message():
 
 @pytest.mark.asyncio
 async def test_send_text_message_generates_unique_ids_across_calls():
-    gateway = FakeWhatsAppGateway()
+    gateway = make_whatsapp_gateway()
     to = PhoneNumber("+5491122334455")
 
     first_id = await gateway.send_text_message(to, "first")

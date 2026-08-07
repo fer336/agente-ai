@@ -1,6 +1,7 @@
 import pytest
 
 from app.domain.exceptions.errors import (
+    AppointmentNotFoundError,
     AppointmentSlotUnavailableError,
     DomainError,
     DuplicateActionError,
@@ -20,6 +21,7 @@ from app.domain.exceptions.errors import (
         PatientNotIdentifiedError,
         PendingActionExpiredError,
         InvalidConfirmationError,
+        AppointmentNotFoundError,
     ],
 )
 def test_domain_errors_are_subclasses_of_domain_error(error_class):

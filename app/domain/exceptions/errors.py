@@ -24,3 +24,7 @@ class PendingActionExpiredError(DomainError):
 
 class InvalidConfirmationError(DomainError):
     """Raised when a confirmation response is ambiguous or does not match a pending action."""
+
+
+class AppointmentNotFoundError(DomainError):
+    """Raised when an appointment id has no matching record."""

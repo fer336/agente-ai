@@ -3,6 +3,7 @@ from itertools import count
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
+from app.domain.exceptions.errors import AppointmentNotFoundError
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
 
@@ -57,7 +58,7 @@ class FakeDentalinkGateway:
     ) -> Appointment:
         existing = self.get_appointment(appointment_id)
         if existing is None:
-            raise ValueError(f"Appointment {appointment_id} not found")
+            raise AppointmentNotFoundError(f"Appointment {appointment_id} not found")
 
         rescheduled = Appointment(
             id=existing.id,
@@ -72,7 +73,7 @@ class FakeDentalinkGateway:
     async def cancel_appointment(self, appointment_id: str, idempotency_key: str) -> None:
         existing = self.get_appointment(appointment_id)
         if existing is None:
-            raise ValueError(f"Appointment {appointment_id} not found")
+            raise AppointmentNotFoundError(f"Appointment {appointment_id} not found")
 
         cancelled = Appointment(
             id=existing.id,
