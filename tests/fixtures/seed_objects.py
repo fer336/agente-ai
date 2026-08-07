@@ -5,15 +5,18 @@ have no setup/teardown lifecycle, so a callable constructor is sufficient and
 matches the call shape of the inline helpers these replace.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact import Contact
+from app.domain.entities.conversation import Conversation
+from app.domain.entities.message import Message
 from app.domain.entities.patient import Patient
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.phone_number import PhoneNumber
 
 
@@ -64,6 +67,38 @@ def make_contact(
     patient_id: str | None = None,
 ) -> Contact:
     return Contact(id=id_, phone=PhoneNumber(phone), patient_id=patient_id)
+
+
+def make_conversation(
+    id_: str = "chatwoot-100",
+    contact_id: str = "contact-1",
+    mode: str = "agent",
+    created_at: datetime | None = None,
+) -> Conversation:
+    return Conversation(
+        id=ConversationId(id_),
+        contact_id=contact_id,
+        mode=mode,
+        created_at=created_at if created_at is not None else datetime.now(UTC),
+    )
+
+
+def make_message(
+    id_: str = "msg-1",
+    conversation_id: str = "chatwoot-100",
+    external_message_id: str = "wamid.1",
+    direction: str = "inbound",
+    text: str = "hola",
+    created_at: datetime | None = None,
+) -> Message:
+    return Message(
+        id=id_,
+        conversation_id=ConversationId(conversation_id),
+        external_message_id=ExternalMessageId(external_message_id),
+        direction=direction,
+        text=text,
+        created_at=created_at if created_at is not None else datetime.now(UTC),
+    )
 
 
 def make_chatwoot_payload(**overrides: object) -> dict[str, object]:

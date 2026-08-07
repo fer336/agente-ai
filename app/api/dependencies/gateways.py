@@ -1,11 +1,13 @@
 from functools import lru_cache
 
+from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.gateways import (
     AppointmentGateway,
     HumanHandoffGateway,
     MessagingGateway,
 )
 from app.domain.repositories.llm_provider import LLMProvider
+from app.infrastructure.agent.not_implemented_agent_invoker import NotImplementedAgentInvoker
 from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -70,3 +72,18 @@ def get_llm_provider() -> LLMProvider:
     `LLMProvider` Protocol.
     """
     return _get_fake_llm_provider()
+
+
+@lru_cache
+def _get_not_implemented_agent_invoker() -> NotImplementedAgentInvoker:
+    return NotImplementedAgentInvoker()
+
+
+def get_agent_invoker() -> AgentInvoker:
+    """FastAPI dependency providing the `AgentInvoker` port (Etapa 5 seam).
+
+    Returns `NotImplementedAgentInvoker` — no LangGraph/agent implementation
+    exists yet. This is the swap point for Etapa 5: callers (`IngestMessageUseCase`)
+    only depend on the `AgentInvoker` Protocol.
+    """
+    return _get_not_implemented_agent_invoker()

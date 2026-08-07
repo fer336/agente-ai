@@ -1,8 +1,18 @@
+from dataclasses import dataclass
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.config.settings import Settings, get_settings
+from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.external_message_id import ExternalMessageId
+from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.database.fake_contact_repository import FakeContactRepository
+from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
+from app.infrastructure.database.fake_message_repository import FakeMessageRepository
 from app.main import app
+from tests.fixtures.gateways import make_ingest_message_use_case
 from tests.fixtures.seed_objects import make_chatwoot_payload
 
 _WEBHOOK_SECRET = "correct-secret"
@@ -17,10 +27,46 @@ def _override_settings() -> Settings:
     )
 
 
+@dataclass
+class _IngestFakes:
+    """Repositories backing the route-level `IngestMessageUseCase` override.
+
+    Exposed so tests that need to inspect post-request state (task 4.15's
+    TRIANGULATE step) can request this fixture by name; tests that only
+    care about the HTTP response ignore it.
+    """
+
+    message_repository: FakeMessageRepository
+    contact_repository: FakeContactRepository
+    conversation_repository: FakeConversationRepository
+
+
 @pytest.fixture(autouse=True)
 def _override_webhook_settings():
     app.dependency_overrides[get_settings] = _override_settings
-    yield
+
+    # `IngestMessageUseCase` is a process-level `@lru_cache`d singleton in
+    # production (see `app.api.dependencies.use_cases`), backed by a REAL
+    # Postgres session factory and REAL Redis client. Without this
+    # override, resolving `Depends(get_ingest_message_use_case)` for every
+    # request to this route would build (and cache, for the rest of the
+    # test session) that real singleton — these are unit tests and must
+    # not depend on live infrastructure.
+    message_repository = FakeMessageRepository()
+    contact_repository = FakeContactRepository()
+    conversation_repository = FakeConversationRepository()
+    fake_use_case = make_ingest_message_use_case(
+        message_repository=message_repository,
+        contact_repository=contact_repository,
+        conversation_repository=conversation_repository,
+    )
+    app.dependency_overrides[get_ingest_message_use_case] = lambda: fake_use_case
+
+    yield _IngestFakes(
+        message_repository=message_repository,
+        contact_repository=contact_repository,
+        conversation_repository=conversation_repository,
+    )
     app.dependency_overrides.clear()
 
 
@@ -73,11 +119,33 @@ async def test_outgoing_message_dropped():
 
 
 @pytest.mark.asyncio
-async def test_valid_incoming_message_forwarded_to_ingestion():
+async def test_valid_incoming_message_forwarded_to_ingestion(_override_webhook_settings):
+    # TRIANGULATE (task 4.15): asserts the REAL `IngestMessageUseCase` ran
+    # end-to-end through the route (not just that the route returned 200) —
+    # a contact and a conversation were resolved/created, and the message
+    # was actually persisted, proving `webhook.py` really calls
+    # `use_case.execute(dto)` rather than just building the DTO and
+    # discarding it (Phase 2's stub behavior, which this replaces).
+    fakes = _override_webhook_settings
+
     response = await _post_webhook(make_chatwoot_payload())
 
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
+
+    contact = await fakes.contact_repository.get_by_phone(PhoneNumber("+5491122334455"))
+    assert contact is not None
+
+    conversation = await fakes.conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
+
+    assert (
+        await fakes.message_repository.exists_by_external_id(
+            ExternalMessageId("wamid.HBgLNTQ5MTEyMjMzNDQ1FQIAERgSMkQ5")
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio

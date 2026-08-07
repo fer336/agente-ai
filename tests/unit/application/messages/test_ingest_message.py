@@ -1,0 +1,321 @@
+"""Unit tests for `IngestMessageUseCase` (Etapa 4 Phase 4).
+
+Uses only fakes — `FakeMessageRepository`/`FakeContactRepository`/
+`FakeConversationRepository`/`FakeAgentInvoker`/`InMemoryFakeRedis` — per
+the design doc's Testing Strategy table. See `_build_use_case()` for how
+the use case's `repositories_provider` abstraction (a single async-context-
+manager callable bundling all three repositories) is satisfied by fakes
+with no session/transaction lifecycle, vs. the real SQLAlchemy-session-
+backed provider used in production DI
+(`app.api.dependencies.use_cases.get_ingest_message_use_case`).
+"""
+
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import pytest
+
+from app.application.messages.inbound_message_dto import InboundMessageDTO
+from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
+from app.domain.entities.contact import Contact
+from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.redis.debounce import DebounceTracker
+from tests.fixtures.fake_redis import InMemoryFakeRedis
+from tests.fixtures.gateways import (
+    make_agent_invoker,
+    make_contact_repository,
+    make_conversation_repository,
+    make_message_repository,
+)
+from tests.fixtures.seed_objects import make_conversation, make_message
+
+_DEBOUNCE_SECONDS = 6
+
+
+def _make_dto(
+    external_message_id: str = "wamid.1",
+    chatwoot_conversation_id: str = "100",
+    from_phone: str = "+5491122334455",
+    text: str = "Hola, quiero agendar un turno",
+) -> InboundMessageDTO:
+    return InboundMessageDTO(
+        external_message_id=external_message_id,
+        chatwoot_conversation_id=chatwoot_conversation_id,
+        from_phone=PhoneNumber(from_phone),
+        text=text,
+    )
+
+
+def _build_use_case(
+    message_repository=None,
+    contact_repository=None,
+    conversation_repository=None,
+    redis_client=None,
+    debounce_tracker=None,
+    agent_invoker=None,
+    debounce_seconds: int = _DEBOUNCE_SECONDS,
+) -> IngestMessageUseCase:
+    message_repository = (
+        message_repository if message_repository is not None else make_message_repository()
+    )
+    contact_repository = (
+        contact_repository if contact_repository is not None else make_contact_repository()
+    )
+    conversation_repository = (
+        conversation_repository
+        if conversation_repository is not None
+        else make_conversation_repository()
+    )
+    redis_client = redis_client if redis_client is not None else InMemoryFakeRedis()
+    debounce_tracker = (
+        debounce_tracker
+        if debounce_tracker is not None
+        else DebounceTracker(redis_client, debounce_seconds)
+    )
+    agent_invoker = agent_invoker if agent_invoker is not None else make_agent_invoker()
+
+    @asynccontextmanager
+    async def repositories_provider() -> AsyncIterator[MessageRepositories]:
+        yield MessageRepositories(
+            messages=message_repository,
+            contacts=contact_repository,
+            conversations=conversation_repository,
+        )
+
+    return IngestMessageUseCase(
+        repositories_provider=repositories_provider,
+        debounce_tracker=debounce_tracker,
+        redis_client=redis_client,
+        agent_invoker=agent_invoker,
+        debounce_seconds=debounce_seconds,
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_source_id_ignored():
+    message_repository = make_message_repository()
+    await message_repository.save(make_message(external_message_id="wamid.1"))
+    contact_repository = make_contact_repository()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        message_repository=message_repository,
+        contact_repository=contact_repository,
+        agent_invoker=agent_invoker,
+    )
+
+    await use_case.execute(_make_dto(external_message_id="wamid.1"))
+
+    # The pipeline halted before contact resolution — proves it short-
+    # circuited on the duplicate rather than merely tolerating it.
+    assert await contact_repository.get_by_phone(PhoneNumber("+5491122334455")) is None
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_new_contact_created():
+    contact_repository = make_contact_repository()
+    use_case = _build_use_case(contact_repository=contact_repository)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    contact = await contact_repository.get_by_phone(PhoneNumber("+5491122334455"))
+    assert contact is not None
+    assert str(contact.phone) == "+5491122334455"
+
+
+@pytest.mark.asyncio
+async def test_existing_contact_resolved_not_duplicated():
+    contact_repository = make_contact_repository()
+    existing = Contact(id="contact-existing", phone=PhoneNumber("+5491122334455"), patient_id=None)
+    await contact_repository.save(existing)
+    use_case = _build_use_case(contact_repository=contact_repository)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    matching = [
+        c
+        for c in contact_repository._contacts_by_id.values()
+        if str(c.phone) == "+5491122334455"
+    ]
+    assert matching == [existing]
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_created_with_chatwoot_prefixed_id_and_agent_mode():
+    conversation_repository = make_conversation_repository()
+    use_case = _build_use_case(conversation_repository=conversation_repository)
+
+    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+
+    conversation = await conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
+
+
+@pytest.mark.asyncio
+async def test_existing_conversation_resolved_not_duplicated():
+    conversation_repository = make_conversation_repository()
+    existing = make_conversation(id_="chatwoot-100", mode="agent")
+    await conversation_repository.save(existing)
+    use_case = _build_use_case(conversation_repository=conversation_repository)
+
+    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+
+    assert len(conversation_repository._conversations_by_id) == 1
+    fetched = await conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    assert fetched == existing
+
+
+@pytest.mark.asyncio
+async def test_human_mode_blocks_handoff():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="chatwoot-100", mode="human"))
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, redis_client=redis_client
+    )
+
+    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+
+    # No debounce key was ever touched — the human-mode gate short-circuits
+    # BEFORE debounce/lock/seam, per spec's "Human-Mode Pause Gate".
+    assert await redis_client.get("debounce:conversation:chatwoot-100") is None
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_proceeds_to_debounce():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="chatwoot-100", mode="agent"))
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, redis_client=redis_client
+    )
+
+    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+
+    assert await redis_client.get("debounce:conversation:chatwoot-100") is not None
+
+
+@pytest.mark.asyncio
+async def test_multiple_messages_grouped_into_one_handoff():
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
+
+    await use_case.execute(
+        _make_dto(external_message_id="wamid.1", chatwoot_conversation_id="100", text="Hola")
+    )
+    await asyncio.sleep(0.02)
+    await use_case.execute(
+        _make_dto(
+            external_message_id="wamid.2", chatwoot_conversation_id="100", text="quiero un turno"
+        )
+    )
+    await asyncio.sleep(0.02)
+    await use_case.execute(
+        _make_dto(
+            external_message_id="wamid.3", chatwoot_conversation_id="100", text="para mañana"
+        )
+    )
+    await asyncio.sleep(0.15)
+
+    assert len(agent_invoker.calls) == 1
+    conversation_id, message_ids, user_message = agent_invoker.calls[0]
+    assert conversation_id == ConversationId("chatwoot-100")
+    assert len(message_ids) == 3
+    # Arrival order is proven by the joined text, not just the count.
+    assert user_message == "Hola\nquiero un turno\npara mañana"
+
+
+@pytest.mark.asyncio
+async def test_single_message_still_produces_valid_dto():
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
+
+    await use_case.execute(
+        _make_dto(external_message_id="wamid.1", chatwoot_conversation_id="200", text="Hola sola")
+    )
+    await asyncio.sleep(0.15)
+
+    assert len(agent_invoker.calls) == 1
+    conversation_id, message_ids, user_message = agent_invoker.calls[0]
+    assert conversation_id == ConversationId("chatwoot-200")
+    assert len(message_ids) == 1
+    assert user_message == "Hola sola"
+
+
+class _YieldingContactRepository:
+    """Wraps a `FakeContactRepository`, yielding control to the event loop
+    right after `get_by_phone` resolves but before returning.
+
+    This forces two concurrently-scheduled `execute()` calls to interleave
+    at exactly the point a real, non-transactional Postgres get-then-insert
+    would under true concurrent request handling — `contacts.phone` has NO
+    DB-level unique constraint (confirmed in the Etapa 4 PR1 verify report,
+    id 3979), so this scenario is a real, reachable production race, not a
+    hypothetical one. Without a forced yield here, two `asyncio.gather`'d
+    calls against a plain in-memory fake would never actually interleave,
+    since neither coroutine has any other true suspension point before
+    `save()` — this double would be pointless against a repository that
+    already does real (yielding) I/O, like the real SQLAlchemy adapter.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    async def get_by_phone(self, phone):
+        result = await self._inner.get_by_phone(phone)
+        await asyncio.sleep(0)
+        return result
+
+    async def save(self, contact):
+        await self._inner.save(contact)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ingestion_for_a_new_phone_can_race_and_create_duplicate_contacts():
+    """Documents a known, accepted limitation flagged by the Etapa 4 PR1
+    verify report (id 3979, INFO finding): `IngestMessageUseCase` does not
+    add any application-level locking around contact resolution — only the
+    per-conversation Redis lock exists, and it is acquired much later,
+    around the debounce-fire step, never around contact creation. Two truly
+    concurrent webhook deliveries for a brand-new phone number can each
+    resolve `get_by_phone -> None` before either has called `save`,
+    producing two distinct Contact rows for the same phone.
+
+    This test is NOT asserting desired behavior — it is a regression
+    baseline capturing the current, known-racy behavior, so a future fix
+    (e.g. a DB unique index + upsert-on-conflict) has a test to flip from
+    "duplicates possible" to "duplicates prevented" instead of silently
+    fixing an undocumented gap.
+    """
+    shared_fake = make_contact_repository()
+    racy_repository = _YieldingContactRepository(shared_fake)
+    use_case = _build_use_case(contact_repository=racy_repository)
+
+    await asyncio.gather(
+        use_case.execute(
+            _make_dto(
+                external_message_id="wamid.race-1",
+                chatwoot_conversation_id="301",
+                from_phone="+5491100000099",
+            )
+        ),
+        use_case.execute(
+            _make_dto(
+                external_message_id="wamid.race-2",
+                chatwoot_conversation_id="302",
+                from_phone="+5491100000099",
+            )
+        ),
+    )
+
+    matching = [
+        c for c in shared_fake._contacts_by_id.values() if str(c.phone) == "+5491100000099"
+    ]
+    assert len(matching) == 2, (
+        "expected the documented race to produce 2 duplicate Contact rows for the "
+        "same phone — if this now produces 1, the race has been fixed and this test "
+        "should be rewritten to assert the fix instead of the known limitation"
+    )

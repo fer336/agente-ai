@@ -1,15 +1,18 @@
 from app.api.dependencies.gateways import (
+    get_agent_invoker,
     get_appointment_gateway,
     get_human_handoff_gateway,
     get_llm_provider,
     get_messaging_gateway,
 )
+from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.gateways import (
     AppointmentGateway,
     HumanHandoffGateway,
     MessagingGateway,
 )
 from app.domain.repositories.llm_provider import LLMProvider
+from app.infrastructure.agent.not_implemented_agent_invoker import NotImplementedAgentInvoker
 from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -68,5 +71,19 @@ def test_get_llm_provider_returns_a_fake_llm_provider():
 def test_get_llm_provider_returns_the_same_cached_instance_across_calls():
     first = get_llm_provider()
     second = get_llm_provider()
+
+    assert first is second
+
+
+def test_get_agent_invoker_returns_a_not_implemented_agent_invoker():
+    invoker = get_agent_invoker()
+
+    assert isinstance(invoker, NotImplementedAgentInvoker)
+    assert isinstance(invoker, AgentInvoker)
+
+
+def test_get_agent_invoker_returns_the_same_cached_instance_across_calls():
+    first = get_agent_invoker()
+    second = get_agent_invoker()
 
     assert first is second
