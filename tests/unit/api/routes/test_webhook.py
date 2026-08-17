@@ -13,16 +13,16 @@ from app.infrastructure.database.fake_conversation_repository import FakeConvers
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
 from app.main import app
 from tests.fixtures.gateways import make_ingest_message_use_case
-from tests.fixtures.seed_objects import make_chatwoot_payload, make_conversation
+from tests.fixtures.seed_objects import make_conversation, make_ycloud_payload
 
 _WEBHOOK_SECRET = "correct-secret"
-_INBOX_ID = "42"
+_WHATSAPP_NUMBER = "+5491100000001"
 
 
 def _override_settings() -> Settings:
     return Settings(
-        chatwoot_webhook_secret=_WEBHOOK_SECRET,
-        chatwoot_inbox_id=_INBOX_ID,
+        ycloud_webhook_secret=_WEBHOOK_SECRET,
+        ycloud_whatsapp_number=_WHATSAPP_NUMBER,
         _env_file=None,
     )
 
@@ -75,8 +75,8 @@ async def test_wrong_secret_rejected():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            "/webhooks/chatwoot/wrong-secret",
-            json=make_chatwoot_payload(),
+            "/webhooks/ycloud/wrong-secret",
+            json=make_ycloud_payload(),
         )
 
     assert response.status_code == 404
@@ -86,32 +86,21 @@ async def test_wrong_secret_rejected():
 async def _post_webhook(payload: dict[str, object]):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.post(f"/webhooks/chatwoot/{_WEBHOOK_SECRET}", json=payload)
+        return await client.post(f"/webhooks/ycloud/{_WEBHOOK_SECRET}", json=payload)
 
 
 @pytest.mark.asyncio
-async def test_wrong_inbox_dropped():
-    response = await _post_webhook(make_chatwoot_payload(inbox={"id": 999}))
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ignored"}
-
-
-@pytest.mark.asyncio
-async def test_private_note_dropped():
-    response = await _post_webhook(make_chatwoot_payload(private=True))
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ignored"}
-
-
-@pytest.mark.asyncio
-async def test_outgoing_message_dropped():
-    # Outgoing + agent_bot sender is exactly the mirrored-AI-reply shape from
-    # the Etapa 5 outbound mirror (Phase 5) — it must never reach ingestion,
-    # otherwise it would flip conversation.mode to "human" (regression guard).
+async def test_wrong_whatsapp_number_dropped():
     response = await _post_webhook(
-        make_chatwoot_payload(message_type="outgoing", sender={"type": "agent_bot"})
+        make_ycloud_payload(
+            whatsappInboundMessage={
+                "id": "wamid.HBgLNTQ5MTEyMjMzNDQ1FQIAERgSMkQ5",
+                "from": "+5491122334455",
+                "to": "+5491199999999",
+                "type": "text",
+                "text": {"body": "Hola"},
+            }
+        )
     )
 
     assert response.status_code == 200
@@ -119,35 +108,33 @@ async def test_outgoing_message_dropped():
 
 
 @pytest.mark.asyncio
-async def test_mirrored_agent_bot_message_never_flips_mode_to_human(_override_webhook_settings):
-    # Phase 5 mode-flip regression test (task 5.8). Necessity check, made
-    # explicit rather than assumed: `_passes_filters()` (Phase 2) already
-    # drops EVERY payload with `message_type != "incoming"` before
-    # `IngestMessageUseCase` ever runs — an outgoing Chatwoot event (our
-    # own `ChatwootConversationGateway.mirror_message` write, OR a real
-    # human agent's reply typed in Chatwoot) can NEVER reach the ingestion
-    # pipeline at all, regardless of `sender.type`. This test therefore
-    # proves a structural guarantee that already existed since PR2/PR4 —
-    # it is NOT closing a live gap discovered in this phase. Separately:
-    # grepping the whole `app/` tree confirms `conversation.mode` is only
-    # ever WRITTEN as `"agent"` (at conversation creation) — there is no
-    # code path anywhere in this codebase, in this etapa, that sets it to
-    # `"human"` at all. "Real human agent reply flips mode to human" logic
-    # does not exist yet; per the spec's own "Out of Scope" section, that
-    # behavior is deferred to a later etapa (Etapa 5/10), not Etapa 4.
-    fakes = _override_webhook_settings
-    await fakes.conversation_repository.save(make_conversation(id_="chatwoot-100", mode="agent"))
-
+async def test_non_text_message_type_dropped():
+    # Audio (PRD §24.1) and button/interactive replies are recognized but
+    # not processed yet — that pipeline doesn't exist in this codebase.
     response = await _post_webhook(
-        make_chatwoot_payload(message_type="outgoing", sender={"type": "agent_bot"})
+        make_ycloud_payload(
+            whatsappInboundMessage={
+                "id": "wamid.HBgLNTQ5MTEyMjMzNDQ1FQIAERgSMkQ5",
+                "from": "+5491122334455",
+                "to": _WHATSAPP_NUMBER,
+                "type": "audio",
+            }
+        )
     )
 
     assert response.status_code == 200
     assert response.json() == {"status": "ignored"}
 
-    conversation = await fakes.conversation_repository.get_by_id(ConversationId("chatwoot-100"))
-    assert conversation is not None
-    assert conversation.mode == "agent"
+
+@pytest.mark.asyncio
+async def test_unknown_event_type_dropped():
+    # e.g. a delivery-status event, not an inbound message.
+    response = await _post_webhook(
+        make_ycloud_payload(type="whatsapp.message.delivered")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
 
 
 @pytest.mark.asyncio
@@ -157,10 +144,10 @@ async def test_valid_incoming_message_forwarded_to_ingestion(_override_webhook_s
     # a contact and a conversation were resolved/created, and the message
     # was actually persisted, proving `webhook.py` really calls
     # `use_case.execute(dto)` rather than just building the DTO and
-    # discarding it (Phase 2's stub behavior, which this replaces).
+    # discarding it.
     fakes = _override_webhook_settings
 
-    response = await _post_webhook(make_chatwoot_payload())
+    response = await _post_webhook(make_ycloud_payload())
 
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
@@ -168,7 +155,9 @@ async def test_valid_incoming_message_forwarded_to_ingestion(_override_webhook_s
     contact = await fakes.contact_repository.get_by_phone(PhoneNumber("+5491122334455"))
     assert contact is not None
 
-    conversation = await fakes.conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
     assert conversation is not None
     assert conversation.mode == "agent"
 
@@ -181,44 +170,47 @@ async def test_valid_incoming_message_forwarded_to_ingestion(_override_webhook_s
 
 
 @pytest.mark.asyncio
-async def test_valid_message_missing_sender_phone_number_acked_not_500():
-    # A payload that passes all four filters (message_created, incoming,
-    # non-private, matching inbox) but lacks sender.phone_number is a
-    # plausible-but-incomplete Chatwoot payload (e.g. a contact record with
-    # no phone populated). It must never crash the handler with an unhandled
-    # 500 — Chatwoot retries 5xx responses, which could cause a retry storm.
-    # `raise_app_exceptions=False` mirrors real deployed ASGI behavior
-    # (uncaught exceptions surface as a 500 response, not a Python
-    # exception), matching how the verify agent reproduced the bug.
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
-            json=make_chatwoot_payload(sender={}),
-        )
+async def test_existing_conversation_not_duplicated_across_webhook_deliveries(
+    _override_webhook_settings,
+):
+    fakes = _override_webhook_settings
+    await fakes.conversation_repository.save(
+        make_conversation(id_="ycloud-+5491122334455", mode="agent")
+    )
+
+    response = await _post_webhook(make_ycloud_payload())
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ignored"}
+    assert response.json() == {"status": "accepted"}
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert conversation is not None
+    assert conversation.mode == "agent"
 
 
 @pytest.mark.asyncio
-async def test_valid_message_missing_source_id_acked_not_500():
-    # A payload that passes all four filters (message_created, incoming,
-    # non-private, matching inbox) and has a valid sender.phone_number but
-    # lacks source_id is a plausible-but-incomplete Chatwoot payload. It
-    # must never crash the handler with an unhandled 500 — Chatwoot retries
-    # 5xx responses, which could cause a retry storm. Mirrors
-    # `test_valid_message_missing_sender_phone_number_acked_not_500` above,
-    # extended to cover the sibling `source_id` field that
-    # `ExternalMessageId` also rejects when empty.
+async def test_valid_message_missing_sender_phone_number_acked_not_500():
+    # A payload that passes the event/message-type/number filters but lacks
+    # `whatsappInboundMessage.from` is a plausible-but-incomplete YCloud
+    # payload. It must never crash the handler with an unhandled 500 —
+    # YCloud retries 5xx responses, which could cause a retry storm.
     # `raise_app_exceptions=False` mirrors real deployed ASGI behavior
     # (uncaught exceptions surface as a 500 response, not a Python
     # exception).
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
-            json=make_chatwoot_payload(source_id=""),
+            f"/webhooks/ycloud/{_WEBHOOK_SECRET}",
+            json=make_ycloud_payload(
+                whatsappInboundMessage={
+                    "id": "wamid.HBgLNTQ5MTEyMjMzNDQ1FQIAERgSMkQ5",
+                    "from": "",
+                    "to": _WHATSAPP_NUMBER,
+                    "type": "text",
+                    "text": {"body": "Hola"},
+                }
+            ),
         )
 
     assert response.status_code == 200
@@ -226,21 +218,20 @@ async def test_valid_message_missing_source_id_acked_not_500():
 
 
 @pytest.mark.asyncio
-async def test_valid_message_whitespace_only_source_id_acked_not_500():
-    # A whitespace-only `source_id` (e.g. "   ") is truthy, so it bypassed
-    # the falsy-only guard added by the previous corrective commit and
-    # reached `ExternalMessageId(dto.external_message_id)` at the top of
-    # `IngestMessageUseCase.execute()` — which is NOT wrapped by the
-    # route's try/except (that only wraps `to_inbound_message_dto()`) —
-    # producing an unhandled 500. `ExternalMessageId` itself validates via
-    # `.strip()`, not falsiness, so the guard must match that invariant
-    # exactly. `raise_app_exceptions=False` mirrors real deployed ASGI
-    # behavior (uncaught exceptions surface as a 500 response).
+async def test_valid_message_missing_external_id_acked_not_500():
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
-            json=make_chatwoot_payload(source_id="   "),
+            f"/webhooks/ycloud/{_WEBHOOK_SECRET}",
+            json=make_ycloud_payload(
+                whatsappInboundMessage={
+                    "id": "",
+                    "from": "+5491122334455",
+                    "to": _WHATSAPP_NUMBER,
+                    "type": "text",
+                    "text": {"body": "Hola"},
+                }
+            ),
         )
 
     assert response.status_code == 200
@@ -248,20 +239,23 @@ async def test_valid_message_whitespace_only_source_id_acked_not_500():
 
 
 @pytest.mark.asyncio
-async def test_valid_message_whitespace_only_sender_phone_number_acked_not_500():
-    # Sibling regression guard for `sender.phone_number`: a whitespace-only
-    # value is truthy, so it bypasses the falsy-only guard too. Unlike
-    # `source_id`, `PhoneNumber(self.sender.phone_number)` is constructed
-    # inside `to_inbound_message_dto()` itself (still inside the route's
-    # try/except), so this case was never actually reachable as a 500 —
-    # `PhoneNumber`'s own format validation (must start with "+") already
-    # rejects it there. This test locks in that existing safety after the
-    # guard was normalized to `.strip()` for defense-in-depth.
+async def test_valid_message_whitespace_only_external_id_acked_not_500():
+    # A whitespace-only id is truthy, so it would bypass a falsy-only
+    # guard — `ExternalMessageId` itself validates via `.strip()`, not
+    # falsiness, so the parser's guard must match that invariant exactly.
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
-            f"/webhooks/chatwoot/{_WEBHOOK_SECRET}",
-            json=make_chatwoot_payload(sender={"phone_number": "   "}),
+            f"/webhooks/ycloud/{_WEBHOOK_SECRET}",
+            json=make_ycloud_payload(
+                whatsappInboundMessage={
+                    "id": "   ",
+                    "from": "+5491122334455",
+                    "to": _WHATSAPP_NUMBER,
+                    "type": "text",
+                    "text": {"body": "Hola"},
+                }
+            ),
         )
 
     assert response.status_code == 200
@@ -270,9 +264,12 @@ async def test_valid_message_whitespace_only_sender_phone_number_acked_not_500()
 
 def test_route_has_openapi_metadata():
     schema = app.openapi()
-    operation = schema["paths"]["/webhooks/chatwoot/{secret}"]["post"]
+    operation = schema["paths"]["/webhooks/ycloud/{secret}"]["post"]
 
-    assert operation["summary"] == "Receive a Chatwoot `message_created` outgoing webhook event"
+    assert (
+        operation["summary"]
+        == "Receive a YCloud `whatsapp.inbound_message.received` webhook event"
+    )
     assert operation["tags"] == ["webhooks"]
 
 
@@ -287,4 +284,4 @@ async def test_docs_and_redoc_and_openapi_json_still_reachable():
     assert docs.status_code == 200
     assert redoc.status_code == 200
     assert openapi_json.status_code == 200
-    assert "/webhooks/chatwoot/{secret}" in openapi_json.json()["paths"]
+    assert "/webhooks/ycloud/{secret}" in openapi_json.json()["paths"]

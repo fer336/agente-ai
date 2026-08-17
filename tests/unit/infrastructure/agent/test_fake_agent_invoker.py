@@ -14,6 +14,18 @@ async def test_handle_records_the_call():
     invoker = FakeAgentInvoker()
     conversation_id = ConversationId("conv-1")
 
-    await invoker.handle(conversation_id, ["msg-1", "msg-2"], "hola doctor")
+    await invoker.handle(conversation_id, ["msg-1", "msg-2"], "hola doctor", None)
 
-    assert invoker.calls == [(conversation_id, ["msg-1", "msg-2"], "hola doctor")]
+    assert invoker.calls == [(conversation_id, ["msg-1", "msg-2"], "hola doctor", None)]
+
+
+@pytest.mark.asyncio
+async def test_handle_records_the_button_payload():
+    invoker = FakeAgentInvoker()
+    conversation_id = ConversationId("conv-1")
+
+    await invoker.handle(conversation_id, ["msg-1"], "✅ Confirmar", "CONFIRM_APPOINTMENT")
+
+    assert invoker.calls == [
+        (conversation_id, ["msg-1"], "✅ Confirmar", "CONFIRM_APPOINTMENT")
+    ]

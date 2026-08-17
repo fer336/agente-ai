@@ -8,36 +8,68 @@ matches the call shape of the inline `Fake*()` construction these replace.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from app.application.appointments.propose_appointment import ProposalRepositories
+from app.application.errors.error_service import ErrorService
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
 from app.application.messages.send_reply import SendReplyUseCase
+from app.application.observability.trace_repositories import TraceRepositories
+from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment_slot import AppointmentSlot
+from app.domain.entities.patient import Patient
+from app.domain.entities.professional import Professional
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
-from app.infrastructure.chatwoot.fake_chatwoot_conversation_gateway import (
-    FakeChatwootConversationGateway,
-)
-from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
+from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
+from app.infrastructure.database.fake_error_repository import FakeErrorRepository
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
+from app.infrastructure.database.fake_node_execution_repository import (
+    FakeNodeExecutionRepository,
+)
+from app.infrastructure.database.fake_outbox_repository import FakeOutboxRepository
+from app.infrastructure.database.fake_pending_action_repository import (
+    FakePendingActionRepository,
+)
+from app.infrastructure.database.fake_scheduled_action_repository import (
+    FakeScheduledActionRepository,
+)
+from app.infrastructure.database.fake_tool_execution_repository import (
+    FakeToolExecutionRepository,
+)
+from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
+from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.redis.debounce import DebounceTracker
-from app.infrastructure.whatsapp.fake_whatsapp_gateway import FakeWhatsAppGateway
+from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
+from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 
 
 def make_dentalink_gateway(
     available_slots: list[AppointmentSlot] | None = None,
+    professionals: list[Professional] | None = None,
 ) -> FakeDentalinkGateway:
-    return FakeDentalinkGateway(available_slots=available_slots)
+    return FakeDentalinkGateway(available_slots=available_slots, professionals=professionals)
 
 
-def make_chatwoot_gateway() -> FakeChatwootGateway:
-    return FakeChatwootGateway()
+def make_agreement_gateway(
+    agreements: list[Agreement] | None = None,
+    patient_agreements: dict[str, list[Agreement]] | None = None,
+) -> FakeAgreementGateway:
+    return FakeAgreementGateway(agreements=agreements, patient_agreements=patient_agreements)
 
 
-def make_whatsapp_gateway() -> FakeWhatsAppGateway:
-    return FakeWhatsAppGateway()
+def make_patient_gateway(patients: list[Patient] | None = None) -> FakePatientGateway:
+    return FakePatientGateway(patients=patients)
+
+
+def make_ycloud_handoff_gateway() -> FakeYCloudHandoffGateway:
+    return FakeYCloudHandoffGateway()
+
+
+def make_ycloud_messaging_gateway() -> FakeYCloudMessagingGateway:
+    return FakeYCloudMessagingGateway()
 
 
 def make_llm_provider() -> FakeLLMProvider:
@@ -56,25 +88,123 @@ def make_conversation_repository() -> FakeConversationRepository:
     return FakeConversationRepository()
 
 
+def make_pending_action_repository() -> FakePendingActionRepository:
+    return FakePendingActionRepository()
+
+
+def make_scheduled_action_repository() -> FakeScheduledActionRepository:
+    return FakeScheduledActionRepository()
+
+
+def make_outbox_repository() -> FakeOutboxRepository:
+    return FakeOutboxRepository()
+
+
+def make_agent_run_repository() -> FakeAgentRunRepository:
+    return FakeAgentRunRepository()
+
+
+def make_node_execution_repository() -> FakeNodeExecutionRepository:
+    return FakeNodeExecutionRepository()
+
+
+def make_tool_execution_repository() -> FakeToolExecutionRepository:
+    return FakeToolExecutionRepository()
+
+
+def make_error_repository() -> FakeErrorRepository:
+    return FakeErrorRepository()
+
+
+def make_error_service(
+    error_repository: FakeErrorRepository | None = None,
+    alert_threshold_count: int = 5,
+    alert_window_seconds: int = 120,
+) -> ErrorService:
+    return ErrorService(
+        error_repository if error_repository is not None else make_error_repository(),
+        alert_threshold_count=alert_threshold_count,
+        alert_window_seconds=alert_window_seconds,
+    )
+
+
+def make_trace_repositories_provider(
+    agent_runs: FakeAgentRunRepository | None = None,
+    node_executions: FakeNodeExecutionRepository | None = None,
+    tool_executions: FakeToolExecutionRepository | None = None,
+    errors: FakeErrorRepository | None = None,
+):
+    """Builds a `TraceRepositoriesProvider` wired entirely to fakes.
+
+    Yields the SAME repository instances on every call, matching
+    `make_proposal_repositories_provider`'s own rationale — a graph run's
+    node executions and its `AgentRun` must all be visible to each other
+    within the same `handle()` call.
+    """
+    agent_runs = agent_runs if agent_runs is not None else make_agent_run_repository()
+    node_executions = (
+        node_executions if node_executions is not None else make_node_execution_repository()
+    )
+    tool_executions = (
+        tool_executions if tool_executions is not None else make_tool_execution_repository()
+    )
+    errors = errors if errors is not None else make_error_repository()
+
+    @asynccontextmanager
+    async def provider() -> AsyncIterator[TraceRepositories]:
+        yield TraceRepositories(
+            agent_runs=agent_runs,
+            node_executions=node_executions,
+            tool_executions=tool_executions,
+            errors=errors,
+        )
+
+    return provider
+
+
+def make_proposal_repositories_provider(
+    pending_actions: FakePendingActionRepository | None = None,
+    scheduled_actions: FakeScheduledActionRepository | None = None,
+    outbox: FakeOutboxRepository | None = None,
+):
+    """Builds a `ProposalRepositoriesProvider` wired entirely to fakes.
+
+    Yields the SAME repository instances on every call (not fresh ones per
+    call) — the appointment stage machine's propose/confirm/reject turns
+    are separate `node()` invocations that must all see each other's writes,
+    matching how `open_sqlalchemy_proposal_repositories` shares one
+    committed session's rows across requests in production.
+    """
+    pending_actions = (
+        pending_actions if pending_actions is not None else make_pending_action_repository()
+    )
+    scheduled_actions = (
+        scheduled_actions if scheduled_actions is not None else make_scheduled_action_repository()
+    )
+    outbox = outbox if outbox is not None else make_outbox_repository()
+
+    @asynccontextmanager
+    async def provider() -> AsyncIterator[ProposalRepositories]:
+        yield ProposalRepositories(
+            pending_actions=pending_actions,
+            scheduled_actions=scheduled_actions,
+            outbox=outbox,
+        )
+
+    return provider
+
+
 def make_agent_invoker() -> FakeAgentInvoker:
     return FakeAgentInvoker()
 
 
-def make_chatwoot_conversation_gateway() -> FakeChatwootConversationGateway:
-    return FakeChatwootConversationGateway()
-
-
 def make_send_reply_use_case(
-    messaging_gateway: FakeWhatsAppGateway | None = None,
-    chatwoot_gateway: FakeChatwootConversationGateway | None = None,
+    messaging_gateway: FakeYCloudMessagingGateway | None = None,
 ) -> SendReplyUseCase:
     messaging_gateway = (
-        messaging_gateway if messaging_gateway is not None else make_whatsapp_gateway()
+        messaging_gateway if messaging_gateway is not None else make_ycloud_messaging_gateway()
     )
-    chatwoot_gateway = (
-        chatwoot_gateway if chatwoot_gateway is not None else make_chatwoot_conversation_gateway()
-    )
-    return SendReplyUseCase(messaging_gateway, chatwoot_gateway)
+    return SendReplyUseCase(messaging_gateway)
 
 
 def make_ingest_message_use_case(

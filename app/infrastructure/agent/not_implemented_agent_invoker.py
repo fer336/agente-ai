@@ -2,16 +2,19 @@ from app.domain.value_objects.conversation_id import ConversationId
 
 
 class NotImplementedAgentInvoker:
-    """DI-wired `AgentInvoker` stub until Etapa 5's LangGraph agent exists.
+    """DI-wired `AgentInvoker` stub, kept as a reference/example implementation.
 
-    Raising loudly here (rather than silently no-op'ing) makes the Etapa 5
-    seam impossible to miss once `IngestMessageUseCase` actually reaches it
-    in a running environment — the swap point is `get_agent_invoker` in
-    `app.api.dependencies.gateways`.
+    No longer bound in production DI (see `app.api.dependencies.gateways.get_agent_invoker`,
+    which now returns `LangGraphAgentInvoker`) — retained for anyone building
+    a fresh `AgentInvoker` swap point from scratch.
     """
 
     async def handle(
-        self, conversation_id: ConversationId, message_ids: list[str], user_message: str
+        self,
+        conversation_id: ConversationId,
+        message_ids: list[str],
+        user_message: str,
+        button_payload: str | None,
     ) -> None:
         raise NotImplementedError(
             "AgentInvoker.handle is the Etapa 5 seam — no agent implementation exists yet"

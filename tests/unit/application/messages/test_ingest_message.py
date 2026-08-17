@@ -36,15 +36,15 @@ _DEBOUNCE_SECONDS = 6
 
 def _make_dto(
     external_message_id: str = "wamid.1",
-    chatwoot_conversation_id: str = "100",
     from_phone: str = "+5491122334455",
     text: str = "Hola, quiero agendar un turno",
+    button_payload: str | None = None,
 ) -> InboundMessageDTO:
     return InboundMessageDTO(
         external_message_id=external_message_id,
-        chatwoot_conversation_id=chatwoot_conversation_id,
         from_phone=PhoneNumber(from_phone),
         text=text,
+        button_payload=button_payload,
     )
 
 
@@ -143,13 +143,13 @@ async def test_existing_contact_resolved_not_duplicated():
 
 
 @pytest.mark.asyncio
-async def test_new_conversation_created_with_chatwoot_prefixed_id_and_agent_mode():
+async def test_new_conversation_created_with_ycloud_prefixed_id_and_agent_mode():
     conversation_repository = make_conversation_repository()
     use_case = _build_use_case(conversation_repository=conversation_repository)
 
-    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
-    conversation = await conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert conversation is not None
     assert conversation.mode == "agent"
 
@@ -157,45 +157,45 @@ async def test_new_conversation_created_with_chatwoot_prefixed_id_and_agent_mode
 @pytest.mark.asyncio
 async def test_existing_conversation_resolved_not_duplicated():
     conversation_repository = make_conversation_repository()
-    existing = make_conversation(id_="chatwoot-100", mode="agent")
+    existing = make_conversation(id_="ycloud-+5491122334455", mode="agent")
     await conversation_repository.save(existing)
     use_case = _build_use_case(conversation_repository=conversation_repository)
 
-    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     assert len(conversation_repository._conversations_by_id) == 1
-    fetched = await conversation_repository.get_by_id(ConversationId("chatwoot-100"))
+    fetched = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert fetched == existing
 
 
 @pytest.mark.asyncio
 async def test_human_mode_blocks_handoff():
     conversation_repository = make_conversation_repository()
-    await conversation_repository.save(make_conversation(id_="chatwoot-100", mode="human"))
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="human"))
     redis_client = InMemoryFakeRedis()
     use_case = _build_use_case(
         conversation_repository=conversation_repository, redis_client=redis_client
     )
 
-    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     # No debounce key was ever touched — the human-mode gate short-circuits
     # BEFORE debounce/lock/seam, per spec's "Human-Mode Pause Gate".
-    assert await redis_client.get("debounce:conversation:chatwoot-100") is None
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
 
 
 @pytest.mark.asyncio
 async def test_agent_mode_proceeds_to_debounce():
     conversation_repository = make_conversation_repository()
-    await conversation_repository.save(make_conversation(id_="chatwoot-100", mode="agent"))
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     redis_client = InMemoryFakeRedis()
     use_case = _build_use_case(
         conversation_repository=conversation_repository, redis_client=redis_client
     )
 
-    await use_case.execute(_make_dto(chatwoot_conversation_id="100"))
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
-    assert await redis_client.get("debounce:conversation:chatwoot-100") is not None
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is not None
 
 
 @pytest.mark.asyncio
@@ -204,28 +204,55 @@ async def test_multiple_messages_grouped_into_one_handoff():
     use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
 
     await use_case.execute(
-        _make_dto(external_message_id="wamid.1", chatwoot_conversation_id="100", text="Hola")
+        _make_dto(external_message_id="wamid.1", from_phone="+5491122334455", text="Hola")
     )
     await asyncio.sleep(0.02)
     await use_case.execute(
         _make_dto(
-            external_message_id="wamid.2", chatwoot_conversation_id="100", text="quiero un turno"
+            external_message_id="wamid.2", from_phone="+5491122334455", text="quiero un turno"
         )
     )
     await asyncio.sleep(0.02)
     await use_case.execute(
         _make_dto(
-            external_message_id="wamid.3", chatwoot_conversation_id="100", text="para mañana"
+            external_message_id="wamid.3", from_phone="+5491122334455", text="para mañana"
         )
     )
     await asyncio.sleep(0.15)
 
     assert len(agent_invoker.calls) == 1
-    conversation_id, message_ids, user_message = agent_invoker.calls[0]
-    assert conversation_id == ConversationId("chatwoot-100")
+    conversation_id, message_ids, user_message, button_payload = agent_invoker.calls[0]
+    assert conversation_id == ConversationId("ycloud-+5491122334455")
     assert len(message_ids) == 3
     # Arrival order is proven by the joined text, not just the count.
     assert user_message == "Hola\nquiero un turno\npara mañana"
+    assert button_payload is None
+
+
+@pytest.mark.asyncio
+async def test_grouped_messages_use_the_last_non_null_button_payload():
+    # PRD.md §6: a deliberate button tap is a terminal action that must
+    # take priority over any free text debounced alongside it.
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
+
+    await use_case.execute(
+        _make_dto(external_message_id="wamid.1", from_phone="+5491122334455", text="Hola")
+    )
+    await asyncio.sleep(0.02)
+    await use_case.execute(
+        _make_dto(
+            external_message_id="wamid.2",
+            from_phone="+5491122334455",
+            text="✅ Confirmar",
+            button_payload="CONFIRM_APPOINTMENT",
+        )
+    )
+    await asyncio.sleep(0.15)
+
+    assert len(agent_invoker.calls) == 1
+    _, _, _, button_payload = agent_invoker.calls[0]
+    assert button_payload == "CONFIRM_APPOINTMENT"
 
 
 @pytest.mark.asyncio
@@ -234,15 +261,16 @@ async def test_single_message_still_produces_valid_dto():
     use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
 
     await use_case.execute(
-        _make_dto(external_message_id="wamid.1", chatwoot_conversation_id="200", text="Hola sola")
+        _make_dto(external_message_id="wamid.1", from_phone="+5491100000022", text="Hola sola")
     )
     await asyncio.sleep(0.15)
 
     assert len(agent_invoker.calls) == 1
-    conversation_id, message_ids, user_message = agent_invoker.calls[0]
-    assert conversation_id == ConversationId("chatwoot-200")
+    conversation_id, message_ids, user_message, button_payload = agent_invoker.calls[0]
+    assert conversation_id == ConversationId("ycloud-+5491100000022")
     assert len(message_ids) == 1
     assert user_message == "Hola sola"
+    assert button_payload is None
 
 
 class _YieldingContactRepository:
@@ -298,14 +326,12 @@ async def test_concurrent_ingestion_for_a_new_phone_can_race_and_create_duplicat
         use_case.execute(
             _make_dto(
                 external_message_id="wamid.race-1",
-                chatwoot_conversation_id="301",
                 from_phone="+5491100000099",
             )
         ),
         use_case.execute(
             _make_dto(
                 external_message_id="wamid.race-2",
-                chatwoot_conversation_id="302",
                 from_phone="+5491100000099",
             )
         ),

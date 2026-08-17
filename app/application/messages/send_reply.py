@@ -1,36 +1,32 @@
-from app.domain.repositories.gateways import ChatwootConversationGateway, MessagingGateway
+from app.domain.repositories.gateways import MessagingGateway
+from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 
 
 class SendReplyUseCase:
-    """Outbound dual-write (design doc's Data Flow "Outbound dual-write" step).
+    """Sends an AI reply through the outbound messaging channel.
 
-    Sends an AI reply through BOTH channels with the identical text:
-    - `MessagingGateway.send_text_message` — direct Meta Cloud API send
-      (existing since Etapa 3, unchanged).
-    - `ChatwootConversationGateway.mirror_message` — mirrors the same text
-      into the Chatwoot conversation thread under an Agent Bot sender
-      identity (this phase), so human agents watching Chatwoot see the
-      AI's reply without it ever re-entering `IngestMessageUseCase` (the
-      webhook route's `message_type == "incoming"` filter, established in
-      Phase 2, already drops every outgoing/mirrored event structurally —
-      see the Phase 5 mode-flip regression test).
+    Unlike the pre-YCloud design (Etapa 4's Chatwoot-era dual-write), there
+    is no separate mirror call here: YCloud IS the WhatsApp channel, so a
+    message sent through `MessagingGateway` is already visible to human
+    agents in YCloud's own Shared Team Inbox — no second write to a
+    distinct "mirror" gateway is needed.
 
-    No production caller wires this yet: Etapa 5's future LangGraph
-    reply-producing node is the intended caller once it exists. Building
-    and testing this use case now keeps the dual-write behavior covered
-    ahead of that integration — same swap-point-ready pattern as
-    `AgentInvoker`/`NotImplementedAgentInvoker`.
+    When `buttons` is given, sends an interactive button message
+    (`MessagingGateway.send_buttons`) instead of plain text — needed by
+    PRD.md §6's `INTERACTIVE_SELECTION`/`SENSITIVE_CONFIRMATION` states,
+    which require a real tappable button, not a text reply the patient
+    could type back verbatim (PRD.md §24.4: text/audio must never confirm
+    a sensitive operation).
     """
 
-    def __init__(
-        self,
-        messaging_gateway: MessagingGateway,
-        chatwoot_gateway: ChatwootConversationGateway,
-    ) -> None:
+    def __init__(self, messaging_gateway: MessagingGateway) -> None:
         self._messaging_gateway = messaging_gateway
-        self._chatwoot_gateway = chatwoot_gateway
 
-    async def execute(self, to: PhoneNumber, chatwoot_conversation_id: str, text: str) -> None:
-        await self._messaging_gateway.send_text_message(to, text)
-        await self._chatwoot_gateway.mirror_message(chatwoot_conversation_id, text)
+    async def execute(
+        self, to: PhoneNumber, text: str, buttons: list[InteractiveButton] | None = None
+    ) -> None:
+        if buttons:
+            await self._messaging_gateway.send_buttons(to, text, buttons)
+        else:
+            await self._messaging_gateway.send_text_message(to, text)

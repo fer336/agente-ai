@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
@@ -12,8 +12,8 @@ def _slot() -> AppointmentSlot:
         professional_id="prof-9",
         specialty_id="cleaning",
         time_range=DateTimeRange(
-            start=datetime(2026, 8, 4, 15, 30, tzinfo=timezone.utc),
-            end=datetime(2026, 8, 4, 16, 0, tzinfo=timezone.utc),
+            start=datetime(2026, 8, 4, 15, 30, tzinfo=UTC),
+            end=datetime(2026, 8, 4, 16, 0, tzinfo=UTC),
         ),
     )
 

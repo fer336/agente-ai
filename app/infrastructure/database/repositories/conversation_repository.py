@@ -25,6 +25,7 @@ class SqlAlchemyConversationRepository:
 
         model.contact_id = conversation.contact_id
         model.mode = conversation.mode
+        model.input_state = conversation.input_state
         model.created_at = conversation.created_at
         await self._session.flush()
 
@@ -35,4 +36,5 @@ def _to_entity(model: ConversationModel) -> Conversation:
         contact_id=model.contact_id,
         mode=model.mode,
         created_at=model.created_at,
+        input_state=model.input_state,
     )

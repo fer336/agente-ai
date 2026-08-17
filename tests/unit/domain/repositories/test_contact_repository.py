@@ -5,6 +5,9 @@ class ConformingContactRepository:
     async def get_by_phone(self, phone):
         return None
 
+    async def get_by_id(self, contact_id):
+        return None
+
     async def save(self, contact):
         return None
 

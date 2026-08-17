@@ -14,5 +14,8 @@ class FakeContactRepository:
                 return contact
         return None
 
+    async def get_by_id(self, contact_id: str) -> Contact | None:
+        return self._contacts_by_id.get(contact_id)
+
     async def save(self, contact: Contact) -> None:
         self._contacts_by_id[contact.id] = contact

@@ -3,7 +3,16 @@ class DomainError(Exception):
 
 
 class AppointmentSlotUnavailableError(DomainError):
-    """Raised when a chosen appointment slot is no longer available."""
+    """Raised when a chosen appointment slot is no longer available.
+
+    PRD.md §11.2: "Ese horario acaba de ocuparse mientras confirmábamos" —
+    raised when a lock can't be acquired or revalidation finds the slot
+    gone. Callers must never retry the same slot automatically.
+    """
+
+    def __init__(self, slot_id: str) -> None:
+        self.slot_id = slot_id
+        super().__init__(f"Appointment slot {slot_id} is no longer available")
 
 
 class DuplicateMessageError(DomainError):
@@ -19,11 +28,25 @@ class PatientNotIdentifiedError(DomainError):
 
 
 class PendingActionExpiredError(DomainError):
-    """Raised when a pending action is confirmed after its expiration."""
+    """Raised when a pending action is confirmed after its expiration.
+
+    PRD.md §16.3: a same-moment confirmation and expiration race must have
+    exactly one winner. This is raised when the guarded
+    `pending -> confirmed` transition loses that race (the row was no
+    longer `pending` by the time it ran).
+    """
+
+    def __init__(self, pending_action_id: str) -> None:
+        self.pending_action_id = pending_action_id
+        super().__init__(f"PendingAction {pending_action_id} is no longer pending")
 
 
 class InvalidConfirmationError(DomainError):
     """Raised when a confirmation response is ambiguous or does not match a pending action."""
+
+    def __init__(self, pending_action_id: str) -> None:
+        self.pending_action_id = pending_action_id
+        super().__init__(f"No matching PendingAction {pending_action_id}")
 
 
 class AppointmentNotFoundError(DomainError):

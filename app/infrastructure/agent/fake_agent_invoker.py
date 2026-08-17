@@ -9,9 +9,13 @@ class FakeAgentInvoker:
     """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[ConversationId, list[str], str]] = []
+        self.calls: list[tuple[ConversationId, list[str], str, str | None]] = []
 
     async def handle(
-        self, conversation_id: ConversationId, message_ids: list[str], user_message: str
+        self,
+        conversation_id: ConversationId,
+        message_ids: list[str],
+        user_message: str,
+        button_payload: str | None,
     ) -> None:
-        self.calls.append((conversation_id, message_ids, user_message))
+        self.calls.append((conversation_id, message_ids, user_message, button_payload))

@@ -1,10 +1,13 @@
 from typing import Protocol, runtime_checkable
 
+from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
+from app.domain.entities.professional import Professional
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 
 
@@ -18,6 +21,10 @@ class AppointmentGateway(Protocol):
         professional_id: str | None,
         date_range: DateTimeRange,
     ) -> list[AppointmentSlot]: ...
+
+    async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]: ...
+
+    async def get_patient_appointments(self, patient_id: str) -> list[Appointment]: ...
 
     async def create_appointment(
         self,
@@ -41,30 +48,45 @@ class AppointmentGateway(Protocol):
 
 
 @runtime_checkable
+class PatientGateway(Protocol):
+    """Port to the external patient identification system (e.g. Dentalink).
+
+    PRD.md §32: identification for sensitive operations (viewing/cancelling/
+    rescheduling appointments) requires validating full name + DNI against
+    this gateway — the phone number alone is never sufficient proof.
+    """
+
+    async def find_patient(self, full_name: str, dni: str) -> Patient | None: ...
+
+
+@runtime_checkable
+class AgreementGateway(Protocol):
+    """Port to the external insurance/agreement (obra social) catalog (e.g. Dentalink)."""
+
+    async def list_agreements(self) -> list[Agreement]: ...
+
+    async def find_agreement_by_name(self, name: str) -> Agreement | None: ...
+
+    async def get_patient_agreements(self, patient_id: str) -> list[Agreement]: ...
+
+
+@runtime_checkable
 class MessagingGateway(Protocol):
-    """Port to the outbound messaging channel (e.g. WhatsApp)."""
+    """Port to the outbound messaging channel (e.g. YCloud/WhatsApp)."""
 
     async def send_text_message(self, to: PhoneNumber, text: str) -> str:
         """Sends a text message and returns the external_message_id."""
         ...
 
+    async def send_buttons(
+        self, to: PhoneNumber, text: str, buttons: list[InteractiveButton]
+    ) -> str:
+        """Sends an interactive button message and returns the external_message_id."""
+        ...
+
 
 @runtime_checkable
 class HumanHandoffGateway(Protocol):
-    """Port to the human-in-the-loop escalation channel (e.g. Chatwoot)."""
+    """Port to the human-in-the-loop escalation channel (e.g. YCloud Shared Team Inbox)."""
 
     async def request_handoff(self, conversation_id: ConversationId, reason: str) -> None: ...
-
-
-@runtime_checkable
-class ChatwootConversationGateway(Protocol):
-    """Mirrors AI-sent replies into the Chatwoot conversation thread.
-
-    Distinct from `HumanHandoffGateway`: `request_handoff` is a one-shot
-    escalation notification, while `mirror_message` is called for every
-    single AI reply (high-frequency, single-purpose port). See the Etapa 4
-    design doc's "Outbound mirror port" ADR for why these are NOT merged
-    into one Protocol.
-    """
-
-    async def mirror_message(self, chatwoot_conversation_id: str, text: str) -> None: ...

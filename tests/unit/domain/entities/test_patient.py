@@ -12,6 +12,18 @@ def test_creates_patient_with_id_name_and_phone():
     assert patient.id == "patient-1"
     assert patient.full_name == "Ana Gomez"
     assert patient.phone == PhoneNumber(value="+5491122334455")
+    assert patient.dni is None
+
+
+def test_patient_accepts_an_explicit_dni():
+    patient = Patient(
+        id="patient-5",
+        full_name="Ana Gomez",
+        phone=PhoneNumber(value="+5491122334455"),
+        dni="30111222",
+    )
+
+    assert patient.dni == "30111222"
 
 
 def test_patients_with_same_fields_are_equal():

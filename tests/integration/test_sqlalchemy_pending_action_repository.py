@@ -49,3 +49,53 @@ async def test_get_pending_for_conversation_excludes_non_pending_actions(
     pending = await repository.get_pending_for_conversation(ConversationId(value=conversation_id))
 
     assert {action.id for action in pending} == {"pa-2"}
+
+
+async def test_mark_expired_if_pending_succeeds_when_still_pending(db_session, conversation_id):
+    repository = SqlAlchemyPendingActionRepository(db_session)
+    await repository.save(_pending_action(conversation_id, "pa-4", "pending"))
+
+    expired = await repository.mark_expired_if_pending("pa-4")
+
+    assert expired is True
+    fetched = await repository.get_by_id("pa-4")
+    assert fetched is not None
+    assert fetched.status == "expired"
+
+
+async def test_mark_expired_if_pending_fails_when_already_confirmed(db_session, conversation_id):
+    # PRD.md §16.1/§16.3: a same-moment confirmation must win over a
+    # follow-up expiration — the guard must not blindly overwrite status.
+    repository = SqlAlchemyPendingActionRepository(db_session)
+    await repository.save(_pending_action(conversation_id, "pa-5", "confirmed"))
+
+    expired = await repository.mark_expired_if_pending("pa-5")
+
+    assert expired is False
+    fetched = await repository.get_by_id("pa-5")
+    assert fetched is not None
+    assert fetched.status == "confirmed"
+
+
+async def test_mark_confirmed_if_pending_succeeds_when_still_pending(db_session, conversation_id):
+    repository = SqlAlchemyPendingActionRepository(db_session)
+    await repository.save(_pending_action(conversation_id, "pa-6", "pending"))
+
+    confirmed = await repository.mark_confirmed_if_pending("pa-6")
+
+    assert confirmed is True
+    fetched = await repository.get_by_id("pa-6")
+    assert fetched is not None
+    assert fetched.status == "confirmed"
+
+
+async def test_mark_confirmed_if_pending_fails_when_already_expired(db_session, conversation_id):
+    repository = SqlAlchemyPendingActionRepository(db_session)
+    await repository.save(_pending_action(conversation_id, "pa-7", "expired"))
+
+    confirmed = await repository.mark_confirmed_if_pending("pa-7")
+
+    assert confirmed is False
+    fetched = await repository.get_by_id("pa-7")
+    assert fetched is not None
+    assert fetched.status == "expired"

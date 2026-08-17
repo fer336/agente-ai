@@ -16,7 +16,38 @@ async def test_classify_intent_recognizes_appointment_keyword():
 
     result = await provider.classify_intent("Quiero pedir un turno", context={})
 
-    assert result == IntentResult(intent="book_appointment", confidence=0.9)
+    assert result == IntentResult(intent="appointment", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_recognizes_insurance_keyword():
+    provider = make_llm_provider()
+
+    result = await provider.classify_intent("¿Trabajan con OSDE?", context={})
+
+    assert result == IntentResult(intent="insurance", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_recognizes_handoff_keyword():
+    provider = make_llm_provider()
+
+    result = await provider.classify_intent("Voy a llegar tarde", context={})
+
+    assert result == IntentResult(intent="handoff", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_prioritizes_handoff_over_appointment_keywords():
+    # PRD.md §22: "No se intentará modificar automáticamente un turno porque
+    # el paciente indique que llegará tarde. Ese caso siempre se deriva."
+    provider = make_llm_provider()
+
+    result = await provider.classify_intent(
+        "Voy a llegar tarde a mi turno de hoy", context={}
+    )
+
+    assert result.intent == "handoff"
 
 
 @pytest.mark.asyncio
@@ -42,13 +73,11 @@ async def test_extract_information_reports_all_requested_fields_as_missing():
 @pytest.mark.asyncio
 async def test_generate_response_includes_the_intent_from_context():
     provider = make_llm_provider()
-    context = ResponseContext(
-        conversation_id="conv-1", intent="book_appointment", collected_data={}
-    )
+    context = ResponseContext(conversation_id="conv-1", intent="appointment", collected_data={})
 
     response = await provider.generate_response(context)
 
-    assert response == "[fake-response for intent=book_appointment]"
+    assert response == "[fake-response for intent=appointment]"
 
 
 def test_fake_llm_provider_satisfies_llm_provider_protocol():

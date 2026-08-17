@@ -28,5 +28,23 @@ async def test_get_by_phone_returns_none_when_no_contact_matches():
     assert fetched is None
 
 
+@pytest.mark.asyncio
+async def test_save_then_get_by_id_returns_the_saved_contact():
+    repository = make_contact_repository()
+    contact = make_contact(id_="contact-1", phone="+5491122334455")
+
+    await repository.save(contact)
+    fetched = await repository.get_by_id("contact-1")
+
+    assert fetched is contact
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_returns_none_when_no_contact_matches():
+    repository = make_contact_repository()
+
+    assert await repository.get_by_id("missing") is None
+
+
 def test_fake_contact_repository_satisfies_contact_repository_protocol():
     assert isinstance(FakeContactRepository(), ContactRepository)

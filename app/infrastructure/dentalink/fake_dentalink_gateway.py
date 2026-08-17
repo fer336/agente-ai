@@ -3,6 +3,7 @@ from itertools import count
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
+from app.domain.entities.professional import Professional
 from app.domain.exceptions.errors import AppointmentNotFoundError
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
@@ -11,8 +12,13 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 class FakeDentalinkGateway:
     """In-memory fake implementing `AppointmentGateway` for local dev and tests."""
 
-    def __init__(self, available_slots: list[AppointmentSlot] | None = None) -> None:
+    def __init__(
+        self,
+        available_slots: list[AppointmentSlot] | None = None,
+        professionals: list[Professional] | None = None,
+    ) -> None:
         self._available_slots = list(available_slots) if available_slots else []
+        self._professionals = list(professionals) if professionals else []
         self._appointments_by_key: dict[str, Appointment] = {}
         self._appointments_by_id: dict[str, Appointment] = {}
         self._next_id = count(1)
@@ -29,6 +35,20 @@ class FakeDentalinkGateway:
             if (specialty_id is None or slot.specialty_id == specialty_id)
             and (professional_id is None or slot.professional_id == professional_id)
             and date_range.contains(slot.time_range.start)
+        ]
+
+    async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:
+        return [
+            professional
+            for professional in self._professionals
+            if specialty_id is None or professional.specialty_id == specialty_id
+        ]
+
+    async def get_patient_appointments(self, patient_id: str) -> list[Appointment]:
+        return [
+            appointment
+            for appointment in self._appointments_by_id.values()
+            if appointment.patient_id == patient_id and appointment.status != "cancelled"
         ]
 
     async def create_appointment(

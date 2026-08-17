@@ -15,7 +15,6 @@ from app.domain.exceptions.errors import (
 @pytest.mark.parametrize(
     "error_class",
     [
-        AppointmentSlotUnavailableError,
         DuplicateMessageError,
         DuplicateActionError,
         PatientNotIdentifiedError,
@@ -37,3 +36,10 @@ def test_appointment_not_found_error_exposes_appointment_id_attribute():
 
     assert exc.appointment_id == "999"
     assert str(exc) == "Appointment 999 not found"
+
+
+def test_appointment_slot_unavailable_error_exposes_slot_id_attribute():
+    exc = AppointmentSlotUnavailableError("slot-1")
+
+    assert exc.slot_id == "slot-1"
+    assert issubclass(AppointmentSlotUnavailableError, DomainError)

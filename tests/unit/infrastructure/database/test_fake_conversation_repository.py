@@ -14,15 +14,15 @@ def test_fake_conversation_repository_satisfies_conversation_repository_protocol
 async def test_get_by_id_returns_none_when_missing():
     repository = FakeConversationRepository()
 
-    assert await repository.get_by_id(ConversationId("chatwoot-100")) is None
+    assert await repository.get_by_id(ConversationId("conv-100")) is None
 
 
 @pytest.mark.asyncio
 async def test_save_then_get_by_id_round_trips():
     repository = FakeConversationRepository()
-    conversation = make_conversation(id_="chatwoot-100")
+    conversation = make_conversation(id_="conv-100")
 
     await repository.save(conversation)
-    fetched = await repository.get_by_id(ConversationId("chatwoot-100"))
+    fetched = await repository.get_by_id(ConversationId("conv-100"))
 
     assert fetched == conversation

@@ -7,7 +7,7 @@ from app.domain.repositories.gateways import AppointmentGateway
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from tests.fixtures.gateways import make_dentalink_gateway
-from tests.fixtures.seed_objects import make_patient, make_slot
+from tests.fixtures.seed_objects import make_patient, make_professional, make_slot
 
 
 @pytest.mark.asyncio
@@ -37,6 +37,51 @@ async def test_search_availability_returns_empty_list_when_no_slot_matches_profe
     )
 
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_list_professionals_filters_by_specialty():
+    matching = make_professional(id_="prof-1", specialty_id="cleaning")
+    other_specialty = make_professional(id_="prof-2", specialty_id="whitening")
+    gateway = make_dentalink_gateway(professionals=[matching, other_specialty])
+
+    results = await gateway.list_professionals(specialty_id="cleaning")
+
+    assert results == [matching]
+
+
+@pytest.mark.asyncio
+async def test_list_professionals_returns_all_when_specialty_id_is_none():
+    first = make_professional(id_="prof-1", specialty_id="cleaning")
+    second = make_professional(id_="prof-2", specialty_id="whitening")
+    gateway = make_dentalink_gateway(professionals=[first, second])
+
+    results = await gateway.list_professionals()
+
+    assert results == [first, second]
+
+
+@pytest.mark.asyncio
+async def test_get_patient_appointments_excludes_cancelled_appointments():
+    slot = make_slot()
+    gateway = make_dentalink_gateway(available_slots=[slot])
+    patient = make_patient(id_="pat-1")
+    kept = await gateway.create_appointment(patient, slot, idempotency_key="key-keep")
+    to_cancel = await gateway.create_appointment(
+        make_patient(id_="pat-1"), make_slot(id_="slot-2"), idempotency_key="key-cancel"
+    )
+    await gateway.cancel_appointment(str(to_cancel.id), idempotency_key="key-cancel-op")
+
+    results = await gateway.get_patient_appointments("pat-1")
+
+    assert [appointment.id for appointment in results] == [kept.id]
+
+
+@pytest.mark.asyncio
+async def test_get_patient_appointments_returns_empty_list_for_unknown_patient():
+    gateway = make_dentalink_gateway()
+
+    assert await gateway.get_patient_appointments("unknown") == []
 
 
 @pytest.mark.asyncio

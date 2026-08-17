@@ -15,3 +15,6 @@ build/
 # local orchestrator tooling, not app code
 .atl/
 excalidraw.log
+
+# playwright MCP local artifacts
+.playwright-mcp/

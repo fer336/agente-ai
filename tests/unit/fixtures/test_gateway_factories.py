@@ -1,16 +1,18 @@
 import pytest
 
-from app.infrastructure.chatwoot.fake_chatwoot_gateway import FakeChatwootGateway
+from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
-from app.infrastructure.whatsapp.fake_whatsapp_gateway import FakeWhatsAppGateway
+from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
+from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from tests.fixtures.gateways import (
-    make_chatwoot_gateway,
+    make_agreement_gateway,
     make_dentalink_gateway,
     make_llm_provider,
-    make_whatsapp_gateway,
+    make_ycloud_handoff_gateway,
+    make_ycloud_messaging_gateway,
 )
-from tests.fixtures.seed_objects import make_slot
+from tests.fixtures.seed_objects import make_agreement, make_professional, make_slot
 
 
 def test_make_dentalink_gateway_returns_a_fresh_fake_with_no_slots_by_default():
@@ -28,19 +30,44 @@ def test_make_dentalink_gateway_accepts_available_slots_override():
     assert gateway._available_slots == [slot]
 
 
-@pytest.mark.asyncio
-async def test_make_chatwoot_gateway_returns_a_fresh_fake_chatwoot_gateway():
-    gateway = make_chatwoot_gateway()
+def test_make_dentalink_gateway_accepts_professionals_override():
+    professional = make_professional()
 
-    assert isinstance(gateway, FakeChatwootGateway)
+    gateway = make_dentalink_gateway(professionals=[professional])
+
+    assert gateway._professionals == [professional]
+
+
+@pytest.mark.asyncio
+async def test_make_agreement_gateway_returns_a_fresh_fake_with_no_agreements_by_default():
+    gateway = make_agreement_gateway()
+
+    assert isinstance(gateway, FakeAgreementGateway)
+    assert await gateway.list_agreements() == []
+
+
+@pytest.mark.asyncio
+async def test_make_agreement_gateway_accepts_agreements_override():
+    agreement = make_agreement()
+
+    gateway = make_agreement_gateway(agreements=[agreement])
+
+    assert await gateway.list_agreements() == [agreement]
+
+
+@pytest.mark.asyncio
+async def test_make_ycloud_handoff_gateway_returns_a_fresh_fake_handoff_gateway():
+    gateway = make_ycloud_handoff_gateway()
+
+    assert isinstance(gateway, FakeYCloudHandoffGateway)
     assert gateway.handoff_requests == []
 
 
 @pytest.mark.asyncio
-async def test_make_whatsapp_gateway_returns_a_fresh_fake_whatsapp_gateway():
-    gateway = make_whatsapp_gateway()
+async def test_make_ycloud_messaging_gateway_returns_a_fresh_fake_messaging_gateway():
+    gateway = make_ycloud_messaging_gateway()
 
-    assert isinstance(gateway, FakeWhatsAppGateway)
+    assert isinstance(gateway, FakeYCloudMessagingGateway)
     assert gateway.sent_messages == []
 
 

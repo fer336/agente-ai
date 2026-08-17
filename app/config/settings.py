@@ -27,17 +27,45 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     redis_password: str | None = None
 
-    chatwoot_url: str = ""
-    chatwoot_api_token: str = ""
-    chatwoot_account_id: str = ""
-    chatwoot_inbox_id: str = ""
-    chatwoot_webhook_secret: str = ""
+    ycloud_api_url: str = ""
+    ycloud_api_key: str = ""
+    ycloud_webhook_secret: str = ""
+    ycloud_whatsapp_number: str = ""
 
-    whatsapp_api_url: str = ""
-    whatsapp_access_token: str = ""
-    whatsapp_phone_number_id: str = ""
+    dentalink_api_url: str = "https://api.dentalink.healthatom.com/api"
+    dentalink_access_token: str = ""
+    dentalink_timeout_seconds: float = 15
+    # Not PRD-named env vars (PRD.md §68 only lists the three above) — added
+    # to bridge AppointmentGateway's existing Protocol signature (no branch/
+    # chair/sucursal parameter) against Dentalink's required request fields
+    # for a single-clinic MVP (PRD.md intro: "diseñado exclusivamente para
+    # una clínica específica"). See the DentalinkGateway change's report.
+    dentalink_default_branch_id: str = ""
+    dentalink_default_chair_id: str = ""
+    dentalink_default_duration_minutes: int = 30
 
     message_debounce_seconds: int = 6
+    #: PRD.md §68's documented name/default — how long a `PendingAction`
+    #: proposal stays confirmable before the (not-yet-built) expiry worker
+    #: would expire it (PRD.md §16.1).
+    appointment_confirmation_timeout_seconds: int = 120
+
+    #: PRD.md §68's documented name/default — stamped on every `AgentRun`
+    #: (PRD.md §39) so a prompt/behavior change can be correlated with the
+    #: runs it affected.
+    prompt_version: str = "agent-system-v0.1.0"
+    #: Empty by default (no real LLM/audio provider wired yet, PRD.md §33 —
+    #: a later change) — still stamped on every `AgentRun.model` as
+    #: whatever is configured, matching every other still-unconfigured
+    #: integration in this file (e.g. `ycloud_api_key`).
+    openai_model: str = ""
+
+    #: PRD.md §68/§50's documented names/defaults — how many same
+    #: `source`+`error_type` errors within how many seconds counts as
+    #: "repeated" rather than "aislado" for `ErrorService.classify`'s
+    #: severity escalation (PRD.md §46).
+    alert_timeout_threshold_count: int = 5
+    alert_timeout_threshold_window_seconds: int = 120
 
     @computed_field  # type: ignore[prop-decorator]
     @property

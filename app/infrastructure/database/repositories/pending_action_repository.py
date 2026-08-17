@@ -1,4 +1,6 @@
-from sqlalchemy import select
+from typing import Any, cast
+
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.pending_action import PendingAction
@@ -43,6 +45,30 @@ class SqlAlchemyPendingActionRepository:
             )
         )
         return [_to_entity(model) for model in result.scalars()]
+
+    async def mark_expired_if_pending(self, pending_action_id: str) -> bool:
+        result = await self._session.execute(
+            update(PendingActionModel)
+            .where(
+                PendingActionModel.id == pending_action_id,
+                PendingActionModel.status == "pending",
+            )
+            .values(status="expired")
+        )
+        await self._session.flush()
+        return cast("CursorResult[Any]", result).rowcount == 1
+
+    async def mark_confirmed_if_pending(self, pending_action_id: str) -> bool:
+        result = await self._session.execute(
+            update(PendingActionModel)
+            .where(
+                PendingActionModel.id == pending_action_id,
+                PendingActionModel.status == "pending",
+            )
+            .values(status="confirmed")
+        )
+        await self._session.flush()
+        return cast("CursorResult[Any]", result).rowcount == 1
 
 
 def _to_entity(model: PendingActionModel) -> PendingAction:

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.domain.entities.message import Message
 from app.domain.value_objects.conversation_id import ConversationId
@@ -12,7 +12,7 @@ def test_creates_message_with_all_fields():
         external_message_id=ExternalMessageId(value="wamid-1"),
         direction="inbound",
         text="Hola, queria consultar por un turno",
-        created_at=datetime(2026, 8, 4, 9, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
     )
 
     assert message.id == "msg-1"
@@ -21,7 +21,7 @@ def test_creates_message_with_all_fields():
 
 
 def test_messages_with_different_direction_are_not_equal():
-    created_at = datetime(2026, 8, 4, 9, 0, tzinfo=timezone.utc)
+    created_at = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
     first = Message(
         id="msg-2",
         conversation_id=ConversationId(value="conv-2"),

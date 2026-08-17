@@ -1,5 +1,5 @@
 import dataclasses
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -7,7 +7,7 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 
 
 def _dt(hour: int) -> datetime:
-    return datetime(2026, 8, 4, hour, 0, tzinfo=timezone.utc)
+    return datetime(2026, 8, 4, hour, 0, tzinfo=UTC)
 
 
 def test_creates_date_time_range_with_start_before_end():
@@ -49,10 +49,10 @@ def test_duration_reflects_a_different_span():
 def test_contains_returns_true_for_moment_inside_range():
     date_range = DateTimeRange(start=_dt(9), end=_dt(10))
 
-    assert date_range.contains(datetime(2026, 8, 4, 9, 30, tzinfo=timezone.utc)) is True
+    assert date_range.contains(datetime(2026, 8, 4, 9, 30, tzinfo=UTC)) is True
 
 
 def test_contains_returns_false_for_moment_outside_range():
     date_range = DateTimeRange(start=_dt(9), end=_dt(10))
 
-    assert date_range.contains(datetime(2026, 8, 4, 11, 0, tzinfo=timezone.utc)) is False
+    assert date_range.contains(datetime(2026, 8, 4, 11, 0, tzinfo=UTC)) is False

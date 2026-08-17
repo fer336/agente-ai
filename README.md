@@ -6,15 +6,71 @@ architecture: `app/domain`, `app/application`, `app/infrastructure`,
 
 ## Architecture
 
-![Hexagonal architecture overview](animated-svg-hexagonal-foundation/renders/hexagonal-foundation.gif)
+```mermaid
+flowchart TB
+    WhatsApp["WhatsApp"] --> YCloud["YCloud"]
+    YCloud -->|webhook| Webhook
+
+    subgraph API["app/api"]
+        Webhook["POST /webhooks/ycloud/{secret}"]
+        Health["/health, /ready"]
+    end
+
+    subgraph Agent["app/agent — LangGraph"]
+        SearchNode["search_availability node"]
+    end
+
+    subgraph Application["app/application — use cases"]
+        Ingest["IngestMessageUseCase"]
+        SendReply["SendReplyUseCase"]
+        SearchAvail["SearchAvailabilityUseCase"]
+    end
+
+    subgraph Domain["app/domain — Protocols, zero deps"]
+        ApptGW[["AppointmentGateway"]]
+        MsgGW[["MessagingGateway"]]
+        HandoffGW[["HumanHandoffGateway"]]
+        LLMP[["LLMProvider"]]
+        AgentInv[["AgentInvoker"]]
+    end
+
+    subgraph Infra["app/infrastructure — adapters"]
+        Dentalink["FakeDentalinkGateway"]
+        YCloudMsg["FakeYCloudMessagingGateway<br/>(real YCloudMessagingGateway not wired)"]
+        YCloudHandoff["FakeYCloudHandoffGateway<br/>(real YCloudHandoffGateway not wired)"]
+        LLMFake["FakeLLMProvider"]
+        AgentStub["NotImplementedAgentInvoker<br/>(Etapa 5 seam, not yet wired to LangGraph)"]
+        PG[("PostgreSQL")]
+        Redis[("Redis")]
+    end
+
+    Webhook --> Ingest
+    Ingest --> AgentInv
+    Ingest --> PG
+    Ingest --> Redis
+    SearchNode --> SearchAvail
+    SearchAvail --> ApptGW
+    SendReply --> MsgGW
+
+    ApptGW --> Dentalink
+    MsgGW --> YCloudMsg
+    HandoffGW --> YCloudHandoff
+    LLMP --> LLMFake
+    AgentInv --> AgentStub
+```
 
 Layered hexagonal design: `API → Agent (LangGraph) → Application (use cases)
 → Domain (Protocols, zero deps) → Infrastructure (adapters)`, with PostgreSQL
 as the LangGraph checkpointer and Redis reserved for debounce/locks/rate-limit.
-All four infrastructure adapters (Dentalink, WhatsApp, Chatwoot, LLM) are
-in-memory fakes today — deliberate swap points for the real integrations.
-See [`docs/architecture.md`](docs/architecture.md) for the full breakdown of
-what's implemented, what's out of scope, and the next steps.
+YCloud is the sole WhatsApp channel (replaces any prior messaging setup —
+see [`PRD.md`](PRD.md) §24). All infrastructure adapters (Dentalink, YCloud
+messaging, YCloud handoff, LLM) are in-memory fakes today — deliberate swap
+points for the real integrations; the real `httpx`-based YCloud adapters
+already exist in `app/infrastructure/ycloud/` but aren't wired into DI yet
+(no live YCloud credentials in this environment). See
+[`docs/architecture.md`](docs/architecture.md) for the full breakdown of
+what's implemented, what's out of scope, and the next steps, and
+[`PRD.md`](PRD.md) for the full product scope and business rules.
 
 ## Requirements
 
@@ -33,14 +89,15 @@ pip install -e ".[dev]"
 ## Configure environment
 
 ```bash
-cp .env.example .env
+cp dotenv_example_template.txt .env
 ```
 
-`.env.example` documents discrete settings — `APP_HOST`/`APP_PORT` (the FastAPI
-bind address, since the app can run on your own server, not only via
-docker-compose), `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/
-`POSTGRES_PASSWORD`/`POSTGRES_DB`, and `REDIS_HOST`/`REDIS_PORT`. `DATABASE_URL`
-and `REDIS_URL` are derived automatically from those fields by
+`dotenv_example_template.txt` documents discrete settings — `APP_HOST`/`APP_PORT`
+(the FastAPI bind address, since the app can run on your own server, not only
+via docker-compose), `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/
+`POSTGRES_PASSWORD`/`POSTGRES_DB`, `REDIS_HOST`/`REDIS_PORT`, and
+`YCLOUD_API_URL`/`YCLOUD_API_KEY`/`YCLOUD_WEBHOOK_SECRET`/`YCLOUD_WHATSAPP_NUMBER`.
+`DATABASE_URL` and `REDIS_URL` are derived automatically from those fields by
 `app.config.settings` — you don't need to set them directly. Edit `.env` if
 your Postgres/Redis run somewhere other than `localhost`.
 

@@ -11,6 +11,12 @@ class ConformingPendingActionRepository:
     async def get_pending_for_conversation(self, conversation_id):
         return []
 
+    async def mark_expired_if_pending(self, pending_action_id):
+        return False
+
+    async def mark_confirmed_if_pending(self, pending_action_id):
+        return False
+
 
 class PartialPendingActionRepository:
     async def get_by_id(self, pending_action_id):

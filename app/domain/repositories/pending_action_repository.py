@@ -15,3 +15,26 @@ class PendingActionRepository(Protocol):
     async def get_pending_for_conversation(
         self, conversation_id: ConversationId
     ) -> list[PendingAction]: ...
+
+    async def mark_expired_if_pending(self, pending_action_id: str) -> bool:
+        """Atomically transitions `pending` -> `expired`.
+
+        Returns True if this call performed the transition, False if the
+        row was no longer `pending` (e.g. a concurrent confirmation already
+        moved it to `confirmed`) — the `WHERE status = 'pending'` SQL guard
+        that gives mutual exclusion between a follow-up expiration and a
+        same-moment confirmation (PRD.md §16.1/§16.3: "Si una confirmación y
+        el vencimiento ocurren simultáneamente, solamente una transición
+        podrá ganar").
+        """
+        ...
+
+    async def mark_confirmed_if_pending(self, pending_action_id: str) -> bool:
+        """Atomically transitions `pending` -> `confirmed`.
+
+        Symmetric to `mark_expired_if_pending` above — same `WHERE status =
+        'pending'` guard, the other side of PRD.md §16.3's race. Returns
+        True if this call performed the transition, False if the row was
+        no longer `pending` (e.g. the expiration follow-up already won).
+        """
+        ...

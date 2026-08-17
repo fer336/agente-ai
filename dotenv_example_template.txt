@@ -1,0 +1,42 @@
+# App server bind address (uvicorn) — the app runs on your own server,
+# not only via docker-compose local dev.
+APP_HOST=0.0.0.0
+APP_PORT=8000
+
+# Postgres — discrete fields. DATABASE_URL is derived automatically from
+# these by app.config.settings (postgresql+asyncpg://...); do not set it
+# separately.
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=changeme
+POSTGRES_DB=clinic_ai_agent
+
+# Redis — discrete fields. REDIS_URL is derived automatically from these.
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# YCloud — WhatsApp Business API channel (webhooks, sending, Shared Team
+# Inbox handoff). Replaces the pre-YCloud Chatwoot/direct-Meta-API setup.
+YCLOUD_API_URL=https://api.ycloud.com
+YCLOUD_API_KEY=changeme
+YCLOUD_WEBHOOK_SECRET=changeme
+YCLOUD_WHATSAPP_NUMBER=
+
+MESSAGE_DEBOUNCE_SECONDS=6
+
+# Dentalink — appointment scheduling and insurance-agreement source of
+# truth (PRD.md §27). No real access token exists in this project yet —
+# the real DentalinkGateway/DentalinkAgreementGateway adapters are built
+# but stay behind an in-memory Fake in DI until one is provisioned.
+DENTALINK_API_URL=https://api.dentalink.healthatom.com/api
+DENTALINK_ACCESS_TOKEN=
+DENTALINK_TIMEOUT_SECONDS=15
+# Not documented by the PRD's own env var list (§68) — this MVP targets a
+# single clinic/branch/chair, so these fill request fields Dentalink
+# requires (id_sucursal, id_sillon) that AppointmentGateway's Protocol
+# signature has no parameter for.
+DENTALINK_DEFAULT_BRANCH_ID=
+DENTALINK_DEFAULT_CHAIR_ID=
+DENTALINK_DEFAULT_DURATION_MINUTES=30

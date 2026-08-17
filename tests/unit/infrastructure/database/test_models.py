@@ -14,6 +14,11 @@ _EXPECTED_TABLES = {
     "human_handoffs",
     "approved_contents",
     "outbox_events",
+    "scheduled_actions",
+    "media_processing_jobs",
+    "agent_runs",
+    "node_executions",
+    "errors",
 }
 
 
@@ -36,4 +41,14 @@ def test_messages_external_message_id_is_unique():
 
 def test_appointment_actions_idempotency_key_is_unique():
     column = Base.metadata.tables["appointment_actions"].c.idempotency_key
+    assert column.unique
+
+
+def test_scheduled_actions_idempotency_key_is_unique():
+    column = Base.metadata.tables["scheduled_actions"].c.idempotency_key
+    assert column.unique
+
+
+def test_media_processing_jobs_message_id_is_unique():
+    column = Base.metadata.tables["media_processing_jobs"].c.message_id
     assert column.unique

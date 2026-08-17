@@ -74,11 +74,12 @@ class IngestMessageUseCase:
         self._redis_client = redis_client
         self._agent_invoker = agent_invoker
         self._debounce_seconds = debounce_seconds
-        # Per-conversation accumulator of (message_id, text) pairs awaiting
-        # grouping into one Etapa-5 handoff. In-process only — see the
-        # class docstring's singleton-lifetime note and the design's
-        # "Debounce trigger mechanism" ADR (no ARQ/durable queue this etapa).
-        self._pending_messages: dict[str, list[tuple[str, str]]] = {}
+        # Per-conversation accumulator of (message_id, text, button_payload)
+        # tuples awaiting grouping into one Etapa-5 handoff. In-process
+        # only — see the class docstring's singleton-lifetime note and the
+        # design's "Debounce trigger mechanism" ADR (no ARQ/durable queue
+        # this etapa).
+        self._pending_messages: dict[str, list[tuple[str, str, str | None]]] = {}
         # Strong references to in-flight background tasks: asyncio only
         # keeps a WEAK reference to a task created via `create_task()`, so
         # without this set a task can be garbage-collected mid-flight.
@@ -92,7 +93,7 @@ class IngestMessageUseCase:
 
             contact = await self._resolve_or_create_contact(repositories.contacts, dto.from_phone)
             conversation = await self._resolve_or_create_conversation(
-                repositories.conversations, dto.chatwoot_conversation_id, contact.id
+                repositories.conversations, dto.from_phone, contact.id
             )
 
             message = Message(
@@ -113,7 +114,9 @@ class IngestMessageUseCase:
             # handoff to the Etapa 5 seam is skipped.
             return
 
-        self._pending_messages.setdefault(conversation_key, []).append((message.id, message.text))
+        self._pending_messages.setdefault(conversation_key, []).append(
+            (message.id, message.text, dto.button_payload)
+        )
         token = await self._debounce_tracker.touch(conversation_key)
 
         # NOTE (Etapa 4 design ADR "Debounce trigger mechanism"): this
@@ -165,11 +168,18 @@ class IngestMessageUseCase:
             grouped = self._pending_messages.pop(conversation_key, [])
             if not grouped:
                 return
-            message_ids = [message_id for message_id, _ in grouped]
-            user_message = "\n".join(text for _, text in grouped)
+            message_ids = [message_id for message_id, _, _ in grouped]
+            user_message = "\n".join(text for _, text, _ in grouped)
+            # Last non-null button payload wins — a deliberate button tap is
+            # a terminal action that should take priority over any free
+            # text debounced alongside it (PRD.md §6: buttons carry a KNOWN
+            # intent and must not be reinterpreted).
+            button_payload = next(
+                (payload for _, _, payload in reversed(grouped) if payload is not None), None
+            )
 
             await self._agent_invoker.handle(
-                ConversationId(conversation_key), message_ids, user_message
+                ConversationId(conversation_key), message_ids, user_message, button_payload
             )
 
     async def _resolve_or_create_contact(
@@ -185,13 +195,15 @@ class IngestMessageUseCase:
     async def _resolve_or_create_conversation(
         self,
         conversation_repository: ConversationRepository,
-        chatwoot_conversation_id: str,
+        from_phone: PhoneNumber,
         contact_id: str,
     ) -> Conversation:
-        # Etapa 4 design ADR "Chatwoot<->our conversation mapping": our
-        # ConversationId IS `chatwoot-{chatwoot_conversation_id}` — a
-        # deliberate zero-migration id-encoding convention, not a hack.
-        conversation_id = ConversationId(f"chatwoot-{chatwoot_conversation_id}")
+        # YCloud/WhatsApp conversations are 1:1 with the sender's phone
+        # number (no separate vendor conversation-id concept, unlike
+        # Chatwoot's ticket-style `conversation.id`) — so our ConversationId
+        # IS `ycloud-{phone}`, a deliberate zero-migration id-encoding
+        # convention, not a hack.
+        conversation_id = ConversationId(f"ycloud-{from_phone}")
         conversation = await conversation_repository.get_by_id(conversation_id)
         if conversation is not None:
             return conversation

@@ -21,6 +21,12 @@ class SqlAlchemyContactRepository:
             return None
         return _to_entity(model)
 
+    async def get_by_id(self, contact_id: str) -> Contact | None:
+        model = await self._session.get(ContactModel, contact_id)
+        if model is None:
+            return None
+        return _to_entity(model)
+
     async def save(self, contact: Contact) -> None:
         model = await self._session.get(ContactModel, contact.id)
         if model is None:

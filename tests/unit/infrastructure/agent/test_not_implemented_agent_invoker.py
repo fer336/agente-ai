@@ -14,4 +14,4 @@ async def test_handle_raises_not_implemented_error():
     invoker = NotImplementedAgentInvoker()
 
     with pytest.raises(NotImplementedError):
-        await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola")
+        await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
