@@ -13,6 +13,17 @@ class MediaProcessingJobRepository(Protocol):
 
     async def save(self, job: MediaProcessingJob) -> None: ...
 
+    async def list_pending(self, limit: int) -> list[MediaProcessingJob]:
+        """Returns up to `limit` jobs still in `pending` status, oldest first.
+
+        The audio worker's claim loop (`app.workers.audio_tasks`) reads this
+        list and then calls `transition_status` per job — the atomic,
+        mutually-exclusive claim happens there, not here; a job returned by
+        this call is only a CANDIDATE, since another worker may claim it
+        first.
+        """
+        ...
+
     async def transition_status(
         self, job_id: str, *, from_status: str, to_status: str
     ) -> bool:

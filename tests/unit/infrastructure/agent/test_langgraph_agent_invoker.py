@@ -24,11 +24,13 @@ from tests.fixtures.gateways import (
     make_conversation_repository,
     make_dentalink_gateway,
     make_error_service,
+    make_linear_gateway,
     make_llm_provider,
     make_node_execution_repository,
     make_patient_gateway,
     make_proposal_repositories_provider,
     make_send_reply_use_case,
+    make_telegram_notifier,
     make_tool_execution_repository,
     make_trace_repositories_provider,
     make_ycloud_handoff_gateway,
@@ -103,6 +105,11 @@ def _make_invoker(
         model="gpt-4o-mini",
         alert_threshold_count=5,
         alert_window_seconds=120,
+        telegram_notifier=make_telegram_notifier(),
+        linear_gateway=make_linear_gateway(),
+        incident_threshold_count=10,
+        incident_threshold_window_seconds=300,
+        telegram_alert_cooldown_seconds=900,
         checkpointer_provider=_make_checkpointer_provider(checkpointer),
     )
     return (
@@ -162,6 +169,11 @@ async def test_handle_works_without_a_checkpointer_provider():
         model="gpt-4o-mini",
         alert_threshold_count=5,
         alert_window_seconds=120,
+        telegram_notifier=make_telegram_notifier(),
+        linear_gateway=make_linear_gateway(),
+        incident_threshold_count=10,
+        incident_threshold_window_seconds=300,
+        telegram_alert_cooldown_seconds=900,
     )
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)

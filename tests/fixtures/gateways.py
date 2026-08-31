@@ -22,6 +22,10 @@ from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRe
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
+from app.infrastructure.database.fake_incident_repository import FakeIncidentRepository
+from app.infrastructure.database.fake_media_processing_job_repository import (
+    FakeMediaProcessingJobRepository,
+)
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
 from app.infrastructure.database.fake_node_execution_repository import (
     FakeNodeExecutionRepository,
@@ -39,8 +43,10 @@ from app.infrastructure.database.fake_tool_execution_repository import (
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.redis.debounce import DebounceTracker
+from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from tests.fixtures.fake_redis import InMemoryFakeRedis
@@ -84,6 +90,10 @@ def make_message_repository() -> FakeMessageRepository:
     return FakeMessageRepository()
 
 
+def make_media_processing_job_repository() -> FakeMediaProcessingJobRepository:
+    return FakeMediaProcessingJobRepository()
+
+
 def make_conversation_repository() -> FakeConversationRepository:
     return FakeConversationRepository()
 
@@ -116,15 +126,39 @@ def make_error_repository() -> FakeErrorRepository:
     return FakeErrorRepository()
 
 
+def make_incident_repository() -> FakeIncidentRepository:
+    return FakeIncidentRepository()
+
+
+def make_telegram_notifier() -> FakeTelegramAlertNotifier:
+    return FakeTelegramAlertNotifier()
+
+
+def make_linear_gateway() -> FakeLinearIncidentGateway:
+    return FakeLinearIncidentGateway()
+
+
 def make_error_service(
     error_repository: FakeErrorRepository | None = None,
     alert_threshold_count: int = 5,
     alert_window_seconds: int = 120,
+    incident_repository: FakeIncidentRepository | None = None,
+    telegram_notifier: FakeTelegramAlertNotifier | None = None,
+    linear_gateway: FakeLinearIncidentGateway | None = None,
+    incident_threshold_count: int = 10,
+    incident_threshold_window_seconds: int = 300,
+    telegram_alert_cooldown_seconds: int = 900,
 ) -> ErrorService:
     return ErrorService(
         error_repository if error_repository is not None else make_error_repository(),
+        incident_repository if incident_repository is not None else make_incident_repository(),
+        telegram_notifier if telegram_notifier is not None else make_telegram_notifier(),
+        linear_gateway if linear_gateway is not None else make_linear_gateway(),
         alert_threshold_count=alert_threshold_count,
         alert_window_seconds=alert_window_seconds,
+        incident_threshold_count=incident_threshold_count,
+        incident_threshold_window_seconds=incident_threshold_window_seconds,
+        telegram_alert_cooldown_seconds=telegram_alert_cooldown_seconds,
     )
 
 
@@ -133,6 +167,7 @@ def make_trace_repositories_provider(
     node_executions: FakeNodeExecutionRepository | None = None,
     tool_executions: FakeToolExecutionRepository | None = None,
     errors: FakeErrorRepository | None = None,
+    incidents: FakeIncidentRepository | None = None,
 ):
     """Builds a `TraceRepositoriesProvider` wired entirely to fakes.
 
@@ -149,6 +184,7 @@ def make_trace_repositories_provider(
         tool_executions if tool_executions is not None else make_tool_execution_repository()
     )
     errors = errors if errors is not None else make_error_repository()
+    incidents = incidents if incidents is not None else make_incident_repository()
 
     @asynccontextmanager
     async def provider() -> AsyncIterator[TraceRepositories]:
@@ -157,6 +193,7 @@ def make_trace_repositories_provider(
             node_executions=node_executions,
             tool_executions=tool_executions,
             errors=errors,
+            incidents=incidents,
         )
 
     return provider
@@ -211,9 +248,11 @@ def make_ingest_message_use_case(
     message_repository: FakeMessageRepository | None = None,
     contact_repository: FakeContactRepository | None = None,
     conversation_repository: FakeConversationRepository | None = None,
+    media_processing_job_repository: FakeMediaProcessingJobRepository | None = None,
     redis_client: InMemoryFakeRedis | None = None,
     agent_invoker: FakeAgentInvoker | None = None,
     debounce_seconds: int = 6,
+    audio_rate_limit_per_minute: int = 0,
 ) -> IngestMessageUseCase:
     """Builds an `IngestMessageUseCase` wired entirely to fakes.
 
@@ -234,6 +273,11 @@ def make_ingest_message_use_case(
         if conversation_repository is not None
         else make_conversation_repository()
     )
+    media_processing_job_repository = (
+        media_processing_job_repository
+        if media_processing_job_repository is not None
+        else make_media_processing_job_repository()
+    )
     redis_client = redis_client if redis_client is not None else InMemoryFakeRedis()
     agent_invoker = agent_invoker if agent_invoker is not None else make_agent_invoker()
     debounce_tracker = DebounceTracker(redis_client, debounce_seconds)
@@ -244,6 +288,7 @@ def make_ingest_message_use_case(
             messages=message_repository,
             contacts=contact_repository,
             conversations=conversation_repository,
+            media_processing_jobs=media_processing_job_repository,
         )
 
     return IngestMessageUseCase(
@@ -252,4 +297,5 @@ def make_ingest_message_use_case(
         redis_client=redis_client,
         agent_invoker=agent_invoker,
         debounce_seconds=debounce_seconds,
+        audio_rate_limit_per_minute=audio_rate_limit_per_minute,
     )

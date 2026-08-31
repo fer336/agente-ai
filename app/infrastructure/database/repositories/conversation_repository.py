@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.conversation import Conversation
@@ -28,6 +29,12 @@ class SqlAlchemyConversationRepository:
         model.input_state = conversation.input_state
         model.created_at = conversation.created_at
         await self._session.flush()
+
+    async def list_recent(self, limit: int = 50) -> list[Conversation]:
+        result = await self._session.execute(
+            select(ConversationModel).order_by(ConversationModel.created_at.desc()).limit(limit)
+        )
+        return [_to_entity(model) for model in result.scalars().all()]
 
 
 def _to_entity(model: ConversationModel) -> Conversation:

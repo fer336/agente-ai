@@ -19,3 +19,23 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     session_factory = _get_session_factory()
     async with session_factory() as session:
         yield session
+
+
+async def get_committing_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Like `get_db_session`, but commits once the route handler returns
+    successfully.
+
+    For routes whose write must survive past this one request/response
+    cycle (an admin-panel login's audit entry, an error being marked
+    resolved) — plain `get_db_session` alone would leave those writes
+    flushed-but-uncommitted, discarded when the session closes (same
+    pitfall `open_sqlalchemy_proposal_repositories`/
+    `open_sqlalchemy_trace_repositories` document for the process-singleton
+    use cases). If the route raises, this generator's `commit()` is never
+    reached — FastAPI propagates the exception through the `yield` point
+    before resuming here, so a failed request correctly persists nothing.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield session
+        await session.commit()

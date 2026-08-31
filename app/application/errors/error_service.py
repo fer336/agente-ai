@@ -31,7 +31,11 @@ from app.domain.entities.error_record import (
     SEVERITY_WARNING,
     ErrorRecord,
 )
+from app.domain.entities.incident import INCIDENT_OPEN, Incident
+from app.domain.repositories.alert_notifier import AlertNotifier
 from app.domain.repositories.error_repository import ErrorRepository
+from app.domain.repositories.incident_gateway import IncidentGateway
+from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.value_objects.conversation_id import ConversationId
 
 logger = logging.getLogger(__name__)
@@ -86,26 +90,45 @@ _LOG_LEVEL_BY_SEVERITY = {
 
 
 class ErrorService:
-    """Concentrates error classification and (eventually) alerting behind
-    one service (PRD.md §45, §52) — "la lógica del agente no deberá
-    conocer directamente Telegram ni Linear".
+    """Concentrates error classification and alerting behind one service
+    (PRD.md §45, §52) — "la lógica del agente no deberá conocer
+    directamente Telegram ni Linear".
 
-    This change wires `report`/`classify` (PostgreSQL `errors` +
-    `logging`, PRD.md §45's first two boxes) — `update_incident`/
-    `notify_telegram`/`sync_linear` are a deliberately deferred follow-up
-    (PRD.md §47-51: incident dedup + Telegram + Linear), see this change's
-    report for why.
+    `report`/`classify` persist to PostgreSQL `errors` + `logging` (PRD.md
+    §45's first two boxes) for every severity. For ERROR/CRITICAL only,
+    `report` also calls `update_incident` (fingerprint dedup, PRD.md §49),
+    `notify_telegram` (always, subject to a cooldown), and `sync_linear`
+    (CRITICAL always; ERROR only once the fingerprint's occurrences within
+    `incident_threshold_window_seconds` reach `incident_threshold_count`,
+    PRD.md §46/§50). WARNING/INFO never touch incidents/Telegram/Linear.
+
+    A Telegram/Linear delivery failure is caught and logged inside
+    `notify_telegram`/`sync_linear` themselves — it must never propagate
+    back into `report()`'s caller (PRD.md §47: Telegram/Linear are alert
+    channels, not the source of truth the rest of the system depends on).
     """
 
     def __init__(
         self,
         error_repository: ErrorRepository,
+        incident_repository: IncidentRepository,
+        telegram_notifier: AlertNotifier,
+        linear_gateway: IncidentGateway,
         alert_threshold_count: int,
         alert_window_seconds: int,
+        incident_threshold_count: int,
+        incident_threshold_window_seconds: int,
+        telegram_alert_cooldown_seconds: int,
     ) -> None:
         self._error_repository = error_repository
+        self._incident_repository = incident_repository
+        self._telegram_notifier = telegram_notifier
+        self._linear_gateway = linear_gateway
         self._alert_threshold_count = alert_threshold_count
         self._alert_window_seconds = alert_window_seconds
+        self._incident_threshold_count = incident_threshold_count
+        self._incident_threshold_window_seconds = incident_threshold_window_seconds
+        self._telegram_alert_cooldown_seconds = telegram_alert_cooldown_seconds
 
     async def report(
         self,
@@ -118,6 +141,7 @@ class ErrorService:
         agent_run_id: str | None = None,
         error_code: str | None = None,
         technical_detail: str | None = None,
+        operation: str | None = None,
     ) -> ErrorRecord:
         severity = await self.classify(source=source, error_type=error_type)
         error = ErrorRecord(
@@ -152,7 +176,159 @@ class ErrorService:
                 "agent_run_id": agent_run_id,
             },
         )
+
+        if severity in (SEVERITY_ERROR, SEVERITY_CRITICAL):
+            incident = await self.update_incident(
+                source=source,
+                error_type=error_type,
+                operation=operation,
+                severity=severity,
+                conversation_id=conversation_id,
+                now=error.created_at,
+            )
+            await self.notify_telegram(incident, error)
+            if await self._should_sync_linear(incident, source, error_type):
+                await self.sync_linear(incident, error)
+
         return error
+
+    @staticmethod
+    def build_fingerprint(source: str, error_type: str, operation: str | None) -> str:
+        """PRD.md §49: `provider:error_type:operation`, falling back to
+        `provider:error_type` when no `operation` is available (no current
+        `report()` caller hits the fallback, but it keeps `operation`
+        optional for forward compatibility).
+        """
+        if operation is not None:
+            return f"{source}:{error_type}:{operation}"
+        return f"{source}:{error_type}"
+
+    async def _should_sync_linear(self, incident: Incident, source: str, error_type: str) -> bool:
+        if incident.severity == SEVERITY_CRITICAL:
+            return True
+        since = incident.last_seen - timedelta(seconds=self._incident_threshold_window_seconds)
+        # Unlike `classify`'s own windowed count (run BEFORE its occurrence
+        # is persisted, hence that check's own `+1`), this runs AFTER
+        # `report()` already saved the current `ErrorRecord` — `count_recent`
+        # already includes it, so no `+1` here.
+        recent_count = await self._error_repository.count_recent(source, error_type, since)
+        return recent_count >= self._incident_threshold_count
+
+    async def update_incident(
+        self,
+        *,
+        source: str,
+        error_type: str,
+        operation: str | None,
+        severity: str,
+        conversation_id: ConversationId | None,
+        now: datetime,
+    ) -> Incident:
+        """Upserts the open incident for this fingerprint (PRD.md §49): a
+        brand-new fingerprint creates one row; a repeat updates
+        `occurrences`/`last_seen`/`affected_conversations` in place rather
+        than creating a duplicate.
+
+        `affected_conversations` is a simple per-occurrence counter (kept
+        deliberately simple per `Incident`'s own docstring), not a true
+        distinct-conversation count — a genuine dedup would require
+        persisting the full set of conversation ids per incident, which
+        this MVP-level table does not do.
+        """
+        fingerprint = self.build_fingerprint(source, error_type, operation)
+        existing = await self._incident_repository.get_by_fingerprint(fingerprint)
+        if existing is not None:
+            existing.occurrences += 1
+            existing.last_seen = now
+            if conversation_id is not None:
+                existing.affected_conversations += 1
+            if existing.severity != SEVERITY_CRITICAL:
+                existing.severity = severity
+            await self._incident_repository.update(existing)
+            return existing
+
+        incident = Incident(
+            id=str(uuid4()),
+            fingerprint=fingerprint,
+            source=source,
+            error_type=error_type,
+            operation=operation,
+            severity=severity,
+            occurrences=1,
+            affected_conversations=1 if conversation_id is not None else 0,
+            first_seen=now,
+            last_seen=now,
+            status=INCIDENT_OPEN,
+            linear_issue_id=None,
+            last_notification_at=None,
+            resolved_at=None,
+        )
+        await self._incident_repository.save(incident)
+        return incident
+
+    async def notify_telegram(self, incident: Incident, error: ErrorRecord) -> None:
+        """Sends (or suppresses, per `telegram_alert_cooldown_seconds`) a
+        Telegram alert for this incident (PRD.md §47/§50).
+        """
+        now = error.created_at
+        if incident.last_notification_at is not None:
+            elapsed = (now - incident.last_notification_at).total_seconds()
+            if elapsed < self._telegram_alert_cooldown_seconds:
+                return
+
+        text = (
+            f"🚨 {incident.severity} — {incident.source}\n\n"
+            f"Error: {incident.error_type}\n"
+            f"Nodo/Operación: {incident.operation or 'n/d'}\n\n"
+            f"Ocurrencias: {incident.occurrences}\n"
+            f"Conversaciones afectadas: {incident.affected_conversations}\n"
+            f"Primera detección: {incident.first_seen.isoformat()}\n\n"
+            f"Ver detalle:\n/admin/errors/{error.id}"
+        )
+        try:
+            await self._telegram_notifier.notify(text)
+        except Exception:  # noqa: BLE001 - a Telegram outage must never break error reporting
+            logger.warning(
+                "error_service.notify_telegram_failed incident_id=%s", incident.id, exc_info=True
+            )
+            return
+
+        incident.last_notification_at = now
+        await self._incident_repository.update(incident)
+
+    async def sync_linear(self, incident: Incident, error: ErrorRecord) -> None:
+        """Creates the incident's Linear issue on first sync, or comments
+        on the existing one for a repeat occurrence (PRD.md §48/§49: "NO
+        crear otro issue").
+        """
+        try:
+            if incident.linear_issue_id is None:
+                issue_id = await self._linear_gateway.create_issue(
+                    title=f"[{incident.severity}][{incident.source.upper()}] {incident.error_type}",
+                    description=(
+                        f"Fingerprint: {incident.fingerprint}\n"
+                        f"Occurrences: {incident.occurrences}\n"
+                        f"Affected conversations: {incident.affected_conversations}\n"
+                        f"First seen: {incident.first_seen.isoformat()}\n"
+                        f"Last seen: {incident.last_seen.isoformat()}\n"
+                        f"Admin: /admin/errors/{error.id}"
+                    ),
+                    priority="urgent" if incident.severity == SEVERITY_CRITICAL else "high",
+                )
+                incident.linear_issue_id = issue_id
+            else:
+                await self._linear_gateway.add_comment(
+                    incident.linear_issue_id,
+                    f"Occurrences: {incident.occurrences}\n"
+                    f"Last seen: {incident.last_seen.isoformat()}",
+                )
+        except Exception:  # noqa: BLE001 - a Linear outage must never break error reporting
+            logger.warning(
+                "error_service.sync_linear_failed incident_id=%s", incident.id, exc_info=True
+            )
+            return
+
+        await self._incident_repository.update(incident)
 
     async def classify(self, *, source: str, error_type: str) -> str:
         """Derives severity from `error_type` alone (PRD.md §46) — `source`

@@ -49,6 +49,7 @@ async def traced_call(
                     message=str(exc),
                     agent_run_id=context.agent_run_id,
                     technical_detail=repr(exc),
+                    operation=operation,
                 )
                 error_id = error.id
             await context.tool_execution_repository.save(

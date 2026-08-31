@@ -1,0 +1,55 @@
+# Promptfoo config for the WhatsApp dental-clinic agent (PRD.md §58-63,
+# Etapa 10 del roadmap). Evaluates the deployed agent through its own
+# isolated HTTP endpoint, never a direct LLM call — matching §61's second
+# evaluation level exactly:
+#
+#   Promptfoo → FastAPI → LangGraph → FakeDentalinkGateway → FakeYCloudGateway
+#
+# Running this for real needs:
+#   1. `npx promptfoo eval` (Node/promptfoo CLI) — NOT part of this Python
+#      project's toolchain and not installed in this environment; this
+#      config is scaffolded and structurally valid, but was never actually
+#      executed against a live server here (deferred, same as GROQ_API_KEY
+#      in the audio-pipeline change).
+#   2. A running server with `INTERNAL_EVAL_ENABLED=true` and a valid
+#      admin session (`ADMIN_SESSION_COOKIE`/`ADMIN_CSRF_COOKIE` below) —
+#      see app/api/routes/internal_eval.py. Never point this at production.
+
+description: "Agente WhatsApp clínica dental — Promptfoo (PRD.md §58-63)"
+
+prompts:
+  - file://prompts/agent_system_prompt.txt
+
+providers:
+  - id: https
+    label: internal-eval-chat
+    config:
+      url: "{{env.INTERNAL_EVAL_BASE_URL}}/internal/eval/chat"
+      method: POST
+      headers:
+        Content-Type: application/json
+        Cookie: "admin_session={{env.ADMIN_SESSION_COOKIE}}; admin_csrf={{env.ADMIN_CSRF_COOKIE}}"
+        X-CSRF-Token: "{{env.ADMIN_CSRF_COOKIE}}"
+      body:
+        conversation_id: "{{conversation_id}}"
+        message: "{{message}}"
+      # The provider's raw output is the full `EvalChatResponse` JSON body
+      # (reply_text/agent_run_id/agent_run_status/node_names/tool_names) —
+      # left un-transformed so both `llm-rubric` (graded on the parsed
+      # reply text) and the `javascript` asserts in assertions/custom.js
+      # (which need node_names/tool_names, not just the reply) can inspect
+      # the whole shape.
+      transformResponse: "json"
+
+defaultTest:
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noSensitiveValuesInReply
+
+tests:
+  - evals/datasets/appointments.yaml
+  - evals/datasets/agreements.yaml
+  - evals/datasets/handoff.yaml
+  - evals/datasets/safety.yaml
+  - evals/datasets/adversarial.yaml
+  - evals/datasets/audio.yaml

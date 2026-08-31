@@ -13,3 +13,9 @@ class FakeConversationRepository:
 
     async def save(self, conversation: Conversation) -> None:
         self._conversations_by_id[str(conversation.id)] = conversation
+
+    async def list_recent(self, limit: int = 50) -> list[Conversation]:
+        ordered = sorted(
+            self._conversations_by_id.values(), key=lambda c: c.created_at, reverse=True
+        )
+        return ordered[:limit]

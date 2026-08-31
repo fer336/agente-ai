@@ -6,7 +6,11 @@ from app.infrastructure.ycloud.webhook_parser import (
     is_processable_message,
     to_inbound_message_dto,
 )
-from tests.fixtures.seed_objects import make_ycloud_button_reply_payload, make_ycloud_payload
+from tests.fixtures.seed_objects import (
+    make_ycloud_audio_payload,
+    make_ycloud_button_reply_payload,
+    make_ycloud_payload,
+)
 
 _WHATSAPP_NUMBER = "+5491100000001"
 
@@ -25,9 +29,26 @@ def test_is_processable_message_rejects_wrong_event_type():
     assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
 
 
-def test_is_processable_message_rejects_audio_message_type():
+def test_is_processable_message_accepts_an_audio_message_with_a_media_id():
+    payload = YCloudInboundEventPayload.model_validate(
+        make_ycloud_audio_payload(whatsapp_number=_WHATSAPP_NUMBER)
+    )
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is True
+
+
+def test_is_processable_message_rejects_an_audio_message_with_no_media_id():
+    raw = make_ycloud_audio_payload(whatsapp_number=_WHATSAPP_NUMBER)
+    raw["whatsappInboundMessage"]["audio"]["id"] = ""
+    payload = YCloudInboundEventPayload.model_validate(raw)
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
+
+
+def test_is_processable_message_rejects_an_audio_message_with_no_audio_object():
     raw = make_ycloud_payload()
     raw["whatsappInboundMessage"]["type"] = "audio"
+
     payload = YCloudInboundEventPayload.model_validate(raw)
 
     assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
@@ -155,6 +176,31 @@ def test_to_inbound_message_dto_raises_when_id_is_whitespace_only():
 
     with pytest.raises(ValueError):
         to_inbound_message_dto(payload)
+
+
+def test_to_inbound_message_dto_maps_audio_metadata_with_no_text():
+    payload = YCloudInboundEventPayload.model_validate(
+        make_ycloud_audio_payload(
+            media_id="media-1", mime_type="audio/ogg", sha256="abc123"
+        )
+    )
+
+    dto = to_inbound_message_dto(payload)
+
+    assert dto.message_type == "audio"
+    assert dto.text == ""
+    assert dto.button_payload is None
+    assert dto.media_id == "media-1"
+    assert dto.media_mime_type == "audio/ogg"
+    assert dto.media_sha256 == "abc123"
+
+
+def test_to_inbound_message_dto_maps_audio_with_no_sha256():
+    payload = YCloudInboundEventPayload.model_validate(make_ycloud_audio_payload())
+
+    dto = to_inbound_message_dto(payload)
+
+    assert dto.media_sha256 is None
 
 
 def test_to_inbound_message_dto_raises_when_from_is_whitespace_only():

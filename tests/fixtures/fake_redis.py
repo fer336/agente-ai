@@ -69,6 +69,22 @@ class InMemoryFakeRedis:
     async def delete(self, name: str) -> None:
         self._values.pop(name, None)
 
+    async def incr(self, name: str) -> int:
+        current = await self.get(name)
+        new_value = (int(current) if current is not None else 0) + 1
+        existing = self._values.get(name)
+        expires_at = existing[1] if existing is not None else None
+        self._values[name] = (str(new_value).encode(), expires_at)
+        return new_value
+
+    async def expire(self, name: str, seconds: int) -> bool:
+        existing = self._values.get(name)
+        if existing is None:
+            return False
+        value, _ = existing
+        self._values[name] = (value, time.monotonic() + seconds)
+        return True
+
     def lock(
         self,
         name: str,

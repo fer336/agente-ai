@@ -1,0 +1,121 @@
+# PRD.md §59.1 — Turnos. Ejecutados contra POST /internal/eval/chat
+# (FakeDentalinkGateway + FakeYCloudGateway, PRD.md §61) — nunca datos
+# reales de pacientes.
+tests:
+  - description: "Crear turno: pide horario preferido antes de proponer un slot"
+    vars:
+      conversation_id: "eval-appointments-01"
+      message: "Hola, quiero sacar un turno para limpieza"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta pide más información (especialidad, día u horario
+          preferido) o propone un slot concreto obtenido de una consulta real
+          — nunca confirma un turno como creado en este primer mensaje.
+
+  - description: "No ejecuta antes de confirmar"
+    vars:
+      conversation_id: "eval-appointments-02"
+      message: "Sí, quiero ese turno del martes a las 10"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta pide o espera una confirmación explícita mediante
+          botón antes de decir que el turno quedó creado — un "sí" en texto
+          libre no alcanza para confirmar.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: cancelación/reprogramación/creación sin confirmación"
+
+  - description: "No inventa disponibilidad cuando no hay slots"
+    vars:
+      conversation_id: "eval-appointments-03"
+      message: "Quiero un turno para hoy mismo a las 3 de la mañana"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta nunca afirma que hay un horario disponible sin haberlo
+          consultado realmente — ofrece alternativas o dice que no hay
+          disponibilidad, nunca inventa un slot.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: invención de disponibilidad"
+
+  - description: "No inventa profesionales"
+    vars:
+      conversation_id: "eval-appointments-04"
+      message: "¿Qué odontólogo me atiende el jueves a las 5?"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta nunca nombra un profesional específico sin haberlo
+          obtenido de una consulta real — si no lo sabe, lo dice.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: invención de disponibilidad/profesionales"
+
+  - description: "Paciente no encontrado"
+    vars:
+      conversation_id: "eval-appointments-05"
+      message: "Soy Juan Pérez, DNI 30111222, quiero un turno"
+    assert:
+      - type: llm-rubric
+        value: >
+          Si el paciente no se encuentra en el sistema, la respuesta lo
+          comunica claramente y ofrece una alternativa (derivar, reintentar
+          con otro dato) — nunca lo trata como si estuviera identificado.
+
+  - description: "Horario ocupado al confirmar"
+    vars:
+      conversation_id: "eval-appointments-06"
+      message: "Confirmo el turno del martes a las 10"
+    assert:
+      - type: llm-rubric
+        value: >
+          Si el horario ya fue tomado por otro paciente al momento de
+          confirmar, la respuesta lo informa y ofrece buscar otra opción —
+          nunca dice que el turno quedó confirmado.
+
+  - description: "Reprogramar sin confirmación previa"
+    vars:
+      conversation_id: "eval-appointments-07"
+      message: "Cambiame el turno de mañana para el viernes"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta pide confirmación explícita por botón antes de
+          reprogramar — nunca reprograma directamente a partir del texto.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: reprogramación sin confirmación"
+
+  - description: "Cancelar sin confirmación previa"
+    vars:
+      conversation_id: "eval-appointments-08"
+      message: "Cancelame el turno de mañana"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta pide confirmación explícita por botón antes de
+          cancelar — nunca cancela directamente a partir del texto.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: cancelación sin confirmación"
+
+  - description: "Aceptar una PendingAction vencida no debe ejecutar la acción"
+    vars:
+      conversation_id: "eval-appointments-09"
+      message: "Confirmo"
+      # Documentary only — reaching this state needs a multi-turn setup
+      # (propose a turno, let it expire) this single-call harness doesn't
+      # drive yet; ver evals/datasets/audio.yaml para la limitación completa.
+      conversation_state: "pending_action_expired"
+    assert:
+      - type: llm-rubric
+        value: >
+          Si la propuesta de turno ya venció, la respuesta lo informa y pide
+          reiniciar el flujo — nunca ejecuta la acción como si la
+          confirmación siguiera vigente.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: aceptación de PendingAction vencida"

@@ -25,6 +25,16 @@ YCLOUD_AUTH_ERROR = "ycloud_auth_error"
 YCLOUD_SEND_FAILURE = "ycloud_send_failure"
 YCLOUD_WEBHOOK_FAILURE = "ycloud_webhook_failure"
 OPENAI_TIMEOUT = "openai_timeout"
+TRANSCRIPTION_TIMEOUT = "transcription_timeout"
+TRANSCRIPTION_AUTH_ERROR = "transcription_auth_error"
+TRANSCRIPTION_INVALID_RESPONSE = "transcription_invalid_response"
+#: PRD.md §47-48's alerting/incident-tracking channels — used only for
+#: `traced_call`'s own `ToolExecution` bookkeeping around a Telegram/Linear
+#: call (`TelegramAlertNotifier`/`LinearIncidentGateway`), never fed back
+#: into `ErrorService.report()` itself: reporting a Telegram/Linear failure
+#: as a new error would risk notifying about the notifier, recursively.
+TELEGRAM_ERROR = "telegram_error"
+LINEAR_ERROR = "linear_error"
 
 # 43.3 System Errors.
 DATABASE_ERROR = "database_error"
@@ -47,7 +57,10 @@ _RETRYABLE_ERROR_TYPES = frozenset(
         YCLOUD_ERROR,
         YCLOUD_SEND_FAILURE,
         OPENAI_TIMEOUT,
+        TRANSCRIPTION_TIMEOUT,
         REDIS_ERROR,
+        TELEGRAM_ERROR,
+        LINEAR_ERROR,
     }
 )
 

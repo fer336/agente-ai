@@ -134,3 +134,50 @@ async def test_send_text_raises_ycloud_api_error_on_non_2xx_response(
         await client.send_text("+5491122334455", "Hola")
 
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_media_sends_api_key_and_returns_parsed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(
+        monkeypatch,
+        json_response={"url": "https://cdn.ycloud.com/media/1", "mime_type": "audio/ogg"},
+    )
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    result = await client.get_media("media-1")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url == "https://api.ycloud.com/v1/media/media-1"
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    assert request.method == "GET"
+    assert result == {"url": "https://cdn.ycloud.com/media/1", "mime_type": "audio/ogg"}
+
+
+@pytest.mark.asyncio
+async def test_get_media_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError) as exc_info:
+        await client.get_media("missing")
+
+    assert exc_info.value.status_code == 404

@@ -8,6 +8,9 @@ class ConformingConversationRepository:
     async def save(self, conversation):
         return None
 
+    async def list_recent(self, limit=50):
+        return []
+
 
 class PartialConversationRepository:
     async def get_by_id(self, conversation_id):

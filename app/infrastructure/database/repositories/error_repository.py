@@ -50,6 +50,20 @@ class SqlAlchemyErrorRepository:
         )
         return result.scalar_one()
 
+    async def list_recent(self, limit: int = 50) -> list[ErrorRecord]:
+        result = await self._session.execute(
+            select(ErrorModel).order_by(ErrorModel.created_at.desc()).limit(limit)
+        )
+        return [_to_entity(model) for model in result.scalars().all()]
+
+    async def get_by_conversation_id(self, conversation_id: ConversationId) -> list[ErrorRecord]:
+        result = await self._session.execute(
+            select(ErrorModel)
+            .where(ErrorModel.conversation_id == str(conversation_id))
+            .order_by(ErrorModel.created_at.desc())
+        )
+        return [_to_entity(model) for model in result.scalars().all()]
+
 
 def _to_entity(model: ErrorModel) -> ErrorRecord:
     return ErrorRecord(

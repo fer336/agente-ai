@@ -73,3 +73,41 @@ async def test_count_recent_only_counts_matching_source_and_error_type_since(
     )
 
     assert count == 1
+
+
+async def test_list_recent_orders_newest_first_and_respects_limit(
+    db_session, conversation_id, agent_run_id
+):
+    repository = SqlAlchemyErrorRepository(db_session)
+    now = datetime(2026, 8, 11, 9, 0, tzinfo=UTC)
+    for i in range(3):
+        await repository.save(
+            _error(
+                conversation_id,
+                agent_run_id,
+                f"err-recent-{i}",
+                created_at=now + timedelta(minutes=i),
+            )
+        )
+
+    fetched = await repository.list_recent(limit=2)
+
+    assert [e.id for e in fetched] == ["err-recent-2", "err-recent-1"]
+
+
+async def test_get_by_conversation_id_only_returns_matching_errors(
+    db_session, conversation_id, agent_run_id, contact_id
+):
+    from app.infrastructure.database.models.conversation import ConversationModel
+
+    other_conversation = ConversationModel(id="conv-other", contact_id=contact_id, mode="agent")
+    db_session.add(other_conversation)
+    await db_session.flush()
+
+    repository = SqlAlchemyErrorRepository(db_session)
+    await repository.save(_error(conversation_id, agent_run_id, "err-mine"))
+    await repository.save(_error("conv-other", agent_run_id, "err-other"))
+
+    fetched = await repository.get_by_conversation_id(ConversationId(value=conversation_id))
+
+    assert [e.id for e in fetched] == ["err-mine"]

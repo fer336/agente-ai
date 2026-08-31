@@ -10,6 +10,7 @@ from app.api.dependencies.repositories import (
 from app.application.messages.send_reply import SendReplyUseCase
 from app.config.settings import get_settings
 from app.domain.repositories.agent_invoker import AgentInvoker
+from app.domain.repositories.alert_notifier import AlertNotifier
 from app.domain.repositories.gateways import (
     AgreementGateway,
     AppointmentGateway,
@@ -17,13 +18,22 @@ from app.domain.repositories.gateways import (
     MessagingGateway,
     PatientGateway,
 )
+from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
+from app.domain.repositories.media_downloader import MediaDownloader
+from app.domain.repositories.media_gateway import MediaGateway
+from app.domain.repositories.transcription_gateway import TranscriptionGateway
 from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvoker
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
+from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
+from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
+from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
+from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 
 
@@ -131,6 +141,95 @@ def get_llm_provider() -> LLMProvider:
 
 
 @lru_cache
+def _get_fake_transcription_gateway() -> FakeTranscriptionGateway:
+    return FakeTranscriptionGateway()
+
+
+def get_transcription_gateway() -> TranscriptionGateway:
+    """FastAPI dependency providing the `TranscriptionGateway` port.
+
+    Returns the in-memory `FakeTranscriptionGateway` for now. This is the
+    swap point for the real, `httpx`-based
+    `app.infrastructure.transcription.groq_transcription_gateway.GroqTranscriptionGateway`
+    adapter (already implemented, not yet wired here — no live Groq
+    credentials in dev this change) — callers only depend on the
+    `TranscriptionGateway` Protocol.
+    """
+    return _get_fake_transcription_gateway()
+
+
+@lru_cache
+def _get_fake_media_gateway() -> FakeYCloudMediaGateway:
+    return FakeYCloudMediaGateway()
+
+
+def get_media_gateway() -> MediaGateway:
+    """FastAPI dependency providing the `MediaGateway` port.
+
+    Returns the in-memory `FakeYCloudMediaGateway` for now. This is the
+    swap point for the real, `httpx`-based
+    `app.infrastructure.ycloud.media_gateway.YCloudMediaGateway` adapter
+    (already implemented, not yet wired here — no live YCloud credentials
+    in dev this change) — callers only depend on the `MediaGateway`
+    Protocol.
+    """
+    return _get_fake_media_gateway()
+
+
+@lru_cache
+def _get_fake_media_downloader() -> FakeMediaDownloader:
+    return FakeMediaDownloader()
+
+
+def get_media_downloader() -> MediaDownloader:
+    """FastAPI dependency providing the `MediaDownloader` port.
+
+    Returns the in-memory `FakeMediaDownloader` for now. This is the swap
+    point for the real, SSRF-safe
+    `app.infrastructure.media.secure_media_downloader.SecureMediaDownloader`
+    adapter (already implemented, not yet wired here) — callers only depend
+    on the `MediaDownloader` Protocol.
+    """
+    return _get_fake_media_downloader()
+
+
+@lru_cache
+def _get_fake_telegram_notifier() -> FakeTelegramAlertNotifier:
+    return FakeTelegramAlertNotifier()
+
+
+def get_telegram_notifier() -> AlertNotifier:
+    """FastAPI dependency providing the `AlertNotifier` port.
+
+    Returns the in-memory `FakeTelegramAlertNotifier` for now. This is the
+    swap point for the real, `httpx`-based
+    `app.infrastructure.telegram.telegram_alert_notifier.TelegramAlertNotifier`
+    adapter (already implemented, not yet wired here — no live Telegram bot
+    credentials in dev this change) — callers only depend on the
+    `AlertNotifier` Protocol.
+    """
+    return _get_fake_telegram_notifier()
+
+
+@lru_cache
+def _get_fake_linear_gateway() -> FakeLinearIncidentGateway:
+    return FakeLinearIncidentGateway()
+
+
+def get_linear_gateway() -> IncidentGateway:
+    """FastAPI dependency providing the `IncidentGateway` port.
+
+    Returns the in-memory `FakeLinearIncidentGateway` for now. This is the
+    swap point for the real, `httpx`-based
+    `app.infrastructure.linear.linear_incident_gateway.LinearIncidentGateway`
+    adapter (already implemented, not yet wired here — no live Linear
+    credentials in dev this change) — callers only depend on the
+    `IncidentGateway` Protocol.
+    """
+    return _get_fake_linear_gateway()
+
+
+@lru_cache
 def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
     return LangGraphAgentInvoker(
         appointment_gateway=get_appointment_gateway(),
@@ -148,6 +247,11 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         model=get_settings().openai_model,
         alert_threshold_count=get_settings().alert_timeout_threshold_count,
         alert_window_seconds=get_settings().alert_timeout_threshold_window_seconds,
+        telegram_notifier=get_telegram_notifier(),
+        linear_gateway=get_linear_gateway(),
+        incident_threshold_count=get_settings().incident_threshold_count,
+        incident_threshold_window_seconds=get_settings().incident_threshold_window_seconds,
+        telegram_alert_cooldown_seconds=get_settings().telegram_alert_cooldown_seconds,
         checkpointer_provider=get_agent_checkpointer,
     )
 

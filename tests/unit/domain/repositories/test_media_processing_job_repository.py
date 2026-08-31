@@ -14,6 +14,9 @@ class ConformingMediaProcessingJobRepository:
     async def transition_status(self, job_id, *, from_status, to_status):
         return False
 
+    async def list_pending(self, limit):
+        return []
+
 
 class PartialMediaProcessingJobRepository:
     async def get_by_id(self, job_id):

@@ -18,6 +18,7 @@ from app.application.observability.trace_repositories import TraceRepositoriesPr
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF, RUNNING, AgentRun
 from app.domain.entities.node_execution import FAILED as NODE_EXECUTION_FAILED
 from app.domain.entities.node_execution import NodeExecution
+from app.domain.repositories.alert_notifier import AlertNotifier
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import (
@@ -26,6 +27,7 @@ from app.domain.repositories.gateways import (
     HumanHandoffGateway,
     PatientGateway,
 )
+from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.conversation_id import ConversationId
 
@@ -112,6 +114,11 @@ class LangGraphAgentInvoker:
         model: str,
         alert_threshold_count: int,
         alert_window_seconds: int,
+        telegram_notifier: AlertNotifier,
+        linear_gateway: IncidentGateway,
+        incident_threshold_count: int,
+        incident_threshold_window_seconds: int,
+        telegram_alert_cooldown_seconds: int,
         checkpointer_provider: CheckpointerProvider | None = None,
     ) -> None:
         self._appointment_gateway = appointment_gateway
@@ -129,6 +136,11 @@ class LangGraphAgentInvoker:
         self._model = model
         self._alert_threshold_count = alert_threshold_count
         self._alert_window_seconds = alert_window_seconds
+        self._telegram_notifier = telegram_notifier
+        self._linear_gateway = linear_gateway
+        self._incident_threshold_count = incident_threshold_count
+        self._incident_threshold_window_seconds = incident_threshold_window_seconds
+        self._telegram_alert_cooldown_seconds = telegram_alert_cooldown_seconds
         self._checkpointer_provider = checkpointer_provider
 
     async def handle(
@@ -158,8 +170,14 @@ class LangGraphAgentInvoker:
         async with self._trace_repositories_provider() as trace_repositories:
             error_service = ErrorService(
                 trace_repositories.errors,
+                trace_repositories.incidents,
+                self._telegram_notifier,
+                self._linear_gateway,
                 alert_threshold_count=self._alert_threshold_count,
                 alert_window_seconds=self._alert_window_seconds,
+                incident_threshold_count=self._incident_threshold_count,
+                incident_threshold_window_seconds=self._incident_threshold_window_seconds,
+                telegram_alert_cooldown_seconds=self._telegram_alert_cooldown_seconds,
             )
             await trace_repositories.agent_runs.save(
                 AgentRun(

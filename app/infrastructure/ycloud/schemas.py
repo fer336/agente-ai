@@ -31,6 +31,20 @@ class YCloudInteractive(BaseModel):
     button_reply: YCloudButtonReply | None = None
 
 
+class YCloudAudioMessage(BaseModel):
+    """`type="audio"` payload shape (PRD.md §24.1), following the same Meta
+    WhatsApp Cloud API convention every media message type uses: only an
+    opaque `id` + `mime_type` are delivered in the webhook — the actual
+    download URL is resolved separately via `GET /v1/media/{id}`
+    (`YCloudMediaGateway`). `sha256` is optional (not every vendor/media
+    type reports one).
+    """
+
+    id: str = ""
+    mime_type: str = ""
+    sha256: str | None = None
+
+
 class YCloudInboundMessage(BaseModel):
     id: str = ""
     from_: str = Field(default="", alias="from")
@@ -38,6 +52,7 @@ class YCloudInboundMessage(BaseModel):
     type: str = ""
     text: YCloudText | None = None
     interactive: YCloudInteractive | None = None
+    audio: YCloudAudioMessage | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 

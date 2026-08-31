@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, asc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.media_processing_job import MediaProcessingJob
@@ -41,7 +41,18 @@ class SqlAlchemyMediaProcessingJobRepository:
         model.media_id = job.media_id
         model.media_mime_type = job.media_mime_type
         model.attempts = job.attempts
+        model.last_error = job.last_error
+        model.completed_at = job.completed_at
         await self._session.flush()
+
+    async def list_pending(self, limit: int) -> list[MediaProcessingJob]:
+        result = await self._session.execute(
+            select(MediaProcessingJobModel)
+            .where(MediaProcessingJobModel.status == "pending")
+            .order_by(asc(MediaProcessingJobModel.created_at))
+            .limit(limit)
+        )
+        return [_to_entity(model) for model in result.scalars().all()]
 
     async def transition_status(self, job_id: str, *, from_status: str, to_status: str) -> bool:
         result = await self._session.execute(
@@ -64,4 +75,7 @@ def _to_entity(model: MediaProcessingJobModel) -> MediaProcessingJob:
         media_id=model.media_id,
         media_mime_type=model.media_mime_type,
         attempts=model.attempts,
+        last_error=model.last_error,
+        created_at=model.created_at,
+        completed_at=model.completed_at,
     )

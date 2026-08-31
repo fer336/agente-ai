@@ -17,6 +17,7 @@ dependencies = [
     "alembic",
     "redis",
     "httpx",
+    "mutagen",
 ]
 
 [project.optional-dependencies]

@@ -14,6 +14,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact import Contact
 from app.domain.entities.conversation import Conversation
 from app.domain.entities.error_record import SEVERITY_INFO, SOURCE_APPLICATION, ErrorRecord
+from app.domain.entities.incident import INCIDENT_OPEN, Incident
 from app.domain.entities.message import Message
 from app.domain.entities.node_execution import COMPLETED as NODE_EXECUTION_COMPLETED
 from app.domain.entities.node_execution import NodeExecution
@@ -171,6 +172,30 @@ def make_ycloud_button_reply_payload(
                 "type": "button_reply",
                 "button_reply": {"id": button_id, "title": button_title},
             },
+        },
+    }
+
+
+def make_ycloud_audio_payload(
+    whatsapp_number: str = "+5491100000001",
+    media_id: str = "media-1",
+    mime_type: str = "audio/ogg",
+    sha256: str | None = None,
+    external_message_id: str = "wamid.audio-1",
+    from_phone: str = "+5491122334455",
+) -> dict[str, object]:
+    """Raw YCloud `type="audio"` webhook JSON body, valid-by-default (PRD.md §24.1)."""
+    audio: dict[str, object] = {"id": media_id, "mime_type": mime_type}
+    if sha256 is not None:
+        audio["sha256"] = sha256
+    return {
+        "type": "whatsapp.inbound_message.received",
+        "whatsappInboundMessage": {
+            "id": external_message_id,
+            "from": from_phone,
+            "to": whatsapp_number,
+            "type": "audio",
+            "audio": audio,
         },
     }
 
@@ -356,5 +381,40 @@ def make_error_record(
         severity=severity,
         retryable=retryable,
         created_at=created_at if created_at is not None else datetime.now(UTC),
+        resolved_at=resolved_at,
+    )
+
+
+def make_incident(
+    id_: str = "inc-1",
+    fingerprint: str = "dentalink:dentalink_timeout:search_availability",
+    source: str = SOURCE_APPLICATION,
+    error_type: str = "dentalink_timeout",
+    operation: str | None = "search_availability",
+    severity: str = "ERROR",
+    occurrences: int = 1,
+    affected_conversations: int = 1,
+    first_seen: datetime | None = None,
+    last_seen: datetime | None = None,
+    status: str = INCIDENT_OPEN,
+    linear_issue_id: str | None = None,
+    last_notification_at: datetime | None = None,
+    resolved_at: datetime | None = None,
+) -> Incident:
+    now = datetime.now(UTC)
+    return Incident(
+        id=id_,
+        fingerprint=fingerprint,
+        source=source,
+        error_type=error_type,
+        operation=operation,
+        severity=severity,
+        occurrences=occurrences,
+        affected_conversations=affected_conversations,
+        first_seen=first_seen if first_seen is not None else now,
+        last_seen=last_seen if last_seen is not None else now,
+        status=status,
+        linear_issue_id=linear_issue_id,
+        last_notification_at=last_notification_at,
         resolved_at=resolved_at,
     )

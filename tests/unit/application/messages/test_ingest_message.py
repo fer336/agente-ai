@@ -27,6 +27,7 @@ from tests.fixtures.gateways import (
     make_agent_invoker,
     make_contact_repository,
     make_conversation_repository,
+    make_media_processing_job_repository,
     make_message_repository,
 )
 from tests.fixtures.seed_objects import make_conversation, make_message
@@ -48,14 +49,35 @@ def _make_dto(
     )
 
 
+def _make_audio_dto(
+    external_message_id: str = "wamid.audio-1",
+    from_phone: str = "+5491122334455",
+    media_id: str = "media-1",
+    media_mime_type: str = "audio/ogg",
+    media_sha256: str | None = None,
+) -> InboundMessageDTO:
+    return InboundMessageDTO(
+        external_message_id=external_message_id,
+        from_phone=PhoneNumber(from_phone),
+        text="",
+        button_payload=None,
+        message_type="audio",
+        media_id=media_id,
+        media_mime_type=media_mime_type,
+        media_sha256=media_sha256,
+    )
+
+
 def _build_use_case(
     message_repository=None,
     contact_repository=None,
     conversation_repository=None,
+    media_processing_job_repository=None,
     redis_client=None,
     debounce_tracker=None,
     agent_invoker=None,
     debounce_seconds: int = _DEBOUNCE_SECONDS,
+    audio_rate_limit_per_minute: int = 0,
 ) -> IngestMessageUseCase:
     message_repository = (
         message_repository if message_repository is not None else make_message_repository()
@@ -67,6 +89,11 @@ def _build_use_case(
         conversation_repository
         if conversation_repository is not None
         else make_conversation_repository()
+    )
+    media_processing_job_repository = (
+        media_processing_job_repository
+        if media_processing_job_repository is not None
+        else make_media_processing_job_repository()
     )
     redis_client = redis_client if redis_client is not None else InMemoryFakeRedis()
     debounce_tracker = (
@@ -82,6 +109,7 @@ def _build_use_case(
             messages=message_repository,
             contacts=contact_repository,
             conversations=conversation_repository,
+            media_processing_jobs=media_processing_job_repository,
         )
 
     return IngestMessageUseCase(
@@ -90,6 +118,7 @@ def _build_use_case(
         redis_client=redis_client,
         agent_invoker=agent_invoker,
         debounce_seconds=debounce_seconds,
+        audio_rate_limit_per_minute=audio_rate_limit_per_minute,
     )
 
 
@@ -345,3 +374,155 @@ async def test_concurrent_ingestion_for_a_new_phone_can_race_and_create_duplicat
         "same phone — if this now produces 1, the race has been fixed and this test "
         "should be rewritten to assert the fix instead of the known limitation"
     )
+
+
+@pytest.mark.asyncio
+async def test_audio_message_is_persisted_with_media_metadata_and_no_debounce():
+    message_repository = make_message_repository()
+    redis_client = InMemoryFakeRedis()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        message_repository=message_repository,
+        redis_client=redis_client,
+        agent_invoker=agent_invoker,
+    )
+
+    await use_case.execute(
+        _make_audio_dto(media_id="media-1", media_mime_type="audio/ogg", media_sha256="abc123")
+    )
+
+    messages = list(message_repository._messages_by_id.values())
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.message_type == "audio"
+    assert message.text == ""
+    assert message.media_id == "media-1"
+    assert message.media_mime_type == "audio/ogg"
+    assert message.media_sha256 == "abc123"
+    assert message.media_status == "pending"
+    # No debounce/agent-invocation yet — there is no transcript.
+    assert agent_invoker.calls == []
+    assert (
+        await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_audio_message_creates_a_pending_media_processing_job():
+    media_processing_job_repository = make_media_processing_job_repository()
+    use_case = _build_use_case(media_processing_job_repository=media_processing_job_repository)
+
+    await use_case.execute(_make_audio_dto(media_id="media-1", media_mime_type="audio/ogg"))
+
+    pending = await media_processing_job_repository.list_pending(limit=10)
+    assert len(pending) == 1
+    assert pending[0].media_id == "media-1"
+    assert pending[0].media_mime_type == "audio/ogg"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_audio_external_id_is_ignored():
+    message_repository = make_message_repository()
+    media_processing_job_repository = make_media_processing_job_repository()
+    use_case = _build_use_case(
+        message_repository=message_repository,
+        media_processing_job_repository=media_processing_job_repository,
+    )
+    await use_case.execute(_make_audio_dto(external_message_id="wamid.audio-dup"))
+
+    await use_case.execute(_make_audio_dto(external_message_id="wamid.audio-dup"))
+
+    assert len(message_repository._messages_by_id) == 1
+    assert len(await media_processing_job_repository.list_pending(limit=10)) == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_message_persisted_even_when_conversation_is_human_mode():
+    # A human in the shared inbox still benefits from the eventual
+    # transcript — only forwarding to the agent is gated on mode, and only
+    # once a transcript exists (see resume_after_transcription tests below).
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="human"))
+    message_repository = make_message_repository()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, message_repository=message_repository
+    )
+
+    await use_case.execute(_make_audio_dto())
+
+    assert len(message_repository._messages_by_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_rate_limit_drops_message_past_the_configured_threshold():
+    message_repository = make_message_repository()
+    media_processing_job_repository = make_media_processing_job_repository()
+    use_case = _build_use_case(
+        message_repository=message_repository,
+        media_processing_job_repository=media_processing_job_repository,
+        audio_rate_limit_per_minute=2,
+    )
+
+    await use_case.execute(_make_audio_dto(external_message_id="wamid.audio-1"))
+    await use_case.execute(_make_audio_dto(external_message_id="wamid.audio-2"))
+    await use_case.execute(_make_audio_dto(external_message_id="wamid.audio-3"))
+
+    assert len(message_repository._messages_by_id) == 2
+    assert len(await media_processing_job_repository.list_pending(limit=10)) == 2
+
+
+@pytest.mark.asyncio
+async def test_audio_rate_limit_disabled_by_default():
+    message_repository = make_message_repository()
+    use_case = _build_use_case(message_repository=message_repository)
+
+    for i in range(10):
+        await use_case.execute(_make_audio_dto(external_message_id=f"wamid.audio-{i}"))
+
+    assert len(message_repository._messages_by_id) == 10
+
+
+@pytest.mark.asyncio
+async def test_resume_after_transcription_schedules_debounce_with_no_button_payload():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        debounce_seconds=0.05,
+    )
+
+    await use_case.resume_after_transcription(
+        ConversationId("ycloud-+5491122334455"), "msg-audio-1", "hola quiero un turno"
+    )
+    await asyncio.sleep(0.15)
+
+    assert len(agent_invoker.calls) == 1
+    conversation_id, message_ids, user_message, button_payload = agent_invoker.calls[0]
+    assert conversation_id == ConversationId("ycloud-+5491122334455")
+    assert message_ids == ["msg-audio-1"]
+    assert user_message == "hola quiero un turno"
+    assert button_payload is None
+
+
+@pytest.mark.asyncio
+async def test_resume_after_transcription_does_not_forward_when_conversation_is_human():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="human"))
+    agent_invoker = make_agent_invoker()
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        redis_client=redis_client,
+        debounce_seconds=0.05,
+    )
+
+    await use_case.resume_after_transcription(
+        ConversationId("ycloud-+5491122334455"), "msg-audio-1", "hola quiero un turno"
+    )
+    await asyncio.sleep(0.1)
+
+    assert agent_invoker.calls == []
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None

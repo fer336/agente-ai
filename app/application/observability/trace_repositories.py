@@ -4,24 +4,27 @@ from dataclasses import dataclass
 
 from app.domain.repositories.agent_run_repository import AgentRunRepository
 from app.domain.repositories.error_repository import ErrorRepository
+from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.repositories.node_execution_repository import NodeExecutionRepository
 from app.domain.repositories.tool_execution_repository import ToolExecutionRepository
 
 
 @dataclass(frozen=True)
 class TraceRepositories:
-    """Bundles the four repositories PRD.md §38's traceability layer needs
-    (`agent_runs`/`node_executions`/`tool_executions`/`errors`, §39-42).
+    """Bundles the five repositories PRD.md §38's traceability layer needs
+    (`agent_runs`/`node_executions`/`tool_executions`/`errors`/`incidents`,
+    §39-42, §49).
 
     Shared across `LangGraphAgentInvoker` (agent runs + node executions),
-    the gateways (tool executions), and `ErrorService` (errors) — owned by
-    none of them individually, unlike e.g. `ProposalRepositories`.
+    the gateways (tool executions), and `ErrorService` (errors + incidents)
+    — owned by none of them individually, unlike e.g. `ProposalRepositories`.
     """
 
     agent_runs: AgentRunRepository
     node_executions: NodeExecutionRepository
     tool_executions: ToolExecutionRepository
     errors: ErrorRepository
+    incidents: IncidentRepository
 
 
 # A zero-arg async context manager factory yielding a fresh `TraceRepositories`

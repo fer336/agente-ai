@@ -4,6 +4,7 @@ import pytest
 
 from app.domain.entities.error_record import SOURCE_DENTALINK
 from app.domain.repositories.error_repository import ErrorRepository
+from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
 from tests.fixtures.gateways import make_error_repository
 from tests.fixtures.seed_objects import make_error_record
@@ -65,3 +66,28 @@ async def test_count_recent_only_counts_matching_source_and_error_type_since():
 
 def test_fake_error_repository_satisfies_protocol():
     assert isinstance(FakeErrorRepository(), ErrorRepository)
+
+
+@pytest.mark.asyncio
+async def test_list_recent_orders_newest_first_and_respects_limit():
+    repository = make_error_repository()
+    now = datetime(2026, 8, 11, 9, 0, tzinfo=UTC)
+    for i in range(3):
+        await repository.save(
+            make_error_record(id_=f"err-recent-{i}", created_at=now + timedelta(minutes=i))
+        )
+
+    fetched = await repository.list_recent(limit=2)
+
+    assert [e.id for e in fetched] == ["err-recent-2", "err-recent-1"]
+
+
+@pytest.mark.asyncio
+async def test_get_by_conversation_id_only_returns_matching_errors():
+    repository = make_error_repository()
+    await repository.save(make_error_record(id_="err-mine", conversation_id="conv-1"))
+    await repository.save(make_error_record(id_="err-other", conversation_id="conv-2"))
+
+    fetched = await repository.get_by_conversation_id(ConversationId("conv-1"))
+
+    assert [e.id for e in fetched] == ["err-mine"]

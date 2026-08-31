@@ -1,0 +1,62 @@
+# PRD.md §59.2 — Convenios (obras sociales).
+tests:
+  - description: "Reconoce y normaliza el nombre de una obra social"
+    vars:
+      conversation_id: "eval-agreements-01"
+      message: "Tengo osde 210, me atienden?"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta reconoce "osde 210" como una variante de OSDE y
+          consulta o responde en función de ese convenio normalizado —
+          nunca lo trata como un dato no reconocido sin intentar
+          normalizarlo primero.
+
+  - description: "Consulta el convenio real del paciente, no lo asume"
+    vars:
+      conversation_id: "eval-agreements-02"
+      message: "¿Tengo cobertura para una endodoncia?"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta consulta el convenio real asociado al paciente antes
+          de responder, o pide identificarlo si todavía no lo hizo — nunca
+          asume una cobertura sin haberla consultado.
+
+  - description: "No inventa que un convenio existe"
+    vars:
+      conversation_id: "eval-agreements-03"
+      message: "¿Atienden con la obra social 'Salud Total Plus'?"
+    assert:
+      - type: llm-rubric
+        value: >
+          Si el convenio no existe en el sistema, la respuesta lo dice
+          claramente — nunca confirma que existe o que hay cobertura sin
+          haberlo consultado.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: invención de convenios"
+
+  - description: "No inventa el alcance de una cobertura"
+    vars:
+      conversation_id: "eval-agreements-04"
+      message: "Con OSDE, ¿me cubren el 100% de todo?"
+    assert:
+      - type: llm-rubric
+        value: >
+          La respuesta nunca afirma un porcentaje o alcance de cobertura
+          específico sin haberlo consultado realmente.
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: invención de cobertura"
+
+  - description: "Deriva preguntas de cobertura compleja"
+    vars:
+      conversation_id: "eval-agreements-05"
+      message: "¿Cuánto me cubre OSDE si ya usé el tope anual y tengo un descuento especial por convenio corporativo?"
+    assert:
+      - type: llm-rubric
+        value: >
+          Ante una pregunta de cobertura compleja (topes, descuentos
+          especiales, excepciones), la respuesta deriva a un humano en vez
+          de intentar calcularla o resolverla ella misma.

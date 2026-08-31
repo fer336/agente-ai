@@ -28,15 +28,36 @@ from app.domain.entities.error_record import (
     SOURCE_DENTALINK,
 )
 from app.domain.value_objects.conversation_id import ConversationId
-from tests.fixtures.gateways import make_error_repository
+from tests.fixtures.gateways import (
+    make_error_repository,
+    make_incident_repository,
+    make_linear_gateway,
+    make_telegram_notifier,
+)
 from tests.fixtures.seed_objects import make_error_record
 
 
-def _service(repository=None, threshold_count=5, window_seconds=120) -> ErrorService:
+def _service(
+    repository=None,
+    threshold_count=5,
+    window_seconds=120,
+    incident_repository=None,
+    telegram_notifier=None,
+    linear_gateway=None,
+    incident_threshold_count=10,
+    incident_threshold_window_seconds=300,
+    telegram_alert_cooldown_seconds=900,
+) -> ErrorService:
     return ErrorService(
         repository or make_error_repository(),
+        incident_repository if incident_repository is not None else make_incident_repository(),
+        telegram_notifier if telegram_notifier is not None else make_telegram_notifier(),
+        linear_gateway if linear_gateway is not None else make_linear_gateway(),
         alert_threshold_count=threshold_count,
         alert_window_seconds=window_seconds,
+        incident_threshold_count=incident_threshold_count,
+        incident_threshold_window_seconds=incident_threshold_window_seconds,
+        telegram_alert_cooldown_seconds=telegram_alert_cooldown_seconds,
     )
 
 
@@ -196,3 +217,152 @@ async def test_report_marks_business_errors_as_not_retryable():
     )
 
     assert error.retryable is False
+
+
+# --- Incident dedup + Telegram/Linear (PRD.md §47-51) --------------------
+
+
+@pytest.mark.asyncio
+async def test_report_creates_one_incident_and_updates_it_on_a_repeat_fingerprint():
+    incident_repository = make_incident_repository()
+    service = _service(incident_repository=incident_repository)
+
+    await service.report(
+        source=SOURCE_APPLICATION,
+        error_type=GRAPH_STATE_ERROR,
+        message="boom",
+        conversation_id=ConversationId(value="conv-1"),
+        operation="some_node",
+    )
+    await service.report(
+        source=SOURCE_APPLICATION,
+        error_type=GRAPH_STATE_ERROR,
+        message="boom again",
+        conversation_id=ConversationId(value="conv-2"),
+        operation="some_node",
+    )
+
+    open_incidents = await incident_repository.list_open()
+    assert len(open_incidents) == 1
+    incident = open_incidents[0]
+    assert incident.fingerprint == "application:graph_state_error:some_node"
+    assert incident.occurrences == 2
+    assert incident.affected_conversations == 2
+
+
+@pytest.mark.asyncio
+async def test_report_never_touches_incidents_telegram_or_linear_for_warning():
+    incident_repository = make_incident_repository()
+    telegram_notifier = make_telegram_notifier()
+    linear_gateway = make_linear_gateway()
+    service = _service(
+        incident_repository=incident_repository,
+        telegram_notifier=telegram_notifier,
+        linear_gateway=linear_gateway,
+    )
+
+    await service.report(
+        source=SOURCE_APPLICATION, error_type=APPOINTMENT_SLOT_TAKEN, message="slot taken"
+    )
+
+    assert await incident_repository.list_open() == []
+    assert telegram_notifier.sent_messages == []
+    assert linear_gateway.created_issues == []
+
+
+@pytest.mark.asyncio
+async def test_report_always_notifies_telegram_for_error_severity():
+    telegram_notifier = make_telegram_notifier()
+    service = _service(telegram_notifier=telegram_notifier)
+
+    await service.report(source=SOURCE_APPLICATION, error_type=GRAPH_STATE_ERROR, message="boom")
+
+    assert len(telegram_notifier.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_only_syncs_linear_for_error_severity_past_the_incident_threshold():
+    linear_gateway = make_linear_gateway()
+    service = _service(linear_gateway=linear_gateway, incident_threshold_count=3)
+
+    for i in range(2):
+        await service.report(
+            source=SOURCE_APPLICATION, error_type=GRAPH_STATE_ERROR, message=f"boom {i}"
+        )
+    assert linear_gateway.created_issues == []
+
+    await service.report(source=SOURCE_APPLICATION, error_type=GRAPH_STATE_ERROR, message="boom 3")
+
+    assert len(linear_gateway.created_issues) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_always_notifies_telegram_and_syncs_linear_for_critical():
+    telegram_notifier = make_telegram_notifier()
+    linear_gateway = make_linear_gateway()
+    service = _service(telegram_notifier=telegram_notifier, linear_gateway=linear_gateway)
+
+    await service.report(
+        source=SOURCE_APPLICATION, error_type=UNEXPECTED_EXCEPTION, message="crashed"
+    )
+
+    assert len(telegram_notifier.sent_messages) == 1
+    assert len(linear_gateway.created_issues) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_reuses_the_same_linear_issue_on_a_repeat_past_threshold():
+    linear_gateway = make_linear_gateway()
+    service = _service(linear_gateway=linear_gateway)
+
+    for i in range(2):
+        await service.report(
+            source=SOURCE_APPLICATION, error_type=UNEXPECTED_EXCEPTION, message=f"crash {i}"
+        )
+
+    assert len(linear_gateway.created_issues) == 1
+    assert len(linear_gateway.comments) == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_cooldown_suppresses_a_second_notification_within_the_window():
+    telegram_notifier = make_telegram_notifier()
+    service = _service(telegram_notifier=telegram_notifier, telegram_alert_cooldown_seconds=900)
+
+    await service.report(
+        source=SOURCE_APPLICATION, error_type=UNEXPECTED_EXCEPTION, message="crash 1"
+    )
+    await service.report(
+        source=SOURCE_APPLICATION, error_type=UNEXPECTED_EXCEPTION, message="crash 2"
+    )
+
+    assert len(telegram_notifier.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_notifies_again_after_the_cooldown_elapses():
+    incident_repository = make_incident_repository()
+    telegram_notifier = make_telegram_notifier()
+    service = _service(
+        incident_repository=incident_repository,
+        telegram_notifier=telegram_notifier,
+        telegram_alert_cooldown_seconds=900,
+    )
+
+    await service.report(
+        source=SOURCE_APPLICATION, error_type=UNEXPECTED_EXCEPTION, message="crash 1"
+    )
+    assert len(telegram_notifier.sent_messages) == 1
+
+    # Simulate the cooldown having elapsed by rewinding the incident's own
+    # `last_notification_at` — avoids monkeypatching `datetime.now` just to
+    # exercise this one comparison.
+    incident = (await incident_repository.list_open())[0]
+    incident.last_notification_at = incident.last_notification_at - timedelta(seconds=1000)
+    await incident_repository.update(incident)
+
+    await service.report(
+        source=SOURCE_APPLICATION, error_type=UNEXPECTED_EXCEPTION, message="crash 2"
+    )
+
+    assert len(telegram_notifier.sent_messages) == 2

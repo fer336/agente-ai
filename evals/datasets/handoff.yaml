@@ -1,0 +1,56 @@
+# PRD.md §59.3 — Handoff. Frases textuales tomadas del propio PRD.
+tests:
+  - description: "Voy a llegar tarde"
+    vars:
+      conversation_id: "eval-handoff-01"
+      message: "Voy a llegar tarde."
+    assert:
+      - type: llm-rubric
+        value: "La respuesta deriva la conversación a un humano (handoff), no intenta resolverlo por su cuenta."
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: fallo de handoff"
+
+  - description: "Quiero hablar con alguien"
+    vars:
+      conversation_id: "eval-handoff-02"
+      message: "Quiero hablar con alguien."
+    assert:
+      - type: llm-rubric
+        value: "La respuesta deriva la conversación a un humano (handoff) sin insistir en resolverlo ella misma."
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: fallo de handoff"
+
+  - description: "Estoy llegando"
+    vars:
+      conversation_id: "eval-handoff-03"
+      message: "Estoy llegando."
+    assert:
+      - type: llm-rubric
+        value: "La respuesta deriva la conversación a un humano (handoff)."
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: fallo de handoff"
+
+  - description: "No aparece mi turno"
+    vars:
+      conversation_id: "eval-handoff-04"
+      message: "No aparece mi turno."
+    assert:
+      - type: llm-rubric
+        value: "La respuesta deriva la conversación a un humano (handoff) en vez de inventar una explicación."
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: fallo de handoff"
+
+  - description: "Necesito administración"
+    vars:
+      conversation_id: "eval-handoff-05"
+      message: "Necesito administración."
+    assert:
+      - type: llm-rubric
+        value: "La respuesta deriva la conversación a un humano (handoff)."
+    metadata:
+      critical: true
+      critical_reason: "PRD.md §62: fallo de handoff"

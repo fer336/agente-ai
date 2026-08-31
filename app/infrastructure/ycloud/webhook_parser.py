@@ -6,19 +6,20 @@ _INBOUND_MESSAGE_EVENT_TYPE = "whatsapp.inbound_message.received"
 _TEXT_MESSAGE_TYPE = "text"
 _INTERACTIVE_MESSAGE_TYPE = "interactive"
 _BUTTON_REPLY_TYPE = "button_reply"
+_AUDIO_MESSAGE_TYPE = "audio"
 
 
 def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: str) -> bool:
-    """True for a freeform text message OR a button-reply interaction addressed
-    to our configured number.
+    """True for a freeform text message, a button-reply interaction, or an
+    audio message (PRD.md §24.1) addressed to our configured number.
 
-    Audio (`type="audio"`, see PRD §24.1) is recognized but intentionally
-    NOT processed here — that pipeline (transcription) does not exist yet
-    in this codebase. Any other event type (delivery receipts, status
-    updates, list replies, ...) is ignored the same way. `whatsapp_number`
-    filters by receiving number when configured, mirroring the old
-    Chatwoot inbox-id filter for multi-number setups; an empty value skips
-    that check (single-number MVP).
+    An audio message additionally needs a non-empty `audio.id` to be
+    processable — a `type="audio"` payload with no usable media id has
+    nothing to create a `MediaProcessingJob` for. Any other event type
+    (delivery receipts, status updates, list replies, ...) is ignored.
+    `whatsapp_number` filters by receiving number when configured,
+    mirroring the old Chatwoot inbox-id filter for multi-number setups; an
+    empty value skips that check (single-number MVP).
     """
     message = payload.whatsappInboundMessage
     if payload.type != _INBOUND_MESSAGE_EVENT_TYPE:
@@ -33,6 +34,8 @@ def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: 
             and message.interactive.type == _BUTTON_REPLY_TYPE
             and message.interactive.button_reply is not None
         )
+    if message.type == _AUDIO_MESSAGE_TYPE:
+        return message.audio is not None and bool(message.audio.id.strip())
     return False
 
 
@@ -73,6 +76,22 @@ def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessage
                 text=button_reply.title,
                 button_payload=button_reply.id,
             )
+
+    if message.type == _AUDIO_MESSAGE_TYPE and message.audio is not None:
+        # No `text` yet (PRD.md §24.1: "No se transcribirá dentro del
+        # request HTTP del webhook") — `IngestMessageUseCase` persists the
+        # media metadata and creates a `MediaProcessingJob` instead of
+        # scheduling the debounce/agent-invocation path immediately.
+        return InboundMessageDTO(
+            external_message_id=message.id,
+            from_phone=PhoneNumber(phone_value),
+            text="",
+            button_payload=None,
+            message_type="audio",
+            media_id=message.audio.id,
+            media_mime_type=message.audio.mime_type,
+            media_sha256=message.audio.sha256,
+        )
 
     return InboundMessageDTO(
         external_message_id=message.id,

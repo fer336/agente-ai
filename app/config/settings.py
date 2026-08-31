@@ -67,6 +67,80 @@ class Settings(BaseSettings):
     alert_timeout_threshold_count: int = 5
     alert_timeout_threshold_window_seconds: int = 120
 
+    #: Audio/transcription pipeline (PRD.md §24, §68, §74.7). PRD.md §68's
+    #: template names this `OPENAI_TRANSCRIPTION_MODEL` — this codebase's
+    #: chosen provider is Groq instead (user decision), so the env var
+    #: names below follow Groq's own naming, not the PRD template verbatim.
+    groq_api_key: str = ""
+    groq_api_url: str = "https://api.groq.com/openai/v1"
+    groq_transcription_model: str = "whisper-large-v3-turbo"
+
+    audio_max_size_bytes: int = 16_777_216
+    audio_max_duration_seconds: int = 180
+    audio_download_timeout_seconds: float = 20
+    audio_transcription_timeout_seconds: float = 45
+    audio_allowed_mime_types: str = "audio/ogg,audio/mpeg,audio/mp4,audio/aac"
+    #: PRD.md §24.3: "Eliminar el temporal después de transcribir o fallar
+    #: definitivamente" is a hard security requirement, not an optional
+    #: behavior — `TranscribeAudioUseCase` always deletes its temp file
+    #: unconditionally and does not read this setting. Kept only so
+    #: `.env.example` documents the PRD-named var; wiring a real opt-out
+    #: would contradict §74.7's "no almacenar permanentemente" mandate.
+    audio_delete_after_processing: bool = True
+    audio_rate_limit_per_conversation_per_minute: int = 5
+    #: Extra hostnames `SecureMediaDownloader` may fetch from, beyond
+    #: `ycloud_api_url`'s own host (comma-separated) — a vendor's media CDN
+    #: is often a different domain than its REST API.
+    ycloud_media_allowed_hosts: str = ""
+
+    #: Admin panel (PRD.md §44, §74.3). Empty by default, same convention as
+    #: every other still-unconfigured secret in this file — a deploy MUST
+    #: set a real secret before the panel is reachable with a valid signed
+    #: session (an empty secret still signs/verifies internally-consistently,
+    #: it's just a guessable one, so `Settings` doesn't refuse to start on
+    #: it — same posture as `ycloud_webhook_secret`).
+    admin_session_secret: str = ""
+    admin_session_ttl_seconds: int = 3600
+    #: PRD.md §61's internal evaluation endpoint (`POST /internal/eval/chat`)
+    #: — PRD.md §74.3's last line requires it "deshabilitado en producción
+    #: salvo necesidad expresa, autenticación fuerte y restricción de red",
+    #: hence off by default. Even when enabled it still requires a valid
+    #: admin session (see `app.api.routes.internal_eval`) — the network
+    #: restriction half of that requirement is a deployment/infra concern
+    #: this flag cannot enforce by itself.
+    internal_eval_enabled: bool = False
+
+    #: Incident deduplication + Telegram + Linear (PRD.md §47-51, Etapa 9's
+    #: remaining scope). Empty by default, same convention as every other
+    #: still-unconfigured secret in this file — `TelegramAlertNotifier`/
+    #: `LinearIncidentGateway` are Fake-wired by default in DI (no live
+    #: Telegram bot or Linear workspace credentials in this environment).
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    linear_api_key: str = ""
+    #: Linear issue creation is scoped to one team — required to build a
+    #: `LinearIncidentGateway.create_issue` GraphQL mutation.
+    linear_team_id: str = ""
+
+    #: PRD.md §50's suggested defaults — distinct from `alert_timeout_
+    #: threshold_count`/`_window_seconds` above (those decide WARNING→ERROR
+    #: severity escalation per §46; these decide ERROR→"create/update a
+    #: Linear issue" per §46's "Linear podrá crearse si el problema supera
+    #: el umbral definido").
+    incident_threshold_count: int = 10
+    incident_threshold_window_seconds: int = 300
+    #: PRD.md §50 — suppresses a duplicate Telegram notification for the
+    #: same incident fingerprint within this many seconds, so a burst of
+    #: identical errors sends one alert, not one per error.
+    telegram_alert_cooldown_seconds: int = 900
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def audio_allowed_mime_types_set(self) -> frozenset[str]:
+        return frozenset(
+            value.strip() for value in self.audio_allowed_mime_types.split(",") if value.strip()
+        )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:

@@ -1,7 +1,30 @@
+from datetime import UTC, datetime
+
 from app.domain.entities.media_processing_job import MediaProcessingJob
+from app.domain.entities.message import Message
+from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.infrastructure.database.repositories.media_processing_job_repository import (
     SqlAlchemyMediaProcessingJobRepository,
 )
+from app.infrastructure.database.repositories.message_repository import SqlAlchemyMessageRepository
+
+
+async def _second_message_id(db_session, conversation_id: str) -> str:
+    # `media_processing_jobs.message_id` is unique (one job per message) —
+    # a second pending job in the same test needs its own message row.
+    message_repository = SqlAlchemyMessageRepository(db_session)
+    message = Message(
+        id="msg-fixture-2",
+        conversation_id=ConversationId(conversation_id),
+        external_message_id=ExternalMessageId("wamid.fixture-2"),
+        direction="inbound",
+        text="",
+        created_at=datetime(2026, 8, 20, 9, 0, tzinfo=UTC),
+        message_type="audio",
+    )
+    await message_repository.save(message)
+    return message.id
 
 
 def _job(message_id: str, job_id: str, status: str) -> MediaProcessingJob:
@@ -82,3 +105,27 @@ async def test_transition_status_fails_when_status_no_longer_matches_from_status
 
     assert first_worker_won is True
     assert second_worker_won is False
+
+
+async def test_list_pending_returns_only_pending_jobs_oldest_first(
+    db_session, message_id, conversation_id
+):
+    repository = SqlAlchemyMediaProcessingJobRepository(db_session)
+    second_message_id = await _second_message_id(db_session, conversation_id)
+    await repository.save(_job(message_id, "job-5", "pending"))
+    await repository.save(_job(second_message_id, "job-6", "completed"))
+
+    pending = await repository.list_pending(limit=10)
+
+    assert [job.id for job in pending] == ["job-5"]
+
+
+async def test_list_pending_respects_limit(db_session, message_id, conversation_id):
+    repository = SqlAlchemyMediaProcessingJobRepository(db_session)
+    second_message_id = await _second_message_id(db_session, conversation_id)
+    await repository.save(_job(message_id, "job-7", "pending"))
+    await repository.save(_job(second_message_id, "job-8", "pending"))
+
+    pending = await repository.list_pending(limit=1)
+
+    assert len(pending) == 1

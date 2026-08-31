@@ -200,3 +200,124 @@ def test_settings_reads_alert_threshold_fields_from_env(monkeypatch):
 
     assert settings.alert_timeout_threshold_count == 3
     assert settings.alert_timeout_threshold_window_seconds == 60
+
+
+def test_settings_defaults_audio_fields_when_no_env_vars(monkeypatch):
+    for var in (
+        "GROQ_API_KEY",
+        "GROQ_API_URL",
+        "GROQ_TRANSCRIPTION_MODEL",
+        "AUDIO_MAX_SIZE_BYTES",
+        "AUDIO_MAX_DURATION_SECONDS",
+        "AUDIO_DOWNLOAD_TIMEOUT_SECONDS",
+        "AUDIO_TRANSCRIPTION_TIMEOUT_SECONDS",
+        "AUDIO_ALLOWED_MIME_TYPES",
+        "AUDIO_DELETE_AFTER_PROCESSING",
+        "AUDIO_RATE_LIMIT_PER_CONVERSATION_PER_MINUTE",
+        "YCLOUD_MEDIA_ALLOWED_HOSTS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.groq_api_key == ""
+    assert settings.groq_api_url == "https://api.groq.com/openai/v1"
+    assert settings.groq_transcription_model == "whisper-large-v3-turbo"
+    assert settings.audio_max_size_bytes == 16_777_216
+    assert settings.audio_max_duration_seconds == 180
+    assert settings.audio_download_timeout_seconds == 20
+    assert settings.audio_transcription_timeout_seconds == 45
+    assert settings.audio_allowed_mime_types == "audio/ogg,audio/mpeg,audio/mp4,audio/aac"
+    assert settings.audio_allowed_mime_types_set == {
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/aac",
+    }
+    assert settings.audio_delete_after_processing is True
+    assert settings.audio_rate_limit_per_conversation_per_minute == 5
+    assert settings.ycloud_media_allowed_hosts == ""
+
+
+def test_settings_defaults_admin_panel_fields_when_no_env_vars(monkeypatch):
+    for var in ("ADMIN_SESSION_SECRET", "ADMIN_SESSION_TTL_SECONDS", "INTERNAL_EVAL_ENABLED"):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.admin_session_secret == ""
+    assert settings.admin_session_ttl_seconds == 3600
+    assert settings.internal_eval_enabled is False
+
+
+def test_settings_reads_admin_panel_fields_from_env(monkeypatch):
+    monkeypatch.setenv("ADMIN_SESSION_SECRET", "admin-secret")
+    monkeypatch.setenv("ADMIN_SESSION_TTL_SECONDS", "1800")
+    monkeypatch.setenv("INTERNAL_EVAL_ENABLED", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.admin_session_secret == "admin-secret"
+    assert settings.admin_session_ttl_seconds == 1800
+    assert settings.internal_eval_enabled is True
+
+
+def test_settings_defaults_incident_fields_when_no_env_vars(monkeypatch):
+    for var in (
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "LINEAR_API_KEY",
+        "LINEAR_TEAM_ID",
+        "INCIDENT_THRESHOLD_COUNT",
+        "INCIDENT_THRESHOLD_WINDOW_SECONDS",
+        "TELEGRAM_ALERT_COOLDOWN_SECONDS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.telegram_bot_token == ""
+    assert settings.telegram_chat_id == ""
+    assert settings.linear_api_key == ""
+    assert settings.linear_team_id == ""
+    assert settings.incident_threshold_count == 10
+    assert settings.incident_threshold_window_seconds == 300
+    assert settings.telegram_alert_cooldown_seconds == 900
+
+
+def test_settings_reads_incident_fields_from_env(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "bot-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat-1")
+    monkeypatch.setenv("LINEAR_API_KEY", "linear-key")
+    monkeypatch.setenv("LINEAR_TEAM_ID", "team-1")
+    monkeypatch.setenv("INCIDENT_THRESHOLD_COUNT", "20")
+    monkeypatch.setenv("INCIDENT_THRESHOLD_WINDOW_SECONDS", "600")
+    monkeypatch.setenv("TELEGRAM_ALERT_COOLDOWN_SECONDS", "1800")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.telegram_bot_token == "bot-token"
+    assert settings.telegram_chat_id == "chat-1"
+    assert settings.linear_api_key == "linear-key"
+    assert settings.linear_team_id == "team-1"
+    assert settings.incident_threshold_count == 20
+    assert settings.incident_threshold_window_seconds == 600
+    assert settings.telegram_alert_cooldown_seconds == 1800
+
+
+def test_settings_reads_audio_fields_from_env(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "groq-key")
+    monkeypatch.setenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3")
+    monkeypatch.setenv("AUDIO_MAX_SIZE_BYTES", "1000")
+    monkeypatch.setenv("AUDIO_MAX_DURATION_SECONDS", "60")
+    monkeypatch.setenv("AUDIO_ALLOWED_MIME_TYPES", "audio/ogg,audio/mp4")
+    monkeypatch.setenv("AUDIO_RATE_LIMIT_PER_CONVERSATION_PER_MINUTE", "3")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.groq_api_key == "groq-key"
+    assert settings.groq_transcription_model == "whisper-large-v3"
+    assert settings.audio_max_size_bytes == 1000
+    assert settings.audio_max_duration_seconds == 60
+    assert settings.audio_allowed_mime_types_set == {"audio/ogg", "audio/mp4"}
+    assert settings.audio_rate_limit_per_conversation_per_minute == 3

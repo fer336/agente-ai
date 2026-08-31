@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -26,3 +28,18 @@ async def test_save_then_get_by_id_round_trips():
     fetched = await repository.get_by_id(ConversationId("conv-100"))
 
     assert fetched == conversation
+
+
+@pytest.mark.asyncio
+async def test_list_recent_orders_newest_first_and_respects_limit():
+    repository = FakeConversationRepository()
+    for i in range(3):
+        await repository.save(
+            make_conversation(
+                id_=f"conv-recent-{i}", created_at=datetime(2026, 1, 1, 9, i, tzinfo=UTC)
+            )
+        )
+
+    fetched = await repository.list_recent(limit=2)
+
+    assert [str(c.id) for c in fetched] == ["conv-recent-2", "conv-recent-1"]

@@ -50,6 +50,25 @@ class YCloudClient:
             }
         )
 
+    async def get_media(self, media_id: str) -> dict[str, object]:
+        """`GET /v1/media/{media_id}` — resolves a webhook's opaque media
+        `id` to a short-lived download URL + declared MIME type (+ sha256
+        when reported), per Meta's WhatsApp Cloud API media-metadata
+        convention YCloud mirrors (PRD.md §24.1: "Descargar el archivo desde
+        YCloud"). UNVERIFIED against a live YCloud account — see this
+        module's own docstring.
+        """
+        url = f"{self._base_url}/v1/media/{media_id}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers={"X-API-Key": self._api_key})
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+            data = response.json()
+            return dict(data)
+
     async def _post_message(self, payload: dict[str, object]) -> str:
         url = f"{self._base_url}/v2/whatsapp/messages"
         async with httpx.AsyncClient() as client:

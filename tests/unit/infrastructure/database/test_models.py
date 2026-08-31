@@ -19,6 +19,9 @@ _EXPECTED_TABLES = {
     "agent_runs",
     "node_executions",
     "errors",
+    "admin_users",
+    "admin_audit_log",
+    "incidents",
 }
 
 

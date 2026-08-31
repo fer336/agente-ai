@@ -108,6 +108,7 @@ def with_error_handling(
                 message=f"Node '{node_name}' raised an unhandled exception",
                 agent_run_id=agent_run_id,
                 technical_detail=repr(exc),
+                operation=node_name,
             )
             await node_execution_repository.save(
                 NodeExecution(

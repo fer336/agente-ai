@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from app.domain.entities.error_record import ErrorRecord
+from app.domain.value_objects.conversation_id import ConversationId
 
 
 class FakeErrorRepository:
@@ -23,3 +24,13 @@ class FakeErrorRepository:
             and error.error_type == error_type
             and error.created_at >= since
         )
+
+    async def list_recent(self, limit: int = 50) -> list[ErrorRecord]:
+        ordered = sorted(self._by_id.values(), key=lambda e: e.created_at, reverse=True)
+        return ordered[:limit]
+
+    async def get_by_conversation_id(self, conversation_id: ConversationId) -> list[ErrorRecord]:
+        matches = [
+            error for error in self._by_id.values() if error.conversation_id == conversation_id
+        ]
+        return sorted(matches, key=lambda e: e.created_at, reverse=True)

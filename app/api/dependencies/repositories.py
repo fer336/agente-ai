@@ -6,10 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.db import _get_session_factory, get_db_session
 from app.application.appointments.propose_appointment import ProposalRepositories
+from app.application.audio.transcribe_audio import TranscriptionRepositories
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
+from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.repositories.message_repository import MessageRepository
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
@@ -20,6 +22,12 @@ from app.infrastructure.database.repositories.conversation_repository import (
     SqlAlchemyConversationRepository,
 )
 from app.infrastructure.database.repositories.error_repository import SqlAlchemyErrorRepository
+from app.infrastructure.database.repositories.incident_repository import (
+    SqlAlchemyIncidentRepository,
+)
+from app.infrastructure.database.repositories.media_processing_job_repository import (
+    SqlAlchemyMediaProcessingJobRepository,
+)
 from app.infrastructure.database.repositories.message_repository import SqlAlchemyMessageRepository
 from app.infrastructure.database.repositories.node_execution_repository import (
     SqlAlchemyNodeExecutionRepository,
@@ -78,7 +86,27 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
             messages=SqlAlchemyMessageRepository(session),
             contacts=SqlAlchemyContactRepository(session),
             conversations=SqlAlchemyConversationRepository(session),
+            media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
         )
+
+
+@asynccontextmanager
+async def open_sqlalchemy_transcription_repositories() -> AsyncIterator[TranscriptionRepositories]:
+    """`TranscribeAudioUseCase`'s `repositories_provider` for production DI.
+
+    Opens a FRESH session per call (see `open_sqlalchemy_message_repositories`'s
+    own docstring for why) — `TranscribeAudioUseCase.execute()` calls this
+    provider multiple times per job (claim, then one or more result
+    writes), deliberately never holding one session open across the slow
+    download/transcription network calls in between.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield TranscriptionRepositories(
+            media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
+            messages=SqlAlchemyMessageRepository(session),
+        )
+        await session.commit()
 
 
 @asynccontextmanager
@@ -143,5 +171,16 @@ async def open_sqlalchemy_trace_repositories() -> AsyncIterator[TraceRepositorie
             node_executions=SqlAlchemyNodeExecutionRepository(session),
             tool_executions=SqlAlchemyToolExecutionRepository(session),
             errors=SqlAlchemyErrorRepository(session),
+            incidents=SqlAlchemyIncidentRepository(session),
         )
         await session.commit()
+
+
+def get_incident_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> IncidentRepository:
+    """FastAPI dependency providing the `IncidentRepository` port (real,
+    Postgres-backed) — used outside the `TraceRepositoriesProvider` flow by
+    `app.workers.incident_tasks.check_incident_recovery`'s eventual caller.
+    """
+    return SqlAlchemyIncidentRepository(session)

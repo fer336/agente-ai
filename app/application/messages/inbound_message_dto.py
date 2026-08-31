@@ -20,9 +20,18 @@ class InboundMessageDTO:
     populated with a human-readable representation (the button's title for
     a button reply) so callers that only care about display text never need
     to special-case `button_payload is not None`.
+
+    `message_type="audio"` (PRD.md §24.1) carries no `text` yet — it is
+    filled in later, once `TranscribeAudioUseCase` produces a transcript —
+    and instead carries the vendor's opaque `media_id`/`media_mime_type`
+    (+ optional `media_sha256`) needed to resolve and download the file.
     """
 
     external_message_id: str
     from_phone: PhoneNumber
     text: str
     button_payload: str | None = None
+    message_type: str = "text"
+    media_id: str | None = None
+    media_mime_type: str | None = None
+    media_sha256: str | None = None

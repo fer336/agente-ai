@@ -67,3 +67,20 @@ async def test_save_updates_an_existing_conversation(db_session, contact_id):
 
     assert fetched is not None
     assert fetched.mode == "human"
+
+
+async def test_list_recent_orders_newest_first_and_respects_limit(db_session, contact_id):
+    repository = SqlAlchemyConversationRepository(db_session)
+    for i in range(3):
+        await repository.save(
+            Conversation(
+                id=ConversationId(value=f"conv-recent-{i}"),
+                contact_id=contact_id,
+                mode="agent",
+                created_at=datetime(2026, 8, 4, 9, i, tzinfo=UTC),
+            )
+        )
+
+    fetched = await repository.list_recent(limit=2)
+
+    assert [str(c.id) for c in fetched] == ["conv-recent-2", "conv-recent-1"]

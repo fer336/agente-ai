@@ -11,10 +11,13 @@ from redis.asyncio import Redis
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.domain.entities.contact import Contact
 from app.domain.entities.conversation import Conversation
-from app.domain.entities.message import Message
+from app.domain.entities.media_processing_job import PENDING as JOB_PENDING
+from app.domain.entities.media_processing_job import MediaProcessingJob
+from app.domain.entities.message import MEDIA_PENDING, Message
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
+from app.domain.repositories.media_processing_job_repository import MediaProcessingJobRepository
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
@@ -24,14 +27,20 @@ from app.infrastructure.redis.lock import redis_lock
 
 logger = logging.getLogger(__name__)
 
+#: Redis key prefix for the per-conversation-per-minute audio counter
+#: (PRD.md §24.3/§68 `AUDIO_RATE_LIMIT_PER_CONVERSATION_PER_MINUTE`).
+_AUDIO_RATE_LIMIT_KEY_PREFIX = "audio_rate_limit:conversation:"
+_AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
+
 
 @dataclass(frozen=True)
 class MessageRepositories:
-    """Bundles the three repositories one `IngestMessageUseCase` unit of work needs."""
+    """Bundles the repositories one `IngestMessageUseCase` unit of work needs."""
 
     messages: MessageRepository
     contacts: ContactRepository
     conversations: ConversationRepository
+    media_processing_jobs: MediaProcessingJobRepository
 
 
 # A zero-arg async context manager factory yielding a fresh `MessageRepositories`
@@ -68,12 +77,18 @@ class IngestMessageUseCase:
         redis_client: Redis,
         agent_invoker: AgentInvoker,
         debounce_seconds: int,
+        audio_rate_limit_per_minute: int = 0,
     ) -> None:
         self._repositories_provider = repositories_provider
         self._debounce_tracker = debounce_tracker
         self._redis_client = redis_client
         self._agent_invoker = agent_invoker
         self._debounce_seconds = debounce_seconds
+        #: PRD.md §24.3's per-conversation audio rate limit. `0` (the
+        #: default) disables the check entirely — every existing caller
+        #: that builds this use case without the new parameter (tests,
+        #: pre-audio DI wiring) keeps its previous, unlimited behavior.
+        self._audio_rate_limit_per_minute = audio_rate_limit_per_minute
         # Per-conversation accumulator of (message_id, text, button_payload)
         # tuples awaiting grouping into one Etapa-5 handoff. In-process
         # only — see the class docstring's singleton-lifetime note and the
@@ -95,6 +110,19 @@ class IngestMessageUseCase:
             conversation = await self._resolve_or_create_conversation(
                 repositories.conversations, dto.from_phone, contact.id
             )
+            conversation_key = str(conversation.id)
+
+            if dto.message_type == "audio":
+                if await self._audio_rate_limit_exceeded(conversation_key):
+                    logger.warning(
+                        "ingest_message.audio_rate_limit_exceeded conversation=%s",
+                        conversation_key,
+                    )
+                    return
+                await self._ingest_audio_message(
+                    repositories, dto, conversation, external_message_id
+                )
+                return
 
             message = Message(
                 id=str(uuid4()),
@@ -106,7 +134,6 @@ class IngestMessageUseCase:
             )
             await repositories.messages.save(message)
             conversation_mode = conversation.mode
-            conversation_key = str(conversation.id)
 
         if conversation_mode == "human":
             # Human-Mode Pause Gate (spec): short-circuit BEFORE debounce/
@@ -114,8 +141,97 @@ class IngestMessageUseCase:
             # handoff to the Etapa 5 seam is skipped.
             return
 
+        await self._schedule_processing(
+            conversation_key, message.id, message.text, dto.button_payload
+        )
+
+    async def _ingest_audio_message(
+        self,
+        repositories: MessageRepositories,
+        dto: InboundMessageDTO,
+        conversation: Conversation,
+        external_message_id: ExternalMessageId,
+    ) -> None:
+        """Etapa 4/9.1's audio branch (PRD.md §24.1): persists the message's
+        media metadata and creates a `MediaProcessingJob`, then returns
+        immediately — WITHOUT touching debounce/lock/agent-invocation, since
+        there is no transcript yet. The message is persisted regardless of
+        `conversation.mode` (a human in the shared inbox needs the
+        transcript too, once it exists) — only the eventual
+        `resume_after_transcription` forwarding step re-checks `mode`,
+        mirroring the text path's own human-mode gate.
+        """
+        now = datetime.now(UTC)
+        message = Message(
+            id=str(uuid4()),
+            conversation_id=conversation.id,
+            external_message_id=external_message_id,
+            direction="inbound",
+            text="",
+            created_at=now,
+            message_type="audio",
+            media_id=dto.media_id,
+            media_mime_type=dto.media_mime_type,
+            media_sha256=dto.media_sha256,
+            media_status=MEDIA_PENDING,
+            inbound_received_at=now,
+            transcription_status=MEDIA_PENDING,
+        )
+        await repositories.messages.save(message)
+
+        job = MediaProcessingJob(
+            id=str(uuid4()),
+            message_id=message.id,
+            status=JOB_PENDING,
+            media_id=dto.media_id or "",
+            media_mime_type=dto.media_mime_type or "",
+            attempts=0,
+        )
+        await repositories.media_processing_jobs.save(job)
+
+    async def _audio_rate_limit_exceeded(self, conversation_key: str) -> bool:
+        if self._audio_rate_limit_per_minute <= 0:
+            return False
+        key = f"{_AUDIO_RATE_LIMIT_KEY_PREFIX}{conversation_key}"
+        count = await self._redis_client.incr(key)
+        if count == 1:
+            await self._redis_client.expire(key, _AUDIO_RATE_LIMIT_WINDOW_SECONDS)
+        return count > self._audio_rate_limit_per_minute
+
+    async def resume_after_transcription(
+        self, conversation_id: ConversationId, message_id: str, text: str
+    ) -> None:
+        """`TranscribeAudioUseCase`'s success path: feeds the transcript
+        through the EXACT SAME debounce/lock/agent-invocation machinery a
+        typed message already uses (PRD.md §24.1's "Normalizar texto ->
+        LangGraph"). `button_payload` is always `None` here — a
+        transcript never carries one (PRD.md §24.2/§72: audio must never
+        itself confirm a sensitive operation or advance an interactive
+        selection; only a real button payload can, and this method has no
+        such payload to give it).
+
+        Re-checks `conversation.mode` at call time rather than trusting
+        whatever it was when the audio first arrived — mode may have
+        flipped to `human` while transcription was in flight, and PRD.md
+        §24.2's "Audio en HUMAN -> no se procesa" must still hold.
+        """
+        conversation_key = str(conversation_id)
+        async with self._repositories_provider() as repositories:
+            conversation = await repositories.conversations.get_by_id(conversation_id)
+        if conversation is not None and conversation.mode == "human":
+            return
+
+        await self._schedule_processing(conversation_key, message_id, text, None)
+
+    async def _schedule_processing(
+        self,
+        conversation_key: str,
+        message_id: str,
+        text: str,
+        button_payload: str | None,
+    ) -> None:
         self._pending_messages.setdefault(conversation_key, []).append(
-            (message.id, message.text, dto.button_payload)
+            (message_id, text, button_payload)
         )
         token = await self._debounce_tracker.touch(conversation_key)
 

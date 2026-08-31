@@ -56,3 +56,38 @@ async def test_save_upserts_the_same_row_by_id(db_session, conversation_id, mess
     assert fetched is not None
     assert fetched.status == COMPLETED
     assert fetched.finished_at == finished_at
+
+
+async def test_get_by_conversation_id_orders_newest_first(db_session, conversation_id, message_id):
+    repository = SqlAlchemyAgentRunRepository(db_session)
+    earlier = _agent_run(conversation_id, message_id, "run-earlier", COMPLETED)
+    later = _agent_run(conversation_id, message_id, "run-later", RUNNING)
+    later.started_at = datetime(2026, 8, 11, 10, 0, tzinfo=UTC)
+    await repository.save(earlier)
+    await repository.save(later)
+
+    fetched = await repository.get_by_conversation_id(ConversationId(value=conversation_id))
+
+    assert [run.id for run in fetched] == ["run-later", "run-earlier"]
+
+
+async def test_get_latest_by_conversation_id_returns_none_when_no_runs(db_session):
+    repository = SqlAlchemyAgentRunRepository(db_session)
+
+    assert await repository.get_latest_by_conversation_id(ConversationId(value="conv-none")) is None
+
+
+async def test_get_latest_by_conversation_id_returns_the_most_recent_run(
+    db_session, conversation_id, message_id
+):
+    repository = SqlAlchemyAgentRunRepository(db_session)
+    earlier = _agent_run(conversation_id, message_id, "run-a", COMPLETED)
+    later = _agent_run(conversation_id, message_id, "run-b", RUNNING)
+    later.started_at = datetime(2026, 8, 11, 10, 0, tzinfo=UTC)
+    await repository.save(earlier)
+    await repository.save(later)
+
+    latest = await repository.get_latest_by_conversation_id(ConversationId(value=conversation_id))
+
+    assert latest is not None
+    assert latest.id == "run-b"

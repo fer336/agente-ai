@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.agent_run import AgentRun
@@ -34,6 +35,26 @@ class SqlAlchemyAgentRunRepository:
         model.current_node = agent_run.current_node
         model.error_id = agent_run.error_id
         await self._session.flush()
+
+    async def get_by_conversation_id(self, conversation_id: ConversationId) -> list[AgentRun]:
+        result = await self._session.execute(
+            select(AgentRunModel)
+            .where(AgentRunModel.conversation_id == str(conversation_id))
+            .order_by(AgentRunModel.started_at.desc())
+        )
+        return [_to_entity(model) for model in result.scalars().all()]
+
+    async def get_latest_by_conversation_id(
+        self, conversation_id: ConversationId
+    ) -> AgentRun | None:
+        result = await self._session.execute(
+            select(AgentRunModel)
+            .where(AgentRunModel.conversation_id == str(conversation_id))
+            .order_by(AgentRunModel.started_at.desc())
+            .limit(1)
+        )
+        model = result.scalars().first()
+        return _to_entity(model) if model else None
 
 
 def _to_entity(model: AgentRunModel) -> AgentRun:
