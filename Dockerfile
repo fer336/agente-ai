@@ -23,7 +23,7 @@ RUN uv sync --frozen --no-dev --no-editable
 FROM python:3.11-slim AS runtime
 
 #: Same pinned uv binary as the builder stage — needed at runtime so `uv
-#: run` can launch the app (see CMD below).
+#: run` can launch the app (see entrypoint.sh, below).
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /usr/local/bin/uv
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app --create-home app
@@ -38,10 +38,11 @@ COPY pyproject.toml uv.lock README.md ./
 COPY app ./app
 COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
+COPY entrypoint.sh ./entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH" VIRTUAL_ENV="/app/.venv"
 
-RUN chown -R app:app /app
+RUN chmod +x entrypoint.sh && chown -R app:app /app
 USER app
 
 EXPOSE 8000
@@ -55,4 +56,12 @@ EXPOSE 8000
 #: network call) rather than through that broken shebang, and `python -m
 #: uvicorn` sidesteps the console-script file entirely as a second layer
 #: of protection against the same class of bug.
-CMD ["uv", "run", "--no-sync", "python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+#:
+#: entrypoint.sh runs `alembic upgrade head` against the real production
+#: database before exec'ing uvicorn — this only has a live DB connection
+#: once the container is actually running on the target node (CI has no
+#: network path to production Postgres, so migrations can't run any
+#: earlier in the pipeline). Safe with `replicas: 1` in docker-stack.yml;
+#: would need a separate one-shot migration job instead of an entrypoint
+#: if replicas are ever scaled beyond 1.
+ENTRYPOINT ["./entrypoint.sh"]
