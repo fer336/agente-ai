@@ -1,0 +1,58 @@
+version: "3.8"
+
+# NOTE: the `agente_ai_backend_env` secret referenced below must already
+# exist as a Docker Swarm secret on the target node before this stack is
+# deployed:
+#   docker secret create agente_ai_backend_env <path-to-local-env-file>
+# This is managed out-of-band (manually) — it is NOT created or updated by
+# the CI/CD workflow in .github/workflows/release.yml. Rotating it means
+# creating a new secret under a new name (Swarm secrets are immutable),
+# updating the `source:` below, and redeploying the stack.
+#
+# NOTE: the `image:` tag below is rewritten automatically by
+# .github/workflows/release.yml on every release, pinned to the released
+# version (e.g. v1.2.3) — do not hand-edit it, it will be overwritten.
+#
+# Postgres/Redis are external/managed — not part of this stack. Their real
+# host/port/credentials live inside the `agente_ai_backend_env` secret file
+# itself (POSTGRES_HOST, REDIS_HOST, etc.), not here.
+
+services:
+  backend:
+    image: ghcr.io/fer336/agente-ai:v0.0.0
+    networks:
+      - network_public
+    secrets:
+      - source: agente_ai_backend_env
+        target: /run/secrets/backend.env
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=network_public"
+
+        # Single router: this backend serves everything (webhooks, health,
+        # admin) at the domain root — no /api or /auth path split like
+        # apartamentos-backend has, so one Host() rule covers it all.
+        - "traefik.http.routers.agente-ai-backend.rule=Host(`agent.qeva-ai.com`)"
+        - "traefik.http.routers.agente-ai-backend.entrypoints=websecure"
+        - "traefik.http.routers.agente-ai-backend.tls.certresolver=letsencryptresolver"
+
+        - "traefik.http.services.agente-ai-backend.loadbalancer.server.port=8000"
+
+networks:
+  network_public:
+    external: true
+    name: network_public
+
+secrets:
+  agente_ai_backend_env:
+    external: true

@@ -12,7 +12,15 @@ class Settings(BaseSettings):
     single-URL form for convenience (SQLAlchemy/Redis client constructors).
     """
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    #: Two candidate paths, not one: local/dev runs read `.env` from the cwd;
+    #: the production Swarm stack (`docker-stack.yml`) mounts the config as a
+    #: Docker secret file at `/run/secrets/backend.env` instead — a plain
+    #: env-var injection isn't how Swarm secrets work. Whichever path exists
+    #: on disk is used; a missing one is silently skipped by pydantic-settings,
+    #: so this is safe in both environments without an if/else.
+    model_config = SettingsConfigDict(
+        env_file=(".env", "/run/secrets/backend.env"), extra="ignore"
+    )
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
@@ -133,6 +141,20 @@ class Settings(BaseSettings):
     #: same incident fingerprint within this many seconds, so a burst of
     #: identical errors sends one alert, not one per error.
     telegram_alert_cooldown_seconds: int = 900
+
+    #: Conversational memory module (no PRD.md section number — this
+    #: session's own brief). "10 a 20 mensajes, configurable" — 15 as a
+    #: middle-of-range default for `MemoryService`'s recent-window layer.
+    memory_recent_window_size: int = 15
+    #: How many new, not-yet-compacted messages accumulate for a contact
+    #: before `app.workers.memory_tasks.compact_stale_contact_memories`
+    #: (a one-poll-tick sweep, not scheduler-wired yet — same accepted gap
+    #: as `process_pending_audio_jobs`/`check_incident_recovery`) compacts it.
+    memory_compaction_message_threshold: int = 20
+    #: TTL for `MemoryService`'s Redis cache of a contact's compacted
+    #: summary — a cache miss/expiry always falls back to PostgreSQL, never
+    #: a permanent loss (PostgreSQL is this module's source of truth).
+    memory_cache_ttl_seconds: int = 3600
 
     @computed_field  # type: ignore[prop-decorator]
     @property

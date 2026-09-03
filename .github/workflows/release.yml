@@ -75,34 +75,36 @@ jobs:
           ref: main
           token: ${{ secrets.RELEASE_PUSH_TOKEN }}
 
-      - name: Pin app image tag in docker-compose.yml
+      - name: Pin app image tag in docker-stack.yml
         run: |
           set -euo pipefail
           tag="${{ github.event.release.tag_name }}"
 
-          # Anchored on the `image:` key itself (not a bare grep for the
-          # registry prefix) so this can never touch a comment line that
-          # merely mentions the image name in prose.
-          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)${IMAGE}:.*|\1${IMAGE}:${tag}|" docker-compose.yml
+          # docker-stack.yml is the production Swarm/Portainer artifact —
+          # docker-compose.yml is local-dev-only and is never touched by
+          # this pipeline. Anchored on the `image:` key itself (not a bare
+          # grep for the registry prefix) so this can never touch a comment
+          # line that merely mentions the image name in prose.
+          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)${IMAGE}:.*|\1${IMAGE}:${tag}|" docker-stack.yml
 
-          if ! grep -qF "image: ${IMAGE}:${tag}" docker-compose.yml; then
-            echo "::error::Failed to pin docker-compose.yml to ${IMAGE}:${tag} — the image: line was not found or not updated." >&2
+          if ! grep -qF "image: ${IMAGE}:${tag}" docker-stack.yml; then
+            echo "::error::Failed to pin docker-stack.yml to ${IMAGE}:${tag} — the image: line was not found or not updated." >&2
             exit 1
           fi
 
-      - name: Commit and push the pinned compose file
+      - name: Commit and push the pinned stack file
         run: |
           set -euo pipefail
           git config user.name "release-bot"
           git config user.email "release-bot@users.noreply.github.com"
 
-          if git diff --quiet -- docker-compose.yml; then
-            echo "docker-compose.yml already pinned to this release tag — nothing to commit."
+          if git diff --quiet -- docker-stack.yml; then
+            echo "docker-stack.yml already pinned to this release tag — nothing to commit."
             exit 0
           fi
 
-          git add docker-compose.yml
-          git commit -m "chore(release): pin app image to ${{ github.event.release.tag_name }}"
+          git add docker-stack.yml
+          git commit -m "chore(release): pin backend image to ${{ github.event.release.tag_name }}"
           git push origin main
 
   notify-portainer:
