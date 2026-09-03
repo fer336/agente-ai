@@ -4,6 +4,7 @@ from app.domain.repositories.gateways import (
     HumanHandoffGateway,
     MessagingGateway,
     PatientGateway,
+    SpecialtyGateway,
 )
 from app.domain.value_objects.interactive_button import InteractiveButton
 
@@ -61,6 +62,22 @@ def test_partial_class_does_not_satisfy_agreement_gateway_protocol():
             return []
 
     assert not isinstance(PartialAgreementGateway(), AgreementGateway)
+
+
+def test_conforming_class_satisfies_specialty_gateway_protocol():
+    class ConformingSpecialtyGateway:
+        async def list_specialties(self):
+            return []
+
+    assert isinstance(ConformingSpecialtyGateway(), SpecialtyGateway)
+
+
+def test_partial_class_does_not_satisfy_specialty_gateway_protocol():
+    class PartialSpecialtyGateway:
+        async def other_method(self):
+            pass
+
+    assert not isinstance(PartialSpecialtyGateway(), SpecialtyGateway)
 
 
 def test_conforming_class_satisfies_messaging_gateway_protocol():

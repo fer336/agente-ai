@@ -9,6 +9,7 @@ from app.agent.graph import (
     HANDLE_ERROR_NODE,
     HANDOFF_NODE,
     RESOLVE_INTERACTION_NODE,
+    SPECIALTIES_NODE,
     build_graph,
     compile_graph,
 )
@@ -26,15 +27,17 @@ from tests.fixtures.gateways import (
     make_node_execution_repository,
     make_patient_gateway,
     make_proposal_repositories_provider,
+    make_specialty_gateway,
     make_tool_execution_repository,
 )
-from tests.fixtures.seed_objects import make_agreement, make_conversation
+from tests.fixtures.seed_objects import make_agreement, make_conversation, make_specialty
 
 
 def _build_graph(conversation_repository=None):
     return build_graph(
         appointment_gateway=FakeDentalinkGateway(),
         agreement_gateway=FakeAgreementGateway(),
+        specialty_gateway=make_specialty_gateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=FakeLLMProvider(),
         conversation_repository=conversation_repository or FakeConversationRepository(),
@@ -50,11 +53,16 @@ def _build_graph(conversation_repository=None):
 
 
 def _compile(
-    conversation_repository=None, agreement_gateway=None, checkpointer=None, error_service=None
+    conversation_repository=None,
+    agreement_gateway=None,
+    specialty_gateway=None,
+    checkpointer=None,
+    error_service=None,
 ):
     return compile_graph(
         appointment_gateway=FakeDentalinkGateway(),
         agreement_gateway=agreement_gateway or FakeAgreementGateway(),
+        specialty_gateway=specialty_gateway or make_specialty_gateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=FakeLLMProvider(),
         conversation_repository=conversation_repository or FakeConversationRepository(),
@@ -78,6 +86,7 @@ def test_build_graph_wires_every_top_level_node():
         RESOLVE_INTERACTION_NODE,
         APPOINTMENT_NODE,
         AGREEMENT_NODE,
+        SPECIALTIES_NODE,
         HANDOFF_NODE,
         FALLBACK_NODE,
         HANDLE_ERROR_NODE,
@@ -98,6 +107,22 @@ async def test_insurance_message_routes_through_the_agreement_node():
     )
 
     assert "OSDE" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialties_message_routes_through_the_specialties_node():
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    compiled = _compile(
+        conversation_repository=conversation_repository,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(name="Ortodoncia")]),
+    )
+
+    result = await compiled.ainvoke(
+        make_agent_state(conversation_id="conv-1", user_message="¿Qué especialidades tienen?")
+    )
+
+    assert "Ortodoncia" in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -168,6 +193,7 @@ async def test_compiled_graph_records_node_executions_as_it_runs():
     compiled = compile_graph(
         appointment_gateway=FakeDentalinkGateway(),
         agreement_gateway=FakeAgreementGateway(agreements=[make_agreement(name="OSDE")]),
+        specialty_gateway=make_specialty_gateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=FakeLLMProvider(),
         conversation_repository=conversation_repository,

@@ -12,6 +12,7 @@ from app.agent.nodes.fallback import fallback_node
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
+from app.agent.nodes.specialties import create_specialties_node
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
@@ -21,6 +22,7 @@ from app.domain.repositories.gateways import (
     AppointmentGateway,
     HumanHandoffGateway,
     PatientGateway,
+    SpecialtyGateway,
 )
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.repositories.node_execution_repository import NodeExecutionRepository
@@ -45,6 +47,7 @@ CHECK_CONVERSATION_MODE_NODE = "check_conversation_mode"
 RESOLVE_INTERACTION_NODE = "resolve_interaction"
 APPOINTMENT_NODE = "appointment"
 AGREEMENT_NODE = "agreement"
+SPECIALTIES_NODE = "specialties"
 HANDOFF_NODE = "handoff"
 FALLBACK_NODE = "fallback"
 HANDLE_ERROR_NODE = "handle_error"
@@ -74,6 +77,8 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return APPOINTMENT_NODE
     if intent == "insurance":
         return AGREEMENT_NODE
+    if intent == "specialties":
+        return SPECIALTIES_NODE
     if intent == "handoff":
         return HANDOFF_NODE
     return FALLBACK_NODE
@@ -86,6 +91,7 @@ def _route_after_business_node(state: AgentState) -> str:
 def build_graph(
     appointment_gateway: AppointmentGateway,
     agreement_gateway: AgreementGateway,
+    specialty_gateway: SpecialtyGateway,
     handoff_gateway: HumanHandoffGateway,
     llm_provider: LLMProvider,
     conversation_repository: ConversationRepository,
@@ -104,6 +110,7 @@ def build_graph(
     START -> check_conversation_mode -> resolve_interaction
                                              |-- appointment
                                              |-- agreement
+                                             |-- specialties
                                              |-- handoff
                                              `-- fallback
     (any node's exception) -> handle_error -> END
@@ -182,6 +189,17 @@ def build_graph(
         ),
     )
     graph.add_node(
+        SPECIALTIES_NODE,
+        with_error_handling(
+            SPECIALTIES_NODE,
+            create_specialties_node(specialty_gateway),
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
         HANDOFF_NODE,
         with_error_handling(
             HANDOFF_NODE,
@@ -222,11 +240,18 @@ def build_graph(
             HANDLE_ERROR_NODE: HANDLE_ERROR_NODE,
             APPOINTMENT_NODE: APPOINTMENT_NODE,
             AGREEMENT_NODE: AGREEMENT_NODE,
+            SPECIALTIES_NODE: SPECIALTIES_NODE,
             HANDOFF_NODE: HANDOFF_NODE,
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
-    for node_name in (APPOINTMENT_NODE, AGREEMENT_NODE, HANDOFF_NODE, FALLBACK_NODE):
+    for node_name in (
+        APPOINTMENT_NODE,
+        AGREEMENT_NODE,
+        SPECIALTIES_NODE,
+        HANDOFF_NODE,
+        FALLBACK_NODE,
+    ):
         graph.add_conditional_edges(
             node_name,
             _route_after_business_node,
@@ -240,6 +265,7 @@ def build_graph(
 def compile_graph(
     appointment_gateway: AppointmentGateway,
     agreement_gateway: AgreementGateway,
+    specialty_gateway: SpecialtyGateway,
     handoff_gateway: HumanHandoffGateway,
     llm_provider: LLMProvider,
     conversation_repository: ConversationRepository,
@@ -265,6 +291,7 @@ def compile_graph(
     return build_graph(
         appointment_gateway,
         agreement_gateway,
+        specialty_gateway,
         handoff_gateway,
         llm_provider,
         conversation_repository,

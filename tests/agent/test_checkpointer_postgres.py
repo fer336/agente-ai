@@ -39,6 +39,7 @@ from tests.fixtures.gateways import (
     make_node_execution_repository,
     make_patient_gateway,
     make_proposal_repositories_provider,
+    make_specialty_gateway,
     make_tool_execution_repository,
 )
 from tests.fixtures.seed_objects import make_conversation
@@ -90,6 +91,7 @@ async def test_asyncpostgressaver_persists_and_restores_state_across_graph_invoc
     compiled = compile_graph(
         appointment_gateway=FakeDentalinkGateway(available_slots=[_future_slot()]),
         agreement_gateway=FakeAgreementGateway(),
+        specialty_gateway=make_specialty_gateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=FakeLLMProvider(),
         conversation_repository=conversation_repository,

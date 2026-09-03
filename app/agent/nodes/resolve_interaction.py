@@ -1,31 +1,45 @@
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_APPOINTMENT_PAYLOAD,
+    MENU_INSURANCE_PAYLOAD,
+    MENU_SPECIALTIES_PAYLOAD,
+)
 
 #: Minimum classifier confidence to act on it — below this, PRD.md §8's
 #: "Si no puede determinarlo con suficiente seguridad" applies and the
 #: turn routes to `fallback` instead.
 _MIN_INTENT_CONFIDENCE = 0.5
 
-#: PRD.md §7's welcome-menu button payloads (the welcome-message node
-#: itself isn't built yet — out of scope for this change — but this is the
-#: payload-id contract it will use once it exists). Deterministic mapping,
-#: never LLM-classified, per PRD.md §6.
-MENU_APPOINTMENT_PAYLOAD = "MENU_APPOINTMENT"
-MENU_INSURANCE_PAYLOAD = "MENU_INSURANCE"
-MENU_ADMIN_PAYLOAD = "MENU_ADMIN"
+#: PRD.md §7's welcome-menu button payloads — now sent for real by
+#: `IngestMessageUseCase` on a conversation's first turn (see that module's
+#: `_WELCOME_BUTTONS`). Re-exported here (defined in
+#: `app.domain.value_objects.menu_payloads`, see that module's own
+#: docstring for why) so every existing importer of these names from this
+#: module keeps working unchanged. Deterministic mapping, never
+#: LLM-classified, per PRD.md §6.
+__all__ = [
+    "MENU_ADMIN_PAYLOAD",
+    "MENU_APPOINTMENT_PAYLOAD",
+    "MENU_INSURANCE_PAYLOAD",
+    "MENU_SPECIALTIES_PAYLOAD",
+    "create_resolve_interaction_node",
+]
 
 _MENU_BUTTON_INTENTS = {
     MENU_APPOINTMENT_PAYLOAD: "appointment",
     MENU_INSURANCE_PAYLOAD: "insurance",
     MENU_ADMIN_PAYLOAD: "handoff",
+    MENU_SPECIALTIES_PAYLOAD: "specialties",
 }
 
 
 def create_resolve_interaction_node(
     llm_provider: LLMProvider,
 ) -> AgentNode:
-    """Routes a turn to appointment/insurance/handoff/unknown (PRD.md §6, §8).
+    """Routes a turn to appointment/insurance/specialties/handoff/unknown (PRD.md §6, §8).
 
     - A button payload ALWAYS carries a known intent (PRD.md §6: "Botón ->
       Intención conocida -> LangGraph") and is never reclassified. Mid-flow

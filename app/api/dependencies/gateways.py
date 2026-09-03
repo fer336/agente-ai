@@ -17,6 +17,7 @@ from app.domain.repositories.gateways import (
     HumanHandoffGateway,
     MessagingGateway,
     PatientGateway,
+    SpecialtyGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
@@ -24,17 +25,22 @@ from app.domain.repositories.media_downloader import MediaDownloader
 from app.domain.repositories.media_gateway import MediaGateway
 from app.domain.repositories.transcription_gateway import TranscriptionGateway
 from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvoker
+from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
+from app.infrastructure.dentalink.specialty_gateway import DentalinkSpecialtyGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
 from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
+from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
+from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
 @lru_cache
@@ -74,6 +80,42 @@ def get_agreement_gateway() -> AgreementGateway:
 
 
 @lru_cache
+def _get_fake_specialty_gateway() -> FakeSpecialtyGateway:
+    return FakeSpecialtyGateway()
+
+
+@lru_cache
+def _get_dentalink_client() -> DentalinkClient:
+    settings = get_settings()
+    return DentalinkClient(
+        base_url=settings.dentalink_api_url,
+        access_token=settings.dentalink_access_token,
+        timeout_seconds=settings.dentalink_timeout_seconds,
+    )
+
+
+@lru_cache
+def _get_dentalink_specialty_gateway() -> DentalinkSpecialtyGateway:
+    return DentalinkSpecialtyGateway(_get_dentalink_client())
+
+
+def get_specialty_gateway() -> SpecialtyGateway:
+    """FastAPI dependency providing the `SpecialtyGateway` port.
+
+    Returns the real, `httpx`-based `DentalinkSpecialtyGateway` whenever
+    `settings.dentalink_access_token` is configured, else the in-memory
+    `FakeSpecialtyGateway` — callers only depend on the `SpecialtyGateway`
+    Protocol. Unlike `get_agreement_gateway`/`get_patient_gateway` above
+    (still Fake-only pending a future change), this port is new in this
+    change with no live-credential dependents yet, so it is wired
+    conditionally from the start rather than added as a follow-up swap.
+    """
+    if get_settings().dentalink_access_token:
+        return _get_dentalink_specialty_gateway()
+    return _get_fake_specialty_gateway()
+
+
+@lru_cache
 def _get_fake_patient_gateway() -> FakePatientGateway:
     return FakePatientGateway()
 
@@ -94,16 +136,31 @@ def _get_fake_ycloud_messaging_gateway() -> FakeYCloudMessagingGateway:
     return FakeYCloudMessagingGateway()
 
 
+@lru_cache
+def _get_ycloud_client() -> YCloudClient:
+    settings = get_settings()
+    return YCloudClient(
+        base_url=settings.ycloud_api_url,
+        api_key=settings.ycloud_api_key,
+        whatsapp_number=settings.ycloud_whatsapp_number,
+    )
+
+
+@lru_cache
+def _get_real_ycloud_messaging_gateway() -> YCloudMessagingGateway:
+    return YCloudMessagingGateway(_get_ycloud_client())
+
+
 def get_messaging_gateway() -> MessagingGateway:
     """FastAPI dependency providing the `MessagingGateway` port.
 
-    Returns the in-memory `FakeYCloudMessagingGateway` for now. This is the
-    swap point for the real, `httpx`-based
-    `app.infrastructure.ycloud.messaging_gateway.YCloudMessagingGateway`
-    adapter (already implemented, not yet wired here — no live YCloud
-    credentials in dev this change) — callers only depend on the
-    `MessagingGateway` Protocol.
+    Returns the real, `httpx`-based `YCloudMessagingGateway` whenever
+    `settings.ycloud_api_key` is configured, else the in-memory
+    `FakeYCloudMessagingGateway` (e.g. local dev with no YCloud credentials)
+    — callers only depend on the `MessagingGateway` Protocol.
     """
+    if get_settings().ycloud_api_key:
+        return _get_real_ycloud_messaging_gateway()
     return _get_fake_ycloud_messaging_gateway()
 
 
@@ -234,6 +291,7 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
     return LangGraphAgentInvoker(
         appointment_gateway=get_appointment_gateway(),
         agreement_gateway=get_agreement_gateway(),
+        specialty_gateway=get_specialty_gateway(),
         handoff_gateway=get_human_handoff_gateway(),
         llm_provider=get_llm_provider(),
         repositories_provider=open_sqlalchemy_agent_repositories,

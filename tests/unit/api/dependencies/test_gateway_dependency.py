@@ -9,9 +9,11 @@ from app.api.dependencies.gateways import (
     get_media_gateway,
     get_messaging_gateway,
     get_patient_gateway,
+    get_specialty_gateway,
     get_telegram_notifier,
     get_transcription_gateway,
 )
+from app.config.settings import Settings
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.alert_notifier import AlertNotifier
 from app.domain.repositories.gateways import (
@@ -20,6 +22,7 @@ from app.domain.repositories.gateways import (
     HumanHandoffGateway,
     MessagingGateway,
     PatientGateway,
+    SpecialtyGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
@@ -30,6 +33,8 @@ from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvok
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
+from app.infrastructure.dentalink.specialty_gateway import DentalinkSpecialtyGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
@@ -38,6 +43,7 @@ from app.infrastructure.transcription.fake_transcription_gateway import FakeTran
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
+from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
 def test_get_appointment_gateway_returns_a_fake_dentalink_gateway():
@@ -68,6 +74,33 @@ def test_get_agreement_gateway_returns_the_same_cached_instance_across_calls():
     assert first is second
 
 
+def test_get_specialty_gateway_returns_a_fake_specialty_gateway_by_default():
+    gateway = get_specialty_gateway()
+
+    assert isinstance(gateway, FakeSpecialtyGateway)
+    assert isinstance(gateway, SpecialtyGateway)
+
+
+def test_get_specialty_gateway_returns_the_same_cached_instance_across_calls():
+    first = get_specialty_gateway()
+    second = get_specialty_gateway()
+
+    assert first is second
+
+
+def test_get_specialty_gateway_returns_a_real_dentalink_gateway_when_token_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, dentalink_access_token="dl-token"),
+    )
+
+    gateway = get_specialty_gateway()
+
+    assert isinstance(gateway, DentalinkSpecialtyGateway)
+
+
 def test_get_messaging_gateway_returns_a_fake_ycloud_messaging_gateway():
     gateway = get_messaging_gateway()
 
@@ -80,6 +113,19 @@ def test_get_messaging_gateway_returns_the_same_cached_instance_across_calls():
     second = get_messaging_gateway()
 
     assert first is second
+
+
+def test_get_messaging_gateway_returns_a_real_ycloud_gateway_when_api_key_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, ycloud_api_key="yc-key"),
+    )
+
+    gateway = get_messaging_gateway()
+
+    assert isinstance(gateway, YCloudMessagingGateway)
 
 
 def test_get_human_handoff_gateway_returns_a_fake_ycloud_handoff_gateway():

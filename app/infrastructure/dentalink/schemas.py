@@ -25,6 +25,7 @@ from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
+from app.domain.entities.specialty import Specialty
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -147,6 +148,13 @@ def agreement_from_convenio(raw: dict[str, object]) -> Agreement:
     if agreement_id is None:
         raise DentalinkInvalidResponseError("convenio record is missing an id")
     return Agreement(id=str(agreement_id), name=str(raw.get("nombre", "")))
+
+
+def specialty_from_especialidad(raw: dict[str, object]) -> Specialty:
+    specialty_id = raw.get("id", raw.get("id_especialidad"))
+    if specialty_id is None:
+        raise DentalinkInvalidResponseError("especialidad record is missing an id")
+    return Specialty(id=str(specialty_id), name=str(raw.get("nombre", "")))
 
 
 def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | None:

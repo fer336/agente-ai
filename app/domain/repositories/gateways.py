@@ -5,6 +5,7 @@ from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
+from app.domain.entities.specialty import Specialty
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.interactive_button import InteractiveButton
@@ -80,6 +81,13 @@ class AgreementGateway(Protocol):
     async def find_agreement_by_name(self, name: str) -> Agreement | None: ...
 
     async def get_patient_agreements(self, patient_id: str) -> list[Agreement]: ...
+
+
+@runtime_checkable
+class SpecialtyGateway(Protocol):
+    """Port to the external dental specialty catalog (e.g. Dentalink)."""
+
+    async def list_specialties(self) -> list[Specialty]: ...
 
 
 @runtime_checkable
