@@ -4,6 +4,7 @@ from app.agent.nodes.resolve_interaction import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
+    MENU_SPECIALTIES_PAYLOAD,
     create_resolve_interaction_node,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -85,6 +86,26 @@ async def test_insurance_menu_button_payload_routes_to_insurance():
     )
 
     assert result == {"intent": "insurance"}
+
+
+@pytest.mark.asyncio
+async def test_specialties_menu_button_payload_routes_to_specialties():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(user_message="🦷 Especialidades", button_payload=MENU_SPECIALTIES_PAYLOAD)
+    )
+
+    assert result == {"intent": "specialties"}
+
+
+@pytest.mark.asyncio
+async def test_classifies_specialties_intent():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="¿Qué especialidades tienen?"))
+
+    assert result == {"intent": "specialties"}
 
 
 @pytest.mark.asyncio

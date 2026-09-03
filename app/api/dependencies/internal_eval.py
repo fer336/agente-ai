@@ -34,6 +34,7 @@ from app.infrastructure.database.fake_tool_execution_repository import (
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
@@ -114,6 +115,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
     agent_invoker = LangGraphAgentInvoker(
         appointment_gateway=FakeDentalinkGateway(),
         agreement_gateway=FakeAgreementGateway(),
+        specialty_gateway=FakeSpecialtyGateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=FakeLLMProvider(),
         repositories_provider=agent_repositories_provider,

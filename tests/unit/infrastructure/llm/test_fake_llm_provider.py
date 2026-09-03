@@ -29,6 +29,15 @@ async def test_classify_intent_recognizes_insurance_keyword():
 
 
 @pytest.mark.asyncio
+async def test_classify_intent_recognizes_specialty_keyword():
+    provider = make_llm_provider()
+
+    result = await provider.classify_intent("¿Qué especialidades tienen?", context={})
+
+    assert result == IntentResult(intent="specialties", confidence=0.9)
+
+
+@pytest.mark.asyncio
 async def test_classify_intent_recognizes_handoff_keyword():
     provider = make_llm_provider()
 

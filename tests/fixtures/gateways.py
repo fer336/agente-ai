@@ -17,6 +17,7 @@ from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
+from app.domain.entities.specialty import Specialty
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
 from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
@@ -43,6 +44,7 @@ from app.infrastructure.database.fake_tool_execution_repository import (
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.redis.debounce import DebounceTracker
@@ -64,6 +66,10 @@ def make_agreement_gateway(
     patient_agreements: dict[str, list[Agreement]] | None = None,
 ) -> FakeAgreementGateway:
     return FakeAgreementGateway(agreements=agreements, patient_agreements=patient_agreements)
+
+
+def make_specialty_gateway(specialties: list[Specialty] | None = None) -> FakeSpecialtyGateway:
+    return FakeSpecialtyGateway(specialties=specialties)
 
 
 def make_patient_gateway(patients: list[Patient] | None = None) -> FakePatientGateway:
@@ -251,6 +257,7 @@ def make_ingest_message_use_case(
     media_processing_job_repository: FakeMediaProcessingJobRepository | None = None,
     redis_client: InMemoryFakeRedis | None = None,
     agent_invoker: FakeAgentInvoker | None = None,
+    send_reply: SendReplyUseCase | None = None,
     debounce_seconds: int = 6,
     audio_rate_limit_per_minute: int = 0,
 ) -> IngestMessageUseCase:
@@ -280,6 +287,7 @@ def make_ingest_message_use_case(
     )
     redis_client = redis_client if redis_client is not None else InMemoryFakeRedis()
     agent_invoker = agent_invoker if agent_invoker is not None else make_agent_invoker()
+    send_reply = send_reply if send_reply is not None else make_send_reply_use_case()
     debounce_tracker = DebounceTracker(redis_client, debounce_seconds)
 
     @asynccontextmanager
@@ -297,5 +305,6 @@ def make_ingest_message_use_case(
         redis_client=redis_client,
         agent_invoker=agent_invoker,
         debounce_seconds=debounce_seconds,
+        send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
     )

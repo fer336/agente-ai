@@ -9,6 +9,7 @@ from uuid import uuid4
 from redis.asyncio import Redis
 
 from app.application.messages.inbound_message_dto import InboundMessageDTO
+from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.contact import Contact
 from app.domain.entities.conversation import Conversation
 from app.domain.entities.media_processing_job import PENDING as JOB_PENDING
@@ -21,6 +22,12 @@ from app.domain.repositories.media_processing_job_repository import MediaProcess
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
+from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_APPOINTMENT_PAYLOAD,
+    MENU_SPECIALTIES_PAYLOAD,
+)
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.redis.debounce import DebounceTracker
 from app.infrastructure.redis.lock import redis_lock
@@ -31,6 +38,22 @@ logger = logging.getLogger(__name__)
 #: (PRD.md §24.3/§68 `AUDIO_RATE_LIMIT_PER_CONVERSATION_PER_MINUTE`).
 _AUDIO_RATE_LIMIT_KEY_PREFIX = "audio_rate_limit:conversation:"
 _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
+
+#: PRD.md §7's welcome message — sent exactly once, on a conversation's
+#: very first inbound message (see `_resolve_or_create_conversation`'s
+#: "just created" branch, the only place that can know this). No clinic
+#: name is configured anywhere in `Settings` (see that module), so this
+#: stays deliberately generic rather than inventing a brand.
+_WELCOME_TEXT = (
+    "¡Hola! 👋 Soy el asistente virtual de tu clínica dental.\n"
+    "Puedo ayudarte a sacar un turno, contarte qué especialidades atendemos "
+    "o comunicarte con administración. Elegí una opción para arrancar:"
+)
+_WELCOME_BUTTONS = [
+    InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Turnos"),
+    InteractiveButton(id=MENU_SPECIALTIES_PAYLOAD, title="Especialidades"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
+]
 
 
 @dataclass(frozen=True)
@@ -77,6 +100,7 @@ class IngestMessageUseCase:
         redis_client: Redis,
         agent_invoker: AgentInvoker,
         debounce_seconds: int,
+        send_reply: SendReplyUseCase,
         audio_rate_limit_per_minute: int = 0,
     ) -> None:
         self._repositories_provider = repositories_provider
@@ -84,6 +108,12 @@ class IngestMessageUseCase:
         self._redis_client = redis_client
         self._agent_invoker = agent_invoker
         self._debounce_seconds = debounce_seconds
+        #: Etapa 5's own `AgentInvoker`/`SendReplyUseCase` pair already
+        #: sends the graph's reply after Etapa 4 hands off — this is a
+        #: SEPARATE use of the same use case, for the one reply Etapa 4
+        #: itself is responsible for (the welcome message), which exists
+        #: before there is any graph turn to reply to.
+        self._send_reply = send_reply
         #: PRD.md §24.3's per-conversation audio rate limit. `0` (the
         #: default) disables the check entirely — every existing caller
         #: that builds this use case without the new parameter (tests,
@@ -107,10 +137,24 @@ class IngestMessageUseCase:
                 return
 
             contact = await self._resolve_or_create_contact(repositories.contacts, dto.from_phone)
-            conversation = await self._resolve_or_create_conversation(
+            conversation, is_new_conversation = await self._resolve_or_create_conversation(
                 repositories.conversations, dto.from_phone, contact.id
             )
             conversation_key = str(conversation.id)
+
+            if is_new_conversation:
+                # Sent synchronously, inline in this same request — NOT
+                # fire-and-forget — so a delivery failure surfaces as this
+                # request's own error (and gets retried by the caller's
+                # webhook-retry semantics) instead of being silently
+                # swallowed in an unawaited background task. This only
+                # runs once per conversation ever (gated on the "just
+                # created" branch below), so the extra latency it adds is
+                # a one-time cost, not a per-message one. Runs BEFORE the
+                # audio-vs-text branch below so a brand-new conversation's
+                # first message gets the welcome menu even if that first
+                # message is itself an audio note.
+                await self._send_reply.execute(dto.from_phone, _WELCOME_TEXT, _WELCOME_BUTTONS)
 
             if dto.message_type == "audio":
                 if await self._audio_rate_limit_exceeded(conversation_key):
@@ -313,7 +357,7 @@ class IngestMessageUseCase:
         conversation_repository: ConversationRepository,
         from_phone: PhoneNumber,
         contact_id: str,
-    ) -> Conversation:
+    ) -> tuple[Conversation, bool]:
         # YCloud/WhatsApp conversations are 1:1 with the sender's phone
         # number (no separate vendor conversation-id concept, unlike
         # Chatwoot's ticket-style `conversation.id`) — so our ConversationId
@@ -322,7 +366,7 @@ class IngestMessageUseCase:
         conversation_id = ConversationId(f"ycloud-{from_phone}")
         conversation = await conversation_repository.get_by_id(conversation_id)
         if conversation is not None:
-            return conversation
+            return conversation, False
         conversation = Conversation(
             id=conversation_id,
             contact_id=contact_id,
@@ -330,4 +374,9 @@ class IngestMessageUseCase:
             created_at=datetime.now(UTC),
         )
         await conversation_repository.save(conversation)
-        return conversation
+        # The `bool` here is the ONLY place in this class that can tell a
+        # conversation's first-ever turn apart from any later one — by the
+        # time any other method runs, the row this same call just saved is
+        # already indistinguishable from an old one. `execute()` uses it to
+        # fire the once-ever welcome message (PRD.md §7).
+        return conversation, True

@@ -2,6 +2,7 @@ from app.domain.repositories.llm_provider import ExtractionResult, IntentResult,
 
 _APPOINTMENT_KEYWORDS = ("turno", "cita")
 _INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
+_SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
 #: PRD.md §22's automatic-handoff example phrases, lowercased substrings.
 _HANDOFF_KEYWORDS = (
     "llegar tarde",
@@ -33,6 +34,8 @@ class FakeLLMProvider:
             return IntentResult(intent="handoff", confidence=0.9)
         if any(keyword in lowered for keyword in _INSURANCE_KEYWORDS):
             return IntentResult(intent="insurance", confidence=0.9)
+        if any(keyword in lowered for keyword in _SPECIALTY_KEYWORDS):
+            return IntentResult(intent="specialties", confidence=0.9)
         if any(keyword in lowered for keyword in _APPOINTMENT_KEYWORDS):
             return IntentResult(intent="appointment", confidence=0.9)
         return IntentResult(intent="unknown", confidence=0.0)

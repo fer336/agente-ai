@@ -30,6 +30,7 @@ from tests.fixtures.gateways import (
     make_patient_gateway,
     make_proposal_repositories_provider,
     make_send_reply_use_case,
+    make_specialty_gateway,
     make_telegram_notifier,
     make_tool_execution_repository,
     make_trace_repositories_provider,
@@ -68,6 +69,7 @@ def _make_invoker(
     messaging_gateway=None,
     handoff_gateway=None,
     agreement_gateway=None,
+    specialty_gateway=None,
     appointment_gateway=None,
     patient_gateway=None,
     llm_provider=None,
@@ -88,6 +90,7 @@ def _make_invoker(
     invoker = LangGraphAgentInvoker(
         appointment_gateway=appointment_gateway,
         agreement_gateway=agreement_gateway or make_agreement_gateway(),
+        specialty_gateway=specialty_gateway or make_specialty_gateway(),
         handoff_gateway=handoff_gateway or make_ycloud_handoff_gateway(),
         llm_provider=llm_provider or make_llm_provider(),
         repositories_provider=repositories_provider,
@@ -156,6 +159,7 @@ async def test_handle_works_without_a_checkpointer_provider():
     invoker = LangGraphAgentInvoker(
         appointment_gateway=make_dentalink_gateway(),
         agreement_gateway=make_agreement_gateway(agreements=[make_agreement(name="OSDE")]),
+        specialty_gateway=make_specialty_gateway(),
         handoff_gateway=make_ycloud_handoff_gateway(),
         llm_provider=make_llm_provider(),
         repositories_provider=repositories_provider,
@@ -274,6 +278,7 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
     compiled_graph = compile_graph(
         appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
         agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
         handoff_gateway=make_ycloud_handoff_gateway(),
         llm_provider=make_llm_provider(),
         conversation_repository=conversation_repository,

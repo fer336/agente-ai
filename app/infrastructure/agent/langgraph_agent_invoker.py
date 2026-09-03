@@ -26,6 +26,7 @@ from app.domain.repositories.gateways import (
     AppointmentGateway,
     HumanHandoffGateway,
     PatientGateway,
+    SpecialtyGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
@@ -101,6 +102,7 @@ class LangGraphAgentInvoker:
         self,
         appointment_gateway: AppointmentGateway,
         agreement_gateway: AgreementGateway,
+        specialty_gateway: SpecialtyGateway,
         handoff_gateway: HumanHandoffGateway,
         llm_provider: LLMProvider,
         repositories_provider: RepositoriesProvider,
@@ -123,6 +125,7 @@ class LangGraphAgentInvoker:
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
+        self._specialty_gateway = specialty_gateway
         self._handoff_gateway = handoff_gateway
         self._llm_provider = llm_provider
         self._repositories_provider = repositories_provider
@@ -199,6 +202,7 @@ class LangGraphAgentInvoker:
                 compiled_graph = compile_graph(
                     self._appointment_gateway,
                     self._agreement_gateway,
+                    self._specialty_gateway,
                     self._handoff_gateway,
                     self._llm_provider,
                     repositories.conversations,

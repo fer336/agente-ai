@@ -14,6 +14,7 @@ from app.api.dependencies.repositories import (
 )
 from app.application.audio.transcribe_audio import TranscribeAudioUseCase
 from app.application.messages.ingest_message import IngestMessageUseCase
+from app.application.messages.send_reply import SendReplyUseCase
 from app.config.settings import get_settings
 
 
@@ -34,6 +35,7 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         redis_client=get_shared_redis_client(),
         agent_invoker=get_agent_invoker(),
         debounce_seconds=settings.message_debounce_seconds,
+        send_reply=SendReplyUseCase(get_messaging_gateway()),
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
     )
 

@@ -29,6 +29,8 @@ from tests.fixtures.gateways import (
     make_conversation_repository,
     make_media_processing_job_repository,
     make_message_repository,
+    make_send_reply_use_case,
+    make_ycloud_messaging_gateway,
 )
 from tests.fixtures.seed_objects import make_conversation, make_message
 
@@ -76,6 +78,7 @@ def _build_use_case(
     redis_client=None,
     debounce_tracker=None,
     agent_invoker=None,
+    send_reply=None,
     debounce_seconds: int = _DEBOUNCE_SECONDS,
     audio_rate_limit_per_minute: int = 0,
 ) -> IngestMessageUseCase:
@@ -102,6 +105,7 @@ def _build_use_case(
         else DebounceTracker(redis_client, debounce_seconds)
     )
     agent_invoker = agent_invoker if agent_invoker is not None else make_agent_invoker()
+    send_reply = send_reply if send_reply is not None else make_send_reply_use_case()
 
     @asynccontextmanager
     async def repositories_provider() -> AsyncIterator[MessageRepositories]:
@@ -118,6 +122,7 @@ def _build_use_case(
         redis_client=redis_client,
         agent_invoker=agent_invoker,
         debounce_seconds=debounce_seconds,
+        send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
     )
 
@@ -195,6 +200,45 @@ async def test_existing_conversation_resolved_not_duplicated():
     assert len(conversation_repository._conversations_by_id) == 1
     fetched = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert fetched == existing
+
+
+@pytest.mark.asyncio
+async def test_brand_new_conversation_gets_the_welcome_menu():
+    messaging_gateway = make_ycloud_messaging_gateway()
+    use_case = _build_use_case(send_reply=make_send_reply_use_case(messaging_gateway))
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    assert len(messaging_gateway.sent_buttons) == 1
+    phone, text, buttons = messaging_gateway.sent_buttons[0]
+    assert phone == PhoneNumber("+5491122334455")
+    assert "asistente virtual" in text
+    assert [button.title for button in buttons] == ["Turnos", "Especialidades", "Administración"]
+
+
+@pytest.mark.asyncio
+async def test_existing_conversation_never_gets_the_welcome_menu_again():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    messaging_gateway = make_ycloud_messaging_gateway()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        send_reply=make_send_reply_use_case(messaging_gateway),
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    assert messaging_gateway.sent_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_welcome_menu_still_fires_when_the_first_message_is_audio():
+    messaging_gateway = make_ycloud_messaging_gateway()
+    use_case = _build_use_case(send_reply=make_send_reply_use_case(messaging_gateway))
+
+    await use_case.execute(_make_audio_dto(from_phone="+5491122334455"))
+
+    assert len(messaging_gateway.sent_buttons) == 1
 
 
 @pytest.mark.asyncio

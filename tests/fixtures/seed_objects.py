@@ -23,6 +23,7 @@ from app.domain.entities.patient import Patient
 from app.domain.entities.pending_action import PendingAction
 from app.domain.entities.professional import Professional
 from app.domain.entities.scheduled_action import ScheduledAction
+from app.domain.entities.specialty import Specialty
 from app.domain.entities.tool_execution import COMPLETED as TOOL_EXECUTION_COMPLETED
 from app.domain.entities.tool_execution import ToolExecution
 from app.domain.value_objects.appointment_id import AppointmentId
@@ -59,6 +60,10 @@ def make_professional(
 
 def make_agreement(id_: str = "agr-1", name: str = "OSDE") -> Agreement:
     return Agreement(id=id_, name=name)
+
+
+def make_specialty(id_: str = "spec-1", name: str = "Ortodoncia") -> Specialty:
+    return Specialty(id=id_, name=name)
 
 
 def make_patient(
