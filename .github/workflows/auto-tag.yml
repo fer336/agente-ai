@@ -1,0 +1,115 @@
+name: Auto Tag Release
+
+# Every merge to main is scanned for conventional-commit prefixes since the
+# last vX.Y.Z tag; if any warrant a release, this creates the next tag/
+# GitHub Release automatically — which is what actually triggers
+# release.yml's build/deploy pipeline (that workflow only listens for
+# `release: published`, it does not run on a plain push).
+on:
+  push:
+    branches: [main]
+
+jobs:
+  auto-tag:
+    name: auto-tag
+    runs-on: ubuntu-latest
+    # First-line loop guard: release.yml's own "pin-compose" job pushes a
+    # `chore(release): pin ...` commit straight to main on every release.
+    # Without this, that push would re-trigger this workflow, which would
+    # (correctly, per the conventional-commit scan below — chore: never
+    # bumps) compute "no release needed" anyway, but skipping the whole
+    # job outright is cheaper and makes the non-looping behavior explicit
+    # rather than incidental.
+    if: "!startsWith(github.event.head_commit.message, 'chore(release): pin')"
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump from conventional commits since last tag
+        id: bump
+        run: |
+          set -euo pipefail
+
+          last_tag=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)
+
+          if [ -z "$last_tag" ]; then
+            echo "No prior vX.Y.Z tag found — skipping auto-release (cut the first one manually)."
+            echo "bump=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          commits=$(git log "${last_tag}..HEAD" --pretty=%s)
+
+          if [ -z "$commits" ]; then
+            echo "No new commits since ${last_tag}."
+            echo "bump=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Commits since ${last_tag}:"
+          echo "$commits"
+
+          # Priority order: major > minor > patch > none. A later, lower-
+          # priority commit in the loop never downgrades an already-decided
+          # higher bump.
+          bump="none"
+          while IFS= read -r subject; do
+            case "$subject" in
+              *"BREAKING CHANGE"*) bump="major" ;;
+              *"!:"*) bump="major" ;;
+              feat:*|feat\(*\):*)
+                if [ "$bump" != "major" ]; then bump="minor"; fi
+                ;;
+              fix:*|fix\(*\):*|perf:*|perf\(*\):*)
+                if [ "$bump" = "none" ]; then bump="patch"; fi
+                ;;
+            esac
+          done <<< "$commits"
+
+          echo "Computed bump: $bump"
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+          echo "last_tag=$last_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Compute next version
+        id: version
+        if: steps.bump.outputs.bump != 'none'
+        run: |
+          set -euo pipefail
+
+          version="${{ steps.bump.outputs.last_tag }}"
+          version="${version#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+
+          case "${{ steps.bump.outputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+
+          next_tag="v${major}.${minor}.${patch}"
+          echo "Next tag: $next_tag"
+          echo "next_tag=$next_tag" >> "$GITHUB_OUTPUT"
+
+      # Deliberately NOT the default GITHUB_TOKEN: GitHub does not fire
+      # downstream workflow events (including `release: published`) for
+      # anything created using the default token — that's an intentional
+      # anti-recursion measure, but it would silently make this whole
+      # mechanism a no-op (release created, release.yml never runs). A PAT
+      # doesn't have that restriction. RELEASE_PUSH_TOKEN already exists
+      # for this repo (release.yml's compose-pin step) and its Contents
+      # permission covers creating releases too, so it's reused here rather
+      # than adding a second secret.
+      - name: Create release (triggers release.yml)
+        if: steps.bump.outputs.bump != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.version.outputs.next_tag }}" \
+            --repo "${{ github.repository }}" \
+            --target main \
+            --title "${{ steps.version.outputs.next_tag }}" \
+            --generate-notes
