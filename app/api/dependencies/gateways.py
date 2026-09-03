@@ -32,7 +32,9 @@ from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
 from app.infrastructure.dentalink.specialty_gateway import DentalinkSpecialtyGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
+from app.infrastructure.llm.client import OpenAICompatibleLLMClient
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
+from app.infrastructure.llm.openai_compatible_llm_provider import OpenAICompatibleLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
 from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
@@ -187,13 +189,29 @@ def _get_fake_llm_provider() -> FakeLLMProvider:
     return FakeLLMProvider()
 
 
+@lru_cache
+def _get_llm_client() -> OpenAICompatibleLLMClient:
+    settings = get_settings()
+    return OpenAICompatibleLLMClient(
+        settings.llm_api_url, settings.llm_api_key, settings.llm_timeout_seconds
+    )
+
+
+@lru_cache
+def _get_real_llm_provider() -> OpenAICompatibleLLMProvider:
+    return OpenAICompatibleLLMProvider(_get_llm_client(), get_settings().openai_model)
+
+
 def get_llm_provider() -> LLMProvider:
     """FastAPI dependency providing the `LLMProvider` port.
 
-    Returns the in-memory `FakeLLMProvider` for now. This is the swap point
-    for a real LLM adapter in a later change — callers only depend on the
-    `LLMProvider` Protocol.
+    Returns the real, `httpx`-based `OpenAICompatibleLLMProvider` whenever
+    `settings.llm_api_url` is configured (a self-hosted 9Router instance,
+    OpenAI-compatible), else the in-memory `FakeLLMProvider` — callers
+    only depend on the `LLMProvider` Protocol.
     """
+    if get_settings().llm_api_url:
+        return _get_real_llm_provider()
     return _get_fake_llm_provider()
 
 
