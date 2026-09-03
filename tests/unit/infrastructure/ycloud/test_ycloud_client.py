@@ -228,3 +228,49 @@ async def test_get_media_raises_ycloud_api_error_on_non_2xx_response(
         await client.get_media("missing")
 
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_send_typing_indicator_posts_to_the_wamid_scoped_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch, json_response={})
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    await client.send_typing_indicator("wamid.ABC123")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert (
+        request.url
+        == "https://api.ycloud.com/v2/whatsapp/inboundMessages/wamid.ABC123/typingIndicator"
+    )
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    assert request.method == "POST"
+
+
+@pytest.mark.asyncio
+async def test_send_typing_indicator_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="unknown wamid")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError) as exc_info:
+        await client.send_typing_indicator("wamid.stale")
+
+    assert exc_info.value.status_code == 404

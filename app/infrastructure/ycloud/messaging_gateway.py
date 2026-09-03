@@ -87,3 +87,14 @@ class YCloudMessagingGateway:
             return PhoneNumber(str(raw_phone))
         except ValueError:
             return None
+
+    async def send_typing_indicator(self, wamid: str) -> None:
+        await traced_call(
+            tool_name="SendTypingIndicatorTool",
+            provider=_PROVIDER,
+            operation="send_typing_indicator",
+            request_summary="typing_indicator",
+            call=lambda: self._client.send_typing_indicator(wamid),
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )

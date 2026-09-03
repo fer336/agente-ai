@@ -50,6 +50,23 @@ class YCloudClient:
             }
         )
 
+    async def send_typing_indicator(self, wamid: str) -> None:
+        """`POST /v2/whatsapp/inboundMessages/{wamid}/typingIndicator` —
+        marks the given inbound message as read and shows "typing..." to
+        the patient. Per YCloud's own docs: dismissed automatically after
+        25s or as soon as we actually send a reply, whichever is first —
+        callers should only fire this right before doing real work that
+        will end in a reply, never speculatively.
+        """
+        url = f"{self._base_url}/v2/whatsapp/inboundMessages/{wamid}/typingIndicator"
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers={"X-API-Key": self._api_key})
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+
     async def get_media(self, media_id: str) -> dict[str, object]:
         """`GET /v1/media/{media_id}` — resolves a webhook's opaque media
         `id` to a short-lived download URL + declared MIME type (+ sha256
