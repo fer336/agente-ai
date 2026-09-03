@@ -7,10 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.db import _get_session_factory, get_db_session
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.audio.transcribe_audio import TranscriptionRepositories
-from app.application.memory.memory_repositories import MemoryRepositories
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
-from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.incident_repository import IncidentRepository
@@ -18,9 +16,6 @@ from app.domain.repositories.message_repository import MessageRepository
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
-)
-from app.infrastructure.database.repositories.contact_memory_repository import (
-    SqlAlchemyContactMemoryRepository,
 )
 from app.infrastructure.database.repositories.contact_repository import SqlAlchemyContactRepository
 from app.infrastructure.database.repositories.conversation_repository import (
@@ -205,33 +200,3 @@ def get_incident_repository(
     `app.workers.incident_tasks.check_incident_recovery`'s eventual caller.
     """
     return SqlAlchemyIncidentRepository(session)
-
-
-def get_contact_memory_repository(
-    session: AsyncSession = Depends(get_db_session),
-) -> ContactMemoryRepository:
-    """FastAPI dependency providing the `ContactMemoryRepository` port (real,
-    Postgres-backed) — used outside the `MemoryRepositoriesProvider` flow by
-    `app.workers.memory_tasks.compact_stale_contact_memories`'s eventual caller
-    and by the admin memory endpoints.
-    """
-    return SqlAlchemyContactMemoryRepository(session)
-
-
-@asynccontextmanager
-async def open_sqlalchemy_memory_repositories() -> AsyncIterator[MemoryRepositories]:
-    """`LangGraphAgentInvoker`'s `memory_repositories_provider` for production DI.
-
-    Commits explicitly, same reasoning as `open_sqlalchemy_proposal_repositories`/
-    `open_sqlalchemy_trace_repositories` above: an outbound message or a
-    compacted summary written here must survive past this one `handle()`
-    call, unlike `open_sqlalchemy_agent_repositories`'s read-only-in-practice
-    session.
-    """
-    session_factory = _get_session_factory()
-    async with session_factory() as session:
-        yield MemoryRepositories(
-            messages=SqlAlchemyMessageRepository(session),
-            contact_memories=SqlAlchemyContactMemoryRepository(session),
-        )
-        await session.commit()
