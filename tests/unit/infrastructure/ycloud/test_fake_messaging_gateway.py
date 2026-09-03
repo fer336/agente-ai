@@ -33,3 +33,12 @@ async def test_send_buttons_records_recipient_text_and_buttons():
 
 def test_fake_ycloud_messaging_gateway_satisfies_messaging_gateway_protocol():
     assert isinstance(FakeYCloudMessagingGateway(), MessagingGateway)
+
+
+@pytest.mark.asyncio
+async def test_get_contact_phone_returns_preset_phone_or_none():
+    gateway = make_ycloud_messaging_gateway()
+    gateway.contact_phones["contact-1"] = PhoneNumber("+5491122334455")
+
+    assert await gateway.get_contact_phone("contact-1") == PhoneNumber("+5491122334455")
+    assert await gateway.get_contact_phone("unknown") is None

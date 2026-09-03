@@ -68,3 +68,43 @@ class YCloudInboundEventPayload(BaseModel):
 
     type: str = ""
     whatsappInboundMessage: YCloudInboundMessage = YCloudInboundMessage()
+
+
+class YCloudTagChangeExtra(BaseModel):
+    """One entry of a `contact.attributes_changed` event's `tags.extra`
+    array — documents a single ADDED/REMOVED tag action, per
+    https://docs.ycloud.com/reference/contact-attributes-changed-webhook-examples.
+    """
+
+    action: str = ""
+    id: str = ""
+    value: str = ""
+
+
+class YCloudTagsAttributeChange(BaseModel):
+    oldValue: list[str] = Field(default_factory=list)
+    newValue: list[str] = Field(default_factory=list)
+    extra: list[YCloudTagChangeExtra] = Field(default_factory=list)
+
+
+class YCloudChangedAttributes(BaseModel):
+    tags: YCloudTagsAttributeChange | None = None
+
+
+class YCloudContactAttributesChanged(BaseModel):
+    id: str = ""
+    changedAttributes: YCloudChangedAttributes = YCloudChangedAttributes()
+
+
+class YCloudContactAttributesChangedEventPayload(BaseModel):
+    """Raw shape of a YCloud `contact.attributes_changed` webhook event.
+
+    UNVERIFIED against a live YCloud account (no live delivery captured in
+    this change) — field names follow YCloud's publicly documented example
+    at the URL above. Confirm against a real webhook delivery before
+    relying on this for anything beyond the tag-driven bot/human handoff
+    toggle it currently backs.
+    """
+
+    type: str = ""
+    contactAttributesChanged: YCloudContactAttributesChanged = YCloudContactAttributesChanged()

@@ -66,6 +66,28 @@ class YCloudMessagingGateway:
             error_type_of=_error_type_of,
         )
 
+    async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:
+        return await traced_call(
+            tool_name="GetContactPhoneTool",
+            provider=_PROVIDER,
+            operation="get_contact_phone",
+            request_summary=f"ycloud_contact_id={ycloud_contact_id}",
+            call=lambda: self._resolve_contact_phone(ycloud_contact_id),
+            response_summary=lambda phone: "found" if phone is not None else "not_found",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def _resolve_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:
+        data = await self._client.get_contact(ycloud_contact_id)
+        raw_phone = data.get("phoneNumber")
+        if not raw_phone or not str(raw_phone).strip():
+            return None
+        try:
+            return PhoneNumber(str(raw_phone))
+        except ValueError:
+            return None
+
     async def send_typing_indicator(self, wamid: str) -> None:
         await traced_call(
             tool_name="SendTypingIndicatorTool",

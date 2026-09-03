@@ -1,12 +1,23 @@
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.domain.value_objects.phone_number import PhoneNumber
-from app.infrastructure.ycloud.schemas import YCloudInboundEventPayload
+from app.infrastructure.ycloud.schemas import (
+    YCloudContactAttributesChangedEventPayload,
+    YCloudInboundEventPayload,
+)
 
 _INBOUND_MESSAGE_EVENT_TYPE = "whatsapp.inbound_message.received"
 _TEXT_MESSAGE_TYPE = "text"
 _INTERACTIVE_MESSAGE_TYPE = "interactive"
 _BUTTON_REPLY_TYPE = "button_reply"
 _AUDIO_MESSAGE_TYPE = "audio"
+
+_CONTACT_ATTRIBUTES_CHANGED_EVENT_TYPE = "contact.attributes_changed"
+_TAG_ADDED_ACTION = "ADDED"
+#: The two conversation-tags a human agent applies from YCloud's Shared
+#: Team Inbox to hand a conversation back and forth with the bot — the
+#: counterpart to `app.agent.nodes.handoff`'s one-way flip to `"human"`.
+#: Must match the exact tag names created in the YCloud dashboard.
+_TAG_TO_MODE = {"Humano": "human", "Agente": "agent"}
 
 
 def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: str) -> bool:
@@ -99,3 +110,27 @@ def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessage
         text=message.text.body if message.text is not None else "",
         button_payload=None,
     )
+
+
+def is_tag_mode_change_event(event_type: str) -> bool:
+    return event_type == _CONTACT_ATTRIBUTES_CHANGED_EVENT_TYPE
+
+
+def extract_tag_mode_change(
+    payload: YCloudContactAttributesChangedEventPayload,
+) -> tuple[str, str] | None:
+    """Returns `(ycloud_contact_id, mode)` for the first ADDED "Humano"/
+    "Agente" tag in this event's `tags.extra`, else `None` (no tag change
+    here, or none of the tags we care about). Multiple matching tags added
+    in the same event is not expected in practice — the first match wins.
+    """
+    contact = payload.contactAttributesChanged
+    if not contact.id.strip():
+        return None
+    tags_change = contact.changedAttributes.tags
+    if tags_change is None:
+        return None
+    for extra in tags_change.extra:
+        if extra.action == _TAG_ADDED_ACTION and extra.value in _TAG_TO_MODE:
+            return contact.id, _TAG_TO_MODE[extra.value]
+    return None

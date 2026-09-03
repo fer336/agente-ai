@@ -88,6 +88,9 @@ def test_conforming_class_satisfies_messaging_gateway_protocol():
         async def send_buttons(self, to, text, buttons):
             return "external-id"
 
+        async def get_contact_phone(self, ycloud_contact_id):
+            return None
+
         async def send_typing_indicator(self, wamid):
             pass
 

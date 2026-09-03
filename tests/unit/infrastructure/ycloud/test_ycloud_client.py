@@ -159,6 +159,53 @@ async def test_get_media_sends_api_key_and_returns_parsed_json(
 
 
 @pytest.mark.asyncio
+async def test_get_contact_sends_api_key_and_returns_parsed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(
+        monkeypatch,
+        json_response={"id": "contact-1", "phoneNumber": "+5491122334455"},
+    )
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    result = await client.get_contact("contact-1")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url == "https://api.ycloud.com/v2/contact/contacts/contact-1"
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    assert request.method == "GET"
+    assert result == {"id": "contact-1", "phoneNumber": "+5491122334455"}
+
+
+@pytest.mark.asyncio
+async def test_get_contact_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError) as exc_info:
+        await client.get_contact("missing")
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_get_media_raises_ycloud_api_error_on_non_2xx_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

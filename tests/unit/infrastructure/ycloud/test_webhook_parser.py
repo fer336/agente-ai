@@ -1,15 +1,21 @@
 import pytest
 
 from app.domain.value_objects.phone_number import PhoneNumber
-from app.infrastructure.ycloud.schemas import YCloudInboundEventPayload
+from app.infrastructure.ycloud.schemas import (
+    YCloudContactAttributesChangedEventPayload,
+    YCloudInboundEventPayload,
+)
 from app.infrastructure.ycloud.webhook_parser import (
+    extract_tag_mode_change,
     is_processable_message,
+    is_tag_mode_change_event,
     to_inbound_message_dto,
 )
 from tests.fixtures.seed_objects import (
     make_ycloud_audio_payload,
     make_ycloud_button_reply_payload,
     make_ycloud_payload,
+    make_ycloud_tag_change_payload,
 )
 
 _WHATSAPP_NUMBER = "+5491100000001"
@@ -180,9 +186,7 @@ def test_to_inbound_message_dto_raises_when_id_is_whitespace_only():
 
 def test_to_inbound_message_dto_maps_audio_metadata_with_no_text():
     payload = YCloudInboundEventPayload.model_validate(
-        make_ycloud_audio_payload(
-            media_id="media-1", mime_type="audio/ogg", sha256="abc123"
-        )
+        make_ycloud_audio_payload(media_id="media-1", mime_type="audio/ogg", sha256="abc123")
     )
 
     dto = to_inbound_message_dto(payload)
@@ -210,3 +214,58 @@ def test_to_inbound_message_dto_raises_when_from_is_whitespace_only():
 
     with pytest.raises(ValueError):
         to_inbound_message_dto(payload)
+
+
+def test_is_tag_mode_change_event_accepts_contact_attributes_changed():
+    assert is_tag_mode_change_event("contact.attributes_changed") is True
+
+
+def test_is_tag_mode_change_event_rejects_other_types():
+    assert is_tag_mode_change_event("whatsapp.inbound_message.received") is False
+
+
+def test_extract_tag_mode_change_maps_habla_agente_to_agent_mode():
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(
+        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Agente")
+    )
+
+    assert extract_tag_mode_change(payload) == ("c-1", "agent")
+
+
+def test_extract_tag_mode_change_maps_habla_humano_to_human_mode():
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(
+        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Humano")
+    )
+
+    assert extract_tag_mode_change(payload) == ("c-1", "human")
+
+
+def test_extract_tag_mode_change_ignores_unrelated_tags():
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(
+        make_ycloud_tag_change_payload(tag_value="vip")
+    )
+
+    assert extract_tag_mode_change(payload) is None
+
+
+def test_extract_tag_mode_change_ignores_removed_action():
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(
+        make_ycloud_tag_change_payload(tag_value="Agente", action="REMOVED")
+    )
+
+    assert extract_tag_mode_change(payload) is None
+
+
+def test_extract_tag_mode_change_returns_none_when_no_tags_changed():
+    raw = make_ycloud_tag_change_payload()
+    raw["contactAttributesChanged"]["changedAttributes"] = {}
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(raw)
+
+    assert extract_tag_mode_change(payload) is None
+
+
+def test_extract_tag_mode_change_returns_none_when_contact_id_missing():
+    raw = make_ycloud_tag_change_payload(contact_id="")
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(raw)
+
+    assert extract_tag_mode_change(payload) is None
