@@ -173,6 +173,23 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def checkpointer_database_url(self) -> str:
+        """DSN for the LangGraph checkpointer's own connection pool.
+
+        `psycopg`/`psycopg_pool` (what `create_postgres_checkpointer_pool`
+        builds — deliberately separate from the SQLAlchemy asyncpg engine)
+        does not understand SQLAlchemy's `+asyncpg` dialect suffix in
+        `database_url` — it fails every connection attempt with "missing
+        '=' after ... in connection info string" and the pool times out.
+        Plain `postgresql://` is what psycopg's own DSN parser expects.
+        """
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def redis_url(self) -> str:
         if self.redis_password:
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
