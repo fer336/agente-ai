@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.db import _get_session_factory, get_db_session
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.audio.transcribe_audio import TranscriptionRepositories
+from app.application.memory.memory_repositories import MemoryRepositories
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
+from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.incident_repository import IncidentRepository
@@ -16,6 +18,9 @@ from app.domain.repositories.message_repository import MessageRepository
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
+)
+from app.infrastructure.database.repositories.contact_memory_repository import (
+    SqlAlchemyContactMemoryRepository,
 )
 from app.infrastructure.database.repositories.contact_repository import SqlAlchemyContactRepository
 from app.infrastructure.database.repositories.conversation_repository import (
@@ -79,6 +84,13 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
     deferred `_debounce_and_process` step runs well after any one HTTP
     request/response cycle ends, so it must never reuse a request-scoped
     session that has already been closed by then.
+
+    Commits explicitly before the `async with` block exits — verified live
+    against a real webhook round-trip that, without this, every contact/
+    conversation/message write here was silently flushed-then-rolled-back
+    on session close (`AsyncSession` does not auto-commit), so nothing
+    survived past the request that created it. This is the core inbound
+    pipeline; every write through it must be durable.
     """
     session_factory = _get_session_factory()
     async with session_factory() as session:
@@ -88,6 +100,7 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
             conversations=SqlAlchemyConversationRepository(session),
             media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
         )
+        await session.commit()
 
 
 @asynccontextmanager
@@ -116,6 +129,14 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
     Same rationale as `open_sqlalchemy_message_repositories` above: opens a
     FRESH session per call rather than reusing a request-scoped one, since
     `LangGraphAgentInvoker` is a process-level singleton too.
+
+    Commits explicitly, same reasoning/verification as
+    `open_sqlalchemy_message_repositories` above — the `handoff` node's
+    `SetConversationModeUseCase.execute` (PRD.md §21/§23: LangGraph must
+    stop auto-replying once a conversation is flagged `mode="human"`) saves
+    through exactly this session; without a commit here, that flag was
+    silently discarded on session close, so the bot would keep answering
+    on the very next message after a user asked for a human.
     """
     session_factory = _get_session_factory()
     async with session_factory() as session:
@@ -123,18 +144,18 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
             conversations=SqlAlchemyConversationRepository(session),
             contacts=SqlAlchemyContactRepository(session),
         )
+        await session.commit()
 
 
 @asynccontextmanager
 async def open_sqlalchemy_proposal_repositories() -> AsyncIterator[ProposalRepositories]:
     """`ProposeAppointmentUseCase`'s `repositories_provider` for production DI.
 
-    Unlike `open_sqlalchemy_message_repositories`/`open_sqlalchemy_agent_repositories`
-    above (which never call `.commit()` — see their own module's callers'
-    docstrings for the pre-existing "same session, read-your-writes-only"
-    behavior this codebase has relied on so far), this ONE provider commits
-    explicitly before the `async with` block exits. PRD.md §16.2 requires
-    the `PendingAction` + `ScheduledAction` + initial outbox event to exist
+    Commits explicitly before the `async with` block exits — same fix as
+    `open_sqlalchemy_message_repositories`/`open_sqlalchemy_agent_repositories`
+    above, which were missing this until it was caught via a live webhook
+    test (see their own docstrings). PRD.md §16.2 requires the
+    `PendingAction` + `ScheduledAction` + initial outbox event to exist
     together, durably, in a single transaction — a session that's merely
     `close()`d without `commit()` never persists anything past that same
     session, which would silently violate that guarantee the moment a
@@ -184,3 +205,33 @@ def get_incident_repository(
     `app.workers.incident_tasks.check_incident_recovery`'s eventual caller.
     """
     return SqlAlchemyIncidentRepository(session)
+
+
+def get_contact_memory_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> ContactMemoryRepository:
+    """FastAPI dependency providing the `ContactMemoryRepository` port (real,
+    Postgres-backed) — used outside the `MemoryRepositoriesProvider` flow by
+    `app.workers.memory_tasks.compact_stale_contact_memories`'s eventual caller
+    and by the admin memory endpoints.
+    """
+    return SqlAlchemyContactMemoryRepository(session)
+
+
+@asynccontextmanager
+async def open_sqlalchemy_memory_repositories() -> AsyncIterator[MemoryRepositories]:
+    """`LangGraphAgentInvoker`'s `memory_repositories_provider` for production DI.
+
+    Commits explicitly, same reasoning as `open_sqlalchemy_proposal_repositories`/
+    `open_sqlalchemy_trace_repositories` above: an outbound message or a
+    compacted summary written here must survive past this one `handle()`
+    call, unlike `open_sqlalchemy_agent_repositories`'s read-only-in-practice
+    session.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield MemoryRepositories(
+            messages=SqlAlchemyMessageRepository(session),
+            contact_memories=SqlAlchemyContactMemoryRepository(session),
+        )
+        await session.commit()
