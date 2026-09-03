@@ -58,6 +58,18 @@ class PatientGateway(Protocol):
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None: ...
 
+    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
+        """Creates a new patient, tied to the requesting contact's own `phone`.
+
+        Guardrail (IDOR/contact-isolation): `phone` must always be the
+        phone number of the conversation/contact currently being served —
+        never a caller-supplied arbitrary patient phone — so every created
+        record is provably linked to whoever asked for it. Implementations
+        must reject a duplicate RUT (see `PatientAlreadyExistsError`)
+        rather than silently creating a second record for the same person.
+        """
+        ...
+
 
 @runtime_checkable
 class AgreementGateway(Protocol):

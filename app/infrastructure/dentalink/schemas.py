@@ -23,10 +23,19 @@ from datetime import datetime, timedelta
 from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
+from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.dentalink.exceptions import DentalinkInvalidResponseError
+
+#: Dentalink is a Chile-only platform — a `celular`/`telefono` value with no
+#: explicit country code (Dentalink's docs show bare local numbers, e.g.
+#: "912345678") is assumed local Chilean and prefixed accordingly so it can
+#: become a valid E.164 `PhoneNumber`. A value that already starts with "+"
+#: (or already carries the "56" prefix) is left as-is.
+_CHILE_COUNTRY_CODE = "56"
 
 
 def professional_from_dentista(raw: dict[str, object]) -> Professional:
@@ -82,6 +91,55 @@ def appointment_from_cita(raw: dict[str, object], *, cancelled_state_id: str | N
         slot=slot,
         status=status,
     )
+
+
+def patient_from_paciente(raw: dict[str, object]) -> Patient:
+    """Maps a raw `/v1/pacientes` record to the domain `Patient`.
+
+    `Patient.dni` carries Dentalink's `rut` here (see
+    `DentalinkPatientGateway`'s module docstring for why the field keeps
+    its existing PRD name rather than being renamed project-wide).
+    """
+    patient_id = raw.get("id")
+    if patient_id is None:
+        raise DentalinkInvalidResponseError("paciente record is missing an id")
+
+    nombre = str(raw.get("nombre", "")).strip()
+    apellidos = str(raw.get("apellidos", "")).strip()
+    full_name = f"{nombre} {apellidos}".strip()
+
+    raw_phone = raw.get("celular") or raw.get("telefono")
+    if not raw_phone:
+        raise DentalinkInvalidResponseError(
+            f"paciente {patient_id} record has no celular/telefono"
+        )
+    phone = _phone_from_dentalink(str(raw_phone))
+
+    rut = raw.get("rut")
+    return Patient(
+        id=str(patient_id),
+        full_name=full_name,
+        phone=phone,
+        dni=str(rut) if rut is not None else None,
+    )
+
+
+def _phone_from_dentalink(raw_value: str) -> PhoneNumber:
+    digits = "".join(char for char in raw_value if char.isdigit())
+    if not digits:
+        raise DentalinkInvalidResponseError(f"unparseable phone number: {raw_value!r}")
+
+    if raw_value.strip().startswith("+") or digits.startswith(_CHILE_COUNTRY_CODE):
+        candidate = f"+{digits}"
+    else:
+        candidate = f"+{_CHILE_COUNTRY_CODE}{digits}"
+
+    try:
+        return PhoneNumber(candidate)
+    except ValueError as exc:
+        raise DentalinkInvalidResponseError(
+            f"unparseable phone number: {raw_value!r}"
+        ) from exc
 
 
 def agreement_from_convenio(raw: dict[str, object]) -> Agreement:

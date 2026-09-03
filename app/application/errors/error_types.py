@@ -15,6 +15,10 @@ PATIENT_NOT_FOUND = "patient_not_found"
 APPOINTMENT_NOT_FOUND = "appointment_not_found"
 APPOINTMENT_SLOT_TAKEN = "appointment_slot_taken"
 AGREEMENT_NOT_FOUND = "agreement_not_found"
+#: `DentalinkPatientGateway.create_patient`'s anti-duplicate guardrail —
+#: raised as `PatientAlreadyExistsError`, not a Dentalink integration error:
+#: the request reached Dentalink fine, it's a business fact (RUT taken).
+PATIENT_ALREADY_EXISTS = "patient_already_exists"
 
 # 43.2 Integration Errors.
 DENTALINK_TIMEOUT = "dentalink_timeout"

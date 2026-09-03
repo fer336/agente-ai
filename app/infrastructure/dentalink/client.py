@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 
 from app.infrastructure.dentalink.exceptions import (
@@ -6,6 +8,13 @@ from app.infrastructure.dentalink.exceptions import (
     DentalinkInvalidResponseError,
     DentalinkTimeoutError,
 )
+
+#: Bounded retry, transient network errors only (`httpx.TimeoutException`) —
+#: never on a 4xx/5xx application response, which `_request` only sees
+#: *after* a response was successfully received (retrying those would risk
+#: e.g. double-creating a patient/appointment on a slow-but-successful write).
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 0.05
 
 
 class DentalinkClient:
@@ -50,13 +59,23 @@ class DentalinkClient:
     ) -> object:
         url = f"{self._base_url}{path}"
         headers = {"Authorization": f"Token {self._access_token}"}
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                response = await client.request(
-                    method, url, headers=headers, params=params, json=json
-                )
-        except httpx.TimeoutException as exc:
-            raise DentalinkTimeoutError(f"Dentalink request to {path} timed out") from exc
+        response: httpx.Response | None = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+                    response = await client.request(
+                        method, url, headers=headers, params=params, json=json
+                    )
+                break
+            except httpx.TimeoutException as exc:
+                if attempt == _MAX_ATTEMPTS:
+                    # Never include request/response bodies or the token
+                    # itself here — only the path, which is not a secret.
+                    raise DentalinkTimeoutError(
+                        f"Dentalink request to {path} timed out after {attempt} attempts"
+                    ) from exc
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+        assert response is not None  # loop always breaks or raises above
 
         if response.status_code in (401, 403):
             raise DentalinkAuthError(

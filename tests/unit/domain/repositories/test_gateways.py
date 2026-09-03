@@ -111,6 +111,9 @@ def test_conforming_class_satisfies_patient_gateway_protocol():
         async def find_patient(self, full_name, dni):
             return None
 
+        async def create_patient(self, full_name, dni, phone):
+            raise NotImplementedError
+
     assert isinstance(ConformingPatientGateway(), PatientGateway)
 
 
@@ -120,6 +123,14 @@ def test_partial_class_does_not_satisfy_patient_gateway_protocol():
             pass
 
     assert not isinstance(PartialPatientGateway(), PatientGateway)
+
+
+def test_class_missing_create_patient_does_not_satisfy_patient_gateway_protocol():
+    class MissingCreatePatientGateway:
+        async def find_patient(self, full_name, dni):
+            return None
+
+    assert not isinstance(MissingCreatePatientGateway(), PatientGateway)
 
 
 def test_interactive_button_holds_id_and_title():

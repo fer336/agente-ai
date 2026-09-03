@@ -35,12 +35,14 @@ from app.domain.entities.patient import Patient
 from app.domain.exceptions.errors import (
     AppointmentSlotUnavailableError,
     InvalidConfirmationError,
+    PatientAlreadyExistsError,
     PendingActionExpiredError,
 )
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import AppointmentGateway, PatientGateway
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.dni import Dni
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -67,6 +69,15 @@ CREATE_APPOINTMENT_ACTION = "create_appointment"
 RESCHEDULE_APPOINTMENT_ACTION = "reschedule_appointment"
 CANCEL_APPOINTMENT_ACTION = "cancel_appointment"
 
+#: A fourth `PendingAction.action_type`, alongside the three above — only
+#: ever proposed from `STAGE_AWAITING_IDENTIFICATION` when the patient
+#: could not be found AND the in-flight operation is
+#: `CREATE_APPOINTMENT_ACTION` (rescheduling/cancelling a nonexistent
+#: patient's appointment makes no sense, so this is never offered for
+#: those two operations). Reuses the same generic
+#: `STAGE_AWAITING_CONFIRMATION` confirm/reject cycle as the other three.
+CREATE_PATIENT_ACTION = "create_patient"
+
 #: Button payload contract for this flow (PRD.md §6: deterministic, never
 #: LLM-classified).
 OPERATION_CREATE_PAYLOAD = "OPERATION_CREATE"
@@ -92,6 +103,14 @@ _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE = (
 _PATIENT_NOT_FOUND_MESSAGE = (
     "No encontramos ningún paciente con esos datos. Revisá que el nombre y el DNI "
     "coincidan exactamente con los registrados en la clínica, y probá de nuevo."
+)
+_DNI_FORMAT_INVALID_MESSAGE = (
+    "Ese DNI no parece válido. Escribime tu DNI solo con números "
+    "(7 u 8 dígitos), por ejemplo: 30123456."
+)
+_NEW_PATIENT_RACE_LOST_MESSAGE = (
+    "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
+    "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
 )
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
@@ -219,6 +238,21 @@ def _reschedule_confirmation_message(
         f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
         "¿Confirmás el cambio?"
     )
+
+
+def _new_patient_confirmation_message(full_name: str, dni: str) -> str:
+    return (
+        "No encontramos ningún paciente registrado con esos datos. "
+        "¿Confirmás que querés crear tu ficha con estos datos?\n\n"
+        f"Nombre: {full_name}\n"
+        f"DNI: {dni}"
+    )
+
+
+def _new_patient_proposal_payload(
+    full_name: str, dni: str, phone: PhoneNumber
+) -> dict[str, object]:
+    return {"full_name": full_name, "dni": dni, "phone": str(phone)}
 
 
 def _success_message(appointment: Appointment) -> str:
@@ -611,6 +645,39 @@ def create_appointment_node(
                         "collected_data": {},
                     }
 
+                if confirmed_action_type == CREATE_PATIENT_ACTION:
+                    full_name = str(confirmed_payload["full_name"])
+                    dni = str(confirmed_payload["dni"])
+                    phone = PhoneNumber(str(confirmed_payload["phone"]))
+                    try:
+                        new_patient = await patient_gateway.create_patient(full_name, dni, phone)
+                    except PatientAlreadyExistsError:
+                        # Race: someone else created a matching-DNI record
+                        # between propose and confirm. Re-look-up by the
+                        # same name+DNI the patient just confirmed rather
+                        # than failing the turn.
+                        recovered = await identify_patient.execute(full_name, dni)
+                        if recovered is None:
+                            await set_conversation_input_state.execute(
+                                conversation_id, FREE_INPUT
+                            )
+                            return {
+                                "response_text": _NEW_PATIENT_RACE_LOST_MESSAGE,
+                                "response_buttons": None,
+                                "requires_handoff": False,
+                                "pending_action_id": None,
+                                "collected_data": {**collected_data, "stage": None},
+                            }
+                        new_patient = recovered
+
+                    # Only ever reached via `STAGE_AWAITING_IDENTIFICATION`
+                    # proposing this action, which itself only does so when
+                    # `operation == CREATE_APPOINTMENT_ACTION` — always
+                    # continue into slot search, never appointment listing.
+                    return await _offer_slots(
+                        conversation_id, _patient_to_primitives(new_patient), collected_data
+                    )
+
                 if confirmed_action_type == RESCHEDULE_APPOINTMENT_ACTION:
                     appointment_id = str(confirmed_payload["appointment_id"])
                     new_slot = _slot_from_payload(confirmed_payload)
@@ -825,12 +892,52 @@ def create_appointment_node(
                     "requires_handoff": False,
                 }
             full_name, dni = parsed
-            identified_patient = await identify_patient.execute(full_name, dni)
-            if identified_patient is None:
+            try:
+                validated_dni = Dni(dni)
+            except ValueError:
+                # Malformed DNI (wrong length, non-digits) — ask again for
+                # just the DNI rather than falling through to "not found",
+                # and stay in this same stage (no PendingAction needed for
+                # a plain format retry).
                 return {
-                    "response_text": _PATIENT_NOT_FOUND_MESSAGE,
+                    "response_text": _DNI_FORMAT_INVALID_MESSAGE,
                     "response_buttons": None,
                     "requires_handoff": False,
+                }
+            identified_patient = await identify_patient.execute(full_name, validated_dni.value)
+            if identified_patient is None:
+                if collected_data.get("operation") != CREATE_APPOINTMENT_ACTION:
+                    # Rescheduling/cancelling requires an existing patient
+                    # with an existing appointment — there is nothing to
+                    # offer to create here.
+                    return {
+                        "response_text": _PATIENT_NOT_FOUND_MESSAGE,
+                        "response_buttons": None,
+                        "requires_handoff": False,
+                    }
+                # DNI is well-formed but Dentalink has no matching record —
+                # propose creating a new patient rather than dead-ending.
+                # `phone` comes from this WhatsApp contact's own identity
+                # (`conversation_id` is `ycloud-{phone}` by construction,
+                # see `IngestMessageUseCase`), never from parsed free text —
+                # the created record is always provably tied to whoever is
+                # actually messaging.
+                contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
+                new_patient_payload = _new_patient_proposal_payload(
+                    full_name.strip(), validated_dni.value, contact_phone
+                )
+                pending_action = await propose_appointment.execute(
+                    conversation_id, CREATE_PATIENT_ACTION, new_patient_payload
+                )
+                await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+                return {
+                    "response_text": _new_patient_confirmation_message(
+                        full_name.strip(), validated_dni.value
+                    ),
+                    "response_buttons": _CONFIRM_BUTTONS,
+                    "requires_handoff": False,
+                    "pending_action_id": pending_action.id,
+                    "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
                 }
             patient_primitives = _patient_to_primitives(identified_patient)
             if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:

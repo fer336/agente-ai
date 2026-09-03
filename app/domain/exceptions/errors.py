@@ -55,3 +55,17 @@ class AppointmentNotFoundError(DomainError):
     def __init__(self, appointment_id: str) -> None:
         self.appointment_id = appointment_id
         super().__init__(f"Appointment {appointment_id} not found")
+
+
+class PatientAlreadyExistsError(DomainError):
+    """Raised when creating a patient whose RUT already exists in Dentalink.
+
+    Guardrail: `DentalinkPatientGateway.create_patient` always searches by
+    RUT first — this is the typed conflict it raises instead of silently
+    creating a duplicate patient record.
+    """
+
+    def __init__(self, rut: str, existing_patient_id: str) -> None:
+        self.rut = rut
+        self.existing_patient_id = existing_patient_id
+        super().__init__(f"Patient with RUT {rut} already exists (id={existing_patient_id})")

@@ -195,6 +195,89 @@ async def test_raises_timeout_error_when_request_times_out(
         await client.get("/v1/dentistas")
 
 
+@pytest.mark.asyncio
+async def test_get_retries_transient_timeouts_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.TimeoutException("timed out", request=request)
+        return httpx.Response(200, json={"data": []})
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = DentalinkClient(
+        base_url="https://api.dentalink.healthatom.com/api",
+        access_token="secret-token",
+        timeout_seconds=15,
+    )
+
+    result = await client.get("/v1/pacientes")
+
+    assert attempts == 3
+    assert result == {"data": []}
+
+
+@pytest.mark.asyncio
+async def test_get_gives_up_after_max_attempts_on_persistent_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.TimeoutException("timed out", request=request)
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = DentalinkClient(
+        base_url="https://api.dentalink.healthatom.com/api",
+        access_token="secret-token",
+        timeout_seconds=15,
+    )
+
+    from app.infrastructure.dentalink.exceptions import DentalinkTimeoutError
+
+    with pytest.raises(DentalinkTimeoutError):
+        await client.get("/v1/pacientes")
+
+    assert attempts == 3  # bounded retry, not unbounded
+
+
+@pytest.mark.asyncio
+async def test_api_error_never_includes_the_access_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _capture_requests(monkeypatch, httpx.Response(500, text="internal error"))
+    client = DentalinkClient(
+        base_url="https://api.dentalink.healthatom.com/api",
+        access_token="super-secret-token",
+        timeout_seconds=15,
+    )
+
+    with pytest.raises(DentalinkAPIError) as exc_info:
+        await client.get("/v1/pacientes")
+
+    assert "super-secret-token" not in str(exc_info.value)
+
+
 def test_build_filter_params_encodes_bracket_notation_filters():
     params = build_filter_params(
         {"id_sucursal": 1, "fecha": "2026-08-15", "duracion": 30, "id_profesional": 626}
