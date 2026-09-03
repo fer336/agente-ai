@@ -25,6 +25,17 @@ services:
     secrets:
       - source: agente_ai_backend_env
         target: /run/secrets/backend.env
+    # 9Router (LLM_API_URL) runs as a native systemd service on this same
+    # Swarm manager host, bound to 0.0.0.0:20128 — but the container can't
+    # reliably reach it via the host's own Tailscale IP (100.x.x.x):
+    # traffic leaving a Docker bridge/overlay network addressed to one of
+    # the host's own local addresses is a classic "hairpin NAT" case that
+    # doesn't route back in without this. `host.docker.internal` resolves
+    # to the host's real gateway IP instead, which the container CAN reach
+    # normally — LLM_API_URL in the secret should point at
+    # http://host.docker.internal:20128/v1, not the Tailscale IP.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     deploy:
       mode: replicated
       replicas: 1
