@@ -2,12 +2,14 @@ from dataclasses import dataclass
 from datetime import datetime
 
 #: `node_executions.status` — PRD.md §40's example shows only a binary
-#: ✓/✗ result per node (a node call is synchronous and short-lived, unlike
-#: an `AgentRun`, so there is no useful `running` state to persist — see
-#: `with_error_handling`'s own docstring for why this is written once, after
-#: the node call finishes, rather than twice).
+#: ✓/✗ result per node. `RUNNING` exists purely as a placeholder value
+#: for the row `with_error_handling` writes *before* calling the node (see
+#: its own docstring) — never a state a caller should treat as meaningful
+#: on its own; every row transitions to `COMPLETED`/`FAILED` by the time
+#: the node call returns.
 COMPLETED = "completed"
 FAILED = "failed"
+RUNNING = "running"
 
 
 @dataclass

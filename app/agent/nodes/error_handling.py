@@ -7,7 +7,7 @@ from app.agent.state import AgentState
 from app.application.errors.error_service import ErrorService
 from app.application.errors.error_types import UNEXPECTED_EXCEPTION
 from app.domain.entities.error_record import SOURCE_LANGGRAPH
-from app.domain.entities.node_execution import COMPLETED, FAILED, NodeExecution
+from app.domain.entities.node_execution import COMPLETED, FAILED, RUNNING, NodeExecution
 from app.domain.repositories.node_execution_repository import NodeExecutionRepository
 from app.domain.repositories.tool_execution_repository import ToolExecutionRepository
 from app.infrastructure.observability.trace_context import TraceContext, use_trace_context
@@ -77,15 +77,39 @@ def with_error_handling(
     is exactly what `unexpected_exception` means (PRD.md §43.3). The
     resulting `ErrorRecord.id` becomes this `NodeExecution.error_id`.
 
-    Written once, after the node call finishes (success or caught
-    exception) — see `NodeExecution`'s own docstring for why a node call
-    has no useful intermediate `running` state to persist.
+    Writes a `RUNNING` placeholder row for this `node_execution_id` BEFORE
+    calling the node, then overwrites it with the final `COMPLETED`/`FAILED`
+    result once the node call returns (`NodeExecutionRepository.save` is
+    upsert-safe — get-or-create then update — so this is one logical
+    write, not two visible states). This placeholder is required, not
+    cosmetic: a tool call made from inside the node (`traced_call`) saves
+    its own `ToolExecution` row immediately on failure, and that row has a
+    foreign key to `node_executions.id` — without a row already there to
+    reference, that save fails with a `ForeignKeyViolationError`, which
+    then poisons this same session for the *real* error write that follows
+    (a `PendingRollbackError`), silently losing the original exception
+    entirely. Confirmed in production once `classify_intent` started
+    raising real exceptions against a live LLM gateway.
     """
 
     async def wrapped(state: AgentState) -> dict[str, object]:
         node_execution_id = str(uuid4())
         started_at = datetime.now(UTC)
         input_summary = _summarize_input(state)
+        await node_execution_repository.save(
+            NodeExecution(
+                id=node_execution_id,
+                agent_run_id=agent_run_id,
+                node_name=node_name,
+                started_at=started_at,
+                finished_at=started_at,
+                status=RUNNING,
+                input_summary=input_summary,
+                output_summary="",
+                duration_ms=0,
+                error_id=None,
+            )
+        )
         context = TraceContext(
             agent_run_id=agent_run_id,
             node_execution_id=node_execution_id,
