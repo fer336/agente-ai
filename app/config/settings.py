@@ -62,11 +62,19 @@ class Settings(BaseSettings):
     #: (PRD.md §39) so a prompt/behavior change can be correlated with the
     #: runs it affected.
     prompt_version: str = "agent-system-v0.1.0"
-    #: Empty by default (no real LLM/audio provider wired yet, PRD.md §33 —
-    #: a later change) — still stamped on every `AgentRun.model` as
-    #: whatever is configured, matching every other still-unconfigured
-    #: integration in this file (e.g. `ycloud_api_key`).
+    #: Model identifier stamped on every `AgentRun.model` (PRD.md §68's
+    #: documented name/default) AND sent as the real `model` field in every
+    #: `llm_api_url` request — this codebase's LLM provider is an
+    #: OpenAI-compatible gateway (9Router), not literally OpenAI, but the
+    #: field name follows the PRD's original naming to avoid churn.
     openai_model: str = ""
+    #: OpenAI-compatible chat-completions endpoint (e.g. a self-hosted
+    #: 9Router instance) — base URL including `/v1`, no trailing slash
+    #: required. Empty by default (falls back to `FakeLLMProvider`, see
+    #: `app.api.dependencies.gateways.get_llm_provider`).
+    llm_api_url: str = ""
+    llm_api_key: str = ""
+    llm_timeout_seconds: float = 20
 
     #: PRD.md §68/§50's documented names/defaults — how many same
     #: `source`+`error_type` errors within how many seconds counts as

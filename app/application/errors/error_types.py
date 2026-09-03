@@ -29,6 +29,11 @@ YCLOUD_AUTH_ERROR = "ycloud_auth_error"
 YCLOUD_SEND_FAILURE = "ycloud_send_failure"
 YCLOUD_WEBHOOK_FAILURE = "ycloud_webhook_failure"
 OPENAI_TIMEOUT = "openai_timeout"
+#: Not in PRD.md §43.2's literal list (which predates the real
+#: `OpenAICompatibleLLMProvider`) — added alongside it, same
+#: catch-all/auth split as `YCLOUD_ERROR`/`YCLOUD_AUTH_ERROR`.
+LLM_ERROR = "llm_error"
+LLM_AUTH_ERROR = "llm_auth_error"
 TRANSCRIPTION_TIMEOUT = "transcription_timeout"
 TRANSCRIPTION_AUTH_ERROR = "transcription_auth_error"
 TRANSCRIPTION_INVALID_RESPONSE = "transcription_invalid_response"
@@ -61,6 +66,7 @@ _RETRYABLE_ERROR_TYPES = frozenset(
         YCLOUD_ERROR,
         YCLOUD_SEND_FAILURE,
         OPENAI_TIMEOUT,
+        LLM_ERROR,
         TRANSCRIPTION_TIMEOUT,
         REDIS_ERROR,
         TELEGRAM_ERROR,
