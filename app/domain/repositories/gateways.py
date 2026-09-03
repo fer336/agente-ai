@@ -104,6 +104,13 @@ class MessagingGateway(Protocol):
         """Sends an interactive button message and returns the external_message_id."""
         ...
 
+    async def send_typing_indicator(self, wamid: str) -> None:
+        """Marks the given inbound message (by its wamid) as read and
+        shows a "typing..." indicator to the patient while a reply is
+        being prepared.
+        """
+        ...
+
 
 @runtime_checkable
 class HumanHandoffGateway(Protocol):

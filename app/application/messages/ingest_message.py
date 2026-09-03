@@ -119,12 +119,12 @@ class IngestMessageUseCase:
         #: that builds this use case without the new parameter (tests,
         #: pre-audio DI wiring) keeps its previous, unlimited behavior.
         self._audio_rate_limit_per_minute = audio_rate_limit_per_minute
-        # Per-conversation accumulator of (message_id, text, button_payload)
-        # tuples awaiting grouping into one Etapa-5 handoff. In-process
+        # Per-conversation accumulator of (message_id, text, button_payload,
+        # wamid) tuples awaiting grouping into one Etapa-5 handoff. In-process
         # only — see the class docstring's singleton-lifetime note and the
         # design's "Debounce trigger mechanism" ADR (no ARQ/durable queue
         # this etapa).
-        self._pending_messages: dict[str, list[tuple[str, str, str | None]]] = {}
+        self._pending_messages: dict[str, list[tuple[str, str, str | None, str | None]]] = {}
         # Strong references to in-flight background tasks: asyncio only
         # keeps a WEAK reference to a task created via `create_task()`, so
         # without this set a task can be garbage-collected mid-flight.
@@ -186,7 +186,11 @@ class IngestMessageUseCase:
             return
 
         await self._schedule_processing(
-            conversation_key, message.id, message.text, dto.button_payload
+            conversation_key,
+            message.id,
+            message.text,
+            dto.button_payload,
+            str(external_message_id),
         )
 
     async def _ingest_audio_message(
@@ -265,7 +269,11 @@ class IngestMessageUseCase:
         if conversation is not None and conversation.mode == "human":
             return
 
-        await self._schedule_processing(conversation_key, message_id, text, None)
+        # No wamid to thread through here — a transcript has no inbound
+        # webhook payload of its own, and the typing indicator is a
+        # best-effort nicety (skipped, not worth a repository round-trip
+        # to look one up for the audio-resume path specifically).
+        await self._schedule_processing(conversation_key, message_id, text, None, None)
 
     async def _schedule_processing(
         self,
@@ -273,9 +281,10 @@ class IngestMessageUseCase:
         message_id: str,
         text: str,
         button_payload: str | None,
+        wamid: str | None,
     ) -> None:
         self._pending_messages.setdefault(conversation_key, []).append(
-            (message_id, text, button_payload)
+            (message_id, text, button_payload, wamid)
         )
         token = await self._debounce_tracker.touch(conversation_key)
 
@@ -328,15 +337,32 @@ class IngestMessageUseCase:
             grouped = self._pending_messages.pop(conversation_key, [])
             if not grouped:
                 return
-            message_ids = [message_id for message_id, _, _ in grouped]
-            user_message = "\n".join(text for _, text, _ in grouped)
+            message_ids = [message_id for message_id, _, _, _ in grouped]
+            user_message = "\n".join(text for _, text, _, _ in grouped)
             # Last non-null button payload wins — a deliberate button tap is
             # a terminal action that should take priority over any free
             # text debounced alongside it (PRD.md §6: buttons carry a KNOWN
             # intent and must not be reinterpreted).
             button_payload = next(
-                (payload for _, _, payload in reversed(grouped) if payload is not None), None
+                (payload for _, _, payload, _ in reversed(grouped) if payload is not None), None
             )
+            latest_wamid = next(
+                (wamid for _, _, _, wamid in reversed(grouped) if wamid is not None), None
+            )
+
+            if latest_wamid is not None:
+                # Best-effort only: per YCloud's own guidance, only show
+                # "typing..." when we're actually about to reply, which is
+                # always true here — but a failure of this purely cosmetic
+                # call must never block the real reply that follows.
+                try:
+                    await self._send_reply.send_typing_indicator(latest_wamid)
+                except Exception:
+                    logger.warning(
+                        "ingest_message.typing_indicator_failed conversation=%s",
+                        conversation_key,
+                        exc_info=True,
+                    )
 
             await self._agent_invoker.handle(
                 ConversationId(conversation_key), message_ids, user_message, button_payload
