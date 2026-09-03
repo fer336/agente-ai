@@ -69,12 +69,29 @@ class YCloudClient:
             data = response.json()
             return dict(data)
 
+    async def get_contact(self, contact_id: str) -> dict[str, object]:
+        """`GET /v2/contact/contacts/{contact_id}` — resolves a YCloud
+        contact id to its `phoneNumber` (and other contact fields). Needed
+        because YCloud's `contact.attributes_changed` webhook event only
+        ever carries the contact's opaque id, never its phone number.
+        UNVERIFIED against a live YCloud account — see this module's own
+        docstring.
+        """
+        url = f"{self._base_url}/v2/contact/contacts/{contact_id}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers={"X-API-Key": self._api_key})
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+            data = response.json()
+            return dict(data)
+
     async def _post_message(self, payload: dict[str, object]) -> str:
         url = f"{self._base_url}/v2/whatsapp/messages"
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url, headers={"X-API-Key": self._api_key}, json=payload
-            )
+            response = await client.post(url, headers={"X-API-Key": self._api_key}, json=payload)
             if response.is_error:
                 raise YCloudAPIError(
                     f"YCloud API returned {response.status_code}: {response.text}",

@@ -18,6 +18,7 @@ class _StubYCloudClient:
     def __init__(self) -> None:
         self.text_calls: list[tuple[str, str]] = []
         self.button_calls: list[tuple[str, str, list[InteractiveButton]]] = []
+        self.contacts: dict[str, dict[str, object]] = {}
 
     async def send_text(self, to: str, text: str) -> str:
         self.text_calls.append((to, text))
@@ -26,6 +27,9 @@ class _StubYCloudClient:
     async def send_buttons(self, to: str, text: str, buttons: list[InteractiveButton]) -> str:
         self.button_calls.append((to, text, buttons))
         return "wamid.stub-2"
+
+    async def get_contact(self, contact_id: str) -> dict[str, object]:
+        return self.contacts.get(contact_id, {})
 
 
 @pytest.mark.asyncio
@@ -45,9 +49,7 @@ async def test_send_buttons_delegates_to_client_with_stringified_phone():
     gateway = YCloudMessagingGateway(client)
     buttons = [InteractiveButton(id="confirm", title="Confirmar")]
 
-    external_id = await gateway.send_buttons(
-        PhoneNumber("+5491122334455"), "¿Confirmás?", buttons
-    )
+    external_id = await gateway.send_buttons(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons)
 
     assert client.button_calls == [("+5491122334455", "¿Confirmás?", buttons)]
     assert external_id == "wamid.stub-2"
@@ -113,3 +115,32 @@ async def test_send_buttons_records_a_failed_tool_execution_with_http_status():
     assert error is not None
     assert error.error_type == "ycloud_auth_error"
     assert error.severity == "CRITICAL"
+
+
+@pytest.mark.asyncio
+async def test_get_contact_phone_returns_the_resolved_phone_number():
+    client = _StubYCloudClient()
+    client.contacts["contact-1"] = {"id": "contact-1", "phoneNumber": "+5491122334455"}
+    gateway = YCloudMessagingGateway(client)
+
+    phone = await gateway.get_contact_phone("contact-1")
+
+    assert phone == PhoneNumber("+5491122334455")
+
+
+@pytest.mark.asyncio
+async def test_get_contact_phone_returns_none_when_phone_number_missing():
+    client = _StubYCloudClient()
+    client.contacts["contact-1"] = {"id": "contact-1"}
+    gateway = YCloudMessagingGateway(client)
+
+    assert await gateway.get_contact_phone("contact-1") is None
+
+
+@pytest.mark.asyncio
+async def test_get_contact_phone_returns_none_when_phone_number_is_invalid():
+    client = _StubYCloudClient()
+    client.contacts["contact-1"] = {"id": "contact-1", "phoneNumber": "not-a-phone"}
+    gateway = YCloudMessagingGateway(client)
+
+    assert await gateway.get_contact_phone("contact-1") is None

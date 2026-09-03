@@ -104,6 +104,14 @@ class MessagingGateway(Protocol):
         """Sends an interactive button message and returns the external_message_id."""
         ...
 
+    async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:
+        """Resolves a vendor-side contact id to its phone number, or `None`
+        if the contact has no known/valid phone. Needed because YCloud's
+        `contact.attributes_changed` webhook event carries only the
+        contact's opaque id, never its phone number.
+        """
+        ...
+
 
 @runtime_checkable
 class HumanHandoffGateway(Protocol):

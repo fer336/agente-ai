@@ -1,17 +1,32 @@
 import hmac
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.repositories import get_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
+from app.application.conversations.sync_conversation_mode_from_tag import (
+    SyncConversationModeFromTagUseCase,
+)
 from app.application.messages.ingest_message import IngestMessageUseCase
 from app.config.settings import Settings, get_settings
-from app.infrastructure.ycloud.schemas import YCloudInboundEventPayload
+from app.domain.repositories.conversation_repository import ConversationRepository
+from app.domain.repositories.gateways import MessagingGateway
+from app.infrastructure.ycloud.schemas import (
+    YCloudContactAttributesChangedEventPayload,
+    YCloudInboundEventPayload,
+)
 from app.infrastructure.ycloud.webhook_parser import (
+    extract_tag_mode_change,
     is_processable_message,
+    is_tag_mode_change_event,
     to_inbound_message_dto,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -32,14 +47,19 @@ class WebhookAckResponse(BaseModel):
 
 @router.post(
     "/ycloud/{secret}",
-    summary="Receive a YCloud `whatsapp.inbound_message.received` webhook event",
+    summary=(
+        "Receive a YCloud webhook event: `whatsapp.inbound_message.received` "
+        "or `contact.attributes_changed` (tag-driven bot/human toggle)"
+    ),
     response_model=WebhookAckResponse,
 )
 async def receive_ycloud_webhook(
     secret: str,
-    payload: YCloudInboundEventPayload,
+    payload: dict[str, object],
     settings: Settings = Depends(get_settings),
     use_case: IngestMessageUseCase = Depends(get_ingest_message_use_case),
+    messaging_gateway: MessagingGateway = Depends(get_messaging_gateway),
+    conversation_repository: ConversationRepository = Depends(get_conversation_repository),
 ) -> WebhookAckResponse:
     """YCloud is the sole webhook counterparty (WhatsApp -> YCloud -> us).
 
@@ -50,6 +70,13 @@ async def receive_ycloud_webhook(
     deliberately indistinguishable from an unregistered path. YCloud's own
     HMAC signature headers (PRD §74.1) are explicitly out of scope for this
     change — see this PR's report.
+
+    The body is accepted as a raw `dict` (not one fixed pydantic model)
+    because this single endpoint now fans out on `payload["type"]` to two
+    unrelated YCloud event shapes: an inbound WhatsApp message, or a
+    `contact.attributes_changed` tag change (the "Humano"/"Agente"
+    bot/human toggle — see `SyncConversationModeFromTagUseCase`).
+    Each branch validates into its own specific schema before use.
 
     `use_case.execute(dto)` is awaited here — its synchronous portion
     (dedupe, contact/conversation resolution, message persistence, the
@@ -62,11 +89,36 @@ async def receive_ycloud_webhook(
     if not hmac.compare_digest(secret, settings.ycloud_webhook_secret):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invalid webhook secret")
 
-    if not is_processable_message(payload, settings.ycloud_whatsapp_number):
+    event_type = str(payload.get("type", ""))
+
+    if is_tag_mode_change_event(event_type):
+        tag_payload = YCloudContactAttributesChangedEventPayload.model_validate(payload)
+        change = extract_tag_mode_change(tag_payload)
+        if change is None:
+            return WebhookAckResponse(status="ignored")
+
+        ycloud_contact_id, mode = change
+        sync_mode = SyncConversationModeFromTagUseCase(messaging_gateway, conversation_repository)
+        try:
+            await sync_mode.execute(ycloud_contact_id, mode)
+        except Exception:
+            # Best-effort: a YCloud contact-lookup failure must never turn
+            # into a 500 that YCloud retries — same ack-and-drop stance as
+            # the message-parsing branch below.
+            logger.warning(
+                "webhook.tag_mode_sync_failed ycloud_contact_id=%s mode=%s",
+                ycloud_contact_id,
+                mode,
+                exc_info=True,
+            )
+        return WebhookAckResponse(status="accepted")
+
+    message_payload = YCloudInboundEventPayload.model_validate(payload)
+    if not is_processable_message(message_payload, settings.ycloud_whatsapp_number):
         return WebhookAckResponse(status="ignored")
 
     try:
-        dto = to_inbound_message_dto(payload)
+        dto = to_inbound_message_dto(message_payload)
     except ValueError:
         # Plausible-but-incomplete payload (e.g. sender phone missing) —
         # ack-and-drop rather than a 500, so YCloud does not retry a

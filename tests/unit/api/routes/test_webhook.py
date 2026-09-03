@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.repositories import get_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL
@@ -14,9 +16,14 @@ from app.infrastructure.auth.session_tokens import create_session_token
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
+from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from app.main import app
 from tests.fixtures.gateways import make_ingest_message_use_case
-from tests.fixtures.seed_objects import make_conversation, make_ycloud_payload
+from tests.fixtures.seed_objects import (
+    make_conversation,
+    make_ycloud_payload,
+    make_ycloud_tag_change_payload,
+)
 
 _WEBHOOK_SECRET = "correct-secret"
 _WHATSAPP_NUMBER = "+5491100000001"
@@ -132,9 +139,7 @@ async def test_non_text_message_type_dropped():
 @pytest.mark.asyncio
 async def test_unknown_event_type_dropped():
     # e.g. a delivery-status event, not an inbound message.
-    response = await _post_webhook(
-        make_ycloud_payload(type="whatsapp.message.delivered")
-    )
+    response = await _post_webhook(make_ycloud_payload(type="whatsapp.message.delivered"))
 
     assert response.status_code == 200
     assert response.json() == {"status": "ignored"}
@@ -265,14 +270,91 @@ async def test_valid_message_whitespace_only_external_id_acked_not_500():
     assert response.json() == {"status": "ignored"}
 
 
+@dataclass
+class _TagWebhookFakes:
+    messaging_gateway: FakeYCloudMessagingGateway
+    conversation_repository: FakeConversationRepository
+
+
+@pytest.fixture
+def _tag_webhook_fakes():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    conversation_repository = FakeConversationRepository()
+    app.dependency_overrides[get_messaging_gateway] = lambda: messaging_gateway
+    app.dependency_overrides[get_conversation_repository] = lambda: conversation_repository
+
+    yield _TagWebhookFakes(
+        messaging_gateway=messaging_gateway, conversation_repository=conversation_repository
+    )
+
+    del app.dependency_overrides[get_messaging_gateway]
+    del app.dependency_overrides[get_conversation_repository]
+
+
+@pytest.mark.asyncio
+async def test_tag_habla_agente_resumes_the_bot(_tag_webhook_fakes):
+    fakes = _tag_webhook_fakes
+    fakes.messaging_gateway.contact_phones["ycloud-contact-1"] = PhoneNumber("+5491122334455")
+    await fakes.conversation_repository.save(make_conversation(mode="human", input_state="HUMAN"))
+
+    response = await _post_webhook(
+        make_ycloud_tag_change_payload(contact_id="ycloud-contact-1", tag_value="Agente")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert conversation is not None
+    assert conversation.mode == "agent"
+    assert conversation.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_tag_habla_humano_pauses_the_bot(_tag_webhook_fakes):
+    fakes = _tag_webhook_fakes
+    fakes.messaging_gateway.contact_phones["ycloud-contact-1"] = PhoneNumber("+5491122334455")
+    await fakes.conversation_repository.save(make_conversation(mode="agent"))
+
+    response = await _post_webhook(
+        make_ycloud_tag_change_payload(contact_id="ycloud-contact-1", tag_value="Humano")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert conversation is not None
+    assert conversation.mode == "human"
+    assert conversation.input_state == "HUMAN"
+
+
+@pytest.mark.asyncio
+async def test_tag_change_with_unrelated_tag_ignored(_tag_webhook_fakes):
+    response = await _post_webhook(make_ycloud_tag_change_payload(tag_value="vip"))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
+async def test_tag_change_for_unresolvable_contact_acked_not_500(_tag_webhook_fakes):
+    # `contact_phones` is left empty — `get_contact_phone` returns `None`,
+    # exercising the use case's silent no-op path.
+    response = await _post_webhook(make_ycloud_tag_change_payload())
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+
+
 def test_route_has_openapi_metadata():
     schema = app.openapi()
     operation = schema["paths"]["/webhooks/ycloud/{secret}"]["post"]
 
-    assert (
-        operation["summary"]
-        == "Receive a YCloud `whatsapp.inbound_message.received` webhook event"
-    )
+    assert "whatsapp.inbound_message.received" in operation["summary"]
+    assert "contact.attributes_changed" in operation["summary"]
     assert operation["tags"] == ["webhooks"]
 
 

@@ -205,6 +205,30 @@ def make_ycloud_audio_payload(
     }
 
 
+def make_ycloud_tag_change_payload(
+    contact_id: str = "ycloud-contact-1",
+    tag_value: str = "Agente",
+    action: str = "ADDED",
+) -> dict[str, object]:
+    """Raw YCloud `contact.attributes_changed` webhook JSON body (tag
+    change), valid-by-default — see
+    https://docs.ycloud.com/reference/contact-attributes-changed-webhook-examples.
+    """
+    return {
+        "type": "contact.attributes_changed",
+        "contactAttributesChanged": {
+            "id": contact_id,
+            "changedAttributes": {
+                "tags": {
+                    "oldValue": [],
+                    "newValue": [tag_value],
+                    "extra": [{"action": action, "id": "tag-1", "value": tag_value}],
+                }
+            },
+        },
+    }
+
+
 def make_pending_action(
     id_: str = "pa-1",
     conversation_id: str = "conv-1",

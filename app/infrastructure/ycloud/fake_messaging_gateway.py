@@ -8,6 +8,7 @@ class FakeYCloudMessagingGateway:
     def __init__(self) -> None:
         self.sent_messages: list[tuple[PhoneNumber, str]] = []
         self.sent_buttons: list[tuple[PhoneNumber, str, list[InteractiveButton]]] = []
+        self.contact_phones: dict[str, PhoneNumber] = {}
         self._next_id = 1
 
     async def send_text_message(self, to: PhoneNumber, text: str) -> str:
@@ -19,6 +20,9 @@ class FakeYCloudMessagingGateway:
     ) -> str:
         self.sent_buttons.append((to, text, buttons))
         return self._next_external_id()
+
+    async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:
+        return self.contact_phones.get(ycloud_contact_id)
 
     def _next_external_id(self) -> str:
         external_id = f"fake-msg-{self._next_id}"
