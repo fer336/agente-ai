@@ -1,13 +1,16 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.config.settings import Settings, get_settings
+from app.domain.entities.admin_user import ADMIN_TECHNICAL
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.auth.session_tokens import create_session_token
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
@@ -274,14 +277,32 @@ def test_route_has_openapi_metadata():
 
 
 @pytest.mark.asyncio
-async def test_docs_and_redoc_and_openapi_json_still_reachable():
+async def test_public_docs_are_disabled_admin_docs_require_a_session():
+    """The default `/docs`/`/redoc`/`/openapi.json` are disabled (`app.main`)
+    so the API schema — including the `/admin/*` surface — isn't world-
+    readable; `/admin/docs`/`/admin/redoc`/`/admin/openapi.json` re-expose
+    the same content behind the same admin session auth as the rest of the
+    panel (see `app.api.routes.admin_docs`).
+    """
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        docs = await client.get("/docs")
-        redoc = await client.get("/redoc")
-        openapi_json = await client.get("/openapi.json")
+        assert (await client.get("/docs")).status_code == 404
+        assert (await client.get("/redoc")).status_code == 404
+        assert (await client.get("/openapi.json")).status_code == 404
 
-    assert docs.status_code == 200
-    assert redoc.status_code == 200
-    assert openapi_json.status_code == 200
-    assert "/webhooks/ycloud/{secret}" in openapi_json.json()["paths"]
+        assert (await client.get("/admin/docs")).status_code == 401
+        assert (await client.get("/admin/openapi.json")).status_code == 401
+
+        # `_override_settings()` (the autouse fixture above) leaves
+        # `admin_session_secret` at its default `""` — sign with the same
+        # value so the session verifies against it.
+        token, csrf = create_session_token(
+            "admin-1", "tech1", ADMIN_TECHNICAL, "", 3600, now=datetime.now(UTC)
+        )
+        cookies = {"admin_session": token, "admin_csrf": csrf}
+        admin_docs = await client.get("/admin/docs", cookies=cookies)
+        admin_openapi = await client.get("/admin/openapi.json", cookies=cookies)
+
+    assert admin_docs.status_code == 200
+    assert admin_openapi.status_code == 200
+    assert "/webhooks/ycloud/{secret}" in admin_openapi.json()["paths"]
