@@ -30,3 +30,6 @@ class SendReplyUseCase:
             await self._messaging_gateway.send_buttons(to, text, buttons)
         else:
             await self._messaging_gateway.send_text_message(to, text)
+
+    async def send_typing_indicator(self, wamid: str) -> None:
+        await self._messaging_gateway.send_typing_indicator(wamid)

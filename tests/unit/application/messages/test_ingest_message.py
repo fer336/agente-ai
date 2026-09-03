@@ -303,6 +303,56 @@ async def test_multiple_messages_grouped_into_one_handoff():
 
 
 @pytest.mark.asyncio
+async def test_typing_indicator_sent_for_the_latest_message_before_invoking_the_agent():
+    agent_invoker = make_agent_invoker()
+    messaging_gateway = make_ycloud_messaging_gateway()
+    use_case = _build_use_case(
+        agent_invoker=agent_invoker,
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        debounce_seconds=0.05,
+    )
+
+    await use_case.execute(
+        _make_dto(external_message_id="wamid.1", from_phone="+5491122334455", text="Hola")
+    )
+    await asyncio.sleep(0.02)
+    await use_case.execute(
+        _make_dto(
+            external_message_id="wamid.2", from_phone="+5491122334455", text="quiero un turno"
+        )
+    )
+    await asyncio.sleep(0.15)
+
+    assert messaging_gateway.typing_indicators_sent == ["wamid.2"]
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_typing_indicator_failure_does_not_block_the_agent_invocation():
+    class _FailingMessagingGateway:
+        async def send_text_message(self, to, text):
+            return "wamid.out"
+
+        async def send_buttons(self, to, text, buttons):
+            return "wamid.out"
+
+        async def send_typing_indicator(self, wamid):
+            raise RuntimeError("YCloud is briefly down")
+
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        agent_invoker=agent_invoker,
+        send_reply=make_send_reply_use_case(_FailingMessagingGateway()),
+        debounce_seconds=0.05,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455", text="Hola"))
+    await asyncio.sleep(0.15)
+
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_grouped_messages_use_the_last_non_null_button_payload():
     # PRD.md §6: a deliberate button tap is a terminal action that must
     # take priority over any free text debounced alongside it.
