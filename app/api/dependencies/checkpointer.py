@@ -30,7 +30,7 @@ async def get_agent_checkpointer() -> "AsyncPostgresSaver":
     global _pool, _saver
     if _saver is None:
         settings = get_settings()
-        _pool = create_postgres_checkpointer_pool(settings.database_url)
+        _pool = create_postgres_checkpointer_pool(settings.checkpointer_database_url)
         await _pool.open()
         _saver = await create_checkpointer(_pool)
     return _saver
