@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  IMAGE: ghcr.io/fer336/agente-ai
+
+jobs:
+  validate-and-test:
+    name: validate-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release tag is exact SemVer (vX.Y.Z)
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '$tag' is not a valid vX.Y.Z SemVer tag. Refusing to deploy." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.28"
+          enable-cache: true
+
+      - name: Install dependencies (uv.lock, no re-resolution)
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type check (mypy)
+        run: uv run mypy app/
+
+      - name: Tests (pytest)
+        run: uv run pytest
+
+  build-and-push:
+    name: build-and-push
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push exact-tag image (never latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.event.release.tag_name }}
+
+  pin-compose:
+    name: pin-compose
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+
+      - name: Pin app image tag in docker-compose.yml
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+
+          # Anchored on the `image:` key itself (not a bare grep for the
+          # registry prefix) so this can never touch a comment line that
+          # merely mentions the image name in prose.
+          sed -i -E "s|^([[:space:]]*image:[[:space:]]*)${IMAGE}:.*|\1${IMAGE}:${tag}|" docker-compose.yml
+
+          if ! grep -qF "image: ${IMAGE}:${tag}" docker-compose.yml; then
+            echo "::error::Failed to pin docker-compose.yml to ${IMAGE}:${tag} — the image: line was not found or not updated." >&2
+            exit 1
+          fi
+
+      - name: Commit and push the pinned compose file
+        run: |
+          set -euo pipefail
+          git config user.name "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+          if git diff --quiet -- docker-compose.yml; then
+            echo "docker-compose.yml already pinned to this release tag — nothing to commit."
+            exit 0
+          fi
+
+          git add docker-compose.yml
+          git commit -m "chore(release): pin app image to ${{ github.event.release.tag_name }}"
+          git push origin main
+
+  notify-portainer:
+    name: notify-portainer
+    needs: pin-compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Portainer stack redeploy
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}"
+
+  verify-health:
+    name: verify-health
+    needs: notify-portainer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poll production /ready until healthy
+        run: |
+          set -euo pipefail
+          url="https://agent.qeva-ai.com/ready"
+          attempts=18
+          delay=10
+
+          for i in $(seq 1 "$attempts"); do
+            if curl -fsS "$url"; then
+              echo "Production is healthy (attempt $i/$attempts)."
+              exit 0
+            fi
+            echo "Attempt $i/$attempts: not healthy yet, retrying in ${delay}s..."
+            sleep "$delay"
+          done
+
+          echo "::error::Production health check at $url did not pass within $((attempts * delay))s after deploy. Deploy considered FAILED." >&2
+          exit 1

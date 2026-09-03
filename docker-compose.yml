@@ -1,4 +1,36 @@
 services:
+  app:
+    # This exact `image:` line is the release pipeline's find-and-replace
+    # target (`.github/workflows/release.yml`, "Pin docker-compose.yml"
+    # step) — keep `ghcr.io/fer336/agente-ai:` as the only occurrence of
+    # that prefix in this file, and never set this to `latest`.
+    image: ghcr.io/fer336/agente-ai:v0.0.0
+    env_file: .env
+    environment:
+      # Override the .env file's localhost defaults so the app resolves
+      # its dependencies via Docker Compose service-name DNS instead.
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   postgres:
     image: postgres:16-alpine
     environment:
