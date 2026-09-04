@@ -151,7 +151,12 @@ async def test_unrecognized_message_routes_through_fallback():
         make_agent_state(conversation_id="conv-1", user_message="asdkjaslkdj")
     )
 
-    assert "Turnos" in result["response_text"]
+    assert "No estoy seguro" in result["response_text"]
+    assert [button.title for button in result["response_buttons"]] == [
+        "Turnos",
+        "Especialidades",
+        "Administración",
+    ]
 
 
 @pytest.mark.asyncio
