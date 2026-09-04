@@ -65,7 +65,7 @@ async def test_find_patient_filters_by_rut_field_using_the_confirmed_q_encoding(
                     "rut": "30111222",
                     "nombre": "Maria",
                     "apellidos": "Soto",
-                    "celular": "912345678",
+                    "celular": "1122334455",
                 }
             ]
         },
@@ -77,7 +77,7 @@ async def test_find_patient_filters_by_rut_field_using_the_confirmed_q_encoding(
 
     assert found is not None
     assert found.id == "28"
-    assert found.phone == PhoneNumber("+56912345678")
+    assert found.phone == PhoneNumber("+5491122334455")
     q_param = captured[0].url.params["q"]
     assert json.loads(q_param) == {"rut": {"eq": "30111222"}}
 
@@ -91,7 +91,7 @@ async def test_find_patient_returns_none_when_name_does_not_match(
         json={
             "data": [
                 {"id": 28, "rut": "30111222", "nombre": "Maria", "apellidos": "Soto",
-                 "celular": "912345678"}
+                 "celular": "1122334455"}
             ]
         },
     )
@@ -115,7 +115,7 @@ async def test_create_patient_sends_split_name_and_normalized_phone(
     gateway = DentalinkPatientGateway(client)
 
     created = await gateway.create_patient(
-        "Maria Soto Perez", _VALID_DNI, PhoneNumber("+56912345678")
+        "Maria Soto Perez", _VALID_DNI, PhoneNumber("+5491122334455")
     )
 
     assert created.id == "99"
@@ -127,7 +127,7 @@ async def test_create_patient_sends_split_name_and_normalized_phone(
         "rut": "30111222",
         "nombre": "Maria",
         "apellidos": "Soto Perez",
-        "celular": "56912345678",
+        "celular": "5491122334455",
     }
 
 
@@ -140,7 +140,7 @@ async def test_create_patient_raises_a_typed_conflict_instead_of_duplicating(
         json={
             "data": [
                 {"id": 28, "rut": "30111222", "nombre": "Maria", "apellidos": "Soto",
-                 "celular": "912345678"}
+                 "celular": "1122334455"}
             ]
         },
     )
@@ -148,7 +148,7 @@ async def test_create_patient_raises_a_typed_conflict_instead_of_duplicating(
     gateway = DentalinkPatientGateway(client)
 
     with pytest.raises(PatientAlreadyExistsError) as exc_info:
-        await gateway.create_patient("Maria Soto", _VALID_DNI, PhoneNumber("+56912345678"))
+        await gateway.create_patient("Maria Soto", _VALID_DNI, PhoneNumber("+5491122334455"))
 
     assert exc_info.value.existing_patient_id == "28"
     assert len(captured) == 1  # never issues the POST once a conflict is found
@@ -162,7 +162,7 @@ async def test_create_patient_rejects_an_invalid_dni_before_any_http_call(
     gateway = DentalinkPatientGateway(client)
 
     with pytest.raises(ValueError, match="DNI"):
-        await gateway.create_patient("Maria Soto", "not-a-dni", PhoneNumber("+56912345678"))
+        await gateway.create_patient("Maria Soto", "not-a-dni", PhoneNumber("+5491122334455"))
 
     assert captured == []
 

@@ -273,14 +273,14 @@ async def test_update_contact_tags_sends_a_patch_with_the_full_tag_list(
         base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
     )
 
-    await client.update_contact_tags("contact-1", ["vip", "Humano"])
+    await client.update_contact_tags("contact-1", ["vip", "Human"])
 
     assert len(captured) == 1
     request = captured[0]
     assert request.url == "https://api.ycloud.com/v2/contact/contacts/contact-1"
     assert request.method == "PATCH"
     assert request.headers["x-api-key"] == "yc-key-abc"
-    assert json.loads(request.content) == {"tags": ["vip", "Humano"]}
+    assert json.loads(request.content) == {"tags": ["vip", "Human"]}
 
 
 @pytest.mark.asyncio
@@ -303,7 +303,7 @@ async def test_update_contact_tags_raises_ycloud_api_error_on_non_2xx_response(
     )
 
     with pytest.raises(YCloudAPIError) as exc_info:
-        await client.update_contact_tags("missing", ["Humano"])
+        await client.update_contact_tags("missing", ["Human"])
 
     assert exc_info.value.status_code == 404
 

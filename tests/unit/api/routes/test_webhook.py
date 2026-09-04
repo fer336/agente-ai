@@ -299,7 +299,7 @@ async def test_tag_humano_removed_resumes_the_bot(_tag_webhook_fakes):
 
     response = await _post_webhook(
         make_ycloud_tag_change_payload(
-            contact_id="ycloud-contact-1", tag_value="Humano", action="REMOVED"
+            contact_id="ycloud-contact-1", tag_value="Human", action="REMOVED"
         )
     )
 
@@ -321,7 +321,7 @@ async def test_tag_humano_added_pauses_the_bot(_tag_webhook_fakes):
 
     response = await _post_webhook(
         make_ycloud_tag_change_payload(
-            contact_id="ycloud-contact-1", tag_value="Humano", action="ADDED"
+            contact_id="ycloud-contact-1", tag_value="Human", action="ADDED"
         )
     )
 

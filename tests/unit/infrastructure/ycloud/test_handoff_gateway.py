@@ -29,12 +29,12 @@ async def test_request_handoff_tags_the_contact_resolved_from_the_conversation_p
     )
 
     assert client.find_calls == ["+5491122334455"]
-    assert client.update_calls == [("contact-1", ["vip", "Humano"])]
+    assert client.update_calls == [("contact-1", ["vip", "Human"])]
 
 
 @pytest.mark.asyncio
 async def test_request_handoff_does_not_duplicate_an_existing_humano_tag():
-    client = _StubYCloudClient(contact={"id": "contact-1", "tags": ["Humano"]})
+    client = _StubYCloudClient(contact={"id": "contact-1", "tags": ["Human"]})
     gateway = YCloudHandoffGateway(client)
 
     await gateway.request_handoff(ConversationId("ycloud-+5491122334455"), "reason")

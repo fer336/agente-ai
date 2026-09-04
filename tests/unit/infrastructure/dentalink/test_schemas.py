@@ -14,16 +14,18 @@ from app.infrastructure.dentalink.schemas import (
 
 def test_professional_from_dentista_prefers_id_dentista():
     professional = professional_from_dentista(
-        {"id_dentista": 626, "nombre": "Dra. Laura Pérez", "id_especialidad": 3}
+        {"id_dentista": 626, "nombre": "Laura", "apellidos": "Pérez", "id_especialidad": 3}
     )
 
     assert professional.id == "626"
-    assert professional.full_name == "Dra. Laura Pérez"
+    assert professional.full_name == "Laura Pérez"
     assert professional.specialty_id == "3"
 
 
 def test_professional_from_dentista_falls_back_to_id_profesional():
-    professional = professional_from_dentista({"id_profesional": 900, "nombre": "Dr. Roe"})
+    professional = professional_from_dentista(
+        {"id_profesional": 900, "nombre": "Dr.", "apellidos": "Roe"}
+    )
 
     assert professional.id == "900"
     assert professional.specialty_id is None

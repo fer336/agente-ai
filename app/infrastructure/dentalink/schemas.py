@@ -32,21 +32,35 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.dentalink.exceptions import DentalinkInvalidResponseError
 
-#: Dentalink is a Chile-only platform — a `celular`/`telefono` value with no
-#: explicit country code (Dentalink's docs show bare local numbers, e.g.
-#: "912345678") is assumed local Chilean and prefixed accordingly so it can
-#: become a valid E.164 `PhoneNumber`. A value that already starts with "+"
-#: (or already carries the "56" prefix) is left as-is.
-_CHILE_COUNTRY_CODE = "56"
+#: This clinic's Dentalink account is Argentine (confirmed against a live
+#: account 2026-09-04 — see `patient_gateway.py`'s own module docstring for
+#: the matching DNI-vs-RUT confirmation), not Chilean despite Dentalink
+#: itself being a Chilean platform. A `celular`/`telefono` value with no
+#: explicit country code (confirmed real shape, e.g. "1162436577" — area
+#: code + subscriber number, no leading 0/15) is assumed local Argentine and
+#: prefixed with "549" (country code "54" + the "9" mobile-number marker
+#: Argentine E.164/WhatsApp numbers require) so it becomes a valid E.164
+#: `PhoneNumber`. A value that already starts with "+" or already carries
+#: the "54" prefix is left as-is — this does NOT insert a missing "9"
+#: marker into an already-54-prefixed number lacking one, since that shape
+#: was not observed in the confirmed live payloads.
+_ARGENTINA_COUNTRY_CODE = "54"
+_ARGENTINA_MOBILE_PREFIX = "549"
 
 
 def professional_from_dentista(raw: dict[str, object]) -> Professional:
+    """Confirmed against a live Dentalink account (2026-09-04): `/v1/dentistas`
+    splits the name into `nombre`/`apellidos`, same as `/v1/pacientes` — see
+    `patient_from_paciente`'s identical concatenation below.
+    """
     professional_id = raw.get("id_dentista", raw.get("id_profesional", raw.get("id")))
     if professional_id is None:
         raise DentalinkInvalidResponseError("dentista record is missing an id")
+    nombre = str(raw.get("nombre", "")).strip()
+    apellidos = str(raw.get("apellidos", "")).strip()
     return Professional(
         id=str(professional_id),
-        full_name=str(raw.get("nombre", "")),
+        full_name=f"{nombre} {apellidos}".strip(),
         specialty_id=_optional_str(raw.get("id_especialidad")),
     )
 
@@ -131,10 +145,10 @@ def _phone_from_dentalink(raw_value: str) -> PhoneNumber:
     if not digits:
         raise DentalinkInvalidResponseError(f"unparseable phone number: {raw_value!r}")
 
-    if raw_value.strip().startswith("+") or digits.startswith(_CHILE_COUNTRY_CODE):
+    if raw_value.strip().startswith("+") or digits.startswith(_ARGENTINA_COUNTRY_CODE):
         candidate = f"+{digits}"
     else:
-        candidate = f"+{_CHILE_COUNTRY_CODE}{digits}"
+        candidate = f"+{_ARGENTINA_MOBILE_PREFIX}{digits}"
 
     try:
         return PhoneNumber(candidate)
@@ -182,15 +196,21 @@ def treatment_from_tratamiento(raw: dict[str, object]) -> Treatment:
 def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | None:
     """Finds the anulación/cancelación state id among `GET /v1/citas/estados` (PRD.md §27.5).
 
-    Never hardcoded — PRD.md explicitly forbids it. Dentalink's estados
-    response doesn't have a documented boolean "is this the cancellation
-    state" flag, so this matches by name (case/accent-insensitive substring
-    match against "anula"/"cancela") — the same best-effort, UNVERIFIED
-    approach as the rest of this module.
+    Never hardcoded — PRD.md explicitly forbids it. Confirmed against a live
+    Dentalink account (2026-09-04): each estado carries a real `anulacion`
+    flag (`1` for a cancellation state, `0` otherwise), used here as the
+    primary signal. Falls back to the old name-based match
+    (case/accent-insensitive substring against "anula"/"cancela") only for
+    an estado that omits the flag entirely — defensive, in case another
+    account's API version doesn't send it.
     """
     for estado in estados:
-        name = str(estado.get("nombre", "")).casefold()
-        if "anula" in name or "cancela" in name:
+        if "anulacion" in estado:
+            is_cancellation = estado.get("anulacion") == 1
+        else:
+            name = str(estado.get("nombre", "")).casefold()
+            is_cancellation = "anula" in name or "cancela" in name
+        if is_cancellation:
             state_id = estado.get("id")
             if state_id is not None:
                 return str(state_id)

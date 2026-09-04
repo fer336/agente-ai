@@ -226,7 +226,7 @@ def test_is_tag_mode_change_event_rejects_other_types():
 
 def test_extract_tag_mode_change_maps_humano_added_to_human_mode():
     payload = YCloudContactAttributesChangedEventPayload.model_validate(
-        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Humano", action="ADDED")
+        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Human", action="ADDED")
     )
 
     assert extract_tag_mode_change(payload) == ("c-1", "human")
@@ -234,7 +234,7 @@ def test_extract_tag_mode_change_maps_humano_added_to_human_mode():
 
 def test_extract_tag_mode_change_maps_humano_removed_to_agent_mode():
     payload = YCloudContactAttributesChangedEventPayload.model_validate(
-        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Humano", action="REMOVED")
+        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Human", action="REMOVED")
     )
 
     assert extract_tag_mode_change(payload) == ("c-1", "agent")
