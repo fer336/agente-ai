@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.api.dependencies.checkpointer import get_agent_checkpointer
+from app.api.dependencies.config import get_runtime_config_service
 from app.api.dependencies.redis import get_shared_redis_client
 from app.api.dependencies.repositories import (
     open_sqlalchemy_agent_repositories,
@@ -206,7 +207,7 @@ def _get_llm_client() -> OpenAICompatibleLLMClient:
 
 @lru_cache
 def _get_real_llm_provider() -> OpenAICompatibleLLMProvider:
-    return OpenAICompatibleLLMProvider(_get_llm_client(), get_settings().openai_model)
+    return OpenAICompatibleLLMProvider(_get_llm_client(), get_runtime_config_service())
 
 
 def get_llm_provider() -> LLMProvider:

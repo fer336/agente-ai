@@ -2,7 +2,7 @@
 
 No `fakeredis` dependency exists in this project (checked `pyproject.toml`)
 and none is added — this fake implements only the small surface
-`DebounceTracker` and `redis_lock()` need (SET with PX/GET/DELETE, plus a
+`DebounceTracker` and `redis_lock()` need (SET with PX/EX/GET/DELETE, plus a
 minimal `lock()` factory), matching the existing `Fake*` convention
 (`FakeWhatsAppGateway`, `FakeContactRepository`, ...) rather than pulling in
 a new dependency. Values are returned as `bytes`, mirroring the real
@@ -51,8 +51,11 @@ class InMemoryFakeRedis:
         self._values: dict[str, tuple[bytes, float | None]] = {}
         self._locks: set[str] = set()
 
-    async def set(self, name: str, value: str, px: int | None = None) -> bool:
-        expires_at = None if px is None else time.monotonic() + (px / 1000)
+    async def set(
+        self, name: str, value: str, px: int | None = None, ex: int | None = None
+    ) -> bool:
+        ttl_seconds = ex if px is None else px / 1000
+        expires_at = None if ttl_seconds is None else time.monotonic() + ttl_seconds
         self._values[name] = (value.encode(), expires_at)
         return True
 

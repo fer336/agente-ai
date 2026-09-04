@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from redis.asyncio import Redis
 
+from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.contact import Contact
@@ -99,7 +100,7 @@ class IngestMessageUseCase:
         debounce_tracker: DebounceTracker,
         redis_client: Redis,
         agent_invoker: AgentInvoker,
-        debounce_seconds: int,
+        runtime_config_service: RuntimeConfigService,
         send_reply: SendReplyUseCase,
         audio_rate_limit_per_minute: int = 0,
     ) -> None:
@@ -107,7 +108,13 @@ class IngestMessageUseCase:
         self._debounce_tracker = debounce_tracker
         self._redis_client = redis_client
         self._agent_invoker = agent_invoker
-        self._debounce_seconds = debounce_seconds
+        #: Read fresh on every debounce window instead of a value frozen at
+        #: construction — see `app.application.config.runtime_config_service`
+        #: for why. Note `DebounceTracker` above (the "did a newer message
+        #: re-touch this window" check) keeps its OWN separately-configured
+        #: window and is unaffected by this — only how long
+        #: `_debounce_and_process` itself sleeps is live here.
+        self._runtime_config_service = runtime_config_service
         #: Etapa 5's own `AgentInvoker`/`SendReplyUseCase` pair already
         #: sends the graph's reply after Etapa 4 hands off — this is a
         #: SEPARATE use of the same use case, for the one reply Etapa 4
@@ -302,7 +309,8 @@ class IngestMessageUseCase:
         task.add_done_callback(self._background_tasks.discard)
 
     async def _debounce_and_process(self, conversation_key: str, token: str) -> None:
-        await asyncio.sleep(self._debounce_seconds)
+        config = await self._runtime_config_service.get_config()
+        await asyncio.sleep(config.debounce_seconds)
 
         if await self._debounce_tracker.is_stale(conversation_key, token):
             # A newer message re-touched the window; the newer scheduled

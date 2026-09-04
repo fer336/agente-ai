@@ -13,6 +13,7 @@ from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.repositories.message_repository import MessageRepository
+from app.domain.repositories.runtime_config_repository import RuntimeConfigRepository
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
@@ -35,6 +36,9 @@ from app.infrastructure.database.repositories.node_execution_repository import (
 from app.infrastructure.database.repositories.outbox_repository import SqlAlchemyOutboxRepository
 from app.infrastructure.database.repositories.pending_action_repository import (
     SqlAlchemyPendingActionRepository,
+)
+from app.infrastructure.database.repositories.runtime_config_repository import (
+    SqlAlchemyRuntimeConfigRepository,
 )
 from app.infrastructure.database.repositories.scheduled_action_repository import (
     SqlAlchemyScheduledActionRepository,
@@ -200,3 +204,22 @@ def get_incident_repository(
     `app.workers.incident_tasks.check_incident_recovery`'s eventual caller.
     """
     return SqlAlchemyIncidentRepository(session)
+
+
+@asynccontextmanager
+async def open_sqlalchemy_runtime_config_repository() -> AsyncIterator[RuntimeConfigRepository]:
+    """`RuntimeConfigService`'s `repositories_provider` for production DI.
+
+    Opens a FRESH session per call (same rationale as
+    `open_sqlalchemy_message_repositories` above) — `RuntimeConfigService`
+    is a process-level `@lru_cache`d singleton (see
+    `app.api.dependencies.config`), so it must never reuse a request-scoped
+    session across the many separate turns/requests it serves over the
+    process's lifetime. Commits explicitly, same reasoning as every other
+    provider in this module: a session that's merely `close()`d without
+    `commit()` never persists an admin's config edit past that one request.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield SqlAlchemyRuntimeConfigRepository(session)
+        await session.commit()

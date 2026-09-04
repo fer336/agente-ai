@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from app.api.dependencies.config import get_runtime_config_service
 from app.api.dependencies.gateways import (
     get_agent_invoker,
     get_media_downloader,
@@ -34,7 +35,7 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         debounce_tracker=get_debounce_tracker(),
         redis_client=get_shared_redis_client(),
         agent_invoker=get_agent_invoker(),
-        debounce_seconds=settings.message_debounce_seconds,
+        runtime_config_service=get_runtime_config_service(),
         send_reply=SendReplyUseCase(get_messaging_gateway()),
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
     )

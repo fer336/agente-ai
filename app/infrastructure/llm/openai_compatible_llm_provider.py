@@ -1,5 +1,6 @@
 import json
 
+from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_types import (
     INVALID_LLM_OUTPUT,
     LLM_AUTH_ERROR,
@@ -23,12 +24,13 @@ _PROVIDER = "llm"
 #: `graph.py`'s routing — a label outside this set would route nowhere.
 _INTENT_LABELS = ("appointment", "insurance", "specialties", "handoff", "unknown")
 
-#: First-pass prompt, not yet tuned against real patient phrasing (see
-#: this session's decision to hold off on deeper classifier tuning until
-#: a Dentalink token and real conversation samples exist) — good enough to
-#: exercise the real gateway end to end, expected to be revised.
-_CLASSIFY_SYSTEM_PROMPT = f"""Sos un clasificador de intención para el asistente de WhatsApp \
-de una clínica dental en Argentina.
+#: Default prompts (`RuntimeConfigService.get_config()`'s fallback when no
+#: admin has ever saved a `RuntimeAgentConfig` row yet) — same first-pass,
+#: not-yet-tuned content as before this became admin-editable (see this
+#: session's decision to hold off on deeper classifier tuning until real
+#: patient conversation samples exist).
+DEFAULT_CLASSIFY_INTENT_PROMPT = f"""Sos un clasificador de intención para el asistente de \
+WhatsApp de una clínica dental en Argentina.
 
 Dado el mensaje del paciente (y el contexto reciente si lo hay), devolvé SOLO un JSON con \
 esta forma exacta, sin texto adicional:
@@ -41,6 +43,25 @@ esta forma exacta, sin texto adicional:
 un bot no debería resolver solo.
 - unknown: cualquier otra cosa, saludos, o si no estás seguro.
 """
+
+#: `{required_fields}` is substituted with the comma-joined list of fields
+#: this turn needs — required in every admin-edited version of this prompt
+#: (`RuntimeConfigService`/the admin panel's PATCH route validate the
+#: placeholder is still present before saving).
+DEFAULT_EXTRACT_INFORMATION_PROMPT = (
+    "Extraé los siguientes campos del mensaje del paciente, devolviendo SOLO un JSON "
+    'con la forma {{"fields": {{...}}, "missing_fields": [...]}}. Campos requeridos: '
+    "{required_fields}. Un campo que no aparece en el mensaje va en "
+    '"missing_fields", no lo inventes.'
+)
+
+#: `{intent}` and `{collected_data}` are substituted per-turn — same
+#: required-placeholder validation as the extraction prompt above.
+DEFAULT_GENERATE_RESPONSE_PROMPT = (
+    "Sos el asistente de WhatsApp de una clínica dental en Argentina. Escribí una "
+    "respuesta breve, cálida y profesional en español para el paciente, según esta "
+    "intención: {intent} y estos datos ya conocidos: {collected_data}."
+)
 
 
 def _http_status_of(exc: Exception) -> str | None:
@@ -62,6 +83,13 @@ def _error_type_of(exc: Exception) -> str:
 class OpenAICompatibleLLMProvider:
     """`OpenAICompatibleLLMClient`-based real implementation of `LLMProvider`.
 
+    Reads model/temperature/prompt text fresh from `RuntimeConfigService`
+    on every call rather than a value frozen at construction — an admin
+    edit takes effect for the next turn (bounded by the service's cache
+    TTL), no redeploy/restart needed. See
+    `app.application.config.runtime_config_service` for why a value baked
+    into `__init__` wouldn't be "runtime" at all.
+
     Every method raises a typed `LLMProviderError` subclass on an actual
     gateway failure (network/timeout/auth/malformed HTTP response) or on
     the model returning text that isn't the JSON shape the prompt asked
@@ -73,12 +101,15 @@ class OpenAICompatibleLLMProvider:
     not a local try/except here.
     """
 
-    def __init__(self, client: OpenAICompatibleLLMClient, model: str) -> None:
+    def __init__(
+        self, client: OpenAICompatibleLLMClient, runtime_config_service: RuntimeConfigService
+    ) -> None:
         self._client = client
-        self._model = model
+        self._runtime_config_service = runtime_config_service
 
     async def classify_intent(self, message: str, context: dict[str, object]) -> IntentResult:
-        messages = [{"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT}]
+        config = await self._runtime_config_service.get_config()
+        messages = [{"role": "system", "content": config.classify_intent_prompt}]
         recent_messages = context.get("recent_messages")
         if recent_messages:
             messages.append(
@@ -92,7 +123,9 @@ class OpenAICompatibleLLMProvider:
         messages.append({"role": "user", "content": message})
 
         async def _call() -> IntentResult:
-            content = await self._client.chat_completion(self._model, messages)
+            content = await self._client.chat_completion(
+                config.model, messages, temperature=config.temperature
+            )
             return _parse_intent_result(content)
 
         return await traced_call(
@@ -113,11 +146,9 @@ class OpenAICompatibleLLMProvider:
     async def extract_information(
         self, message: str, required_fields: list[str]
     ) -> ExtractionResult:
-        prompt = (
-            "Extraé los siguientes campos del mensaje del paciente, devolviendo SOLO un JSON "
-            f'con la forma {{"fields": {{...}}, "missing_fields": [...]}}. Campos requeridos: '
-            f"{', '.join(required_fields)}. Un campo que no aparece en el mensaje va en "
-            '"missing_fields", no lo inventes.'
+        config = await self._runtime_config_service.get_config()
+        prompt = config.extract_information_prompt.replace(
+            "{required_fields}", ", ".join(required_fields)
         )
         messages = [
             {"role": "system", "content": prompt},
@@ -125,7 +156,9 @@ class OpenAICompatibleLLMProvider:
         ]
 
         async def _call() -> ExtractionResult:
-            content = await self._client.chat_completion(self._model, messages)
+            content = await self._client.chat_completion(
+                config.model, messages, temperature=config.temperature
+            )
             return _parse_extraction_result(content, required_fields)
 
         return await traced_call(
@@ -140,15 +173,16 @@ class OpenAICompatibleLLMProvider:
         )
 
     async def generate_response(self, context: ResponseContext) -> str:
-        prompt = (
-            "Sos el asistente de WhatsApp de una clínica dental en Argentina. Escribí una "
-            "respuesta breve, cálida y profesional en español para el paciente, según esta "
-            f"intención: {context.intent} y estos datos ya conocidos: {context.collected_data}."
+        config = await self._runtime_config_service.get_config()
+        prompt = config.generate_response_prompt.replace("{intent}", context.intent).replace(
+            "{collected_data}", str(context.collected_data)
         )
         messages = [{"role": "system", "content": prompt}]
 
         async def _call() -> str:
-            return await self._client.chat_completion(self._model, messages, temperature=0.3)
+            return await self._client.chat_completion(
+                config.model, messages, temperature=config.temperature
+            )
 
         return await traced_call(
             tool_name="GenerateResponseTool",
