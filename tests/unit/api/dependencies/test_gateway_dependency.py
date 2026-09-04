@@ -43,6 +43,7 @@ from app.infrastructure.transcription.fake_transcription_gateway import FakeTran
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
+from app.infrastructure.ycloud.handoff_gateway import YCloudHandoffGateway
 from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
@@ -140,6 +141,19 @@ def test_get_human_handoff_gateway_returns_the_same_cached_instance_across_calls
     second = get_human_handoff_gateway()
 
     assert first is second
+
+
+def test_get_human_handoff_gateway_returns_a_real_ycloud_gateway_when_api_key_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, ycloud_api_key="yc-key"),
+    )
+
+    gateway = get_human_handoff_gateway()
+
+    assert isinstance(gateway, YCloudHandoffGateway)
 
 
 def test_get_patient_gateway_returns_a_fake_patient_gateway():

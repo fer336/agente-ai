@@ -292,13 +292,15 @@ def _tag_webhook_fakes():
 
 
 @pytest.mark.asyncio
-async def test_tag_habla_agente_resumes_the_bot(_tag_webhook_fakes):
+async def test_tag_humano_removed_resumes_the_bot(_tag_webhook_fakes):
     fakes = _tag_webhook_fakes
     fakes.messaging_gateway.contact_phones["ycloud-contact-1"] = PhoneNumber("+5491122334455")
     await fakes.conversation_repository.save(make_conversation(mode="human", input_state="HUMAN"))
 
     response = await _post_webhook(
-        make_ycloud_tag_change_payload(contact_id="ycloud-contact-1", tag_value="Agente")
+        make_ycloud_tag_change_payload(
+            contact_id="ycloud-contact-1", tag_value="Humano", action="REMOVED"
+        )
     )
 
     assert response.status_code == 200
@@ -312,13 +314,15 @@ async def test_tag_habla_agente_resumes_the_bot(_tag_webhook_fakes):
 
 
 @pytest.mark.asyncio
-async def test_tag_habla_humano_pauses_the_bot(_tag_webhook_fakes):
+async def test_tag_humano_added_pauses_the_bot(_tag_webhook_fakes):
     fakes = _tag_webhook_fakes
     fakes.messaging_gateway.contact_phones["ycloud-contact-1"] = PhoneNumber("+5491122334455")
     await fakes.conversation_repository.save(make_conversation(mode="agent"))
 
     response = await _post_webhook(
-        make_ycloud_tag_change_payload(contact_id="ycloud-contact-1", tag_value="Humano")
+        make_ycloud_tag_change_payload(
+            contact_id="ycloud-contact-1", tag_value="Humano", action="ADDED"
+        )
     )
 
     assert response.status_code == 200

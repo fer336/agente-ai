@@ -224,20 +224,20 @@ def test_is_tag_mode_change_event_rejects_other_types():
     assert is_tag_mode_change_event("whatsapp.inbound_message.received") is False
 
 
-def test_extract_tag_mode_change_maps_habla_agente_to_agent_mode():
+def test_extract_tag_mode_change_maps_humano_added_to_human_mode():
     payload = YCloudContactAttributesChangedEventPayload.model_validate(
-        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Agente")
-    )
-
-    assert extract_tag_mode_change(payload) == ("c-1", "agent")
-
-
-def test_extract_tag_mode_change_maps_habla_humano_to_human_mode():
-    payload = YCloudContactAttributesChangedEventPayload.model_validate(
-        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Humano")
+        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Humano", action="ADDED")
     )
 
     assert extract_tag_mode_change(payload) == ("c-1", "human")
+
+
+def test_extract_tag_mode_change_maps_humano_removed_to_agent_mode():
+    payload = YCloudContactAttributesChangedEventPayload.model_validate(
+        make_ycloud_tag_change_payload(contact_id="c-1", tag_value="Humano", action="REMOVED")
+    )
+
+    assert extract_tag_mode_change(payload) == ("c-1", "agent")
 
 
 def test_extract_tag_mode_change_ignores_unrelated_tags():
@@ -248,9 +248,9 @@ def test_extract_tag_mode_change_ignores_unrelated_tags():
     assert extract_tag_mode_change(payload) is None
 
 
-def test_extract_tag_mode_change_ignores_removed_action():
+def test_extract_tag_mode_change_ignores_unrelated_tag_being_removed():
     payload = YCloudContactAttributesChangedEventPayload.model_validate(
-        make_ycloud_tag_change_payload(tag_value="Agente", action="REMOVED")
+        make_ycloud_tag_change_payload(tag_value="vip", action="REMOVED")
     )
 
     assert extract_tag_mode_change(payload) is None

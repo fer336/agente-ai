@@ -74,8 +74,9 @@ async def receive_ycloud_webhook(
     The body is accepted as a raw `dict` (not one fixed pydantic model)
     because this single endpoint now fans out on `payload["type"]` to two
     unrelated YCloud event shapes: an inbound WhatsApp message, or a
-    `contact.attributes_changed` tag change (the "Humano"/"Agente"
-    bot/human toggle — see `SyncConversationModeFromTagUseCase`).
+    `contact.attributes_changed` tag change (the "Humano" tag's
+    presence/absence drives the bot/human toggle — see
+    `SyncConversationModeFromTagUseCase`).
     Each branch validates into its own specific schema before use.
 
     `use_case.execute(dto)` is awaited here — its synchronous portion

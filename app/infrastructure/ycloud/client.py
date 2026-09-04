@@ -105,6 +105,48 @@ class YCloudClient:
             data = response.json()
             return dict(data)
 
+    async def find_contact_by_phone(self, phone: str) -> dict[str, object] | None:
+        """`GET /v2/contact/contacts?filter.phoneNumber={phone}&limit=1` —
+        resolves a phone number to its YCloud contact (id + current tags),
+        the reverse of `get_contact`. Needed to tag a contact from our side
+        (e.g. marking a handoff) when we only have the patient's phone.
+        Returns `None` when no contact matches. UNVERIFIED against a live
+        YCloud account — see this module's own docstring.
+        """
+        url = f"{self._base_url}/v2/contact/contacts"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                headers={"X-API-Key": self._api_key},
+                params={"filter.phoneNumber": phone, "limit": 1},
+            )
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+            items = response.json().get("items") or []
+            return dict(items[0]) if items else None
+
+    async def update_contact_tags(self, contact_id: str, tags: list[str]) -> None:
+        """`PATCH /v2/contact/contacts/{contact_id}` — replaces the
+        contact's ENTIRE tag list with `tags` (YCloud's tags API is not
+        additive: callers must read the current list first, e.g. via
+        `find_contact_by_phone`/`get_contact`, and pass the merged result).
+        UNVERIFIED against a live YCloud account — see this module's own
+        docstring.
+        """
+        url = f"{self._base_url}/v2/contact/contacts/{contact_id}"
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(
+                url, headers={"X-API-Key": self._api_key}, json={"tags": tags}
+            )
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+
     async def _post_message(self, payload: dict[str, object]) -> str:
         url = f"{self._base_url}/v2/whatsapp/messages"
         async with httpx.AsyncClient() as client:

@@ -13,11 +13,16 @@ _AUDIO_MESSAGE_TYPE = "audio"
 
 _CONTACT_ATTRIBUTES_CHANGED_EVENT_TYPE = "contact.attributes_changed"
 _TAG_ADDED_ACTION = "ADDED"
-#: The two conversation-tags a human agent applies from YCloud's Shared
-#: Team Inbox to hand a conversation back and forth with the bot — the
-#: counterpart to `app.agent.nodes.handoff`'s one-way flip to `"human"`.
-#: Must match the exact tag names created in the YCloud dashboard.
-_TAG_TO_MODE = {"Humano": "human", "Agente": "agent"}
+_TAG_REMOVED_ACTION = "REMOVED"
+#: The single conversation-tag a human agent adds/removes from YCloud's
+#: Shared Team Inbox to hand a conversation back and forth with the bot —
+#: the counterpart to `app.agent.nodes.handoff`'s one-way flip to `"human"`
+#: (which also applies this same tag automatically, see
+#: `app.infrastructure.ycloud.handoff_gateway`). YCloud tags are
+#: independent booleans, not a mutually-exclusive radio group, so presence/
+#: absence of this ONE tag drives the toggle rather than two separate tags.
+#: Must match the exact tag name created in the YCloud dashboard.
+_HUMAN_TAG = "Humano"
 
 
 def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: str) -> bool:
@@ -119,10 +124,12 @@ def is_tag_mode_change_event(event_type: str) -> bool:
 def extract_tag_mode_change(
     payload: YCloudContactAttributesChangedEventPayload,
 ) -> tuple[str, str] | None:
-    """Returns `(ycloud_contact_id, mode)` for the first ADDED "Humano"/
-    "Agente" tag in this event's `tags.extra`, else `None` (no tag change
-    here, or none of the tags we care about). Multiple matching tags added
-    in the same event is not expected in practice — the first match wins.
+    """Returns `(ycloud_contact_id, mode)` for the first ADDED/REMOVED
+    "Humano" tag action in this event's `tags.extra`, else `None` (no tag
+    change here, or it's some other tag we don't care about). ADDED ->
+    `"human"` (a human took over), REMOVED -> `"agent"` (handed back to the
+    bot). Multiple matching actions in the same event is not expected in
+    practice — the first match wins.
     """
     contact = payload.contactAttributesChanged
     if not contact.id.strip():
@@ -131,6 +138,10 @@ def extract_tag_mode_change(
     if tags_change is None:
         return None
     for extra in tags_change.extra:
-        if extra.action == _TAG_ADDED_ACTION and extra.value in _TAG_TO_MODE:
-            return contact.id, _TAG_TO_MODE[extra.value]
+        if extra.value != _HUMAN_TAG:
+            continue
+        if extra.action == _TAG_ADDED_ACTION:
+            return contact.id, "human"
+        if extra.action == _TAG_REMOVED_ACTION:
+            return contact.id, "agent"
     return None
