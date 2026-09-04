@@ -91,11 +91,17 @@ async def receive_ycloud_webhook(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invalid webhook secret")
 
     event_type = str(payload.get("type", ""))
+    # Temporary diagnostic: uvicorn's own access log line never shows the
+    # event TYPE, only the HTTP status — every webhook call looks identical
+    # from that alone. Remove once the tag-driven toggle is confirmed
+    # working end-to-end against a live YCloud account.
+    logger.info("webhook.received event_type=%s", event_type)
 
     if is_tag_mode_change_event(event_type):
         tag_payload = YCloudContactAttributesChangedEventPayload.model_validate(payload)
         change = extract_tag_mode_change(tag_payload)
         if change is None:
+            logger.info("webhook.tag_change_not_matched raw_payload=%s", payload)
             return WebhookAckResponse(status="ignored")
 
         ycloud_contact_id, mode = change
@@ -111,6 +117,10 @@ async def receive_ycloud_webhook(
                 ycloud_contact_id,
                 mode,
                 exc_info=True,
+            )
+        else:
+            logger.info(
+                "webhook.tag_mode_synced ycloud_contact_id=%s mode=%s", ycloud_contact_id, mode
             )
         return WebhookAckResponse(status="accepted")
 
