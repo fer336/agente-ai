@@ -13,16 +13,18 @@ from app.infrastructure.dentalink.schemas import (
 
 def test_professional_from_dentista_prefers_id_dentista():
     professional = professional_from_dentista(
-        {"id_dentista": 626, "nombre": "Dra. Laura Pérez", "id_especialidad": 3}
+        {"id_dentista": 626, "nombre": "Laura", "apellidos": "Pérez", "id_especialidad": 3}
     )
 
     assert professional.id == "626"
-    assert professional.full_name == "Dra. Laura Pérez"
+    assert professional.full_name == "Laura Pérez"
     assert professional.specialty_id == "3"
 
 
 def test_professional_from_dentista_falls_back_to_id_profesional():
-    professional = professional_from_dentista({"id_profesional": 900, "nombre": "Dr. Roe"})
+    professional = professional_from_dentista(
+        {"id_profesional": 900, "nombre": "Dr.", "apellidos": "Roe"}
+    )
 
     assert professional.id == "900"
     assert professional.specialty_id is None
@@ -159,5 +161,27 @@ def test_resolve_cancellation_state_id_matches_cancelada_case_insensitively():
 
 def test_resolve_cancellation_state_id_returns_none_when_no_match():
     state_id = resolve_cancellation_state_id([{"id": 1, "nombre": "Confirmada"}])
+
+    assert state_id is None
+
+
+def test_resolve_cancellation_state_id_prefers_the_real_anulacion_flag():
+    # Confirmed live shape: a state can have "anula"/"cancela" nowhere in
+    # its name yet still be the real cancellation state (or vice versa) —
+    # the flag must win over the name heuristic when both are present.
+    state_id = resolve_cancellation_state_id(
+        [
+            {"id": 24, "nombre": "Confirmado", "anulacion": 0},
+            {"id": 20, "nombre": "Anulado por pcte. via Whatsapp", "anulacion": 1},
+        ]
+    )
+
+    assert state_id == "20"
+
+
+def test_resolve_cancellation_state_id_flag_overrides_a_misleading_name():
+    state_id = resolve_cancellation_state_id(
+        [{"id": 3, "nombre": "Cancelación pendiente de revisión", "anulacion": 0}]
+    )
 
     assert state_id is None
