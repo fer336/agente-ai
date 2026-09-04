@@ -12,6 +12,7 @@ from app.api.dependencies.gateways import (
     get_specialty_gateway,
     get_telegram_notifier,
     get_transcription_gateway,
+    get_treatment_gateway,
 )
 from app.config.settings import Settings
 from app.domain.repositories.agent_invoker import AgentInvoker
@@ -23,6 +24,7 @@ from app.domain.repositories.gateways import (
     MessagingGateway,
     PatientGateway,
     SpecialtyGateway,
+    TreatmentGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
@@ -30,11 +32,16 @@ from app.domain.repositories.media_downloader import MediaDownloader
 from app.domain.repositories.media_gateway import MediaGateway
 from app.domain.repositories.transcription_gateway import TranscriptionGateway
 from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvoker
+from app.infrastructure.dentalink.agreement_gateway import DentalinkAgreementGateway
+from app.infrastructure.dentalink.appointment_gateway import DentalinkAppointmentGateway
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
+from app.infrastructure.dentalink.fake_treatment_gateway import FakeTreatmentGateway
+from app.infrastructure.dentalink.patient_gateway import DentalinkPatientGateway
 from app.infrastructure.dentalink.specialty_gateway import DentalinkSpecialtyGateway
+from app.infrastructure.dentalink.treatment_gateway import DentalinkTreatmentGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
@@ -47,7 +54,11 @@ from app.infrastructure.ycloud.handoff_gateway import YCloudHandoffGateway
 from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
-def test_get_appointment_gateway_returns_a_fake_dentalink_gateway():
+def test_get_appointment_gateway_returns_a_fake_dentalink_gateway_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
     gateway = get_appointment_gateway()
 
     assert isinstance(gateway, FakeDentalinkGateway)
@@ -61,7 +72,29 @@ def test_get_appointment_gateway_returns_the_same_cached_instance_across_calls()
     assert first is second
 
 
-def test_get_agreement_gateway_returns_a_fake_agreement_gateway():
+def test_get_appointment_gateway_returns_a_real_dentalink_gateway_when_token_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(
+            _env_file=None,
+            dentalink_access_token="dl-token",
+            dentalink_default_branch_id="1",
+            dentalink_default_chair_id="7",
+        ),
+    )
+
+    gateway = get_appointment_gateway()
+
+    assert isinstance(gateway, DentalinkAppointmentGateway)
+
+
+def test_get_agreement_gateway_returns_a_fake_agreement_gateway_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
     gateway = get_agreement_gateway()
 
     assert isinstance(gateway, FakeAgreementGateway)
@@ -73,6 +106,19 @@ def test_get_agreement_gateway_returns_the_same_cached_instance_across_calls():
     second = get_agreement_gateway()
 
     assert first is second
+
+
+def test_get_agreement_gateway_returns_a_real_dentalink_gateway_when_token_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, dentalink_access_token="dl-token"),
+    )
+
+    gateway = get_agreement_gateway()
+
+    assert isinstance(gateway, DentalinkAgreementGateway)
 
 
 def test_get_specialty_gateway_returns_a_fake_specialty_gateway_by_default():
@@ -100,6 +146,37 @@ def test_get_specialty_gateway_returns_a_real_dentalink_gateway_when_token_is_co
     gateway = get_specialty_gateway()
 
     assert isinstance(gateway, DentalinkSpecialtyGateway)
+
+
+def test_get_treatment_gateway_returns_a_fake_treatment_gateway_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
+    gateway = get_treatment_gateway()
+
+    assert isinstance(gateway, FakeTreatmentGateway)
+    assert isinstance(gateway, TreatmentGateway)
+
+
+def test_get_treatment_gateway_returns_the_same_cached_instance_across_calls():
+    first = get_treatment_gateway()
+    second = get_treatment_gateway()
+
+    assert first is second
+
+
+def test_get_treatment_gateway_returns_a_real_dentalink_gateway_when_token_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, dentalink_access_token="dl-token"),
+    )
+
+    gateway = get_treatment_gateway()
+
+    assert isinstance(gateway, DentalinkTreatmentGateway)
 
 
 def test_get_messaging_gateway_returns_a_fake_ycloud_messaging_gateway():
@@ -156,7 +233,11 @@ def test_get_human_handoff_gateway_returns_a_real_ycloud_gateway_when_api_key_is
     assert isinstance(gateway, YCloudHandoffGateway)
 
 
-def test_get_patient_gateway_returns_a_fake_patient_gateway():
+def test_get_patient_gateway_returns_a_fake_patient_gateway_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
     gateway = get_patient_gateway()
 
     assert isinstance(gateway, FakePatientGateway)
@@ -168,6 +249,19 @@ def test_get_patient_gateway_returns_the_same_cached_instance_across_calls():
     second = get_patient_gateway()
 
     assert first is second
+
+
+def test_get_patient_gateway_returns_a_real_dentalink_gateway_when_token_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, dentalink_access_token="dl-token"),
+    )
+
+    gateway = get_patient_gateway()
+
+    assert isinstance(gateway, DentalinkPatientGateway)
 
 
 def test_get_llm_provider_returns_a_fake_llm_provider():
