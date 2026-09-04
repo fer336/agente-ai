@@ -206,6 +206,109 @@ async def test_get_contact_raises_ycloud_api_error_on_non_2xx_response(
 
 
 @pytest.mark.asyncio
+async def test_find_contact_by_phone_sends_the_filter_query_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(
+        monkeypatch,
+        json_response={"items": [{"id": "contact-1", "tags": ["vip"]}]},
+    )
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    result = await client.find_contact_by_phone("+5491122334455")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url.path == "/v2/contact/contacts"
+    assert dict(request.url.params) == {"filter.phoneNumber": "+5491122334455", "limit": "1"}
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    assert result == {"id": "contact-1", "tags": ["vip"]}
+
+
+@pytest.mark.asyncio
+async def test_find_contact_by_phone_returns_none_when_no_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _capture_requests(monkeypatch, json_response={"items": []})
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    result = await client.find_contact_by_phone("+5491199999999")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_find_contact_by_phone_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="internal error")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError):
+        await client.find_contact_by_phone("+5491122334455")
+
+
+@pytest.mark.asyncio
+async def test_update_contact_tags_sends_a_patch_with_the_full_tag_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch, json_response={"id": "contact-1"})
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    await client.update_contact_tags("contact-1", ["vip", "Humano"])
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url == "https://api.ycloud.com/v2/contact/contacts/contact-1"
+    assert request.method == "PATCH"
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    assert json.loads(request.content) == {"tags": ["vip", "Humano"]}
+
+
+@pytest.mark.asyncio
+async def test_update_contact_tags_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError) as exc_info:
+        await client.update_contact_tags("missing", ["Humano"])
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_get_media_raises_ycloud_api_error_on_non_2xx_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

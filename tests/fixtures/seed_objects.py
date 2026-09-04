@@ -207,7 +207,7 @@ def make_ycloud_audio_payload(
 
 def make_ycloud_tag_change_payload(
     contact_id: str = "ycloud-contact-1",
-    tag_value: str = "Agente",
+    tag_value: str = "Humano",
     action: str = "ADDED",
 ) -> dict[str, object]:
     """Raw YCloud `contact.attributes_changed` webhook JSON body (tag

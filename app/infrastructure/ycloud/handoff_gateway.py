@@ -1,42 +1,44 @@
-import httpx
-
 from app.domain.value_objects.conversation_id import ConversationId
-from app.infrastructure.ycloud.exceptions import YCloudAPIError
+from app.infrastructure.ycloud.client import YCloudClient
+
+#: The tag a human agent removes in YCloud's Shared Team Inbox to hand a
+#: conversation back to the bot (see
+#: `app.application.conversations.sync_conversation_mode_from_tag`) — this
+#: gateway applies the SAME tag automatically the moment the bot itself
+#: escalates, so a human agent immediately sees which threads need them
+#: without having to tag them by hand first.
+_HUMAN_TAG = "Humano"
 
 
 class YCloudHandoffGateway:
-    """`httpx`-based real implementation of the `HumanHandoffGateway` port.
+    """`YCloudClient`-based real implementation of the `HumanHandoffGateway` port.
 
-    HIGHEST-UNCERTAINTY adapter in this change. Per PRD §21, once
-    `conversation_mode` flips to `HUMAN` the bot simply stops responding —
-    administración continues from the same YCloud Shared Team Inbox thread,
-    which YCloud already shows without any extra API call (it IS the
-    WhatsApp channel). There is no PRD-mandated or publicly confirmed
-    YCloud "assign/escalate conversation" endpoint this adapter must call.
-
-    This implementation tags the conversation via a best-guess
-    `PUT /v2/whatsapp/conversations/{phone}/labels` call so a human agent
-    can filter escalated threads in the Shared Inbox — modeled on YCloud's
-    publicly documented conversation-labeling convention, UNVERIFIED
-    against a live account. Confirm the endpoint (or confirm no call is
-    needed at all, since the mode flip alone may be sufficient) against
-    real YCloud API docs before production use — see this PR's report.
+    Tags the contact "Humano" via YCloud's contact-tags API (`PATCH
+    /v2/contact/contacts/{id}`, confirmed against YCloud's published
+    OpenAPI spec) rather than an unconfirmed "conversation labels" endpoint
+    — mirrors exactly what a human agent does by hand from the Shared Team
+    Inbox, and what
+    `app.application.conversations.sync_conversation_mode_from_tag` already
+    listens for on the way back. `request_handoff` is a no-op (not an
+    error) when the contact can't be resolved by phone — PRD.md §21's
+    `conversation.mode = "human"` flip (done separately by the calling
+    node, not this gateway) is the durable source of truth; this call is a
+    best-effort UX nicety for the human agent's inbox.
     """
 
-    def __init__(self, base_url: str, api_key: str) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._api_key = api_key
+    def __init__(self, client: YCloudClient) -> None:
+        self._client = client
 
     async def request_handoff(self, conversation_id: ConversationId, reason: str) -> None:
         phone = str(conversation_id).removeprefix("ycloud-")
-        url = f"{self._base_url}/v2/whatsapp/conversations/{phone}/labels"
-        async with httpx.AsyncClient() as client:
-            response = await client.put(
-                url,
-                headers={"X-API-Key": self._api_key},
-                json={"labels": ["handoff"], "note": reason},
-            )
-            if response.is_error:
-                raise YCloudAPIError(
-                    f"YCloud API returned {response.status_code}: {response.text}"
-                )
+        contact = await self._client.find_contact_by_phone(phone)
+        if contact is None:
+            return
+        contact_id = contact.get("id")
+        if not contact_id:
+            return
+        raw_tags = contact.get("tags")
+        current_tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
+        if _HUMAN_TAG in current_tags:
+            return
+        await self._client.update_contact_tags(str(contact_id), [*current_tags, _HUMAN_TAG])

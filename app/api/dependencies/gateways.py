@@ -42,6 +42,7 @@ from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
+from app.infrastructure.ycloud.handoff_gateway import YCloudHandoffGateway
 from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
@@ -171,16 +172,22 @@ def _get_fake_ycloud_handoff_gateway() -> FakeYCloudHandoffGateway:
     return FakeYCloudHandoffGateway()
 
 
+@lru_cache
+def _get_real_ycloud_handoff_gateway() -> YCloudHandoffGateway:
+    return YCloudHandoffGateway(_get_ycloud_client())
+
+
 def get_human_handoff_gateway() -> HumanHandoffGateway:
     """FastAPI dependency providing the `HumanHandoffGateway` port.
 
-    Returns the in-memory `FakeYCloudHandoffGateway` for now. This is the
-    swap point for the real, `httpx`-based
-    `app.infrastructure.ycloud.handoff_gateway.YCloudHandoffGateway` adapter
-    (already implemented, not yet wired here — no live YCloud credentials in
-    dev this change) — callers only depend on the `HumanHandoffGateway`
-    Protocol.
+    Returns the real, `httpx`-based `YCloudHandoffGateway` whenever
+    `settings.ycloud_api_key` is configured, else the in-memory
+    `FakeYCloudHandoffGateway` — same conditional pattern as
+    `get_messaging_gateway` below. Callers only depend on the
+    `HumanHandoffGateway` Protocol.
     """
+    if get_settings().ycloud_api_key:
+        return _get_real_ycloud_handoff_gateway()
     return _get_fake_ycloud_handoff_gateway()
 
 
