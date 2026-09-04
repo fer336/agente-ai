@@ -7,13 +7,13 @@ from app.infrastructure.ycloud.client import YCloudClient
 #: gateway applies the SAME tag automatically the moment the bot itself
 #: escalates, so a human agent immediately sees which threads need them
 #: without having to tag them by hand first.
-_HUMAN_TAG = "Humano"
+_HUMAN_TAG = "Human"
 
 
 class YCloudHandoffGateway:
     """`YCloudClient`-based real implementation of the `HumanHandoffGateway` port.
 
-    Tags the contact "Humano" via YCloud's contact-tags API (`PATCH
+    Tags the contact "Human" via YCloud's contact-tags API (`PATCH
     /v2/contact/contacts/{id}`, confirmed against YCloud's published
     OpenAPI spec) rather than an unconfirmed "conversation labels" endpoint
     — mirrors exactly what a human agent does by hand from the Shared Team

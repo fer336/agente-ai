@@ -13,7 +13,7 @@ _INPUT_STATE_FOR_MODE = {"human": HUMAN, "agent": FREE_INPUT}
 
 class SyncConversationModeFromTagUseCase:
     """Flips `conversation.mode` when a human agent adds or removes the
-    "Humano" tag on a YCloud contact from the Shared Team Inbox.
+    "Human" tag on a YCloud contact from the Shared Team Inbox.
 
     Counterpart to `app.agent.nodes.handoff`'s one-way flip to `"human"` —
     that node has no way back to `"agent"` once a human takes over; this is

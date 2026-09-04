@@ -22,7 +22,7 @@ _TAG_REMOVED_ACTION = "REMOVED"
 #: independent booleans, not a mutually-exclusive radio group, so presence/
 #: absence of this ONE tag drives the toggle rather than two separate tags.
 #: Must match the exact tag name created in the YCloud dashboard.
-_HUMAN_TAG = "Humano"
+_HUMAN_TAG = "Human"
 
 
 def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: str) -> bool:
@@ -125,7 +125,7 @@ def extract_tag_mode_change(
     payload: YCloudContactAttributesChangedEventPayload,
 ) -> tuple[str, str] | None:
     """Returns `(ycloud_contact_id, mode)` for the first ADDED/REMOVED
-    "Humano" tag action in this event's `tags.extra`, else `None` (no tag
+    "Human" tag action in this event's `tags.extra`, else `None` (no tag
     change here, or it's some other tag we don't care about). ADDED ->
     `"human"` (a human took over), REMOVED -> `"agent"` (handed back to the
     bot). Multiple matching actions in the same event is not expected in
