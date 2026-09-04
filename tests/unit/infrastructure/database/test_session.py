@@ -19,6 +19,15 @@ def test_create_engine_binds_a_different_url_correctly():
     assert engine.url.database == "otherdb"
 
 
+def test_create_engine_enables_pool_pre_ping():
+    # Regression: without this, a connection the server dropped (restart,
+    # idle timeout) surfaces as ConnectionDoesNotExistError on next use
+    # instead of transparently reconnecting.
+    engine = create_engine("postgresql+asyncpg://user:pass@localhost:5432/db")
+
+    assert engine.pool._pre_ping is True
+
+
 def test_create_session_factory_returns_sessionmaker_bound_to_the_engine():
     engine = create_engine("postgresql+asyncpg://user:pass@localhost:5432/db")
 
