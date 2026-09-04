@@ -7,8 +7,10 @@ matches the call shape of the inline `Fake*()` construction these replace.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from app.application.appointments.propose_appointment import ProposalRepositories
+from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_service import ErrorService
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
 from app.application.messages.send_reply import SendReplyUseCase
@@ -17,6 +19,7 @@ from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
+from app.domain.entities.runtime_agent_config import RuntimeAgentConfig
 from app.domain.entities.specialty import Specialty
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
 from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
@@ -34,6 +37,9 @@ from app.infrastructure.database.fake_node_execution_repository import (
 from app.infrastructure.database.fake_outbox_repository import FakeOutboxRepository
 from app.infrastructure.database.fake_pending_action_repository import (
     FakePendingActionRepository,
+)
+from app.infrastructure.database.fake_runtime_config_repository import (
+    FakeRuntimeConfigRepository,
 )
 from app.infrastructure.database.fake_scheduled_action_repository import (
     FakeScheduledActionRepository,
@@ -250,6 +256,49 @@ def make_send_reply_use_case(
     return SendReplyUseCase(messaging_gateway)
 
 
+def make_runtime_config_service(
+    debounce_seconds: float = 6,
+    model: str = "fake-model",
+    temperature: float = 0.0,
+    classify_intent_prompt: str = "classify this",
+    extract_information_prompt: str = "extract {required_fields}",
+    generate_response_prompt: str = "respond to {intent} with {collected_data}",
+    repository: FakeRuntimeConfigRepository | None = None,
+) -> RuntimeConfigService:
+    """Builds a `RuntimeConfigService` wired to a `FakeRuntimeConfigRepository`
+    (no Redis — every `get_config()` reads the fake directly, deterministic
+    for tests). `debounce_seconds` is deliberately `float` here (not the
+    domain entity's `int`) — several existing tests set it to a fraction of
+    a second (e.g. `0.05`) to keep `IngestMessageUseCase`'s debounce-window
+    test suite fast; Python doesn't enforce dataclass field types at
+    runtime, so this passes through untouched.
+    """
+    repository = repository if repository is not None else FakeRuntimeConfigRepository()
+
+    @asynccontextmanager
+    async def repositories_provider() -> AsyncIterator[FakeRuntimeConfigRepository]:
+        yield repository
+
+    def default_config() -> RuntimeAgentConfig:
+        return RuntimeAgentConfig(
+            id="default",
+            model=model,
+            temperature=temperature,
+            debounce_seconds=debounce_seconds,  # type: ignore[arg-type]
+            classify_intent_prompt=classify_intent_prompt,
+            extract_information_prompt=extract_information_prompt,
+            generate_response_prompt=generate_response_prompt,
+            updated_at=datetime.now(UTC),
+            updated_by="test-default",
+        )
+
+    return RuntimeConfigService(
+        repositories_provider=repositories_provider,
+        default_config=default_config,
+        redis_client=None,
+    )
+
+
 def make_ingest_message_use_case(
     message_repository: FakeMessageRepository | None = None,
     contact_repository: FakeContactRepository | None = None,
@@ -258,7 +307,8 @@ def make_ingest_message_use_case(
     redis_client: InMemoryFakeRedis | None = None,
     agent_invoker: FakeAgentInvoker | None = None,
     send_reply: SendReplyUseCase | None = None,
-    debounce_seconds: int = 6,
+    debounce_seconds: float = 6,
+    runtime_config_service: RuntimeConfigService | None = None,
     audio_rate_limit_per_minute: int = 0,
 ) -> IngestMessageUseCase:
     """Builds an `IngestMessageUseCase` wired entirely to fakes.
@@ -289,6 +339,11 @@ def make_ingest_message_use_case(
     agent_invoker = agent_invoker if agent_invoker is not None else make_agent_invoker()
     send_reply = send_reply if send_reply is not None else make_send_reply_use_case()
     debounce_tracker = DebounceTracker(redis_client, debounce_seconds)
+    runtime_config_service = (
+        runtime_config_service
+        if runtime_config_service is not None
+        else make_runtime_config_service(debounce_seconds=debounce_seconds)
+    )
 
     @asynccontextmanager
     async def repositories_provider() -> AsyncIterator[MessageRepositories]:
@@ -304,7 +359,7 @@ def make_ingest_message_use_case(
         debounce_tracker=debounce_tracker,
         redis_client=redis_client,
         agent_invoker=agent_invoker,
-        debounce_seconds=debounce_seconds,
+        runtime_config_service=runtime_config_service,
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
     )

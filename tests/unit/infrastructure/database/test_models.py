@@ -22,6 +22,7 @@ _EXPECTED_TABLES = {
     "admin_users",
     "admin_audit_log",
     "incidents",
+    "runtime_agent_config",
 }
 
 

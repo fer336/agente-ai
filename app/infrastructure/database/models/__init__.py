@@ -16,6 +16,7 @@ from app.infrastructure.database.models.node_execution import NodeExecutionModel
 from app.infrastructure.database.models.outbox_event import OutboxEventModel
 from app.infrastructure.database.models.patient import PatientModel
 from app.infrastructure.database.models.pending_action import PendingActionModel
+from app.infrastructure.database.models.runtime_agent_config import RuntimeAgentConfigModel
 from app.infrastructure.database.models.scheduled_action import ScheduledActionModel
 from app.infrastructure.database.models.tool_execution import ToolExecutionModel
 
@@ -38,6 +39,7 @@ __all__ = [
     "OutboxEventModel",
     "PatientModel",
     "PendingActionModel",
+    "RuntimeAgentConfigModel",
     "ScheduledActionModel",
     "ToolExecutionModel",
 ]

@@ -29,6 +29,7 @@ from tests.fixtures.gateways import (
     make_conversation_repository,
     make_media_processing_job_repository,
     make_message_repository,
+    make_runtime_config_service,
     make_send_reply_use_case,
     make_ycloud_messaging_gateway,
 )
@@ -121,7 +122,7 @@ def _build_use_case(
         debounce_tracker=debounce_tracker,
         redis_client=redis_client,
         agent_invoker=agent_invoker,
-        debounce_seconds=debounce_seconds,
+        runtime_config_service=make_runtime_config_service(debounce_seconds=debounce_seconds),
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
     )
