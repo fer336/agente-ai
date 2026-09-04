@@ -6,6 +6,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.entities.specialty import Specialty
+from app.domain.entities.treatment import Treatment
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.interactive_button import InteractiveButton
@@ -88,6 +89,21 @@ class SpecialtyGateway(Protocol):
     """Port to the external dental specialty catalog (e.g. Dentalink)."""
 
     async def list_specialties(self) -> list[Specialty]: ...
+
+
+@runtime_checkable
+class TreatmentGateway(Protocol):
+    """Port to the external treatment-plan catalog (e.g. Dentalink).
+
+    Read-only and always scoped to one already-identified patient — never a
+    "list every treatment" call. Matches PRD.md §32's identification
+    guardrail already enforced by `PatientGateway`: a treatment plan
+    carries billing detail (balance owed, amounts paid), so it is only ever
+    fetched for the patient this conversation already proved is who they
+    say they are.
+    """
+
+    async def get_patient_treatments(self, patient_id: str) -> list[Treatment]: ...
 
 
 @runtime_checkable

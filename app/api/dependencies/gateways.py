@@ -18,6 +18,7 @@ from app.domain.repositories.gateways import (
     MessagingGateway,
     PatientGateway,
     SpecialtyGateway,
+    TreatmentGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
@@ -25,12 +26,17 @@ from app.domain.repositories.media_downloader import MediaDownloader
 from app.domain.repositories.media_gateway import MediaGateway
 from app.domain.repositories.transcription_gateway import TranscriptionGateway
 from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvoker
+from app.infrastructure.dentalink.agreement_gateway import DentalinkAgreementGateway
+from app.infrastructure.dentalink.appointment_gateway import DentalinkAppointmentGateway
 from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
+from app.infrastructure.dentalink.fake_treatment_gateway import FakeTreatmentGateway
+from app.infrastructure.dentalink.patient_gateway import DentalinkPatientGateway
 from app.infrastructure.dentalink.specialty_gateway import DentalinkSpecialtyGateway
+from app.infrastructure.dentalink.treatment_gateway import DentalinkTreatmentGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.client import OpenAICompatibleLLMClient
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -51,16 +57,28 @@ def _get_fake_dentalink_gateway() -> FakeDentalinkGateway:
     return FakeDentalinkGateway()
 
 
+@lru_cache
+def _get_real_appointment_gateway() -> DentalinkAppointmentGateway:
+    settings = get_settings()
+    return DentalinkAppointmentGateway(
+        _get_dentalink_client(),
+        default_branch_id=settings.dentalink_default_branch_id,
+        default_chair_id=settings.dentalink_default_chair_id,
+        default_duration_minutes=settings.dentalink_default_duration_minutes,
+    )
+
+
 def get_appointment_gateway() -> AppointmentGateway:
     """FastAPI dependency providing the `AppointmentGateway` port.
 
-    Returns the in-memory `FakeDentalinkGateway` for now. This is the swap
-    point for the real, `httpx`-based
-    `app.infrastructure.dentalink.appointment_gateway.DentalinkAppointmentGateway`
-    adapter (already implemented, not yet wired here — no live Dentalink
-    credentials in dev this change) — callers only depend on the
+    Returns the real, `httpx`-based `DentalinkAppointmentGateway` whenever
+    `settings.dentalink_access_token` is configured, else the in-memory
+    `FakeDentalinkGateway` — same conditional pattern as
+    `get_specialty_gateway` below. Callers only depend on the
     `AppointmentGateway` Protocol.
     """
+    if get_settings().dentalink_access_token:
+        return _get_real_appointment_gateway()
     return _get_fake_dentalink_gateway()
 
 
@@ -69,16 +87,22 @@ def _get_fake_agreement_gateway() -> FakeAgreementGateway:
     return FakeAgreementGateway()
 
 
+@lru_cache
+def _get_real_agreement_gateway() -> DentalinkAgreementGateway:
+    return DentalinkAgreementGateway(_get_dentalink_client())
+
+
 def get_agreement_gateway() -> AgreementGateway:
     """FastAPI dependency providing the `AgreementGateway` port.
 
-    Returns the in-memory `FakeAgreementGateway` for now. This is the swap
-    point for the real, `httpx`-based
-    `app.infrastructure.dentalink.agreement_gateway.DentalinkAgreementGateway`
-    adapter (already implemented, not yet wired here — no live Dentalink
-    credentials in dev this change) — callers only depend on the
+    Returns the real, `httpx`-based `DentalinkAgreementGateway` whenever
+    `settings.dentalink_access_token` is configured, else the in-memory
+    `FakeAgreementGateway` — same conditional pattern as
+    `get_specialty_gateway` below. Callers only depend on the
     `AgreementGateway` Protocol.
     """
+    if get_settings().dentalink_access_token:
+        return _get_real_agreement_gateway()
     return _get_fake_agreement_gateway()
 
 
@@ -108,10 +132,8 @@ def get_specialty_gateway() -> SpecialtyGateway:
     Returns the real, `httpx`-based `DentalinkSpecialtyGateway` whenever
     `settings.dentalink_access_token` is configured, else the in-memory
     `FakeSpecialtyGateway` — callers only depend on the `SpecialtyGateway`
-    Protocol. Unlike `get_agreement_gateway`/`get_patient_gateway` above
-    (still Fake-only pending a future change), this port is new in this
-    change with no live-credential dependents yet, so it is wired
-    conditionally from the start rather than added as a follow-up swap.
+    Protocol. Same conditional pattern as `get_appointment_gateway`/
+    `get_agreement_gateway`/`get_patient_gateway` above.
     """
     if get_settings().dentalink_access_token:
         return _get_dentalink_specialty_gateway()
@@ -119,18 +141,49 @@ def get_specialty_gateway() -> SpecialtyGateway:
 
 
 @lru_cache
+def _get_fake_treatment_gateway() -> FakeTreatmentGateway:
+    return FakeTreatmentGateway()
+
+
+@lru_cache
+def _get_real_treatment_gateway() -> DentalinkTreatmentGateway:
+    return DentalinkTreatmentGateway(_get_dentalink_client())
+
+
+def get_treatment_gateway() -> TreatmentGateway:
+    """FastAPI dependency providing the `TreatmentGateway` port.
+
+    Returns the real, `httpx`-based `DentalinkTreatmentGateway` whenever
+    `settings.dentalink_access_token` is configured, else the in-memory
+    `FakeTreatmentGateway` — same conditional pattern as
+    `get_specialty_gateway` above.
+    """
+    if get_settings().dentalink_access_token:
+        return _get_real_treatment_gateway()
+    return _get_fake_treatment_gateway()
+
+
+@lru_cache
 def _get_fake_patient_gateway() -> FakePatientGateway:
     return FakePatientGateway()
+
+
+@lru_cache
+def _get_real_patient_gateway() -> DentalinkPatientGateway:
+    return DentalinkPatientGateway(_get_dentalink_client())
 
 
 def get_patient_gateway() -> PatientGateway:
     """FastAPI dependency providing the `PatientGateway` port.
 
-    Returns the in-memory `FakePatientGateway` for now. This is the swap
-    point for a real Dentalink-backed adapter (PRD.md §27.1's
-    `GET /v1/pacientes`, not yet built — this change only wires the port
-    and its Fake) — callers only depend on the `PatientGateway` Protocol.
+    Returns the real, `httpx`-based `DentalinkPatientGateway` whenever
+    `settings.dentalink_access_token` is configured, else the in-memory
+    `FakePatientGateway` — same conditional pattern as
+    `get_specialty_gateway` below. Callers only depend on the
+    `PatientGateway` Protocol.
     """
+    if get_settings().dentalink_access_token:
+        return _get_real_patient_gateway()
     return _get_fake_patient_gateway()
 
 

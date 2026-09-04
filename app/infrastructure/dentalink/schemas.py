@@ -26,6 +26,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.entities.specialty import Specialty
+from app.domain.entities.treatment import Treatment
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -171,6 +172,27 @@ def specialty_from_especialidad(raw: dict[str, object]) -> Specialty:
     return Specialty(id=str(specialty_id), name=str(raw.get("nombre", "")))
 
 
+def treatment_from_tratamiento(raw: dict[str, object]) -> Treatment:
+    """Confirmed against a live Dentalink account (2026-09-04):
+    `/v1/pacientes/{id}/tratamientos` returns `finalizado` as `0`/`1`
+    (never a bool literal) and numeric money fields (`total`/`abonado`/
+    `deuda`) as JSON numbers.
+    """
+    treatment_id = raw.get("id")
+    patient_id = raw.get("id_paciente")
+    if treatment_id is None or patient_id is None:
+        raise DentalinkInvalidResponseError("tratamiento record is missing id/id_paciente")
+    return Treatment(
+        id=str(treatment_id),
+        patient_id=str(patient_id),
+        name=str(raw.get("nombre", "")),
+        is_finished=raw.get("finalizado") == 1,
+        total=_as_float(raw.get("total")),
+        paid=_as_float(raw.get("abonado")),
+        debt=_as_float(raw.get("deuda")),
+    )
+
+
 def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | None:
     """Finds the anulación/cancelación state id among `GET /v1/citas/estados` (PRD.md §27.5).
 
@@ -207,6 +229,10 @@ def _parse_datetime(fecha: str, hora: str) -> datetime:
 
 def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
+
+
+def _as_float(value: object) -> float:
+    return float(str(value)) if value is not None else 0.0
 
 
 def as_list(raw: object) -> list[dict[str, object]]:

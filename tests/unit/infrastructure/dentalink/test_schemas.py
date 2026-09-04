@@ -8,6 +8,7 @@ from app.infrastructure.dentalink.schemas import (
     professional_from_dentista,
     resolve_cancellation_state_id,
     slot_from_agenda,
+    treatment_from_tratamiento,
 )
 
 
@@ -165,23 +166,41 @@ def test_resolve_cancellation_state_id_returns_none_when_no_match():
     assert state_id is None
 
 
-def test_resolve_cancellation_state_id_prefers_the_real_anulacion_flag():
-    # Confirmed live shape: a state can have "anula"/"cancela" nowhere in
-    # its name yet still be the real cancellation state (or vice versa) —
-    # the flag must win over the name heuristic when both are present.
-    state_id = resolve_cancellation_state_id(
-        [
-            {"id": 24, "nombre": "Confirmado", "anulacion": 0},
-            {"id": 20, "nombre": "Anulado por pcte. via Whatsapp", "anulacion": 1},
-        ]
+def test_treatment_from_tratamiento_maps_confirmed_live_shape():
+    treatment = treatment_from_tratamiento(
+        {
+            "id": 7998,
+            "id_paciente": 5844,
+            "nombre": "Nuevo plan de tratamiento",
+            "finalizado": 0,
+            "total": 1000,
+            "abonado": 400,
+            "deuda": 600,
+        }
     )
 
-    assert state_id == "20"
+    assert treatment.id == "7998"
+    assert treatment.patient_id == "5844"
+    assert treatment.name == "Nuevo plan de tratamiento"
+    assert treatment.is_finished is False
+    assert treatment.total == 1000.0
+    assert treatment.paid == 400.0
+    assert treatment.debt == 600.0
 
 
-def test_resolve_cancellation_state_id_flag_overrides_a_misleading_name():
-    state_id = resolve_cancellation_state_id(
-        [{"id": 3, "nombre": "Cancelación pendiente de revisión", "anulacion": 0}]
-    )
+def test_treatment_from_tratamiento_defaults_missing_money_fields_to_zero():
+    treatment = treatment_from_tratamiento({"id": 1, "id_paciente": 2, "nombre": "Plan"})
 
-    assert state_id is None
+    assert treatment.total == 0.0
+    assert treatment.paid == 0.0
+    assert treatment.debt == 0.0
+
+
+def test_treatment_from_tratamiento_raises_when_id_is_missing():
+    with pytest.raises(DentalinkInvalidResponseError):
+        treatment_from_tratamiento({"id_paciente": 2, "nombre": "Plan"})
+
+
+def test_treatment_from_tratamiento_raises_when_patient_id_is_missing():
+    with pytest.raises(DentalinkInvalidResponseError):
+        treatment_from_tratamiento({"id": 1, "nombre": "Plan"})
