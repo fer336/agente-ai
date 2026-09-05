@@ -24,6 +24,10 @@ YCLOUD_API_KEY=changeme
 YCLOUD_WEBHOOK_SECRET=changeme
 YCLOUD_WHATSAPP_NUMBER=
 
+# Publicly reachable image URL attached as a header on the welcome menu —
+# leave empty to send the welcome menu without one.
+WELCOME_IMAGE_URL=
+
 MESSAGE_DEBOUNCE_SECONDS=6
 
 # Dentalink — appointment scheduling and insurance-agreement source of

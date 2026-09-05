@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     ycloud_webhook_secret: str = ""
     ycloud_whatsapp_number: str = ""
 
+    #: Publicly reachable URL for the clinic's logo (this session's brief)
+    #: — YCloud/WhatsApp's own servers fetch it, so it can't be a local
+    #: file path. Attached as the welcome menu's image header when set;
+    #: `""` (the default) sends the welcome menu without one, same as
+    #: before this existed.
+    welcome_image_url: str = ""
+
     dentalink_api_url: str = "https://api.dentalink.healthatom.com/api"
     dentalink_access_token: str = ""
     dentalink_timeout_seconds: float = 15

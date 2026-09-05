@@ -4,6 +4,7 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.application.appointments.cancel_appointment import CancelAppointmentUseCase
@@ -40,6 +41,7 @@ from app.domain.exceptions.errors import (
 )
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import AppointmentGateway, PatientGateway
+from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.dni import Dni
@@ -352,6 +354,7 @@ def create_appointment_node(
     conversation_repository: ConversationRepository,
     redis_client: Redis,
     confirmation_timeout_seconds: int,
+    llm_provider: LLMProvider,
 ) -> AgentNode:
     """Full turno management stage machine — create, reschedule, cancel
     (PRD.md §9-16, §32, §72).
@@ -886,10 +889,32 @@ def create_appointment_node(
         if stage == STAGE_AWAITING_IDENTIFICATION:
             parsed = _parse_identification(state["user_message"])
             if parsed is None:
+                retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "identification_retry",
+                    {
+                        "situacion": (
+                            "El paciente escribió algo, pero no pudimos identificar su "
+                            "nombre completo y su DNI juntos en el mensaje."
+                        ),
+                        "formato_requerido": (
+                            "Nombre completo y DNI en un mismo mensaje, ejemplo: "
+                            "Juan Pérez, 30123456. Incluí ese ejemplo en tu respuesta."
+                        ),
+                        "intentos_seguidos": retry_count,
+                    },
+                    _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE,
+                )
                 return {
-                    "response_text": _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE,
+                    "response_text": text,
                     "response_buttons": None,
                     "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "identification_retry_count": retry_count,
+                    },
                 }
             full_name, dni = parsed
             try:
@@ -899,10 +924,33 @@ def create_appointment_node(
                 # just the DNI rather than falling through to "not found",
                 # and stay in this same stage (no PendingAction needed for
                 # a plain format retry).
+                retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "dni_invalid",
+                    {
+                        "situacion": (
+                            "El paciente escribió un DNI con formato inválido (debe tener "
+                            "7 u 8 dígitos, solo números)."
+                        ),
+                        "dni_recibido": dni,
+                        "formato_requerido": (
+                            "Solo números, 7 u 8 dígitos, ejemplo: 30123456. Incluí ese "
+                            "ejemplo en tu respuesta."
+                        ),
+                        "intentos_seguidos": retry_count,
+                    },
+                    _DNI_FORMAT_INVALID_MESSAGE,
+                )
                 return {
-                    "response_text": _DNI_FORMAT_INVALID_MESSAGE,
+                    "response_text": text,
                     "response_buttons": None,
                     "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "identification_retry_count": retry_count,
+                    },
                 }
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
             if identified_patient is None:

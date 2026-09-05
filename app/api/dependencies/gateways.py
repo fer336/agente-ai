@@ -45,6 +45,7 @@ from app.infrastructure.llm.openai_compatible_llm_provider import OpenAICompatib
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
 from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
+from app.infrastructure.transcription.groq_transcription_gateway import GroqTranscriptionGateway
 from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
@@ -281,16 +282,28 @@ def _get_fake_transcription_gateway() -> FakeTranscriptionGateway:
     return FakeTranscriptionGateway()
 
 
+@lru_cache
+def _get_real_transcription_gateway() -> GroqTranscriptionGateway:
+    settings = get_settings()
+    return GroqTranscriptionGateway(
+        base_url=settings.groq_api_url,
+        api_key=settings.groq_api_key,
+        model=settings.groq_transcription_model,
+        timeout_seconds=settings.audio_transcription_timeout_seconds,
+    )
+
+
 def get_transcription_gateway() -> TranscriptionGateway:
     """FastAPI dependency providing the `TranscriptionGateway` port.
 
-    Returns the in-memory `FakeTranscriptionGateway` for now. This is the
-    swap point for the real, `httpx`-based
-    `app.infrastructure.transcription.groq_transcription_gateway.GroqTranscriptionGateway`
-    adapter (already implemented, not yet wired here — no live Groq
-    credentials in dev this change) — callers only depend on the
-    `TranscriptionGateway` Protocol.
+    Returns the real, `httpx`-based `GroqTranscriptionGateway` whenever
+    `settings.groq_api_key` is configured, else the in-memory
+    `FakeTranscriptionGateway` — same conditional pattern as
+    `get_llm_provider`/`get_messaging_gateway` above. Callers only depend
+    on the `TranscriptionGateway` Protocol.
     """
+    if get_settings().groq_api_key:
+        return _get_real_transcription_gateway()
     return _get_fake_transcription_gateway()
 
 

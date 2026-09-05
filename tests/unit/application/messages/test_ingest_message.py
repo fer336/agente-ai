@@ -82,6 +82,7 @@ def _build_use_case(
     send_reply=None,
     debounce_seconds: int = _DEBOUNCE_SECONDS,
     audio_rate_limit_per_minute: int = 0,
+    welcome_image_url: str | None = None,
 ) -> IngestMessageUseCase:
     message_repository = (
         message_repository if message_repository is not None else make_message_repository()
@@ -125,6 +126,7 @@ def _build_use_case(
         runtime_config_service=make_runtime_config_service(debounce_seconds=debounce_seconds),
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
+        welcome_image_url=welcome_image_url,
     )
 
 
@@ -211,10 +213,25 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     assert len(messaging_gateway.sent_buttons) == 1
-    phone, text, buttons = messaging_gateway.sent_buttons[0]
+    phone, text, buttons, image_url = messaging_gateway.sent_buttons[0]
     assert phone == PhoneNumber("+5491122334455")
     assert "asistente virtual" in text
     assert [button.title for button in buttons] == ["Turnos", "Especialidades", "Administración"]
+    assert image_url is None
+
+
+@pytest.mark.asyncio
+async def test_welcome_menu_includes_the_configured_image_when_set():
+    messaging_gateway = make_ycloud_messaging_gateway()
+    use_case = _build_use_case(
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        welcome_image_url="https://s3.qeva.xyz/agente-clinica/public/smiling-pilar-logo.png",
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    _, _, _, image_url = messaging_gateway.sent_buttons[0]
+    assert image_url == "https://s3.qeva.xyz/agente-clinica/public/smiling-pilar-logo.png"
 
 
 @pytest.mark.asyncio
@@ -334,7 +351,7 @@ async def test_typing_indicator_failure_does_not_block_the_agent_invocation():
         async def send_text_message(self, to, text):
             return "wamid.out"
 
-        async def send_buttons(self, to, text, buttons):
+        async def send_buttons(self, to, text, buttons, image_url=None):
             return "wamid.out"
 
         async def send_typing_indicator(self, wamid):

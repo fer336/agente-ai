@@ -44,9 +44,10 @@ class GroqTranscriptionGateway:
     (`POST {base_url}/audio/transcriptions`, multipart `file`+`model` fields,
     `Authorization: Bearer {api_key}`, JSON response `{"text": "..."}`).
     Confirm against real Groq API docs/credentials before production use.
-    Not wired into DI yet (see `app.api.dependencies.gateways`, which still
-    binds `FakeTranscriptionGateway` by default, matching every other
-    gateway's fake-by-default swap-point convention in this codebase).
+    Wired into DI (see `app.api.dependencies.gateways.get_transcription_gateway`)
+    whenever `settings.groq_api_key` is configured, else falls back to
+    `FakeTranscriptionGateway`, matching every other gateway's
+    fake-by-default swap-point convention in this codebase.
     """
 
     def __init__(

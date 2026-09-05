@@ -38,6 +38,7 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         runtime_config_service=get_runtime_config_service(),
         send_reply=SendReplyUseCase(get_messaging_gateway()),
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
+        welcome_image_url=settings.welcome_image_url or None,
     )
 
 

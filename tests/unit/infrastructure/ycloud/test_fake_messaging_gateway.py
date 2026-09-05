@@ -28,7 +28,28 @@ async def test_send_buttons_records_recipient_text_and_buttons():
 
     await gateway.send_buttons(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons)
 
-    assert gateway.sent_buttons == [(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons)]
+    assert gateway.sent_buttons == [
+        (PhoneNumber("+5491122334455"), "¿Confirmás?", buttons, None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_buttons_records_the_image_url_when_given():
+    gateway = make_ycloud_messaging_gateway()
+    buttons = [InteractiveButton(id="confirm", title="Confirmar")]
+
+    await gateway.send_buttons(
+        PhoneNumber("+5491122334455"), "¡Hola!", buttons, image_url="https://example.com/logo.png"
+    )
+
+    assert gateway.sent_buttons == [
+        (
+            PhoneNumber("+5491122334455"),
+            "¡Hola!",
+            buttons,
+            "https://example.com/logo.png",
+        )
+    ]
 
 
 def test_fake_ycloud_messaging_gateway_satisfies_messaging_gateway_protocol():

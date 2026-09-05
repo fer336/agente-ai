@@ -47,6 +47,7 @@ from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
 from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
+from app.infrastructure.transcription.groq_transcription_gateway import GroqTranscriptionGateway
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
@@ -292,7 +293,11 @@ def test_get_agent_invoker_returns_the_same_cached_instance_across_calls():
     assert first is second
 
 
-def test_get_transcription_gateway_returns_a_fake_transcription_gateway():
+def test_get_transcription_gateway_returns_a_fake_transcription_gateway_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
     gateway = get_transcription_gateway()
 
     assert isinstance(gateway, FakeTranscriptionGateway)
@@ -304,6 +309,19 @@ def test_get_transcription_gateway_returns_the_same_cached_instance_across_calls
     second = get_transcription_gateway()
 
     assert first is second
+
+
+def test_get_transcription_gateway_returns_a_real_groq_gateway_when_api_key_is_configured(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, groq_api_key="groq-key"),
+    )
+
+    gateway = get_transcription_gateway()
+
+    assert isinstance(gateway, GroqTranscriptionGateway)
 
 
 def test_get_media_gateway_returns_a_fake_ycloud_media_gateway():
