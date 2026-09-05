@@ -75,14 +75,16 @@ class OpenAICompatibleLLMClient:
         try:
             body = response.json()
             content = body["choices"][0]["message"]["content"]
-            if not isinstance(content, str):
+            if not isinstance(content, str) or not content.strip():
                 # A gateway/model can accept the request and still return
-                # `"content": null` (empty completion, refusal, tool-call-
-                # only response) — `str(None)` must never be treated as a
-                # valid reply, or the literal text "None" reaches the
-                # patient.
+                # `"content": null` (`str(None)` must never be treated as
+                # a valid reply, or the literal text "None" reaches the
+                # patient) or a whitespace-only completion (a truthy
+                # Python string, so callers' own `if not response_text`
+                # checks never catch it, yet YCloud itself rejects it as a
+                # missing `text.body`) — both count as failure here.
                 raise LLMInvalidResponseError(
-                    f"LLM gateway returned non-string message content: {content!r}"
+                    f"LLM gateway returned blank/non-string message content: {content!r}"
                 )
             return content
         except (ValueError, KeyError, IndexError, TypeError) as exc:
