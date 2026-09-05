@@ -181,6 +181,39 @@ async def test_execute_deletes_agent_runs_and_their_node_and_tool_executions_fir
 
 
 @pytest.mark.asyncio
+async def test_execute_deletes_errors_linked_only_by_agent_run_id():
+    # Reproduces a second live production failure: `with_error_handling`
+    # reports errors with `agent_run_id` set but `conversation_id` left
+    # `None` (see `error_service.report`'s call sites) — deleting by
+    # conversation_id alone misses these, and they then block deleting
+    # the agent_run itself via `errors_agent_run_id_fkey`.
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1", contact_id="contact-1"))
+    message_repository = FakeMessageRepository()
+    await message_repository.save(make_message(id_="msg-1", conversation_id="conv-1"))
+    agent_run_repository = FakeAgentRunRepository()
+    await agent_run_repository.save(
+        make_agent_run(id_="run-1", conversation_id="conv-1", message_id="msg-1")
+    )
+    error_repository = FakeErrorRepository()
+    await error_repository.save(
+        make_error_record(id_="err-1", conversation_id=None, agent_run_id="run-1")
+    )
+
+    use_case, *_ = _make_use_case(
+        conversation_repository=conversation_repository,
+        message_repository=message_repository,
+        agent_run_repository=agent_run_repository,
+        error_repository=error_repository,
+    )
+
+    result = await use_case.execute(ConversationId("conv-1"))
+
+    assert result is not None
+    assert await error_repository.get_by_id("err-1") is None
+
+
+@pytest.mark.asyncio
 async def test_execute_returns_none_when_conversation_does_not_exist():
     use_case, *_ = _make_use_case()
 
