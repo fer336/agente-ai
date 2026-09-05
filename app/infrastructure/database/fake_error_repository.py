@@ -34,3 +34,10 @@ class FakeErrorRepository:
             error for error in self._by_id.values() if error.conversation_id == conversation_id
         ]
         return sorted(matches, key=lambda e: e.created_at, reverse=True)
+
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        self._by_id = {
+            id_: error
+            for id_, error in self._by_id.items()
+            if error.conversation_id != conversation_id
+        }
