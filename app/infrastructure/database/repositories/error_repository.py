@@ -72,6 +72,14 @@ class SqlAlchemyErrorRepository:
             await self._session.delete(model)
         await self._session.flush()
 
+    async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
+        result = await self._session.execute(
+            select(ErrorModel).where(ErrorModel.agent_run_id == agent_run_id)
+        )
+        for model in result.scalars().all():
+            await self._session.delete(model)
+        await self._session.flush()
+
 
 def _to_entity(model: ErrorModel) -> ErrorRecord:
     return ErrorRecord(

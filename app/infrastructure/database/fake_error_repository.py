@@ -41,3 +41,8 @@ class FakeErrorRepository:
             for id_, error in self._by_id.items()
             if error.conversation_id != conversation_id
         }
+
+    async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
+        self._by_id = {
+            id_: error for id_, error in self._by_id.items() if error.agent_run_id != agent_run_id
+        }
