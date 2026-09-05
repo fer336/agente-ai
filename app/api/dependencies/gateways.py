@@ -377,6 +377,7 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         send_reply=SendReplyUseCase(get_messaging_gateway()),
         patient_gateway=get_patient_gateway(),
         proposal_repositories_provider=open_sqlalchemy_proposal_repositories,
+        memory_recent_window_size=get_settings().memory_recent_window_size,
         redis_client=get_shared_redis_client(),
         confirmation_timeout_seconds=get_settings().appointment_confirmation_timeout_seconds,
         trace_repositories_provider=open_sqlalchemy_trace_repositories,

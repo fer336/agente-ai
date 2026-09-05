@@ -33,3 +33,27 @@ class FakeMessageRepository:
             if message.conversation_id == conversation_id
         ]
         return sorted(matches, key=lambda m: m.created_at)
+
+    async def get_recent_by_conversation_id(
+        self, conversation_id: ConversationId, limit: int
+    ) -> list[Message]:
+        ordered = await self.get_by_conversation_id(conversation_id)
+        return ordered[-limit:] if limit > 0 else []
+
+    async def get_by_conversation_id_after(
+        self, conversation_id: ConversationId, after_message_id: str | None
+    ) -> list[Message]:
+        ordered = await self.get_by_conversation_id(conversation_id)
+        if after_message_id is None:
+            return ordered
+        anchor = self._messages_by_id.get(after_message_id)
+        if anchor is None:
+            return ordered
+        return [message for message in ordered if message.created_at > anchor.created_at]
+
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        self._messages_by_id = {
+            message_id: message
+            for message_id, message in self._messages_by_id.items()
+            if message.conversation_id != conversation_id
+        }

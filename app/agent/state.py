@@ -18,6 +18,12 @@ class AgentState(TypedDict):
     #: `None` for free text/audio. Set once per turn from `AgentInvoker.handle`'s
     #: own `button_payload` argument — never mutated by a node.
     button_payload: str | None
+    #: Conversational-memory module's bounded context (no PRD.md section
+    #: number — this session's own brief), populated once per turn by
+    #: `LangGraphAgentInvoker.handle()` before `graph.ainvoke()`. `[]`/`None`
+    #: when the contact/conversation lookup fails — never blocks a turn.
+    recent_messages: list[dict[str, str]]
+    contact_memory_summary: str | None
     intent: str | None
     appointment_action: str | None
     collected_data: dict[str, object]

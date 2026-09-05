@@ -18,6 +18,9 @@ from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
 )
+from app.infrastructure.database.repositories.contact_memory_repository import (
+    SqlAlchemyContactMemoryRepository,
+)
 from app.infrastructure.database.repositories.contact_repository import SqlAlchemyContactRepository
 from app.infrastructure.database.repositories.conversation_repository import (
     SqlAlchemyConversationRepository,
@@ -142,6 +145,8 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
         yield AgentRepositories(
             conversations=SqlAlchemyConversationRepository(session),
             contacts=SqlAlchemyContactRepository(session),
+            messages=SqlAlchemyMessageRepository(session),
+            contact_memories=SqlAlchemyContactMemoryRepository(session),
         )
         await session.commit()
 

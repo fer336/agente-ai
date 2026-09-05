@@ -17,6 +17,15 @@ class ConformingMessageRepository:
     async def get_by_conversation_id(self, conversation_id):
         return []
 
+    async def get_recent_by_conversation_id(self, conversation_id, limit):
+        return []
+
+    async def get_by_conversation_id_after(self, conversation_id, after_message_id):
+        return []
+
+    async def delete_by_conversation_id(self, conversation_id):
+        return None
+
 
 class PartialMessageRepository:
     async def exists_by_external_id(self, external_message_id):

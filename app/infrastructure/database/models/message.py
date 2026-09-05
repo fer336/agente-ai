@@ -36,3 +36,4 @@ class MessageModel(Base):
     transcription_model: Mapped[str | None] = mapped_column(String)
     transcription_duration_ms: Mapped[int | None] = mapped_column(Integer)
     transcription_error: Mapped[str | None] = mapped_column(String)
+    role: Mapped[str | None] = mapped_column(String)

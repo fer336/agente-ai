@@ -1,11 +1,16 @@
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies.checkpointer import get_agent_checkpointer
 from app.api.dependencies.db import get_committing_db_session, get_db_session
+from app.api.dependencies.gateways import get_llm_provider
+from app.api.dependencies.redis import get_debounce_tracker, get_shared_redis_client
 from app.application.admin.authenticate_admin import AuthenticateAdminUseCase
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
+from app.application.conversations.reset_conversation import ResetConversationUseCase
+from app.application.memory.memory_service import MemoryService
 from app.config.settings import Settings, get_settings
 from app.infrastructure.database.repositories.admin_audit_log_repository import (
     SqlAlchemyAdminAuditLogRepository,
@@ -15,6 +20,9 @@ from app.infrastructure.database.repositories.admin_user_repository import (
 )
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
+)
+from app.infrastructure.database.repositories.contact_memory_repository import (
+    SqlAlchemyContactMemoryRepository,
 )
 from app.infrastructure.database.repositories.conversation_repository import (
     SqlAlchemyConversationRepository,
@@ -77,4 +85,32 @@ def get_run_query_service(session: AsyncSession = Depends(get_db_session)) -> Ru
         agent_runs=SqlAlchemyAgentRunRepository(session),
         node_executions=SqlAlchemyNodeExecutionRepository(session),
         tool_executions=SqlAlchemyToolExecutionRepository(session),
+    )
+
+
+async def get_reset_conversation_use_case(
+    session: AsyncSession = Depends(get_committing_db_session),
+) -> ResetConversationUseCase:
+    """FastAPI dependency providing `ResetConversationUseCase`.
+
+    `checkpointer` is awaited here (not injected as a lazy provider, unlike
+    `LangGraphAgentInvoker`'s own `checkpointer_provider` callable) because
+    this dependency function is already async and called once per request
+    — no eager-I/O-at-import-time concern applies (see
+    `app.api.dependencies.checkpointer.get_agent_checkpointer`'s own
+    docstring for why IT is lazy).
+    """
+    checkpointer = await get_agent_checkpointer()
+    return ResetConversationUseCase(
+        conversation_repository=SqlAlchemyConversationRepository(session),
+        message_repository=SqlAlchemyMessageRepository(session),
+        memory_service=MemoryService(
+            contact_memory_repository=SqlAlchemyContactMemoryRepository(session),
+            message_repository=SqlAlchemyMessageRepository(session),
+            llm_provider=get_llm_provider(),
+            recent_window_size=get_settings().memory_recent_window_size,
+            redis_client=get_shared_redis_client(),
+        ),
+        checkpointer=checkpointer,
+        debounce_tracker=get_debounce_tracker(),
     )

@@ -32,3 +32,35 @@ class MessageRepository(Protocol):
         Backs the admin panel's conversation detail view (PRD.md §44.2).
         """
         ...
+
+    async def get_recent_by_conversation_id(
+        self, conversation_id: ConversationId, limit: int
+    ) -> list[Message]:
+        """Returns the most recent `limit` messages in a conversation,
+        oldest first (chat-order, ready to feed an LLM context window) —
+        conversational-memory module's bounded "recent window", see
+        `MemoryService.build_agent_context`.
+        """
+        ...
+
+    async def get_by_conversation_id_after(
+        self, conversation_id: ConversationId, after_message_id: str | None
+    ) -> list[Message]:
+        """Returns messages strictly newer than `after_message_id`, oldest
+        first. `after_message_id=None` returns every message in the
+        conversation (oldest first) — the "no prior compaction yet" case.
+
+        Conversational-memory module's watermark read: `MemoryService.compact`
+        never re-reads a message a prior compaction already folded into the
+        summary.
+        """
+        ...
+
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        """Deletes every message in a conversation.
+
+        Admin-only, testing-tool operation — backs the "reset conversation"
+        use case (`ResetConversationUseCase`), never called from the live
+        message-ingestion path.
+        """
+        ...

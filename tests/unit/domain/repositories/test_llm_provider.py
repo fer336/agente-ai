@@ -35,6 +35,17 @@ def test_creates_response_context_with_conversation_data():
     assert context.collected_data == {"specialty": "cleaning"}
 
 
+def test_response_context_defaults_recent_messages_and_contact_memory_when_omitted():
+    context = ResponseContext(
+        conversation_id="conv-1",
+        intent="book_appointment",
+        collected_data={},
+    )
+
+    assert context.recent_messages == []
+    assert context.contact_memory is None
+
+
 def test_conforming_class_satisfies_llm_provider_protocol():
     class ConformingLLMProvider:
         async def classify_intent(self, message, context):
@@ -45,6 +56,9 @@ def test_conforming_class_satisfies_llm_provider_protocol():
 
         async def generate_response(self, context):
             return "ok"
+
+        async def summarize(self, previous_summary, new_messages):
+            return previous_summary
 
     assert isinstance(ConformingLLMProvider(), LLMProvider)
 

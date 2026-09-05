@@ -7,6 +7,7 @@ from app.application.errors.error_types import (
     LLM_ERROR,
     OPENAI_TIMEOUT,
 )
+from app.domain.entities.message import Message
 from app.domain.repositories.llm_provider import ExtractionResult, IntentResult, ResponseContext
 from app.infrastructure.llm.client import OpenAICompatibleLLMClient
 from app.infrastructure.llm.exceptions import (
@@ -61,6 +62,19 @@ DEFAULT_GENERATE_RESPONSE_PROMPT = (
     "Sos el asistente de WhatsApp de una clínica dental en Argentina. Escribí una "
     "respuesta breve, cálida y profesional en español para el paciente, según esta "
     "intención: {intent} y estos datos ya conocidos: {collected_data}."
+)
+
+#: Conversational-memory module's compaction prompt (no PRD.md section
+#: number — this session's own brief). Fixed, not admin-editable via
+#: `RuntimeConfigService` — that's out of scope for this module, unlike the
+#: three prompts above.
+_SUMMARIZE_SYSTEM_PROMPT = (
+    "Sos un asistente que mantiene un resumen breve y actualizado de un paciente de una "
+    "clínica dental, a partir de su historial de conversación por WhatsApp. Actualizá el "
+    "resumen anterior incorporando SOLO información útil a futuro: nombre, preferencias, "
+    "gestiones ya realizadas, información pendiente, decisiones tomadas. No repitas el "
+    "historial completo ni detalles irrelevantes. Devolvé SOLO el nuevo resumen en texto "
+    "plano, sin JSON ni comillas."
 )
 
 
@@ -191,6 +205,40 @@ class OpenAICompatibleLLMProvider:
             request_summary=f"intent={context.intent}",
             call=_call,
             response_summary=lambda text: f"response_length={len(text)}",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def summarize(self, previous_summary: str, new_messages: list[Message]) -> str:
+        config = await self._runtime_config_service.get_config()
+        transcript = "\n".join(
+            f"{message.role or message.direction}: {message.text}"
+            for message in new_messages
+            if message.text
+        )
+        messages = [
+            {"role": "system", "content": _SUMMARIZE_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Resumen anterior: {previous_summary or '(vacío)'}\n\n"
+                    f"Mensajes nuevos:\n{transcript}"
+                ),
+            },
+        ]
+
+        async def _call() -> str:
+            return await self._client.chat_completion(
+                config.model, messages, temperature=config.temperature
+            )
+
+        return await traced_call(
+            tool_name="SummarizeContactTool",
+            provider=_PROVIDER,
+            operation="summarize",
+            request_summary=f"message_count={len(new_messages)}",
+            call=_call,
+            response_summary=lambda text: f"summary_length={len(text)}",
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
         )

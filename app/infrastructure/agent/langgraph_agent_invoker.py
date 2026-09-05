@@ -13,12 +13,14 @@ from app.agent.graph import compile_graph
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
+from app.application.memory.memory_service import MemoryService
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositoriesProvider
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF, RUNNING, AgentRun
 from app.domain.entities.node_execution import FAILED as NODE_EXECUTION_FAILED
 from app.domain.entities.node_execution import NodeExecution
 from app.domain.repositories.alert_notifier import AlertNotifier
+from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import (
@@ -30,15 +32,23 @@ from app.domain.repositories.gateways import (
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
+from app.domain.repositories.message_repository import MessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
 
 
 @dataclass(frozen=True)
 class AgentRepositories:
-    """Bundles the two repositories one `LangGraphAgentInvoker.handle()` call needs."""
+    """Bundles the repositories one `LangGraphAgentInvoker.handle()` call needs."""
 
     conversations: ConversationRepository
     contacts: ContactRepository
+    #: Conversational-memory module's session-scoped repos (no PRD.md
+    #: section number — this session's own brief) — `MemoryService` is
+    #: built fresh per `handle()` call from these, same "no eager I/O,
+    #: session bound per call" reasoning as `conversations`/`contacts`
+    #: above (see this class's own docstring in `open_sqlalchemy_agent_repositories`).
+    messages: MessageRepository
+    contact_memories: ContactMemoryRepository
 
 
 RepositoriesProvider = Callable[[], AbstractAsyncContextManager[AgentRepositories]]
@@ -109,6 +119,7 @@ class LangGraphAgentInvoker:
         send_reply: SendReplyUseCase,
         patient_gateway: PatientGateway,
         proposal_repositories_provider: ProposalRepositoriesProvider,
+        memory_recent_window_size: int,
         redis_client: Redis,
         confirmation_timeout_seconds: int,
         trace_repositories_provider: TraceRepositoriesProvider,
@@ -132,6 +143,7 @@ class LangGraphAgentInvoker:
         self._send_reply = send_reply
         self._patient_gateway = patient_gateway
         self._proposal_repositories_provider = proposal_repositories_provider
+        self._memory_recent_window_size = memory_recent_window_size
         self._redis_client = redis_client
         self._confirmation_timeout_seconds = confirmation_timeout_seconds
         self._trace_repositories_provider = trace_repositories_provider
@@ -222,11 +234,37 @@ class LangGraphAgentInvoker:
                     snapshot = await compiled_graph.aget_state(config)
                     previous_values = snapshot.values or {}
 
+                recent_messages: list[dict[str, str]] = []
+                contact_memory_summary: str | None = None
+                conversation_for_memory = await repositories.conversations.get_by_id(
+                    conversation_id
+                )
+                if conversation_for_memory is not None:
+                    contact_for_memory = await repositories.contacts.get_by_id(
+                        conversation_for_memory.contact_id
+                    )
+                    if contact_for_memory is not None:
+                        memory_service = MemoryService(
+                            contact_memory_repository=repositories.contact_memories,
+                            message_repository=repositories.messages,
+                            llm_provider=self._llm_provider,
+                            recent_window_size=self._memory_recent_window_size,
+                            redis_client=self._redis_client,
+                        )
+                        (
+                            recent_messages,
+                            contact_memory_summary,
+                        ) = await memory_service.build_agent_context(
+                            conversation_id, contact_for_memory.id
+                        )
+
                 initial_state: AgentState = {
                     "conversation_id": str(conversation_id),
                     "message_ids": message_ids,
                     "user_message": user_message,
                     "button_payload": button_payload,
+                    "recent_messages": recent_messages,
+                    "contact_memory_summary": contact_memory_summary,
                     "intent": None,
                     "appointment_action": previous_values.get("appointment_action"),
                     "collected_data": previous_values.get("collected_data", {}),
