@@ -167,6 +167,26 @@ async def test_raises_invalid_response_error_when_content_is_null(
 
 
 @pytest.mark.asyncio
+async def test_raises_invalid_response_error_when_content_is_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A whitespace-only completion is a valid Python string (truthy, so
+    # `if not response_text` downstream never catches it) but YCloud's own
+    # API rejects it as a missing `text.body` — must be treated as failure
+    # here already, not let it reach the messaging gateway.
+    _capture_requests(
+        monkeypatch,
+        httpx.Response(200, json={"choices": [{"message": {"content": "   \n"}}]}),
+    )
+    client = OpenAICompatibleLLMClient(
+        base_url="http://100.109.17.87:20128/v1", api_key="sk-secret", timeout_seconds=20
+    )
+
+    with pytest.raises(LLMInvalidResponseError):
+        await client.chat_completion("model", [{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
 async def test_retries_transient_timeouts_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
 
