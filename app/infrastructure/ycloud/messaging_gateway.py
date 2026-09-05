@@ -53,14 +53,18 @@ class YCloudMessagingGateway:
         )
 
     async def send_buttons(
-        self, to: PhoneNumber, text: str, buttons: list[InteractiveButton]
+        self,
+        to: PhoneNumber,
+        text: str,
+        buttons: list[InteractiveButton],
+        image_url: str | None = None,
     ) -> str:
         return await traced_call(
             tool_name="SendButtonsTool",
             provider=_PROVIDER,
             operation="send_buttons",
             request_summary=f"text_length={len(text)} buttons={len(buttons)}",
-            call=lambda: self._client.send_buttons(str(to), text, buttons),
+            call=lambda: self._client.send_buttons(str(to), text, buttons, image_url),
             response_summary=lambda external_id: f"external_message_id={external_id}",
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,

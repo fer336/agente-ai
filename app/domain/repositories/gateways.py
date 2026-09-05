@@ -115,9 +115,17 @@ class MessagingGateway(Protocol):
         ...
 
     async def send_buttons(
-        self, to: PhoneNumber, text: str, buttons: list[InteractiveButton]
+        self,
+        to: PhoneNumber,
+        text: str,
+        buttons: list[InteractiveButton],
+        image_url: str | None = None,
     ) -> str:
-        """Sends an interactive button message and returns the external_message_id."""
+        """Sends an interactive button message and returns the
+        external_message_id. `image_url` (a publicly reachable URL — a
+        WhatsApp/YCloud recipient's servers fetch it themselves) attaches
+        an image header above the body text, e.g. the welcome message's
+        clinic logo (this session's brief)."""
         ...
 
     async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:

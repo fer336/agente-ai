@@ -26,6 +26,7 @@ from app.agent.nodes.appointment import (
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
@@ -64,6 +65,7 @@ async def _make_node_and_conversation(
     proposal_repositories_provider=None,
     professionals=None,
     conversation_id="conv-1",
+    llm_provider=None,
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
@@ -84,6 +86,7 @@ async def _make_node_and_conversation(
         conversation_repository=conversation_repository,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        llm_provider=llm_provider or FakeLLMProvider(),
     )
     return node, conversation_repository, appointment_gateway
 
@@ -177,8 +180,50 @@ async def test_identification_stage_reprompts_on_unparseable_text():
 
     result = await node(state)
 
+    assert result["response_text"]
+    assert result["collected_data"]["identification_retry_count"] == 1
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+
+
+@pytest.mark.asyncio
+async def test_identification_stage_reprompt_text_varies_and_is_llm_generated():
+    stub_text = "Mmm, no logré separar tu nombre del DNI. ¿Me lo pasás junto, tipo Juan Pérez?"
+
+    class _StubLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            return stub_text
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_StubLLMProvider())
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="hola quiero un turno",
+        collected_data={"stage": STAGE_AWAITING_IDENTIFICATION},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == stub_text
+
+
+@pytest.mark.asyncio
+async def test_identification_stage_reprompt_falls_back_to_static_message_on_llm_failure():
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ExplodingLLMProvider())
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="hola quiero un turno",
+        collected_data={"stage": STAGE_AWAITING_IDENTIFICATION},
+    )
+
+    result = await node(state)
+
     assert "No pude leer" in result["response_text"]
-    assert "collected_data" not in result
+    assert result["collected_data"]["identification_retry_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -258,10 +303,36 @@ async def test_identification_stage_reprompts_when_dni_shape_is_invalid():
 
     result = await node(state)
 
+    assert result["response_text"]
+    assert result["collected_data"]["identification_retry_count"] == 1
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert "pending_action_id" not in result
+
+
+@pytest.mark.asyncio
+async def test_dni_invalid_reprompt_falls_back_to_static_message_on_llm_failure():
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], llm_provider=_ExplodingLLMProvider()
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Juan Perez, 123456",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
     assert "DNI" in result["response_text"]
     assert "no parece válido" in result["response_text"]
-    assert "collected_data" not in result
-    assert "pending_action_id" not in result
 
 
 @pytest.mark.asyncio
@@ -349,6 +420,7 @@ async def test_confirmation_stage_confirms_new_patient_creation_and_offers_slots
         conversation_repository=conversation_repository,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
     )
     payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:
@@ -433,6 +505,7 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
         conversation_repository=conversation_repository,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
     )
     payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:

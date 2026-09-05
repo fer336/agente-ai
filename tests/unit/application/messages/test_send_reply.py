@@ -58,9 +58,28 @@ async def test_send_reply_sends_interactive_buttons_when_given():
             PhoneNumber("+5491122334455"),
             "¿Confirmás el turno del martes a las 10hs?",
             buttons,
+            None,
         )
     ]
     assert messaging_gateway.sent_messages == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_forwards_the_image_url_to_the_gateway():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    buttons = [InteractiveButton(id="MENU_APPOINTMENT", title="Turnos")]
+
+    await use_case.execute(
+        to=PhoneNumber("+5491122334455"),
+        text="¡Hola!",
+        buttons=buttons,
+        image_url="https://example.com/logo.png",
+    )
+
+    assert messaging_gateway.sent_buttons == [
+        (PhoneNumber("+5491122334455"), "¡Hola!", buttons, "https://example.com/logo.png")
+    ]
 
 
 @pytest.mark.asyncio

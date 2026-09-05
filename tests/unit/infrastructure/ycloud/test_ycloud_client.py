@@ -112,6 +112,50 @@ async def test_send_buttons_posts_interactive_button_payload(
 
 
 @pytest.mark.asyncio
+async def test_send_buttons_includes_an_image_header_when_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com",
+        api_key="yc-key-abc",
+        whatsapp_number="+5491100000001",
+    )
+    buttons = [InteractiveButton(id="turnos", title="Turnos")]
+
+    await client.send_buttons(
+        "+5491122334455",
+        "¡Hola!",
+        buttons,
+        image_url="https://s3.qeva.xyz/agente-clinica/public/smiling-pilar-logo.png",
+    )
+
+    body = json.loads(captured[0].content)
+    assert body["interactive"]["header"] == {
+        "type": "image",
+        "image": {"link": "https://s3.qeva.xyz/agente-clinica/public/smiling-pilar-logo.png"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_buttons_omits_header_when_no_image_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com",
+        api_key="yc-key-abc",
+        whatsapp_number="+5491100000001",
+    )
+    buttons = [InteractiveButton(id="turnos", title="Turnos")]
+
+    await client.send_buttons("+5491122334455", "¡Hola!", buttons)
+
+    body = json.loads(captured[0].content)
+    assert "header" not in body["interactive"]
+
+
+@pytest.mark.asyncio
 async def test_send_text_raises_ycloud_api_error_on_non_2xx_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

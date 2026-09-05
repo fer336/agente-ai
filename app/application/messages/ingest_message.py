@@ -103,6 +103,7 @@ class IngestMessageUseCase:
         runtime_config_service: RuntimeConfigService,
         send_reply: SendReplyUseCase,
         audio_rate_limit_per_minute: int = 0,
+        welcome_image_url: str | None = None,
     ) -> None:
         self._repositories_provider = repositories_provider
         self._debounce_tracker = debounce_tracker
@@ -126,6 +127,10 @@ class IngestMessageUseCase:
         #: that builds this use case without the new parameter (tests,
         #: pre-audio DI wiring) keeps its previous, unlimited behavior.
         self._audio_rate_limit_per_minute = audio_rate_limit_per_minute
+        #: This session's brief: attaches the clinic's logo as an image
+        #: header above the welcome menu's body/buttons — `None` (the
+        #: default) keeps every existing environment/test unaffected.
+        self._welcome_image_url = welcome_image_url
         # Per-conversation accumulator of (message_id, text, button_payload,
         # wamid) tuples awaiting grouping into one Etapa-5 handoff. In-process
         # only — see the class docstring's singleton-lifetime note and the
@@ -161,7 +166,12 @@ class IngestMessageUseCase:
                 # audio-vs-text branch below so a brand-new conversation's
                 # first message gets the welcome menu even if that first
                 # message is itself an audio note.
-                await self._send_reply.execute(dto.from_phone, _WELCOME_TEXT, _WELCOME_BUTTONS)
+                await self._send_reply.execute(
+                    dto.from_phone,
+                    _WELCOME_TEXT,
+                    _WELCOME_BUTTONS,
+                    image_url=self._welcome_image_url,
+                )
 
             if dto.message_type == "audio":
                 if await self._audio_rate_limit_exceeded(conversation_key):

@@ -8,7 +8,7 @@ from app.agent.nodes.agreement import create_agreement_node
 from app.agent.nodes.appointment import create_appointment_node
 from app.agent.nodes.check_conversation_mode import create_check_conversation_mode_node
 from app.agent.nodes.error_handling import with_error_handling
-from app.agent.nodes.fallback import fallback_node
+from app.agent.nodes.fallback import create_fallback_node
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
@@ -170,6 +170,7 @@ def build_graph(
                 conversation_repository,
                 redis_client,
                 confirmation_timeout_seconds,
+                llm_provider,
             ),
             node_execution_repository,
             agent_run_id,
@@ -214,7 +215,7 @@ def build_graph(
         FALLBACK_NODE,
         with_error_handling(
             FALLBACK_NODE,
-            fallback_node,
+            create_fallback_node(llm_provider),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,

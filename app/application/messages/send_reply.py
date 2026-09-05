@@ -24,10 +24,14 @@ class SendReplyUseCase:
         self._messaging_gateway = messaging_gateway
 
     async def execute(
-        self, to: PhoneNumber, text: str, buttons: list[InteractiveButton] | None = None
+        self,
+        to: PhoneNumber,
+        text: str,
+        buttons: list[InteractiveButton] | None = None,
+        image_url: str | None = None,
     ) -> None:
         if buttons:
-            await self._messaging_gateway.send_buttons(to, text, buttons)
+            await self._messaging_gateway.send_buttons(to, text, buttons, image_url)
         else:
             await self._messaging_gateway.send_text_message(to, text)
 

@@ -31,22 +31,31 @@ class YCloudClient:
             }
         )
 
-    async def send_buttons(self, to: str, text: str, buttons: list[InteractiveButton]) -> str:
+    async def send_buttons(
+        self,
+        to: str,
+        text: str,
+        buttons: list[InteractiveButton],
+        image_url: str | None = None,
+    ) -> str:
+        interactive: dict[str, object] = {
+            "type": "button",
+            "body": {"text": text},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": button.id, "title": button.title}}
+                    for button in buttons
+                ]
+            },
+        }
+        if image_url is not None:
+            interactive["header"] = {"type": "image", "image": {"link": image_url}}
         return await self._post_message(
             {
                 "from": self._whatsapp_number,
                 "to": to,
                 "type": "interactive",
-                "interactive": {
-                    "type": "button",
-                    "body": {"text": text},
-                    "action": {
-                        "buttons": [
-                            {"type": "reply", "reply": {"id": button.id, "title": button.title}}
-                            for button in buttons
-                        ]
-                    },
-                },
+                "interactive": interactive,
             }
         )
 

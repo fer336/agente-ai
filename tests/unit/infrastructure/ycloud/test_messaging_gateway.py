@@ -17,15 +17,21 @@ from tests.fixtures.gateways import (
 class _StubYCloudClient:
     def __init__(self) -> None:
         self.text_calls: list[tuple[str, str]] = []
-        self.button_calls: list[tuple[str, str, list[InteractiveButton]]] = []
+        self.button_calls: list[tuple[str, str, list[InteractiveButton], str | None]] = []
         self.contacts: dict[str, dict[str, object]] = {}
 
     async def send_text(self, to: str, text: str) -> str:
         self.text_calls.append((to, text))
         return "wamid.stub-1"
 
-    async def send_buttons(self, to: str, text: str, buttons: list[InteractiveButton]) -> str:
-        self.button_calls.append((to, text, buttons))
+    async def send_buttons(
+        self,
+        to: str,
+        text: str,
+        buttons: list[InteractiveButton],
+        image_url: str | None = None,
+    ) -> str:
+        self.button_calls.append((to, text, buttons, image_url))
         return "wamid.stub-2"
 
     async def get_contact(self, contact_id: str) -> dict[str, object]:
@@ -51,8 +57,26 @@ async def test_send_buttons_delegates_to_client_with_stringified_phone():
 
     external_id = await gateway.send_buttons(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons)
 
-    assert client.button_calls == [("+5491122334455", "¿Confirmás?", buttons)]
+    assert client.button_calls == [("+5491122334455", "¿Confirmás?", buttons, None)]
     assert external_id == "wamid.stub-2"
+
+
+@pytest.mark.asyncio
+async def test_send_buttons_forwards_the_image_url_to_the_client():
+    client = _StubYCloudClient()
+    gateway = YCloudMessagingGateway(client)
+    buttons = [InteractiveButton(id="confirm", title="Confirmar")]
+
+    await gateway.send_buttons(
+        PhoneNumber("+5491122334455"),
+        "¡Hola!",
+        buttons,
+        image_url="https://example.com/logo.png",
+    )
+
+    assert client.button_calls == [
+        ("+5491122334455", "¡Hola!", buttons, "https://example.com/logo.png")
+    ]
 
 
 def test_ycloud_messaging_gateway_satisfies_messaging_gateway_protocol():
@@ -89,7 +113,7 @@ async def test_send_text_message_records_a_completed_tool_execution_without_the_
 @pytest.mark.asyncio
 async def test_send_buttons_records_a_failed_tool_execution_with_http_status():
     class _FailingYCloudClient(_StubYCloudClient):
-        async def send_buttons(self, to, text, buttons):
+        async def send_buttons(self, to, text, buttons, image_url=None):
             raise YCloudAPIError("YCloud API returned 401: unauthorized", status_code=401)
 
     gateway = YCloudMessagingGateway(_FailingYCloudClient())
