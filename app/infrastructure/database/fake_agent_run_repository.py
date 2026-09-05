@@ -26,6 +26,13 @@ class FakeAgentRunRepository:
         runs = await self.get_by_conversation_id(conversation_id)
         return runs[0] if runs else None
 
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        self._by_id = {
+            run_id: run
+            for run_id, run in self._by_id.items()
+            if run.conversation_id != conversation_id
+        }
+
     def all(self) -> list[AgentRun]:
         """Test/dev introspection helper — not part of the `AgentRunRepository` Protocol."""
         return list(self._by_id.values())

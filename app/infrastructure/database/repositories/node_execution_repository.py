@@ -42,6 +42,14 @@ class SqlAlchemyNodeExecutionRepository:
         )
         return [_to_entity(model) for model in result.scalars()]
 
+    async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
+        result = await self._session.execute(
+            select(NodeExecutionModel).where(NodeExecutionModel.agent_run_id == agent_run_id)
+        )
+        for model in result.scalars().all():
+            await self._session.delete(model)
+        await self._session.flush()
+
 
 def _to_entity(model: NodeExecutionModel) -> NodeExecution:
     return NodeExecution(

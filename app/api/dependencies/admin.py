@@ -113,4 +113,8 @@ async def get_reset_conversation_use_case(
         ),
         checkpointer=checkpointer,
         debounce_tracker=get_debounce_tracker(),
+        agent_run_repository=SqlAlchemyAgentRunRepository(session),
+        node_execution_repository=SqlAlchemyNodeExecutionRepository(session),
+        tool_execution_repository=SqlAlchemyToolExecutionRepository(session),
+        error_repository=SqlAlchemyErrorRepository(session),
     )
