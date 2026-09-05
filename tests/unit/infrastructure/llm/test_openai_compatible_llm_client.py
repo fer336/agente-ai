@@ -144,6 +144,29 @@ async def test_raises_invalid_response_error_on_unexpected_json_shape(
 
 
 @pytest.mark.asyncio
+async def test_raises_invalid_response_error_when_content_is_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A gateway/model can accept the request and still return
+    # `"content": null` (empty completion, refusal, tool-call-only
+    # response) — `str(None)` must never be treated as a valid reply, or
+    # the literal text "None" gets sent to the patient.
+    _capture_requests(
+        monkeypatch,
+        httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": None}}]},
+        ),
+    )
+    client = OpenAICompatibleLLMClient(
+        base_url="http://100.109.17.87:20128/v1", api_key="sk-secret", timeout_seconds=20
+    )
+
+    with pytest.raises(LLMInvalidResponseError):
+        await client.chat_completion("model", [{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
 async def test_retries_transient_timeouts_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
 

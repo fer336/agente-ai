@@ -74,7 +74,17 @@ class OpenAICompatibleLLMClient:
 
         try:
             body = response.json()
-            return str(body["choices"][0]["message"]["content"])
+            content = body["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                # A gateway/model can accept the request and still return
+                # `"content": null` (empty completion, refusal, tool-call-
+                # only response) — `str(None)` must never be treated as a
+                # valid reply, or the literal text "None" reaches the
+                # patient.
+                raise LLMInvalidResponseError(
+                    f"LLM gateway returned non-string message content: {content!r}"
+                )
+            return content
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise LLMInvalidResponseError(
                 "LLM gateway response was not valid OpenAI-shaped chat-completion JSON"
