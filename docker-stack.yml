@@ -19,7 +19,7 @@ version: "3.8"
 
 services:
   backend:
-    image: ghcr.io/fer336/agente-ai:v0.10.1
+    image: ghcr.io/fer336/agente-ai:v0.10.2
     networks:
       - network_public
     secrets:
