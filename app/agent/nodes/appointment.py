@@ -90,7 +90,11 @@ SELECT_SLOT_PAYLOAD_PREFIX = "SELECT_SLOT:"
 CONFIRM_APPOINTMENT_PAYLOAD = "CONFIRM_APPOINTMENT"
 REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
 
-_DNI_PATTERN = re.compile(r"(\d{6,9})")
+#: No upper bound on digit count here — `Dni` (7-8 digits) is the real
+#: gatekeeper for validity. Capping this at 9 used to truncate a longer
+#: run (e.g. a 10-digit typo) and leak the leftover digit into the parsed
+#: name instead of the whole thing failing `Dni`'s length check cleanly.
+_DNI_PATTERN = re.compile(r"(\d{6,})")
 
 _OPERATION_MENU_MESSAGE = "¿Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
@@ -177,6 +181,29 @@ def _parse_identification(text: str) -> tuple[str, str] | None:
     if not full_name:
         return None
     return full_name, dni
+
+
+def _resolve_identification(
+    text: str, remembered_full_name: str | None
+) -> tuple[str, str] | None:
+    """Tries a fresh `(full_name, dni)` parse of `text` alone; if that fails
+    but `text` is a bare DNI-like digit run with no name text of its own
+    and a full name was already confirmed on an earlier attempt in this
+    same identification stage (`remembered_full_name`), combines them
+    instead of discarding the already-good name and asking for everything
+    again — this session's own brief, prompted by a real conversation
+    where a patient corrected just their DNI after already typing a valid
+    name on the previous (DNI-format-invalid) attempt.
+    """
+    parsed = _parse_identification(text)
+    if parsed is not None:
+        return parsed
+    if remembered_full_name is None:
+        return None
+    match = _DNI_PATTERN.search(text)
+    if match is None:
+        return None
+    return remembered_full_name, match.group(1)
 
 
 def _format_slot_option(slot: AppointmentSlot, professional_names: dict[str, str]) -> str:
@@ -887,7 +914,10 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_IDENTIFICATION:
-            parsed = _parse_identification(state["user_message"])
+            remembered_full_name = cast(
+                str | None, collected_data.get("identification_full_name")
+            )
+            parsed = _resolve_identification(state["user_message"], remembered_full_name)
             if parsed is None:
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
                 text = await generate_or_fallback(
@@ -950,6 +980,7 @@ def create_appointment_node(
                     "collected_data": {
                         **collected_data,
                         "identification_retry_count": retry_count,
+                        "identification_full_name": full_name.strip(),
                     },
                 }
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)

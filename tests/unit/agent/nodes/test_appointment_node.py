@@ -310,6 +310,81 @@ async def test_identification_stage_reprompts_when_dni_shape_is_invalid():
 
 
 @pytest.mark.asyncio
+async def test_dni_invalid_reprompt_remembers_the_already_parsed_full_name():
+    node, _, _ = await _make_node_and_conversation(patients=[])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Ferdinando perez, 123456",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["identification_full_name"] == "Ferdinando perez"
+
+
+@pytest.mark.asyncio
+async def test_dni_invalid_reprompt_does_not_leak_a_stray_digit_into_the_remembered_name():
+    # A DNI longer than 9 digits used to get truncated by the old
+    # `_DNI_PATTERN` (capped at 9), leaving the extra digit stuck onto the
+    # parsed name (e.g. "Ferdinando perez, 2") — seen live in production.
+    node, _, _ = await _make_node_and_conversation(patients=[])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Ferdinando perez, 3012121212",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["identification_full_name"] == "Ferdinando perez"
+
+
+@pytest.mark.asyncio
+async def test_identification_stage_combines_a_bare_dni_correction_with_the_remembered_name():
+    # The patient already gave a valid name on the previous (DNI-invalid)
+    # attempt; sending just the corrected DNI alone must not throw away
+    # that name and ask for everything again.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="30123456",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "identification_full_name": "Juan Perez",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
+
+
+@pytest.mark.asyncio
+async def test_bare_dni_message_without_a_remembered_name_still_reprompts_for_both():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="30123456",
+        collected_data={"stage": STAGE_AWAITING_IDENTIFICATION},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"]
+    assert result["collected_data"]["identification_retry_count"] == 1
+    assert "patient" not in result.get("collected_data", {})
+
+
+@pytest.mark.asyncio
 async def test_dni_invalid_reprompt_falls_back_to_static_message_on_llm_failure():
     from app.infrastructure.llm.exceptions import LLMTimeoutError
 
