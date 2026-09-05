@@ -25,3 +25,13 @@ class AgentRunRepository(Protocol):
         returns.
         """
         ...
+
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        """Deletes every run for a conversation (`ResetConversationUseCase`).
+
+        Callers must delete this conversation's `node_executions`/
+        `tool_executions` (via their own `delete_by_agent_run_id`) for
+        each of these runs first — `node_executions.agent_run_id`/
+        `tool_executions.agent_run_id` are plain FKs with no cascade.
+        """
+        ...

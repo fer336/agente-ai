@@ -17,3 +17,8 @@ class FakeToolExecutionRepository:
         matches = [te for te in self._by_id.values() if te.agent_run_id == agent_run_id]
         matches.sort(key=lambda te: te.created_at)
         return matches
+
+    async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
+        self._by_id = {
+            id_: te for id_, te in self._by_id.items() if te.agent_run_id != agent_run_id
+        }

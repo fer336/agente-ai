@@ -21,6 +21,14 @@ class ErrorRepository(Protocol):
         """Lists every error tied to a conversation (PRD.md §44.1/§44.2)."""
         ...
 
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        """Deletes every error tied to a conversation (`ResetConversationUseCase`).
+
+        Must run before deleting this conversation's `agent_runs` —
+        `errors.agent_run_id` is a plain FK with no cascade.
+        """
+        ...
+
     async def count_recent(self, source: str, error_type: str, since: datetime) -> int:
         """Counts errors of this `source`+`error_type` since `since`.
 
