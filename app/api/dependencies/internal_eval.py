@@ -15,10 +15,10 @@ from app.infrastructure.agent.langgraph_agent_invoker import (
     LangGraphAgentInvoker,
 )
 from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
-from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_contact_memory_repository import (
     FakeContactMemoryRepository,
 )
+from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
 from app.infrastructure.database.fake_incident_repository import FakeIncidentRepository
