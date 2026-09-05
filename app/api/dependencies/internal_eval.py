@@ -16,6 +16,9 @@ from app.infrastructure.agent.langgraph_agent_invoker import (
 )
 from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
+from app.infrastructure.database.fake_contact_memory_repository import (
+    FakeContactMemoryRepository,
+)
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
 from app.infrastructure.database.fake_incident_repository import FakeIncidentRepository
@@ -76,6 +79,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
     conversations = FakeConversationRepository()
     contacts = FakeContactRepository()
     messages = FakeMessageRepository()
+    contact_memories = FakeContactMemoryRepository()
     agent_runs = FakeAgentRunRepository()
     node_executions = FakeNodeExecutionRepository()
     tool_executions = FakeToolExecutionRepository()
@@ -88,7 +92,12 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
 
     @asynccontextmanager
     async def agent_repositories_provider() -> AsyncIterator[AgentRepositories]:
-        yield AgentRepositories(conversations=conversations, contacts=contacts)
+        yield AgentRepositories(
+            conversations=conversations,
+            contacts=contacts,
+            messages=messages,
+            contact_memories=contact_memories,
+        )
 
     @asynccontextmanager
     async def trace_repositories_provider() -> AsyncIterator[TraceRepositories]:
@@ -122,6 +131,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
         send_reply=SendReplyUseCase(messaging_gateway),
         patient_gateway=FakePatientGateway(),
         proposal_repositories_provider=proposal_repositories_provider,
+        memory_recent_window_size=settings.memory_recent_window_size,
         redis_client=get_shared_redis_client(),
         confirmation_timeout_seconds=settings.appointment_confirmation_timeout_seconds,
         trace_repositories_provider=trace_repositories_provider,

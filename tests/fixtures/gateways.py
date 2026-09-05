@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_service import ErrorService
+from app.application.memory.memory_service import MemoryService
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositories
@@ -23,6 +24,9 @@ from app.domain.entities.runtime_agent_config import RuntimeAgentConfig
 from app.domain.entities.specialty import Specialty
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
 from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
+from app.infrastructure.database.fake_contact_memory_repository import (
+    FakeContactMemoryRepository,
+)
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
@@ -100,6 +104,26 @@ def make_contact_repository() -> FakeContactRepository:
 
 def make_message_repository() -> FakeMessageRepository:
     return FakeMessageRepository()
+
+
+def make_contact_memory_repository() -> FakeContactMemoryRepository:
+    return FakeContactMemoryRepository()
+
+
+def make_memory_service(
+    message_repository: FakeMessageRepository | None = None,
+    contact_memory_repository: FakeContactMemoryRepository | None = None,
+    llm_provider: FakeLLMProvider | None = None,
+    recent_window_size: int = 15,
+    redis_client: InMemoryFakeRedis | None = None,
+) -> MemoryService:
+    return MemoryService(
+        contact_memory_repository=contact_memory_repository or make_contact_memory_repository(),
+        message_repository=message_repository or make_message_repository(),
+        llm_provider=llm_provider or make_llm_provider(),
+        recent_window_size=recent_window_size,
+        redis_client=redis_client,
+    )
 
 
 def make_media_processing_job_repository() -> FakeMediaProcessingJobRepository:

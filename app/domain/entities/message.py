@@ -13,6 +13,13 @@ MEDIA_COMPLETED = "completed"
 MEDIA_FAILED = "failed"
 MEDIA_REJECTED = "rejected"
 
+#: Conversational-memory module's LLM-facing role labels (no PRD.md section
+#: number — this session's own brief). `Message.role` is `None` for rows
+#: written before this module existed; `MemoryService`'s own `_message_role`
+#: falls back to `direction` in that case.
+ROLE_USER = "user"
+ROLE_ASSISTANT = "assistant"
+
 
 @dataclass
 class Message:
@@ -46,3 +53,4 @@ class Message:
     transcription_model: str | None = None
     transcription_duration_ms: int | None = None
     transcription_error: str | None = None
+    role: str | None = None

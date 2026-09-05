@@ -41,6 +41,7 @@ class SqlAlchemyMessageRepository:
             transcription_model=message.transcription_model,
             transcription_duration_ms=message.transcription_duration_ms,
             transcription_error=message.transcription_error,
+            role=message.role,
         )
         self._session.add(model)
         await self._session.flush()
@@ -79,6 +80,40 @@ class SqlAlchemyMessageRepository:
         )
         return [_to_entity(model) for model in result.scalars().all()]
 
+    async def get_recent_by_conversation_id(
+        self, conversation_id: ConversationId, limit: int
+    ) -> list[Message]:
+        if limit <= 0:
+            return []
+        result = await self._session.execute(
+            select(MessageModel)
+            .where(MessageModel.conversation_id == str(conversation_id))
+            .order_by(MessageModel.created_at.desc())
+            .limit(limit)
+        )
+        recent_newest_first = [_to_entity(model) for model in result.scalars().all()]
+        return list(reversed(recent_newest_first))
+
+    async def get_by_conversation_id_after(
+        self, conversation_id: ConversationId, after_message_id: str | None
+    ) -> list[Message]:
+        query = select(MessageModel).where(MessageModel.conversation_id == str(conversation_id))
+        if after_message_id is not None:
+            anchor = await self._session.get(MessageModel, after_message_id)
+            if anchor is not None:
+                query = query.where(MessageModel.created_at > anchor.created_at)
+        query = query.order_by(MessageModel.created_at.asc())
+        result = await self._session.execute(query)
+        return [_to_entity(model) for model in result.scalars().all()]
+
+    async def delete_by_conversation_id(self, conversation_id: ConversationId) -> None:
+        result = await self._session.execute(
+            select(MessageModel).where(MessageModel.conversation_id == str(conversation_id))
+        )
+        for model in result.scalars().all():
+            await self._session.delete(model)
+        await self._session.flush()
+
 
 def _to_entity(model: MessageModel) -> Message:
     return Message(
@@ -100,4 +135,5 @@ def _to_entity(model: MessageModel) -> Message:
         transcription_model=model.transcription_model,
         transcription_duration_ms=model.transcription_duration_ms,
         transcription_error=model.transcription_error,
+        role=model.role,
     )

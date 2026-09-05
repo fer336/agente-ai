@@ -14,6 +14,8 @@ def make_agent_state(**overrides: object) -> AgentState:
         "message_ids": ["msg-1"],
         "user_message": "Necesito un turno",
         "button_payload": None,
+        "recent_messages": [],
+        "contact_memory_summary": None,
         "intent": None,
         "appointment_action": None,
         "collected_data": {},

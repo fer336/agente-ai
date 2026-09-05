@@ -44,3 +44,12 @@ class DebounceTracker:
         if isinstance(current, bytes):
             current = current.decode()
         return current != token
+
+    async def clear(self, conversation_id: str) -> None:
+        """Clears a conversation's pending debounce window.
+
+        Admin-only, testing-tool operation — backs the "reset conversation"
+        use case (`ResetConversationUseCase`), never called from the live
+        message-ingestion path.
+        """
+        await self._redis.delete(self._key(conversation_id))

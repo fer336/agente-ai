@@ -6,6 +6,7 @@ from app.infrastructure.database.models.appointment_action import AppointmentAct
 from app.infrastructure.database.models.approved_content import ApprovedContentModel
 from app.infrastructure.database.models.base import Base
 from app.infrastructure.database.models.contact import ContactModel
+from app.infrastructure.database.models.contact_memory import ContactMemoryModel
 from app.infrastructure.database.models.conversation import ConversationModel
 from app.infrastructure.database.models.error_record import ErrorModel
 from app.infrastructure.database.models.human_handoff import HumanHandoffModel
@@ -28,6 +29,7 @@ __all__ = [
     "AppointmentModel",
     "ApprovedContentModel",
     "Base",
+    "ContactMemoryModel",
     "ContactModel",
     "ConversationModel",
     "ErrorModel",

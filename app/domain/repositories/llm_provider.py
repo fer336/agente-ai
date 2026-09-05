@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+
+from app.domain.entities.message import Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,12 @@ class ResponseContext:
     conversation_id: str
     intent: str
     collected_data: dict[str, object]
+    #: Conversational-memory module's bounded context (no PRD.md section
+    #: number — this session's own brief) — populated by
+    #: `MemoryService.build_response_context`, empty/`None` for any call
+    #: site that doesn't go through it yet.
+    recent_messages: list[dict[str, str]] = field(default_factory=list)
+    contact_memory: str | None = None
 
 
 @runtime_checkable
@@ -38,3 +46,11 @@ class LLMProvider(Protocol):
     ) -> ExtractionResult: ...
 
     async def generate_response(self, context: ResponseContext) -> str: ...
+
+    async def summarize(self, previous_summary: str, new_messages: list[Message]) -> str:
+        """Folds `new_messages` into `previous_summary`, producing an
+        updated running summary of the contact — conversational-memory
+        module's incremental compaction step, see
+        `MemoryService.compact`.
+        """
+        ...

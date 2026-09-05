@@ -1,3 +1,4 @@
+from app.domain.entities.message import Message
 from app.domain.repositories.llm_provider import ExtractionResult, IntentResult, ResponseContext
 
 _APPOINTMENT_KEYWORDS = ("turno", "cita")
@@ -47,3 +48,11 @@ class FakeLLMProvider:
 
     async def generate_response(self, context: ResponseContext) -> str:
         return f"[fake-response for intent={context.intent}]"
+
+    async def summarize(self, previous_summary: str, new_messages: list[Message]) -> str:
+        new_text = " | ".join(message.text for message in new_messages if message.text)
+        if not previous_summary:
+            return new_text
+        if not new_text:
+            return previous_summary
+        return f"{previous_summary} | {new_text}"

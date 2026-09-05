@@ -7,12 +7,14 @@ from app.api.dependencies.admin import (
     get_committing_error_query_service,
     get_conversation_query_service,
     get_error_query_service,
+    get_reset_conversation_use_case,
     get_run_query_service,
 )
 from app.api.dependencies.auth import require_csrf, require_role
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
+from app.application.conversations.reset_conversation import ResetConversationUseCase
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL, ROLES
 from app.domain.entities.agent_run import AgentRun
@@ -196,6 +198,46 @@ async def get_conversation_detail(
     _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
     query_service: ConversationQueryService = Depends(get_conversation_query_service),
 ) -> ConversationDetailResponse:
+    detail = await query_service.get_conversation_detail(ConversationId(conversation_id))
+    if detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL)
+
+    return ConversationDetailResponse(
+        conversation=ConversationResponse(
+            id=str(detail.conversation.id),
+            contact_id=detail.conversation.contact_id,
+            mode=detail.conversation.mode,
+            input_state=detail.conversation.input_state,
+            created_at=detail.conversation.created_at,
+        ),
+        messages=[MessageResponse.model_validate(m) for m in detail.messages],
+        agent_runs=[AgentRunResponse.from_entity(r) for r in detail.agent_runs],
+        errors=[ErrorResponse.from_entity(e) for e in detail.errors],
+    )
+
+
+@router.post("/conversations/{conversation_id}/reset", response_model=ConversationDetailResponse)
+async def reset_conversation(
+    conversation_id: str,
+    _role: SessionPayload = Depends(require_role(ADMIN_TECHNICAL)),
+    _csrf: SessionPayload = Depends(require_csrf),
+    reset_use_case: ResetConversationUseCase = Depends(get_reset_conversation_use_case),
+    query_service: ConversationQueryService = Depends(get_conversation_query_service),
+) -> ConversationDetailResponse:
+    """`ADMIN_TECHNICAL`-only and CSRF-checked, same posture as
+    `resolve_error` below — this route is irreversibly destructive
+    (`ResetConversationUseCase`'s own docstring), so it needs the same
+    protection as this panel's other mutating route.
+
+    NEVER call this against a real patient conversation — wipes the
+    conversation's messages, compacted contact memory, LangGraph checkpoint
+    thread, and `mode`/`input_state` back to defaults, so a real WhatsApp
+    number can be re-tested from a clean slate during development.
+    """
+    reset = await reset_use_case.execute(ConversationId(conversation_id))
+    if reset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL)
+
     detail = await query_service.get_conversation_detail(ConversationId(conversation_id))
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL)

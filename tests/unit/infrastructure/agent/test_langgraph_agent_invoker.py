@@ -9,6 +9,7 @@ from app.agent.graph import compile_graph
 from app.agent.nodes.appointment import OPERATION_CREATE_PAYLOAD
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF
 from app.domain.entities.appointment_slot import AppointmentSlot
+from app.domain.entities.contact_memory import ContactMemory
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -20,12 +21,14 @@ from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
     make_agent_run_repository,
     make_agreement_gateway,
+    make_contact_memory_repository,
     make_contact_repository,
     make_conversation_repository,
     make_dentalink_gateway,
     make_error_service,
     make_linear_gateway,
     make_llm_provider,
+    make_message_repository,
     make_node_execution_repository,
     make_patient_gateway,
     make_proposal_repositories_provider,
@@ -41,6 +44,7 @@ from tests.fixtures.seed_objects import (
     make_agreement,
     make_contact,
     make_conversation,
+    make_message,
     make_patient,
 )
 
@@ -66,6 +70,8 @@ def _make_checkpointer_provider(checkpointer):
 def _make_invoker(
     conversation_repository=None,
     contact_repository=None,
+    message_repository=None,
+    contact_memory_repository=None,
     messaging_gateway=None,
     handoff_gateway=None,
     agreement_gateway=None,
@@ -79,13 +85,20 @@ def _make_invoker(
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     contact_repository = contact_repository or make_contact_repository()
+    message_repository = message_repository or make_message_repository()
+    contact_memory_repository = contact_memory_repository or make_contact_memory_repository()
     messaging_gateway = messaging_gateway or make_ycloud_messaging_gateway()
     appointment_gateway = appointment_gateway or make_dentalink_gateway()
     checkpointer = MemorySaver() if checkpointer is None else checkpointer
 
     @asynccontextmanager
     async def repositories_provider() -> AsyncIterator[AgentRepositories]:
-        yield AgentRepositories(conversations=conversation_repository, contacts=contact_repository)
+        yield AgentRepositories(
+            conversations=conversation_repository,
+            contacts=contact_repository,
+            messages=message_repository,
+            contact_memories=contact_memory_repository,
+        )
 
     invoker = LangGraphAgentInvoker(
         appointment_gateway=appointment_gateway,
@@ -99,6 +112,7 @@ def _make_invoker(
         proposal_repositories_provider=(
             proposal_repositories_provider or make_proposal_repositories_provider()
         ),
+        memory_recent_window_size=15,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
         trace_repositories_provider=(
@@ -143,6 +157,71 @@ async def test_handle_sends_the_graphs_response_to_the_contacts_phone():
 
 
 @pytest.mark.asyncio
+async def test_handle_populates_agent_state_with_the_contacts_memory_context():
+    # Proves `MemoryService.build_agent_context` is actually wired into
+    # `handle()` before `graph.ainvoke()` — not just constructible. The
+    # checkpointed state is the only externally observable place this
+    # shows up, since no node reads these two fields yet.
+    checkpointer = MemorySaver()
+    message_repository = make_message_repository()
+    contact_memory_repository = make_contact_memory_repository()
+    await message_repository.save(
+        make_message(
+            id_="msg-old-1",
+            conversation_id="conv-1",
+            external_message_id="wamid.old-1",
+            text="hola, soy Juan",
+        )
+    )
+    await contact_memory_repository.save(
+        ContactMemory(
+            id="mem-1",
+            contact_id="contact-1",
+            summary="Paciente frecuente, prefiere turnos por la tarde.",
+            last_compacted_message_id=None,
+            last_compacted_at=None,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    invoker, conversation_repository, contact_repository, _, _ = _make_invoker(
+        message_repository=message_repository,
+        contact_memory_repository=contact_memory_repository,
+        checkpointer=checkpointer,
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    compiled_graph = compile_graph(
+        appointment_gateway=make_dentalink_gateway(),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=make_patient_gateway(),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-verify",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    )
+    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1"}})
+
+    assert snapshot.values["recent_messages"] == [{"role": "user", "content": "hola, soy Juan"}]
+    assert (
+        snapshot.values["contact_memory_summary"]
+        == "Paciente frecuente, prefiere turnos por la tarde."
+    )
+
+
+@pytest.mark.asyncio
 async def test_handle_works_without_a_checkpointer_provider():
     conversation_repository = make_conversation_repository()
     contact_repository = make_contact_repository()
@@ -154,7 +233,12 @@ async def test_handle_works_without_a_checkpointer_provider():
 
     @asynccontextmanager
     async def repositories_provider() -> AsyncIterator[AgentRepositories]:
-        yield AgentRepositories(conversations=conversation_repository, contacts=contact_repository)
+        yield AgentRepositories(
+            conversations=conversation_repository,
+            contacts=contact_repository,
+            messages=make_message_repository(),
+            contact_memories=make_contact_memory_repository(),
+        )
 
     invoker = LangGraphAgentInvoker(
         appointment_gateway=make_dentalink_gateway(),
@@ -166,6 +250,7 @@ async def test_handle_works_without_a_checkpointer_provider():
         send_reply=make_send_reply_use_case(messaging_gateway=messaging_gateway),
         patient_gateway=make_patient_gateway(),
         proposal_repositories_provider=make_proposal_repositories_provider(),
+        memory_recent_window_size=15,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
         trace_repositories_provider=make_trace_repositories_provider(),
