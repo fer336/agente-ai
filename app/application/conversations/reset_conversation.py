@@ -77,10 +77,16 @@ class ResetConversationUseCase:
         # violates `agent_runs_message_id_fkey` (confirmed live in
         # production against a conversation with real agent runs), so
         # they must go first, deepest-referencing table first.
+        # `ErrorRecord.conversation_id` is very often left `None`
+        # (`with_error_handling` only ever sets `agent_run_id`) —
+        # `delete_by_conversation_id` alone misses those and they then
+        # block deleting the agent_run via `errors_agent_run_id_fkey`
+        # (also confirmed live in production), so both calls are needed.
         agent_runs = await self._agent_run_repository.get_by_conversation_id(conversation_id)
         for agent_run in agent_runs:
             await self._tool_execution_repository.delete_by_agent_run_id(agent_run.id)
             await self._node_execution_repository.delete_by_agent_run_id(agent_run.id)
+            await self._error_repository.delete_by_agent_run_id(agent_run.id)
         await self._error_repository.delete_by_conversation_id(conversation_id)
         await self._agent_run_repository.delete_by_conversation_id(conversation_id)
 

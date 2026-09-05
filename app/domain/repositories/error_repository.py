@@ -25,7 +25,20 @@ class ErrorRepository(Protocol):
         """Deletes every error tied to a conversation (`ResetConversationUseCase`).
 
         Must run before deleting this conversation's `agent_runs` —
-        `errors.agent_run_id` is a plain FK with no cascade.
+        `errors.agent_run_id` is a plain FK with no cascade. NOT
+        sufficient on its own: `ErrorService.report` is very often called
+        with `agent_run_id` set but `conversation_id` left `None` (see its
+        call sites), so callers must also call `delete_by_agent_run_id`
+        for each of this conversation's runs.
+        """
+        ...
+
+    async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
+        """Deletes every error tied to one run, including one whose
+        `conversation_id` was never set (`ResetConversationUseCase`) —
+        the common case for an unhandled-node-exception error report (see
+        `app.agent.nodes.error_handling.with_error_handling`), which
+        `delete_by_conversation_id` alone would miss.
         """
         ...
 
