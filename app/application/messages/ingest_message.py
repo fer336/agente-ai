@@ -42,13 +42,16 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 
 #: PRD.md §7's welcome message — sent exactly once, on a conversation's
 #: very first inbound message (see `_resolve_or_create_conversation`'s
-#: "just created" branch, the only place that can know this). No clinic
-#: name is configured anywhere in `Settings` (see that module), so this
-#: stays deliberately generic rather than inventing a brand.
+#: "just created" branch, the only place that can know this). The clinic
+#: name is written in literally here rather than read from `Settings`:
+#: this deployment serves one clinic ("diseñado exclusivamente para una
+#: clínica específica", PRD.md intro), same single-tenant assumption as
+#: `dentalink_default_branch_id`. `*asterisks*` are WhatsApp's bold
+#: markup, not Markdown.
 _WELCOME_TEXT = (
-    "¡Hola! 👋 Soy el asistente virtual de tu clínica dental.\n"
+    "Hola 👋 Bienvenido a *Smiling Pilar*. Soy el agente de turnos de la clínica.\n"
     "Puedo ayudarte a sacar un turno, contarte qué especialidades atendemos "
-    "o comunicarte con administración. Elegí una opción para arrancar:"
+    "o comunicarte con administración. *Para continuar te pido que selecciones una opción:*"
 )
 _WELCOME_BUTTONS = [
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Turnos"),
@@ -202,6 +205,17 @@ class IngestMessageUseCase:
             # handoff to the Etapa 5 seam is skipped.
             return
 
+        if is_new_conversation:
+            # The welcome sent above IS the answer to a first message: it
+            # greets, says what the bot can do, and offers the menu.
+            # Running the agent for that same turn sent the patient two
+            # near-identical messages seconds apart — the welcome, then
+            # the agent's own "no te entendí" carrying the very same menu
+            # (seen live on a real first "Hola"). The message stays
+            # persisted for history; only this one turn's agent hand-off
+            # is skipped.
+            return
+
         await self._schedule_processing(
             conversation_key,
             message.id,
@@ -314,13 +328,26 @@ class IngestMessageUseCase:
         # 7's dedicated worker process exists. Superseded runs self-detect
         # via `DebounceTracker.is_stale()` in `_debounce_and_process` rather
         # than being explicitly cancelled.
-        task = asyncio.create_task(self._debounce_and_process(conversation_key, token))
+        # A button tap is atomic and deliberate: the patient picked one of
+        # the options the agent itself offered, and there is no second half
+        # of the thought still being typed. Waiting out the debounce window
+        # for it only adds dead time to menus, slot picks and confirmations.
+        # Free text is the only thing that arrives in bursts, so it is the
+        # only thing that still pays for the window.
+        task = asyncio.create_task(
+            self._debounce_and_process(
+                conversation_key, token, skip_debounce=button_payload is not None
+            )
+        )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _debounce_and_process(self, conversation_key: str, token: str) -> None:
+    async def _debounce_and_process(
+        self, conversation_key: str, token: str, *, skip_debounce: bool = False
+    ) -> None:
         config = await self._runtime_config_service.get_config()
-        await asyncio.sleep(config.debounce_seconds)
+        if not skip_debounce:
+            await asyncio.sleep(config.debounce_seconds)
 
         if await self._debounce_tracker.is_stale(conversation_key, token):
             # A newer message re-touched the window; the newer scheduled
