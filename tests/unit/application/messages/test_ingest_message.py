@@ -215,7 +215,10 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
     assert len(messaging_gateway.sent_buttons) == 1
     phone, text, buttons, image_url = messaging_gateway.sent_buttons[0]
     assert phone == PhoneNumber("+5491122334455")
-    assert "asistente virtual" in text
+    # Anchored on the clinic's name rather than on the surrounding wording:
+    # the copy itself is edited freely, but a welcome that greets nobody in
+    # particular is a real defect.
+    assert "Smiling Pilar" in text
     assert [button.title for button in buttons] == ["Turnos", "Especialidades", "Administración"]
     assert image_url is None
 

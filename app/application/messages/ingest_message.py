@@ -42,13 +42,16 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 
 #: PRD.md §7's welcome message — sent exactly once, on a conversation's
 #: very first inbound message (see `_resolve_or_create_conversation`'s
-#: "just created" branch, the only place that can know this). No clinic
-#: name is configured anywhere in `Settings` (see that module), so this
-#: stays deliberately generic rather than inventing a brand.
+#: "just created" branch, the only place that can know this). The clinic
+#: name is written in literally here rather than read from `Settings`:
+#: this deployment serves one clinic ("diseñado exclusivamente para una
+#: clínica específica", PRD.md intro), same single-tenant assumption as
+#: `dentalink_default_branch_id`. `*asterisks*` are WhatsApp's bold
+#: markup, not Markdown.
 _WELCOME_TEXT = (
-    "¡Hola! 👋 Soy el asistente virtual de tu clínica dental.\n"
+    "Hola 👋 Bienvenido a *Smiling Pilar*. Soy el agente de turnos de la clínica.\n"
     "Puedo ayudarte a sacar un turno, contarte qué especialidades atendemos "
-    "o comunicarte con administración. Elegí una opción para arrancar:"
+    "o comunicarte con administración. *Para continuar te pido que selecciones una opción:*"
 )
 _WELCOME_BUTTONS = [
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Turnos"),
