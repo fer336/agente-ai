@@ -68,7 +68,7 @@ def create_resolve_interaction_node(
             intent = _MENU_BUTTON_INTENTS.get(state["button_payload"])
             return {"intent": intent if intent is not None else "unknown"}
 
-        result = await llm_provider.classify_intent(state["user_message"], context={})
+        result = await llm_provider.understand(state["user_message"], context={})
 
         if has_active_stage:
             if result.intent == "handoff" and result.confidence >= _MIN_INTENT_CONFIDENCE:
@@ -77,6 +77,27 @@ def create_resolve_interaction_node(
 
         if result.confidence < _MIN_INTENT_CONFIDENCE:
             return {"intent": "unknown"}
-        return {"intent": result.intent}
+
+        # Whatever the patient named in prose rides along in
+        # `collected_data`, so an operational flow can start from what they
+        # already said instead of asking it again. These are RAW mentions:
+        # the node that consumes them resolves each against the real
+        # Dentalink catalog, never trusting the model for an id.
+        carried = {
+            key: value
+            for key, value in (
+                ("pending_answer", result.answer),
+                ("specialty_mention", result.specialty_mention),
+                ("professional_mention", result.professional_mention),
+                ("operation_mention", result.operation_mention),
+            )
+            if value is not None
+        }
+        if not carried:
+            return {"intent": result.intent}
+        return {
+            "intent": result.intent,
+            "collected_data": {**state["collected_data"], **carried},
+        }
 
     return node

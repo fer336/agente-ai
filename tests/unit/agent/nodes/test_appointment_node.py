@@ -123,6 +123,76 @@ async def test_first_turn_shows_the_operation_menu():
 
 
 @pytest.mark.asyncio
+async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
+    # "quiero un turno de ortodoncia" already answered both menus, so the
+    # patient must not be walked back through either of them.
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="cleaning")
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero un turno de ortodoncia",
+        collected_data={"specialty_mention": "ortodoncia", "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    assert "Dra. Laura Pérez" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_stated_operation_skips_the_operation_menu():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero sacar un turno",
+        collected_data={"operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
+async def test_a_stated_cancel_skips_to_identification():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero cancelar mi turno",
+        collected_data={"operation_mention": "cancel"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["operation"] == CANCEL_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_specialty_mention_still_shows_the_menu():
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero un turno de cardiología",
+        collected_data={"specialty_mention": "cardiología"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
+
+
+@pytest.mark.asyncio
 async def test_operation_menu_reminds_on_unrecognized_input():
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(

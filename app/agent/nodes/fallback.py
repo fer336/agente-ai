@@ -54,6 +54,21 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
 
     async def node(state: AgentState) -> dict[str, object]:
         collected_data = state["collected_data"]
+
+        pending_answer = collected_data.get("pending_answer")
+        if isinstance(pending_answer, str) and pending_answer.strip():
+            # `resolve_interaction` already had the model answer a genuine
+            # question, so there is nothing to be confused about — deliver
+            # it, keep the menu as a way forward, and do NOT count this
+            # turn as a failed one.
+            remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
+            return {
+                "response_text": pending_answer,
+                "response_buttons": _MAIN_MENU_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": remaining,
+            }
+
         fallback_count = cast(int, collected_data.get("fallback_count", 0)) + 1
 
         context: dict[str, object] = {

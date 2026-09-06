@@ -81,6 +81,8 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return SPECIALTIES_NODE
     if intent == "handoff":
         return HANDOFF_NODE
+    # "question" also lands here: the model already wrote the answer, and
+    # `fallback` is the node that delivers a message plus the main menu.
     return FALLBACK_NODE
 
 

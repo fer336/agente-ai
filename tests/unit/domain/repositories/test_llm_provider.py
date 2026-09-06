@@ -3,6 +3,7 @@ from app.domain.repositories.llm_provider import (
     IntentResult,
     LLMProvider,
     ResponseContext,
+    UnderstandingResult,
 )
 
 
@@ -48,6 +49,9 @@ def test_response_context_defaults_recent_messages_and_contact_memory_when_omitt
 
 def test_conforming_class_satisfies_llm_provider_protocol():
     class ConformingLLMProvider:
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="unknown", confidence=0.0)
+
         async def classify_intent(self, message, context):
             return IntentResult(intent="unknown", confidence=0.0)
 
