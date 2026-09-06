@@ -260,6 +260,24 @@ def _numbered_list(names: list[str]) -> str:
     return "\n".join(f"{position}. {name}" for position, name in enumerate(names, start=1))
 
 
+def resolve_by_name(text: str, names: list[str]) -> int | None:
+    """Public alias of `_resolve_by_name` for `specialties.py`, which hands
+    a named specialty straight into this node's professional-selection
+    stage and must match names exactly the way this node does."""
+    return _resolve_by_name(text, names)
+
+
+def numbered_list(names: list[str]) -> str:
+    """Public alias of `_numbered_list` — same reason as `resolve_by_name`."""
+    return _numbered_list(names)
+
+
+def choose_professional_prompt() -> str:
+    """The exact wording this node uses to ask for a professional, so a
+    patient handed over from `specialties.py` sees one consistent prompt."""
+    return _CHOOSE_PROFESSIONAL_PROMPT
+
+
 def _resolve_identification(
     text: str, remembered_full_name: str | None
 ) -> tuple[str, str] | None:
