@@ -99,6 +99,41 @@ async def test_search_availability_issues_one_request_for_a_single_day_range():
 
 
 @pytest.mark.asyncio
+async def test_search_availability_skips_an_unparseable_slot_instead_of_losing_the_day():
+    # One malformed record in the clinic's agenda used to raise straight
+    # out of the whole search, so a single bad row blocked EVERY patient
+    # from booking anything. A slot we cannot read is a slot we cannot
+    # offer — it is not a reason to drop the ones we can.
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v5/agendas": [
+                {
+                    "id": "bad",
+                    "id_profesional": "626",
+                    "fecha": "el martes",
+                    "hora_inicio": "09:00",
+                },
+                {
+                    "id": "good",
+                    "id_profesional": "626",
+                    "fecha": "2026-08-15",
+                    "hora_inicio": "15:30",
+                },
+            ]
+        }
+    )
+    gateway = _gateway(client)
+
+    slots = await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 16, 0, 0)),
+    )
+
+    assert [s.id for s in slots] == ["good"]
+
+
+@pytest.mark.asyncio
 async def test_search_availability_filters_out_non_matching_specialty():
     client = _StubDentalinkClient(
         get_responses={
