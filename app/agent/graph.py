@@ -307,6 +307,13 @@ def compile_graph(
     ).compile(checkpointer=checkpointer)
 
 
+#: Well under psycopg_pool's own 3600s default — a cloud/managed Postgres
+#: or a middlebox typically reaps idle connections long before an hour,
+#: and a recycled-too-early connection costs one cheap reconnect while a
+#: recycled-too-late one costs a dropped patient reply.
+_CHECKPOINTER_POOL_MAX_LIFETIME_SECONDS = 900.0
+
+
 def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPool":
     """Creates a dedicated psycopg async connection pool for the LangGraph
     checkpointer.
@@ -324,6 +331,18 @@ def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPoo
     Postgres refuses to run inside a transaction block — this matches the
     connection kwargs `AsyncPostgresSaver.from_conn_string` uses internally
     (`autocommit=True, prepare_threshold=0, row_factory=dict_row`).
+
+    `check`/`max_lifetime` are this pool's equivalent of the SQLAlchemy
+    engine's `pool_pre_ping=True` (see
+    `app.infrastructure.database.session.create_engine`) — that engine got
+    this treatment, this separate psycopg pool never did. psycopg_pool
+    defaults to NO liveness check and keeps `min_size` connections for up
+    to an hour, so a connection the server has since dropped (restart,
+    idle reaper, network blip) is handed out as-is and every agent turn
+    dies at `aget_state` with `consuming input failed: server closed the
+    connection unexpectedly`, which is exactly what happened in
+    production: webhooks kept returning 200 (SQLAlchemy path is pre-pinged
+    and fine) while the patient got no reply at all.
     """
     from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
@@ -332,6 +351,8 @@ def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPoo
         conninfo=conninfo,
         open=False,
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        check=AsyncConnectionPool.check_connection,
+        max_lifetime=_CHECKPOINTER_POOL_MAX_LIFETIME_SECONDS,
     )
     return pool
 
