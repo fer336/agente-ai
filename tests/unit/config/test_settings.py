@@ -184,6 +184,39 @@ def test_settings_reads_observability_fields_from_env(monkeypatch):
     assert settings.openai_model == "gpt-4o-mini"
 
 
+def test_settings_reads_the_llm_key_from_openrouter_api_key(monkeypatch):
+    # The gateway in use is OpenRouter, so `OPENROUTER_API_KEY` is the name
+    # the deployment's secret actually carries.
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_api_key == "sk-or-key"
+
+
+def test_settings_still_reads_the_llm_key_from_the_legacy_llm_api_key(monkeypatch):
+    # Both names stay valid so an already-deployed secret keeps working.
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "legacy-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_api_key == "legacy-key"
+
+
+def test_settings_reads_the_model_from_llm_model(monkeypatch):
+    # `OPENAI_MODEL` is a confusing name for an OpenRouter/Gemini
+    # deployment — losing it while reworking the secret is what silently
+    # sent an empty `model` and took production down.
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("LLM_MODEL", "google/gemini-3.1-flash-lite")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.openai_model == "google/gemini-3.1-flash-lite"
+
+
 def test_settings_defaults_alert_threshold_fields_when_no_env_vars(monkeypatch):
     for var in ("ALERT_TIMEOUT_THRESHOLD_COUNT", "ALERT_TIMEOUT_THRESHOLD_WINDOW_SECONDS"):
         monkeypatch.delenv(var, raising=False)

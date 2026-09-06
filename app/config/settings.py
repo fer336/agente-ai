@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import computed_field
+from pydantic import AliasChoices, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -74,13 +74,27 @@ class Settings(BaseSettings):
     #: `llm_api_url` request — this codebase's LLM provider is an
     #: OpenAI-compatible gateway (9Router), not literally OpenAI, but the
     #: field name follows the PRD's original naming to avoid churn.
-    openai_model: str = ""
-    #: OpenAI-compatible chat-completions endpoint (e.g. a self-hosted
-    #: 9Router instance) — base URL including `/v1`, no trailing slash
-    #: required. Empty by default (falls back to `FakeLLMProvider`, see
+    #: `LLM_MODEL` is the name to prefer — `OPENAI_MODEL` is kept working
+    #: only so already-deployed secrets don't break. The PRD-era name is
+    #: actively misleading now that the gateway is OpenRouter serving
+    #: Gemini: reworking the secret once dropped `OPENAI_MODEL`, which
+    #: silently sent an empty `model` and took production down with a
+    #: cryptic `400 No models provided`.
+    openai_model: str = Field(
+        default="", validation_alias=AliasChoices("LLM_MODEL", "OPENAI_MODEL")
+    )
+    #: OpenAI-compatible chat-completions endpoint (e.g. OpenRouter, or a
+    #: self-hosted 9Router instance) — base URL including `/v1`, no
+    #: trailing slash required. Empty by default (falls back to
+    #: `FakeLLMProvider`, see
     #: `app.api.dependencies.gateways.get_llm_provider`).
     llm_api_url: str = ""
-    llm_api_key: str = ""
+    #: Same both-names-accepted arrangement as `openai_model` above:
+    #: `OPENROUTER_API_KEY` is what this deployment's secret carries,
+    #: `LLM_API_KEY` stays valid for any environment still using it.
+    llm_api_key: str = Field(
+        default="", validation_alias=AliasChoices("OPENROUTER_API_KEY", "LLM_API_KEY")
+    )
     llm_timeout_seconds: float = 20
 
     #: PRD.md §68/§50's documented names/defaults — how many same
