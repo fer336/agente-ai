@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     dentalink_default_branch_id: str = ""
     dentalink_default_chair_id: str = ""
     dentalink_default_duration_minutes: int = 30
+    #: IANA timezone the clinic's Dentalink account keeps its wall-clock
+    #: times in. Dentalink sends `fecha`/`hora_inicio` with NO offset, and
+    #: reads them back the same way, so this is the only thing that says
+    #: what "10:30" means. Default confirmed from Dentalink's own 500
+    #: trace, which showed it building dates with `America/Argentina/...`.
+    #: Getting it wrong silently books every appointment at the wrong hour.
+    clinic_timezone: str = "America/Argentina/Buenos_Aires"
 
     #: How long FREE TEXT waits before the agent starts, so it is charged
     #: on top of the LLM's own ~2-3s. `DebounceTracker.touch()` RESTARTS

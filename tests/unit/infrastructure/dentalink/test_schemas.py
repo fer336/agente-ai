@@ -1,4 +1,5 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -12,6 +13,10 @@ from app.infrastructure.dentalink.schemas import (
     slot_from_agenda,
     treatment_from_tratamiento,
 )
+
+#: The clinic's timezone is what gives Dentalink's offset-less
+#: wall-clock times a meaning — see `_parse_datetime`.
+_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 
 
 def test_professional_from_dentista_prefers_id_dentista():
@@ -49,6 +54,7 @@ def test_slot_from_agenda_maps_id_profesional_fecha_and_hora_inicio():
             "duracion": 30,
         },
         default_duration_minutes=30,
+        timezone=_TZ,
     )
 
     assert slot.id == "slot-1"
@@ -63,6 +69,7 @@ def test_slot_from_agenda_falls_back_to_id_dentista_and_default_duration():
     slot = slot_from_agenda(
         {"id_dentista": 900, "fecha": "2026-08-15", "hora_inicio": "09:00"},
         default_duration_minutes=45,
+        timezone=_TZ,
     )
 
     assert slot.professional_id == "900"
@@ -78,9 +85,31 @@ def test_slot_from_agenda_parses_the_day_first_dates_real_dentalink_sends():
     slot = slot_from_agenda(
         {"id_profesional": 626, "fecha": "07/09/2026", "hora_inicio": "10:30"},
         default_duration_minutes=30,
+        timezone=_TZ,
     )
 
-    assert slot.time_range.start == datetime(2026, 9, 7, 10, 30)
+    assert slot.time_range.start == datetime(2026, 9, 7, 10, 30, tzinfo=_TZ)
+
+
+def test_slot_from_agenda_stamps_the_clinic_timezone_on_the_slot():
+    # Dentalink sends wall-clock times in the clinic's own timezone with no
+    # offset attached. Leaving them naive made `DateTimeRange.contains`
+    # raise `TypeError: can't compare offset-naive and offset-aware
+    # datetimes` against the UTC search window `_offer_slots` builds — the
+    # very next failure after the date-format one, and invisible until it
+    # was fixed. It also matters on the way out: `create_appointment`
+    # serializes `.date()` and `%H:%M` straight back, so a slot carrying
+    # UTC would book the appointment three hours off.
+    slot = slot_from_agenda(
+        {"id_profesional": 626, "fecha": "07/09/2026", "hora_inicio": "10:30"},
+        default_duration_minutes=30,
+        timezone=_TZ,
+    )
+
+    assert slot.time_range.start == datetime(2026, 9, 7, 10, 30, tzinfo=_TZ)
+    # The wall-clock reading is what goes back to Dentalink — 10:30 local,
+    # never 13:30 UTC.
+    assert slot.time_range.start.strftime("%H:%M") == "10:30"
 
 
 def test_slot_from_agenda_still_rejects_a_date_that_is_neither_format():
@@ -88,19 +117,26 @@ def test_slot_from_agenda_still_rejects_a_date_that_is_neither_format():
         slot_from_agenda(
             {"id_profesional": 1, "fecha": "el martes", "hora_inicio": "10:30"},
             default_duration_minutes=30,
+            timezone=_TZ,
         )
 
 
 def test_slot_from_agenda_raises_when_professional_id_is_missing():
     with pytest.raises(DentalinkInvalidResponseError):
         slot_from_agenda(
-            {"fecha": "2026-08-15", "hora_inicio": "09:00"}, default_duration_minutes=30
+            {"fecha": "2026-08-15", "hora_inicio": "09:00"},
+            default_duration_minutes=30,
+            timezone=_TZ,
         )
 
 
 def test_slot_from_agenda_raises_when_fecha_or_hora_inicio_is_missing():
     with pytest.raises(DentalinkInvalidResponseError):
-        slot_from_agenda({"id_profesional": 1, "fecha": "2026-08-15"}, default_duration_minutes=30)
+        slot_from_agenda(
+            {"id_profesional": 1, "fecha": "2026-08-15"},
+            default_duration_minutes=30,
+            timezone=_TZ,
+        )
 
 
 def test_appointment_from_cita_maps_confirmed_status_when_id_estado_is_not_cancellation():
@@ -115,6 +151,7 @@ def test_appointment_from_cita_maps_confirmed_status_when_id_estado_is_not_cance
             "id_estado": 1,
         },
         cancelled_state_id="9",
+        timezone=_TZ,
     )
 
     assert appointment.id == AppointmentId("42")
@@ -133,6 +170,7 @@ def test_appointment_from_cita_maps_cancelled_status_when_id_estado_matches():
             "id_estado": 9,
         },
         cancelled_state_id="9",
+        timezone=_TZ,
     )
 
     assert appointment.status == "cancelled"
@@ -142,6 +180,7 @@ def test_appointment_from_cita_defaults_to_confirmed_when_cancelled_state_id_is_
     appointment = appointment_from_cita(
         {"id": 42, "id_paciente": "pat-1", "fecha": "2026-08-15", "id_estado": 9},
         cancelled_state_id=None,
+        timezone=_TZ,
     )
 
     assert appointment.status == "confirmed"
@@ -149,7 +188,9 @@ def test_appointment_from_cita_defaults_to_confirmed_when_cancelled_state_id_is_
 
 def test_appointment_from_cita_raises_when_id_is_missing():
     with pytest.raises(DentalinkInvalidResponseError):
-        appointment_from_cita({"id_paciente": "pat-1"}, cancelled_state_id=None)
+        appointment_from_cita(
+            {"id_paciente": "pat-1"}, cancelled_state_id=None, timezone=_TZ
+        )
 
 
 def test_agreement_from_convenio_maps_id_and_nombre():
