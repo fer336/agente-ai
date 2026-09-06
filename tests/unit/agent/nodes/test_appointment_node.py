@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.agent.nodes.appointment import (
+    _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
     CANCEL_APPOINTMENT_ACTION,
     CONFIRM_APPOINTMENT_PAYLOAD,
     CREATE_APPOINTMENT_ACTION,
@@ -27,6 +28,7 @@ from app.agent.nodes.appointment import (
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_APPOINTMENT_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.fake_redis import InMemoryFakeRedis
@@ -622,18 +624,120 @@ async def test_identification_stage_reprompt_falls_back_to_static_message_on_llm
 
 
 @pytest.mark.asyncio
-async def test_identification_stage_reports_when_patient_not_found():
-    node, _, _ = await _make_node_and_conversation(patients=[])
+async def test_an_unknown_patient_is_offered_registration_whatever_they_came_to_do():
+    # Seen live: a patient wrote "voy a llegar más tarde", which reads as
+    # rescheduling, so `operation` was never CREATE. When Dentalink did not
+    # know them, the old code answered "no encontramos ningún paciente"
+    # WITHOUT returning collected_data — leaving the stage on
+    # identification forever. Every later message re-entered the parser and
+    # got the same reprompt: an inescapable loop. The registration offer
+    # existed all along, on the other side of that `if`.
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], conversation_id="ycloud-+5491122334455"
+    )
     state = make_agent_state(
-        conversation_id="conv-1",
-        user_message="Juan Perez, 30123456",
-        collected_data={"stage": STAGE_AWAITING_IDENTIFICATION},
+        conversation_id="ycloud-+5491122334455",
+        user_message="Fernando Ariel, 35946257",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        },
     )
 
     result = await node(state)
 
-    assert "No encontramos ningún paciente" in result["response_text"]
-    assert "collected_data" not in result
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["pending_action_id"] is not None
+    assert [b.id for b in result["response_buttons"]] == [
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    ]
+    # The data they gave is echoed back, so they can spot their own typo.
+    assert "Fernando Ariel" in result["response_text"]
+    assert "35946257" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_newly_registered_patient_with_no_chosen_slot_is_offered_specialties():
+    # Registration reached from reschedule/cancel has no slot picked yet —
+    # a brand-new patient has no appointments to reschedule either, so the
+    # only useful next step is booking one. Proposing a slot that was never
+    # chosen would dead-end on "se me perdió el hilo".
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        pending_action = make_pending_action(
+            conversation_id="conv-1",
+            action_type=CREATE_PATIENT_ACTION,
+            payload={
+                "full_name": "Fernando Ariel",
+                "dni": "35946257",
+                "phone": "+5491122334455",
+            },
+        )
+        await repositories.pending_actions.save(pending_action)
+
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        pending_action_id=pending_action.id,
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert "se me perdió el hilo" not in result["response_text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_main_menu_button_escapes_a_flow_the_patient_is_stuck_in():
+    # Seen live: the patient tapped "Turnos" on the welcome menu while
+    # trapped mid-identification, and the agent went right on asking for
+    # their DNI. A main-menu tap is an unambiguous "start over" — it must
+    # never be read as an answer to the question currently on screen.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=MENU_APPOINTMENT_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            "identification_retry_count": 3,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
+    # The stale counters from the abandoned flow must not leak forward.
+    assert "identification_retry_count" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_identification_escalates_to_administration_after_repeated_misses():
+    # Without a ceiling, `identification_retry_count` just counted upward
+    # while the patient rewrote their DNI forever. The fallback node has
+    # escalated after two misses all along; identification never did.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="no sé si estoy registrado",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "identification_retry_count": _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["response_buttons"] is not None
+    assert MENU_ADMIN_PAYLOAD in [b.id for b in result["response_buttons"]]
 
 
 @pytest.mark.asyncio
@@ -814,25 +918,29 @@ async def test_dni_invalid_reprompt_falls_back_to_static_message_on_llm_failure(
 
 
 @pytest.mark.asyncio
-async def test_identification_stage_reports_not_found_for_reschedule_without_offering_creation():
-    # A well-formed but unregistered DNI must NOT trigger a patient-creation
-    # proposal for reschedule/cancel — there is nothing to reschedule for a
-    # patient that doesn't exist yet.
-    node, _, _ = await _make_node_and_conversation(patients=[])
+async def test_cancelling_an_unknown_patient_also_offers_registration():
+    # This used to assert the opposite — that reschedule/cancel must NOT
+    # offer to create the patient, "there is nothing to reschedule for a
+    # patient that doesn't exist yet". True, and precisely why the old
+    # branch dead-ended: it returned no `collected_data`, pinning the
+    # patient in the identification stage forever. Registering them and
+    # moving on to booking is the only exit that helps.
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], conversation_id="ycloud-+5491122334455"
+    )
     state = make_agent_state(
-        conversation_id="conv-1",
+        conversation_id="ycloud-+5491122334455",
         user_message="Maria Soto, 30111222",
         collected_data={
             "stage": STAGE_AWAITING_IDENTIFICATION,
-            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            "operation": CANCEL_APPOINTMENT_ACTION,
         },
     )
 
     result = await node(state)
 
-    assert "No encontramos ningún paciente" in result["response_text"]
-    assert "collected_data" not in result
-    assert "pending_action_id" not in result
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["pending_action_id"] is not None
 
 
 @pytest.mark.asyncio
