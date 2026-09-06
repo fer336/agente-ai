@@ -171,6 +171,7 @@ def build_graph(
                 redis_client,
                 confirmation_timeout_seconds,
                 llm_provider,
+                specialty_gateway,
             ),
             node_execution_repository,
             agent_run_id,

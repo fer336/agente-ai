@@ -46,6 +46,8 @@ from tests.fixtures.seed_objects import (
     make_conversation,
     make_message,
     make_patient,
+    make_professional,
+    make_specialty,
 )
 
 
@@ -328,12 +330,11 @@ async def test_handle_runs_the_handoff_flow_end_to_end():
 async def test_handle_carries_collected_data_across_turns_via_the_checkpointer():
     # Explicit carry-over, not implicit LangGraph partial-merge (see the
     # invoker's own docstring): turn 1 shows the operation menu, turn 2
-    # (tapping "Sacar turno") asks for identification, turn 3 identifies
-    # the patient and stores `collected_data.available_slots`, turn 4 (a
-    # stray free-text message instead of a button tap) must still see
-    # those same slots to re-offer them — proving the checkpointer
-    # actually carried `collected_data` across four separate `handle()`
-    # calls, not just within a single graph run.
+    # (tapping "Sacar turno") lists the specialties, turn 3 picks one and
+    # lists its professionals, turn 4 picks a professional and stores
+    # `collected_data.available_slots` — proving the checkpointer actually
+    # carried `collected_data` across four separate `handle()` calls, not
+    # just within a single graph run.
     checkpointer = MemorySaver()
     slot = _future_slot()
     conversation_repository = make_conversation_repository()
@@ -348,8 +349,11 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
     invoker, _, _, _, _ = _make_invoker(
         conversation_repository=conversation_repository,
         contact_repository=contact_repository,
-        appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot], professionals=[make_professional(id_="prof-1")]
+        ),
         patient_gateway=patient_gateway,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
         checkpointer=checkpointer,
     )
 
@@ -357,8 +361,8 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
     await invoker.handle(
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
     )
-    await invoker.handle(ConversationId("conv-1"), ["msg-3"], "Juan Perez, 30123456", None)
-    await invoker.handle(ConversationId("conv-1"), ["msg-4"], "no entiendo", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
 
     compiled_graph = compile_graph(
         appointment_gateway=make_dentalink_gateway(available_slots=[slot]),

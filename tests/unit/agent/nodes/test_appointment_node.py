@@ -18,9 +18,10 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_CONFIRMATION,
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_OPERATION_SELECTION,
+    STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SLOT_SELECTION,
+    STAGE_AWAITING_SPECIALTY_SELECTION,
     _appointment_button,
-    _slot_button,
     create_appointment_node,
 )
 from app.domain.entities.appointment_slot import AppointmentSlot
@@ -34,8 +35,15 @@ from tests.fixtures.gateways import (
     make_dentalink_gateway,
     make_patient_gateway,
     make_proposal_repositories_provider,
+    make_specialty_gateway,
 )
-from tests.fixtures.seed_objects import make_conversation, make_patient, make_pending_action
+from tests.fixtures.seed_objects import (
+    make_conversation,
+    make_patient,
+    make_pending_action,
+    make_professional,
+    make_specialty,
+)
 
 _PATIENT_PRIMITIVES = {
     "id": "pat-1",
@@ -66,12 +74,15 @@ async def _make_node_and_conversation(
     professionals=None,
     conversation_id="conv-1",
     llm_provider=None,
+    specialties=None,
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
     appointment_gateway = make_dentalink_gateway(
         available_slots=available_slots if available_slots is not None else [_future_slot()],
-        professionals=professionals,
+        professionals=professionals
+        if professionals is not None
+        else [make_professional(id_="prof-1", specialty_id="cleaning")],
     )
     node = create_appointment_node(
         appointment_gateway=appointment_gateway,
@@ -87,6 +98,11 @@ async def _make_node_and_conversation(
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
         llm_provider=llm_provider or FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=specialties
+            if specialties is not None
+            else [make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
     )
     return node, conversation_repository, appointment_gateway
 
@@ -138,8 +154,16 @@ async def test_operation_menu_reschedule_asks_for_identification():
 
 
 @pytest.mark.asyncio
-async def test_operation_menu_create_asks_for_identification():
-    node, _, _ = await _make_node_and_conversation()
+async def test_operation_menu_create_shows_the_numbered_specialty_list():
+    # Booking now starts from the specialty, not from identification —
+    # WhatsApp only allows 3 buttons, so a 16-specialty catalog has to be
+    # a numbered text list the patient answers with a number.
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[
+            make_specialty(id_="cleaning", name="Ortodoncia"),
+            make_specialty(id_="whitening", name="Endodoncia"),
+        ]
+    )
     state = make_agent_state(
         conversation_id="conv-1",
         button_payload=OPERATION_CREATE_PAYLOAD,
@@ -148,9 +172,310 @@ async def test_operation_menu_create_asks_for_identification():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["response_buttons"] is None
+    assert "1." in result["response_text"]
+    assert "Ortodoncia" in result["response_text"]
+    assert "2." in result["response_text"]
+    assert "Endodoncia" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialty_selection_by_number_lists_that_specialtys_professionals():
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="cleaning"),
+            make_professional(id_="prof-9", full_name="Dr. Otro", specialty_id="whitening"),
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="1",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    assert "Dra. Laura Pérez" in result["response_text"]
+    assert "Dr. Otro" not in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialty_selection_by_name_also_works():
+    # The patient in production typed "turno para ortodoncia" rather than
+    # a number — same catalog-matching idiom agreement.py already uses.
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero ortodoncia por favor",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+
+
+@pytest.mark.asyncio
+async def test_specialty_selection_out_of_range_number_reprompts_same_list():
+    node, _, _ = await _make_node_and_conversation()
+    options = [make_specialty(id_="cleaning", name="Ortodoncia")]
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="99",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": options,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["specialty_retry_count"] == 1
+    assert "Ortodoncia" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialty_selection_garbage_text_reprompts_same_list():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="asdkjasd",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["specialty_retry_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_button_during_specialty_selection_is_treated_as_unrecognized():
+    # These stages never send buttons, so any payload arriving here is a
+    # tap on an older message still on the patient's phone.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=OPERATION_CREATE_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialty_with_no_professionals_dead_ends_gracefully():
+    node, conversation_repository, _ = await _make_node_and_conversation(professionals=[])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="1",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"] == {}
+    assert "administración" in result["response_text"]
+    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
+    assert conversation is not None
+    assert conversation.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_professional_selection_shows_only_that_doctors_slots():
+    chosen = _future_slot(id_="slot-mine", professional_id="prof-1")
+    other = _future_slot(id_="slot-theirs", professional_id="prof-9")
+    node, _, _ = await _make_node_and_conversation(available_slots=[chosen, other])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="1",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert [b.id for b in result["response_buttons"]] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_professional_selection_invalid_reprompts_same_list():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="nada que ver",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["professional_retry_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_slot_selection_in_the_create_flow_goes_to_identification():
+    # Key regression test for the reordered flow: the patient sees value
+    # (a real slot) before being asked for personal data.
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_professional_id": "prof-1",
+            "available_slots": [slot],
+            "professional_names": {"prof-1": "Dra. Laura Pérez"},
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["pending_selected_slot"] == slot
+    assert "pending_action_id" not in result
     assert "DNI" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_identification_after_slot_selection_proposes_the_chosen_slot():
+    slot = _future_slot()
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        available_slots=[slot], proposal_repositories_provider=repositories_provider
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Juan Perez, 30123456",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "pending_selected_slot": slot,
+            "professional_names": {"prof-1": "Dra. Laura Pérez"},
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["pending_action_id"] is not None
+    async with repositories_provider() as repositories:
+        pending = await repositories.pending_actions.get_by_id(result["pending_action_id"])
+    assert pending is not None
+    assert pending.action_type == CREATE_APPOINTMENT_ACTION
+    # /v5/agendas never returns id_especialidad, so the specialty the
+    # patient picked earlier is the only possible source for it.
+    assert pending.payload["specialty_id"] == "cleaning"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_and_cancel_still_ask_for_identification_first():
+    # Reschedule/cancel start from "list YOUR appointments", which
+    # Dentalink cannot answer without knowing the patient — so the
+    # reordering is scoped to booking a new appointment only.
+    for payload, action in (
+        (OPERATION_RESCHEDULE_PAYLOAD, RESCHEDULE_APPOINTMENT_ACTION),
+        (OPERATION_CANCEL_PAYLOAD, CANCEL_APPOINTMENT_ACTION),
+    ):
+        node, _, _ = await _make_node_and_conversation()
+        state = make_agent_state(
+            conversation_id="conv-1",
+            button_payload=payload,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+
+        result = await node(state)
+
+        assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+        assert result["collected_data"]["operation"] == action
+
+
+@pytest.mark.asyncio
+async def test_specialty_and_professional_stages_leave_free_input():
+    node, conversation_repository, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=OPERATION_CREATE_PAYLOAD,
+        collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+    )
+
+    await node(state)
+
+    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
+    assert conversation is not None
+    assert conversation.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_slot_offer_never_exceeds_three_buttons():
+    # WhatsApp caps interactive reply buttons at 3.
+    slots = [_future_slot(id_=f"slot-{i}", days=i + 1) for i in range(6)]
+    node, _, _ = await _make_node_and_conversation(available_slots=slots)
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="1",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert len(result["response_buttons"]) == 3
 
 
 @pytest.mark.asyncio
@@ -242,7 +567,10 @@ async def test_identification_stage_reports_when_patient_not_found():
 
 
 @pytest.mark.asyncio
-async def test_identification_stage_offers_slots_once_patient_is_found():
+async def test_identification_stage_proposes_the_already_chosen_slot():
+    # The slot is now picked BEFORE identification, so identifying is the
+    # last step before the confirm/reject buttons — it must never search
+    # availability again.
     slot = _future_slot()
     node, conversation_repository, _ = await _make_node_and_conversation(available_slots=[slot])
     state = make_agent_state(
@@ -251,29 +579,33 @@ async def test_identification_stage_offers_slots_once_patient_is_found():
         collected_data={
             "stage": STAGE_AWAITING_IDENTIFICATION,
             "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
         },
     )
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
-    assert result["collected_data"]["available_slots"] == [slot]
-    assert result["response_buttons"] == [_slot_button(slot)]
+    assert result["pending_action_id"] is not None
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
-    assert conversation.input_state == "INTERACTIVE_SELECTION"
+    assert conversation.input_state == "SENSITIVE_CONFIRMATION"
 
 
 @pytest.mark.asyncio
-async def test_identification_stage_offers_administracion_when_no_slots_available():
+async def test_professional_selection_offers_administracion_when_no_slots_available():
+    # Availability is searched right after the doctor is chosen now, so
+    # this is where an empty agenda surfaces.
     node, conversation_repository, _ = await _make_node_and_conversation(available_slots=[])
     state = make_agent_state(
         conversation_id="conv-1",
-        user_message="Juan Perez, 30123456",
+        user_message="1",
         collected_data={
-            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
             "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
         },
     )
 
@@ -359,12 +691,13 @@ async def test_identification_stage_combines_a_bare_dni_correction_with_the_reme
             "stage": STAGE_AWAITING_IDENTIFICATION,
             "operation": CREATE_APPOINTMENT_ACTION,
             "identification_full_name": "Juan Perez",
+            "pending_selected_slot": _future_slot(),
         },
     )
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
 
 
@@ -496,6 +829,9 @@ async def test_confirmation_stage_confirms_new_patient_creation_and_offers_slots
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
         llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
     )
     payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:
@@ -512,15 +848,20 @@ async def test_confirmation_stage_confirms_new_patient_creation_and_offers_slots
         conversation_id="ycloud-+5491122334455",
         button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
         pending_action_id="pa-1",
-        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "pending_selected_slot": slot,
+        },
     )
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    # The slot was already chosen before identification, so creating the
+    # patient continues straight to confirming that exact slot.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["patient"]["full_name"] == "Maria Soto"
     assert result["collected_data"]["patient"]["dni"] == "30111222"
-    assert result["response_buttons"] == [_slot_button(slot)]
+    assert result["pending_action_id"] is not None
     created = await patient_gateway.find_patient("Maria Soto", "30111222")
     assert created is not None
     assert str(created.phone) == "+5491122334455"
@@ -581,6 +922,9 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
         llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
     )
     payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:
@@ -597,12 +941,15 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
         conversation_id="ycloud-+5491122334455",
         button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
         pending_action_id="pa-1",
-        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "pending_selected_slot": slot,
+        },
     )
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     # Recovered the PRE-EXISTING record (id="pat-existing"), never created
     # a second one for the same DNI.
     assert result["collected_data"]["patient"]["id"] == "pat-existing"
@@ -653,7 +1000,11 @@ async def test_slot_selection_stage_reoffers_on_a_stale_button():
 
 
 @pytest.mark.asyncio
-async def test_slot_selection_stage_proposes_the_appointment_on_a_valid_selection():
+async def test_slot_selection_stage_proposes_immediately_when_rescheduling():
+    # Reschedule identifies the patient up front (Dentalink cannot list
+    # someone's appointments otherwise), so picking a new slot there goes
+    # straight to confirmation — unlike the create flow, which asks for
+    # identification at this point.
     slot = _future_slot()
     node, conversation_repository, _ = await _make_node_and_conversation(available_slots=[slot])
     state = make_agent_state(
@@ -661,6 +1012,8 @@ async def test_slot_selection_stage_proposes_the_appointment_on_a_valid_selectio
         button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
         collected_data={
             "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            "rescheduling_appointment_id": "apt-1",
             "patient": _PATIENT_PRIMITIVES,
             "available_slots": [slot],
             "professional_names": {},
@@ -848,11 +1201,11 @@ async def test_confirmation_stage_names_the_professional_when_available():
     node, _, _ = await _make_node_and_conversation(available_slots=[slot])
     state = make_agent_state(
         conversation_id="conv-1",
-        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        user_message="Juan Perez, 30123456",
         collected_data={
-            "stage": STAGE_AWAITING_SLOT_SELECTION,
-            "patient": _PATIENT_PRIMITIVES,
-            "available_slots": [slot],
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
             "professional_names": {"prof-9": "Dra. Laura Pérez"},
         },
     )

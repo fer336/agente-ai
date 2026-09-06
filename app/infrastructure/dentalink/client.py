@@ -92,16 +92,3 @@ class DentalinkClient:
             ) from exc
 
 
-def build_filter_params(filters: dict[str, object]) -> dict[str, str]:
-    """Encodes a "filtro conceptual" dict (PRD.md §27.2) into query params.
-
-    PRD §27.2 shows the filter as a conceptual JSON object
-    (`{"id_sucursal": {"eq": 1}, ...}`) without specifying the literal query
-    string encoding. This uses Dentalink's documented bracket-notation
-    filter convention (`filtro[campo][operador]=valor`) — UNVERIFIED against
-    a live account; confirm before production use.
-    """
-    params: dict[str, str] = {}
-    for field, value in filters.items():
-        params[f"filtro[{field}][eq]"] = str(value)
-    return params

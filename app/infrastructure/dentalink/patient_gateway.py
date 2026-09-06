@@ -24,8 +24,6 @@ payload and the `q` filter) is unchanged — only the local validation
 changed from a RUT checksum to a DNI shape check.
 """
 
-import json
-
 from app.application.errors.error_types import (
     DENTALINK_AUTH_ERROR,
     DENTALINK_INVALID_RESPONSE,
@@ -42,6 +40,7 @@ from app.infrastructure.dentalink.exceptions import (
     DentalinkAuthError,
     DentalinkTimeoutError,
 )
+from app.infrastructure.dentalink.query_filter import build_q_param
 from app.infrastructure.dentalink.schemas import as_dict, as_list, patient_from_paciente
 from app.infrastructure.observability.tool_tracing import traced_call
 
@@ -54,24 +53,11 @@ _PROVIDER = "dentalink"
 #: never a JSON *key* or operator — so it can't be used to smuggle in an
 #: unintended field or operator. See `_build_q_param`.
 _ALLOWED_FILTER_FIELDS = frozenset({"rut", "nombre", "email", "habilitado"})
-_ALLOWED_OPERATORS = frozenset({"eq", "neq", "lk"})
 
 
 def _build_q_param(filters: dict[str, tuple[str, object]]) -> dict[str, str]:
-    """Builds Dentalink's `?q={"campo":{"operador":"valor"}}` filter param.
-
-    Always constructed as a Python dict and serialized with `json.dumps` —
-    never by string-interpolating a field name, operator, or value into a
-    hand-built query string.
-    """
-    query: dict[str, dict[str, object]] = {}
-    for field, (operator, value) in filters.items():
-        if field not in _ALLOWED_FILTER_FIELDS:
-            raise ValueError(f"Filtering /v1/pacientes by {field!r} is not allowed")
-        if operator not in _ALLOWED_OPERATORS:
-            raise ValueError(f"Operator {operator!r} is not allowed")
-        query[field] = {operator: value}
-    return {"q": json.dumps(query, separators=(",", ":"))}
+    """`/v1/pacientes`-scoped wrapper over the shared `q=` builder."""
+    return build_q_param(filters, allowed_fields=_ALLOWED_FILTER_FIELDS)
 
 
 def _split_full_name(full_name: str) -> tuple[str, str]:

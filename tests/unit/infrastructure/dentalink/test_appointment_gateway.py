@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 import pytest
@@ -89,10 +90,10 @@ async def test_search_availability_issues_one_request_for_a_single_day_range():
     assert len(client.get_calls) == 1
     path, params = client.get_calls[0]
     assert path == "/v5/agendas"
-    assert params == {
-        "filtro[id_sucursal][eq]": "1",
-        "filtro[fecha][eq]": "2026-08-15",
-        "filtro[duracion][eq]": "30",
+    assert json.loads(params["q"]) == {
+        "id_sucursal": {"eq": "1"},
+        "fecha": {"eq": "2026-08-15"},
+        "duracion": {"eq": "30"},
     }
     assert [s.id for s in slots] == ["slot-1"]
 
@@ -136,7 +137,7 @@ async def test_search_availability_includes_professional_filter_when_given():
 
     _, params = client.get_calls[0]
     assert params is not None
-    assert params["filtro[id_profesional][eq]"] == "626"
+    assert json.loads(params["q"])["id_profesional"] == {"eq": "626"}
 
 
 @pytest.mark.asyncio
@@ -150,7 +151,9 @@ async def test_search_availability_issues_one_request_per_calendar_day():
         date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 18, 0, 0)),
     )
 
-    dates_queried = [params["filtro[fecha][eq]"] for _, params in client.get_calls if params]
+    dates_queried = [
+        json.loads(params["q"])["fecha"]["eq"] for _, params in client.get_calls if params
+    ]
     # date_range is half-open [start, end) — end=2026-08-18T00:00 excludes
     # the 18th itself, so only 15/16/17 are queried.
     assert dates_queried == ["2026-08-15", "2026-08-16", "2026-08-17"]
@@ -171,6 +174,33 @@ async def test_list_professionals_maps_dentistas_response():
     professionals = await gateway.list_professionals(specialty_id="cleaning")
 
     assert [p.id for p in professionals] == ["626"]
+
+
+@pytest.mark.asyncio
+async def test_list_professionals_filters_by_specialty_server_side():
+    # Dentalink's /v1/dentistas supports `q={"id_especialidad":{"eq":N}}`
+    # natively — fetching every dentist and filtering in Python is both
+    # slower and, on a big clinic, needlessly large.
+    client = _StubDentalinkClient(get_responses={"/v1/dentistas": []})
+    gateway = _gateway(client)
+
+    await gateway.list_professionals(specialty_id="cleaning")
+
+    path, params = client.get_calls[0]
+    assert path == "/v1/dentistas"
+    assert params is not None
+    assert json.loads(params["q"]) == {"id_especialidad": {"eq": "cleaning"}}
+
+
+@pytest.mark.asyncio
+async def test_list_professionals_sends_no_filter_when_no_specialty_given():
+    client = _StubDentalinkClient(get_responses={"/v1/dentistas": []})
+    gateway = _gateway(client)
+
+    await gateway.list_professionals()
+
+    _, params = client.get_calls[0]
+    assert params is None
 
 
 @pytest.mark.asyncio

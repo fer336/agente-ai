@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 import app.infrastructure.dentalink.client as client_module
-from app.infrastructure.dentalink.client import DentalinkClient, build_filter_params
+from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.exceptions import (
     DentalinkAPIError,
     DentalinkAuthError,
@@ -276,16 +276,3 @@ async def test_api_error_never_includes_the_access_token(
         await client.get("/v1/pacientes")
 
     assert "super-secret-token" not in str(exc_info.value)
-
-
-def test_build_filter_params_encodes_bracket_notation_filters():
-    params = build_filter_params(
-        {"id_sucursal": 1, "fecha": "2026-08-15", "duracion": 30, "id_profesional": 626}
-    )
-
-    assert params == {
-        "filtro[id_sucursal][eq]": "1",
-        "filtro[fecha][eq]": "2026-08-15",
-        "filtro[duracion][eq]": "30",
-        "filtro[id_profesional][eq]": "626",
-    }

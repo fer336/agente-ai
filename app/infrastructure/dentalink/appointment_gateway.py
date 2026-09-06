@@ -12,13 +12,14 @@ from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.exceptions.errors import AppointmentNotFoundError
 from app.domain.value_objects.date_time_range import DateTimeRange
-from app.infrastructure.dentalink.client import DentalinkClient, build_filter_params
+from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.exceptions import (
     DentalinkAPIError,
     DentalinkAuthError,
     DentalinkInvalidResponseError,
     DentalinkTimeoutError,
 )
+from app.infrastructure.dentalink.query_filter import build_q_param
 from app.infrastructure.dentalink.schemas import (
     appointment_from_cita,
     as_dict,
@@ -82,6 +83,13 @@ def _error_type_of(exc: Exception) -> str:
 #: demo node's 30-day search window.
 _MAX_SEARCH_AVAILABILITY_DAYS = 60
 
+#: Per-endpoint filter allow-lists for `build_q_param` (one Dentalink
+#: resource's columns are not another's, so these are never shared).
+#: `/v5/agendas` notably has NO specialty column — see
+#: `search_availability`'s own docstring.
+_AGENDA_FILTER_FIELDS = frozenset({"id_sucursal", "fecha", "duracion", "id_profesional"})
+_DENTISTA_FILTER_FIELDS = frozenset({"id_especialidad", "especialidad", "habilitado"})
+
 
 class DentalinkAppointmentGateway:
     """`DentalinkClient`-based real implementation of the `AppointmentGateway` port.
@@ -116,6 +124,19 @@ class DentalinkAppointmentGateway:
         professional_id: str | None,
         date_range: DateTimeRange,
     ) -> list[AppointmentSlot]:
+        """WARNING: pass `specialty_id=None` against a real Dentalink account.
+
+        `/v5/agendas` does not return `id_especialidad` at all (confirmed
+        against https://api.dentalink.healthatom.com/docs/), so every slot
+        it yields has `specialty_id == ""` and the filter below discards
+        ALL of them for any non-`None` `specialty_id`. To honour a
+        specialty, resolve it to its professionals first
+        (`list_professionals(specialty_id=...)`, which Dentalink DOES
+        filter server-side) and pass `professional_id` here instead. The
+        parameter is kept because the port defines it and the in-memory
+        fake implements it faithfully.
+        """
+
         async def _call() -> list[AppointmentSlot]:
             slots: list[AppointmentSlot] = []
             day = date_range.start.date()
@@ -125,16 +146,17 @@ class DentalinkAppointmentGateway:
             last_day = (date_range.end - timedelta(microseconds=1)).date()
             days_queried = 0
             while day <= last_day and days_queried < _MAX_SEARCH_AVAILABILITY_DAYS:
-                filters: dict[str, object] = {
-                    "id_sucursal": self._default_branch_id,
-                    "fecha": day.isoformat(),
-                    "duracion": self._default_duration_minutes,
+                filters: dict[str, tuple[str, object]] = {
+                    "id_sucursal": ("eq", self._default_branch_id),
+                    "fecha": ("eq", day.isoformat()),
+                    "duracion": ("eq", str(self._default_duration_minutes)),
                 }
                 if professional_id is not None:
-                    filters["id_profesional"] = professional_id
+                    filters["id_profesional"] = ("eq", professional_id)
 
                 raw_slots = await self._client.get(
-                    "/v5/agendas", params=build_filter_params(filters)
+                    "/v5/agendas",
+                    params=build_q_param(filters, allowed_fields=_AGENDA_FILTER_FIELDS),
                 )
                 for raw_slot in as_list(raw_slots):
                     slot = slot_from_agenda(
@@ -163,10 +185,22 @@ class DentalinkAppointmentGateway:
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:
         async def _call() -> list[Professional]:
-            raw_dentistas = await self._client.get("/v1/dentistas")
+            params = (
+                build_q_param(
+                    {"id_especialidad": ("eq", specialty_id)},
+                    allowed_fields=_DENTISTA_FILTER_FIELDS,
+                )
+                if specialty_id is not None
+                else None
+            )
+            raw_dentistas = await self._client.get("/v1/dentistas", params=params)
             professionals = [professional_from_dentista(raw) for raw in as_list(raw_dentistas)]
             if specialty_id is None:
                 return professionals
+            # Defense in depth: the server-side `q` filter above is what
+            # keeps the response small, but this same check also has to
+            # hold if a live account's `q` semantics differ from the
+            # documented ones (UNVERIFIED against a real token).
             return [p for p in professionals if p.specialty_id == specialty_id]
 
         return await traced_call(
