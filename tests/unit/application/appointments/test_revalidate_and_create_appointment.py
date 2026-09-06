@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -78,16 +79,19 @@ async def test_execute_raises_when_the_lock_is_already_held(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_execute_revalidates_using_the_slots_own_specialty_and_professional():
+async def test_execute_revalidates_by_professional_never_by_specialty():
+    # Against real Dentalink, `/v5/agendas` never returns `id_especialidad`,
+    # so every slot it yields carries `specialty_id == ""` — and
+    # `_propose_selected_slot` stamps the chosen specialty onto the slot
+    # right before this runs. Revalidating with that stamped value matched
+    # nothing and every confirmation died as "ese horario acaba de
+    # ocuparse". The slot id is what identifies the slot; the specialty is
+    # not a filter this step can use. The fake was kinder than production
+    # here, which is exactly why the old test passed.
     slot = _future_slot(professional_id="prof-9")
-    other_specialty_slot = make_slot(
-        id_="slot-other",
-        professional_id="prof-9",
-        specialty_id="whitening",
-        start=slot.time_range.start,
-        end=slot.time_range.end,
-    )
-    gateway = make_dentalink_gateway(available_slots=[slot, other_specialty_slot])
+    slot = replace(slot, specialty_id="cleaning")
+    as_dentalink_returns_it = replace(slot, specialty_id="")
+    gateway = make_dentalink_gateway(available_slots=[as_dentalink_returns_it])
     patient = make_patient()
     use_case = RevalidateAndCreateAppointmentUseCase(gateway, InMemoryFakeRedis())
 
