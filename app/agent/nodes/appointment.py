@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -30,9 +31,12 @@ from app.application.conversations.set_conversation_input_state import (
 from app.application.patients.identify_patient import IdentifyPatientUseCase
 from app.application.pending_actions.confirm_pending_action import ConfirmPendingActionUseCase
 from app.application.pending_actions.reject_pending_action import RejectPendingActionUseCase
+from app.application.specialties.list_specialties import ListSpecialtiesUseCase
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
+from app.domain.entities.professional import Professional
+from app.domain.entities.specialty import Specialty
 from app.domain.exceptions.errors import (
     AppointmentSlotUnavailableError,
     InvalidConfirmationError,
@@ -40,7 +44,11 @@ from app.domain.exceptions.errors import (
     PendingActionExpiredError,
 )
 from app.domain.repositories.conversation_repository import ConversationRepository
-from app.domain.repositories.gateways import AppointmentGateway, PatientGateway
+from app.domain.repositories.gateways import (
+    AppointmentGateway,
+    PatientGateway,
+    SpecialtyGateway,
+)
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
@@ -49,13 +57,25 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 
 _SEARCH_WINDOW = timedelta(days=30)
-_MAX_OPTIONS_SHOWN = 5
+#: WhatsApp/Meta rejects an interactive message with more than 3 reply
+#: buttons. Nothing downstream (`SendReplyUseCase`, `YCloudMessagingGateway`,
+#: `YCloudClient`) enforces it, so every button list is capped here.
+_MAX_OPTIONS_SHOWN = 3
 
 #: `collected_data["stage"]` values — this node's own multi-turn cursor
 #: (PRD.md §9-14's flows). `resolve_interaction` only checks whether a
 #: stage is set at all (routing any button/free-text turn straight back
 #: here, PRD.md §24.2); this node alone interprets which one.
 STAGE_AWAITING_OPERATION_SELECTION = "awaiting_operation_selection"
+#: Booking a NEW appointment starts here (this session's brief): the
+#: patient picks a specialty, then one of that specialty's professionals,
+#: and only then sees real availability. Both are numbered TEXT lists,
+#: not buttons — WhatsApp caps interactive replies at 3 and this clinic
+#: has 16 specialties. Neither is a sensitive write, so both run under
+#: `FREE_INPUT` (PRD.md §24.2 reserves button-only input for selections
+#: and confirmations that mutate something).
+STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
+STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
 STAGE_AWAITING_APPOINTMENT_SELECTION = "awaiting_appointment_selection"
 STAGE_AWAITING_SLOT_SELECTION = "awaiting_slot_selection"
@@ -96,6 +116,24 @@ REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
 #: name instead of the whole thing failing `Dni`'s length check cleanly.
 _DNI_PATTERN = re.compile(r"(\d{6,})")
 
+_CHOOSE_SPECIALTY_PROMPT = (
+    "¿Para qué especialidad querés el turno? Respondeme con el número:"
+)
+_SPECIALTY_NOT_UNDERSTOOD_MESSAGE = (
+    "No pude identificar la especialidad. Respondeme con el número de la lista:"
+)
+_NO_SPECIALTIES_MESSAGE = (
+    "En este momento no tengo las especialidades disponibles. "
+    "¿Querés que te comunique con administración?"
+)
+_CHOOSE_PROFESSIONAL_PROMPT = "¿Con qué profesional preferís atenderte? Respondeme con el número:"
+_PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE = (
+    "No pude identificar al profesional. Respondeme con el número de la lista:"
+)
+_NO_PROFESSIONALS_MESSAGE = (
+    "No tengo profesionales cargados para esa especialidad. "
+    "¿Querés que te comunique con administración?"
+)
 _OPERATION_MENU_MESSAGE = "¿Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
 _ASK_IDENTIFICATION_MESSAGE = (
@@ -181,6 +219,45 @@ def _parse_identification(text: str) -> tuple[str, str] | None:
     if not full_name:
         return None
     return full_name, dni
+
+
+#: A patient answering a numbered list types "2", "2." or "opción 2" —
+#: never more than three digits, since no catalog here is that long.
+_NUMBERED_CHOICE_PATTERN = re.compile(r"\b(\d{1,3})\b")
+
+
+def _resolve_numbered_choice(text: str, option_count: int) -> int | None:
+    """Maps a patient's 1-based reply to a 0-based index into the list they
+    were just shown, or `None` when it isn't a number in range."""
+    match = _NUMBERED_CHOICE_PATTERN.search(text)
+    if match is None:
+        return None
+    index = int(match.group(1)) - 1
+    return index if 0 <= index < option_count else None
+
+
+def _resolve_by_name(text: str, names: list[str]) -> int | None:
+    """Falls back to matching a catalog name found inside the message —
+    same idiom `agreement.py` already uses for obra social names, so a
+    patient who types "quiero ortodoncia" instead of "1" still gets
+    through."""
+    lowered = text.casefold()
+    for index, name in enumerate(names):
+        if name.casefold() in lowered:
+            return index
+    return None
+
+
+def _resolve_choice(text: str, names: list[str]) -> int | None:
+    """Number first (what the list explicitly asked for), name second."""
+    by_number = _resolve_numbered_choice(text, len(names))
+    if by_number is not None:
+        return by_number
+    return _resolve_by_name(text, names)
+
+
+def _numbered_list(names: list[str]) -> str:
+    return "\n".join(f"{position}. {name}" for position, name in enumerate(names, start=1))
 
 
 def _resolve_identification(
@@ -382,6 +459,7 @@ def create_appointment_node(
     redis_client: Redis,
     confirmation_timeout_seconds: int,
     llm_provider: LLMProvider,
+    specialty_gateway: SpecialtyGateway,
 ) -> AgentNode:
     """Full turno management stage machine — create, reschedule, cancel
     (PRD.md §9-16, §32, §72).
@@ -467,6 +545,7 @@ def create_appointment_node(
     )
     cancel_appointment = CancelAppointmentUseCase(appointment_gateway)
     set_conversation_input_state = SetConversationInputStateUseCase(conversation_repository)
+    list_specialties = ListSpecialtiesUseCase(specialty_gateway)
 
     async def _cancel_follow_up(repositories: ProposalRepositories, pending_action_id: str) -> None:
         scheduled_actions = repositories.scheduled_actions
@@ -476,15 +555,76 @@ def create_appointment_node(
                 scheduled_action.id, from_status="scheduled", to_status="cancelled"
             )
 
+    async def _offer_specialties(
+        conversation_id: ConversationId, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        specialties = await list_specialties.execute()
+        if not specialties:
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            return {
+                "response_text": _NO_SPECIALTIES_MESSAGE,
+                "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": {},
+            }
+
+        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+        listing = _numbered_list([specialty.name for specialty in specialties])
+        return {
+            "response_text": f"{_CHOOSE_SPECIALTY_PROMPT}\n\n{listing}",
+            "response_buttons": None,
+            "requires_handoff": False,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+                "specialty_options": specialties,
+            },
+        }
+
+    async def _offer_professionals(
+        conversation_id: ConversationId,
+        specialty_id: str,
+        specialty_name: str,
+        collected_data: dict[str, object],
+    ) -> dict[str, object]:
+        professionals = await appointment_gateway.list_professionals(specialty_id=specialty_id)
+        if not professionals:
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            return {
+                "response_text": _NO_PROFESSIONALS_MESSAGE,
+                "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": {},
+            }
+
+        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+        listing = _numbered_list([professional.full_name for professional in professionals])
+        return {
+            "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
+            "response_buttons": None,
+            "requires_handoff": False,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+                "chosen_specialty_id": specialty_id,
+                "chosen_specialty_name": specialty_name,
+                "professional_options": professionals,
+            },
+        }
+
     async def _offer_slots(
         conversation_id: ConversationId,
-        patient: dict[str, object],
+        patient: dict[str, object] | None,
         collected_data: dict[str, object],
     ) -> dict[str, object]:
         now = datetime.now(UTC)
+        # `specialty_id` is deliberately never forwarded: Dentalink's
+        # `/v5/agendas` does not return `id_especialidad`, so filtering on
+        # it would discard every real slot. The specialty is honoured one
+        # step earlier, by only offering professionals who teach it.
         slots = await search_availability.execute(
             specialty_id=None,
-            professional_id=None,
+            professional_id=cast(str | None, collected_data.get("chosen_professional_id")),
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
         )
         if not slots:
@@ -515,6 +655,52 @@ def create_appointment_node(
                 "patient": patient,
                 "available_slots": options,
                 "professional_names": professional_names,
+            },
+        }
+
+    async def _propose_selected_slot(
+        conversation_id: ConversationId,
+        patient: dict[str, object],
+        collected_data: dict[str, object],
+    ) -> dict[str, object]:
+        """Proposes the slot the patient already picked, now that we know
+        who they are — never re-searches availability."""
+        selected = cast(
+            AppointmentSlot | None, collected_data.get("pending_selected_slot")
+        )
+        if selected is None:
+            return {
+                "response_text": _SESSION_LOST_MESSAGE,
+                "response_buttons": None,
+                "requires_handoff": False,
+                "pending_action_id": None,
+                "collected_data": {},
+            }
+
+        chosen_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+        if chosen_specialty_id:
+            # Dentalink's `/v5/agendas` never returns `id_especialidad`,
+            # so a real slot always arrives with an empty `specialty_id` —
+            # yet `create_appointment` sends that field on to Dentalink.
+            # The specialty the patient chose at the start of this flow is
+            # the only place it can come from.
+            selected = replace(selected, specialty_id=chosen_specialty_id)
+
+        professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
+        pending_action = await propose_appointment.execute(
+            conversation_id, CREATE_APPOINTMENT_ACTION, _proposal_payload(patient, selected)
+        )
+        await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+        return {
+            "response_text": _confirmation_message(selected, professional_names),
+            "response_buttons": _CONFIRM_BUTTONS,
+            "requires_handoff": False,
+            "pending_action_id": pending_action.id,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_CONFIRMATION,
+                "patient": patient,
+                "pending_selected_slot": selected,
             },
         }
 
@@ -702,9 +888,10 @@ def create_appointment_node(
 
                     # Only ever reached via `STAGE_AWAITING_IDENTIFICATION`
                     # proposing this action, which itself only does so when
-                    # `operation == CREATE_APPOINTMENT_ACTION` — always
-                    # continue into slot search, never appointment listing.
-                    return await _offer_slots(
+                    # `operation == CREATE_APPOINTMENT_ACTION`. The patient
+                    # already picked their slot before identifying, so
+                    # continue with that exact slot — never re-search.
+                    return await _propose_selected_slot(
                         conversation_id, _patient_to_primitives(new_patient), collected_data
                     )
 
@@ -758,8 +945,12 @@ def create_appointment_node(
                 list[AppointmentSlot], collected_data.get("available_slots", [])
             )
             patient = cast(dict[str, object] | None, collected_data.get("patient"))
+            # In the CREATE flow the patient is not identified yet at this
+            # point (that now happens after picking a slot), so only the
+            # RESCHEDULE flow requires one here.
+            rescheduling = collected_data.get("rescheduling_appointment_id") is not None
 
-            if not available_slots or patient is None:
+            if not available_slots or (rescheduling and patient is None):
                 return {
                     "response_text": _SESSION_LOST_MESSAGE,
                     "response_buttons": None,
@@ -806,18 +997,29 @@ def create_appointment_node(
             rescheduling_appointment_id = cast(
                 str | None, collected_data.get("rescheduling_appointment_id")
             )
-            if rescheduling_appointment_id is not None:
-                pending_action = await propose_appointment.execute(
-                    conversation_id,
-                    RESCHEDULE_APPOINTMENT_ACTION,
-                    _reschedule_proposal_payload(rescheduling_appointment_id, selected),
-                )
-                confirmation_text = _reschedule_confirmation_message(selected, professional_names)
-            else:
-                pending_action = await propose_appointment.execute(
-                    conversation_id, CREATE_APPOINTMENT_ACTION, _proposal_payload(patient, selected)
-                )
-                confirmation_text = _confirmation_message(selected, professional_names)
+            if rescheduling_appointment_id is None:
+                # CREATE flow: the patient has now seen a real slot, so
+                # this is the moment to ask who they are — the reordering
+                # this session's brief asked for. The chosen slot is
+                # carried forward so identification never re-searches.
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                return {
+                    "response_text": _ASK_IDENTIFICATION_MESSAGE,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "stage": STAGE_AWAITING_IDENTIFICATION,
+                        "pending_selected_slot": selected,
+                    },
+                }
+
+            pending_action = await propose_appointment.execute(
+                conversation_id,
+                RESCHEDULE_APPOINTMENT_ACTION,
+                _reschedule_proposal_payload(rescheduling_appointment_id, selected),
+            )
+            confirmation_text = _reschedule_confirmation_message(selected, professional_names)
 
             await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
             return {
@@ -1020,9 +1222,114 @@ def create_appointment_node(
                 }
             patient_primitives = _patient_to_primitives(identified_patient)
             if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
-                return await _offer_slots(conversation_id, patient_primitives, collected_data)
+                return await _propose_selected_slot(
+                    conversation_id, patient_primitives, collected_data
+                )
             return await _offer_appointments(
                 conversation_id, patient_primitives, identified_patient.id, collected_data
+            )
+
+        if stage == STAGE_AWAITING_SPECIALTY_SELECTION:
+            options = cast(list[Specialty], collected_data.get("specialty_options", []))
+            if not options:
+                return await _offer_specialties(conversation_id, collected_data)
+
+            # These stages never send buttons, so any payload arriving
+            # here is a tap on an older message still on the phone.
+            index = (
+                None
+                if state["button_payload"] is not None
+                else _resolve_choice(state["user_message"], [option.name for option in options])
+            )
+            if index is None:
+                retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
+                listing = _numbered_list([option.name for option in options])
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "specialty_retry",
+                    {
+                        "situacion": (
+                            "El paciente no eligió una especialidad válida de la lista "
+                            "numerada que le mostramos."
+                        ),
+                        "instruccion": (
+                            "Pedile que responda con el número de la especialidad. NO "
+                            "repitas la lista, se la agregamos nosotros abajo."
+                        ),
+                        "intentos_seguidos": retry_count,
+                    },
+                    _SPECIALTY_NOT_UNDERSTOOD_MESSAGE,
+                )
+                return {
+                    "response_text": f"{text}\n\n{listing}",
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "specialty_retry_count": retry_count,
+                    },
+                }
+
+            chosen = options[index]
+            return await _offer_professionals(
+                conversation_id, chosen.id, chosen.name, collected_data
+            )
+
+        if stage == STAGE_AWAITING_PROFESSIONAL_SELECTION:
+            professional_options = cast(
+                list[Professional], collected_data.get("professional_options", [])
+            )
+            specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+            if not professional_options or specialty_id is None:
+                return await _offer_specialties(conversation_id, collected_data)
+
+            index = (
+                None
+                if state["button_payload"] is not None
+                else _resolve_choice(
+                    state["user_message"], [option.full_name for option in professional_options]
+                )
+            )
+            if index is None:
+                retry_count = cast(int, collected_data.get("professional_retry_count", 0)) + 1
+                listing = _numbered_list([option.full_name for option in professional_options])
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "professional_retry",
+                    {
+                        "situacion": (
+                            "El paciente no eligió un profesional válido de la lista "
+                            "numerada que le mostramos."
+                        ),
+                        "instruccion": (
+                            "Pedile que responda con el número del profesional. NO "
+                            "repitas la lista, se la agregamos nosotros abajo."
+                        ),
+                        "intentos_seguidos": retry_count,
+                    },
+                    _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE,
+                )
+                return {
+                    "response_text": f"{text}\n\n{listing}",
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "professional_retry_count": retry_count,
+                    },
+                }
+
+            chosen_professional = professional_options[index]
+            return await _offer_slots(
+                conversation_id,
+                None,
+                {
+                    **collected_data,
+                    "chosen_professional_id": chosen_professional.id,
+                    "chosen_professional_name": chosen_professional.full_name,
+                },
             )
 
         if stage == STAGE_AWAITING_OPERATION_SELECTION:
@@ -1042,6 +1349,15 @@ def create_appointment_node(
                     "response_buttons": _OPERATION_BUTTONS,
                     "requires_handoff": False,
                 }
+            if operation == CREATE_APPOINTMENT_ACTION:
+                # Booking a new appointment now starts from the specialty
+                # (this session's brief). Reschedule/cancel keep asking
+                # for identification first: both begin by listing THIS
+                # patient's own appointments, and Dentalink has no way to
+                # do that without knowing who the patient is.
+                return await _offer_specialties(
+                    conversation_id, {**collected_data, "operation": operation}
+                )
             return {
                 "response_text": _ASK_IDENTIFICATION_MESSAGE,
                 "response_buttons": None,
