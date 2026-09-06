@@ -6,6 +6,7 @@ from app.infrastructure.llm.exceptions import (
     LLMAPIError,
     LLMAuthError,
     LLMInvalidResponseError,
+    LLMProviderError,
     LLMTimeoutError,
 )
 
@@ -39,6 +40,15 @@ class OpenAICompatibleLLMClient:
         message content (never parsed here — callers own their own
         expected shape, JSON or plain text).
         """
+        if not model.strip():
+            # Never send an empty `model` — the gateway answers with a
+            # 400 that reads like an API problem ("No models provided")
+            # when it is really an unset `LLM_MODEL`/`RuntimeAgentConfig`,
+            # which cost a production outage once.
+            raise LLMProviderError(
+                "No LLM model configured — set LLM_MODEL (or runtime_agent_config.model)"
+            )
+
         url = f"{self._base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self._api_key}"}
         payload = {

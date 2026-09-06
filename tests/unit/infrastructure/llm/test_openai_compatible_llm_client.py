@@ -9,6 +9,7 @@ from app.infrastructure.llm.exceptions import (
     LLMAPIError,
     LLMAuthError,
     LLMInvalidResponseError,
+    LLMProviderError,
     LLMTimeoutError,
 )
 
@@ -115,6 +116,26 @@ async def test_raises_api_error_on_other_non_2xx_status(monkeypatch: pytest.Monk
         await client.chat_completion("model", [{"role": "user", "content": "hi"}])
 
     assert exc_info.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_raises_before_calling_the_gateway_when_no_model_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unset model used to be sent as an empty string, and the gateway
+    # answered `400 {"error":{"message":"No models provided"}}` — a
+    # confusing way to learn that a config value is missing. Took
+    # production down once already.
+    captured = _capture_requests(monkeypatch, httpx.Response(200, json={"choices": []}))
+    client = OpenAICompatibleLLMClient(
+        base_url="http://100.109.17.87:20128/v1", api_key="sk-secret", timeout_seconds=20
+    )
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        await client.chat_completion("   ", [{"role": "user", "content": "hi"}])
+
+    assert "model" in str(exc_info.value).lower()
+    assert captured == []
 
 
 @pytest.mark.asyncio
