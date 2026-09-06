@@ -60,6 +60,63 @@ async def test_classify_intent_parses_the_models_json_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_understand_extracts_intent_and_the_mentions_in_one_call() -> None:
+    client = _StubClient(
+        '{"intent": "appointment", "confidence": 0.9, "answer": null,'
+        ' "specialty_mention": "ortodoncia", "professional_mention": null,'
+        ' "operation_mention": "create"}'
+    )
+    provider = _make_provider(client)
+
+    result = await provider.understand("quiero un turno de ortodoncia", context={})
+
+    assert result.intent == "appointment"
+    assert result.specialty_mention == "ortodoncia"
+    assert result.operation_mention == "create"
+    assert result.answer is None
+    # One call, not one to classify plus another to extract.
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_understand_returns_a_written_answer_for_a_plain_question() -> None:
+    client = _StubClient(
+        '{"intent": "question", "confidence": 0.95,'
+        ' "answer": "Sí, atendemos los sábados por la mañana.",'
+        ' "specialty_mention": null, "professional_mention": null,'
+        ' "operation_mention": null}'
+    )
+    provider = _make_provider(client)
+
+    result = await provider.understand("¿atienden los sábados?", context={})
+
+    assert result.intent == "question"
+    assert result.answer == "Sí, atendemos los sábados por la mañana."
+
+
+@pytest.mark.asyncio
+async def test_understand_tolerates_a_response_with_only_the_required_fields() -> None:
+    # A smaller model often omits the null-valued keys entirely.
+    client = _StubClient('{"intent": "handoff", "confidence": 0.8}')
+    provider = _make_provider(client)
+
+    result = await provider.understand("quiero hablar con alguien", context={})
+
+    assert result.intent == "handoff"
+    assert result.specialty_mention is None
+    assert result.operation_mention is None
+
+
+@pytest.mark.asyncio
+async def test_understand_rejects_an_unknown_intent_label() -> None:
+    client = _StubClient('{"intent": "comprar_pizza", "confidence": 0.9}')
+    provider = _make_provider(client)
+
+    with pytest.raises(LLMInvalidResponseError):
+        await provider.understand("hola", context={})
+
+
+@pytest.mark.asyncio
 async def test_classify_intent_sends_the_configured_model_and_temperature() -> None:
     client = _StubClient('{"intent": "unknown", "confidence": 0.1}')
     provider = _make_provider(client, model="deepseek/deepseek-v4-flash", temperature=0.4)

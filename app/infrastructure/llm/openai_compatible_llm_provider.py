@@ -8,7 +8,12 @@ from app.application.errors.error_types import (
     OPENAI_TIMEOUT,
 )
 from app.domain.entities.message import Message
-from app.domain.repositories.llm_provider import ExtractionResult, IntentResult, ResponseContext
+from app.domain.repositories.llm_provider import (
+    ExtractionResult,
+    IntentResult,
+    ResponseContext,
+    UnderstandingResult,
+)
 from app.infrastructure.llm.client import OpenAICompatibleLLMClient
 from app.infrastructure.llm.exceptions import (
     LLMAuthError,
@@ -43,6 +48,45 @@ esta forma exacta, sin texto adicional:
 - handoff: pedir hablar con una persona, urgencias, reclamos, quejas, o cualquier cosa que \
 un bot no debería resolver solo.
 - unknown: cualquier otra cosa, saludos, o si no estás seguro.
+"""
+
+#: `understand`'s own labels — the five `classify_intent` knows plus
+#: `question`, the one that lets a patient ask something the graph has no
+#: operation for and get a real answer instead of the menu.
+_UNDERSTANDING_LABELS = (*_INTENT_LABELS, "question")
+
+#: NOT admin-editable via `RuntimeConfigService` (unlike the three prompts
+#: below): the graph parses this response and routes on it, so its JSON
+#: contract is code, not copy. Deliberately asks for RAW patient wording
+#: in the mentions — resolving "ortodoncia" to a Dentalink id is the
+#: graph's job (`resolve_by_name` against the real catalog), never the
+#: model's, which would otherwise invent ids.
+DEFAULT_UNDERSTAND_PROMPT = f"""Sos quien atiende el WhatsApp de una clínica dental en Argentina.
+
+Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin texto adicional:
+{{"intent": "<una de: {", ".join(_UNDERSTANDING_LABELS)}>", "confidence": <0.0 a 1.0>, \
+"answer": <string o null>, "specialty_mention": <string o null>, \
+"professional_mention": <string o null>, \
+"operation_mention": <"create"|"reschedule"|"cancel"|null>}}
+
+- appointment: quiere sacar, cambiar o cancelar un turno, o pregunta por horarios o por los \
+médicos de una especialidad.
+- insurance: pregunta por obra social, prepaga o convenios.
+- specialties: pregunta qué especialidades atiende la clínica, sin pedir turno.
+- handoff: pide hablar con una persona, urgencias, reclamos o quejas.
+- question: cualquier otra consulta genuina que puedas responder vos (horarios de atención, \
+dirección, formas de pago, cómo llegar, qué incluye un tratamiento).
+- unknown: saludos sueltos, mensajes vacíos o algo que no se entiende.
+
+Campos:
+- "answer": SOLO para intent "question". Respondé corto, cálido y humano, como una persona real \
+por WhatsApp. Si no sabés el dato con certeza, decilo y ofrecé pasarlo con administración — \
+nunca inventes precios, horarios ni disponibilidad. Para cualquier otro intent va null.
+- "specialty_mention": la especialidad tal cual la nombró el paciente ("ortodoncia"), sin \
+traducir ni corregir. null si no nombró ninguna.
+- "professional_mention": el profesional tal cual lo nombró ("la doctora Pérez"). null si no.
+- "operation_mention": "create" si quiere sacar un turno, "reschedule" si quiere cambiarlo, \
+"cancel" si quiere cancelarlo. null si no lo dijo.
 """
 
 #: `{required_fields}` is substituted with the comma-joined list of fields
@@ -161,6 +205,40 @@ class OpenAICompatibleLLMProvider:
             error_type_of=_error_type_of,
         )
 
+    async def understand(self, message: str, context: dict[str, object]) -> UnderstandingResult:
+        config = await self._runtime_config_service.get_config()
+        messages = [{"role": "system", "content": DEFAULT_UNDERSTAND_PROMPT}]
+        recent_messages = context.get("recent_messages")
+        if recent_messages:
+            messages.append(
+                {"role": "system", "content": f"Contexto reciente: {recent_messages}"}
+            )
+        contact_memory = context.get("contact_memory")
+        if contact_memory:
+            messages.append(
+                {"role": "system", "content": f"Resumen del contacto: {contact_memory}"}
+            )
+        messages.append({"role": "user", "content": message})
+
+        async def _call() -> UnderstandingResult:
+            content = await self._client.chat_completion(
+                config.model, messages, temperature=config.temperature
+            )
+            return _parse_understanding_result(content)
+
+        return await traced_call(
+            tool_name="UnderstandTool",
+            provider=_PROVIDER,
+            operation="understand",
+            # Never the message itself — same PRD.md §41 guardrail as
+            # `classify_intent`.
+            request_summary=f"message_length={len(message)}",
+            call=_call,
+            response_summary=lambda result: f"intent={result.intent}",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
     async def extract_information(
         self, message: str, required_fields: list[str]
     ) -> ExtractionResult:
@@ -260,6 +338,40 @@ def _parse_intent_result(content: str) -> IntentResult:
     if intent not in _INTENT_LABELS:
         raise LLMInvalidResponseError(f"Model returned an unrecognized intent label: {intent!r}")
     return IntentResult(intent=intent, confidence=confidence)
+
+
+def _parse_understanding_result(content: str) -> UnderstandingResult:
+    """Same strictness as `_parse_intent_result` for the two fields the
+    graph routes on, deliberately forgiving for the rest: a smaller model
+    routinely omits null-valued keys, and losing a mention only costs one
+    extra question, while a wrong intent sends the whole turn elsewhere.
+    """
+    try:
+        data = json.loads(content)
+        intent = str(data["intent"])
+        confidence = float(data["confidence"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise LLMInvalidResponseError(
+            f"Model output was not the expected understanding JSON shape: {content!r}"
+        ) from exc
+    if intent not in _UNDERSTANDING_LABELS:
+        raise LLMInvalidResponseError(f"Model returned an unrecognized intent label: {intent!r}")
+
+    def _optional(key: str) -> str | None:
+        value = data.get(key)
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    return UnderstandingResult(
+        intent=intent,
+        confidence=confidence,
+        answer=_optional("answer"),
+        specialty_mention=_optional("specialty_mention"),
+        professional_mention=_optional("professional_mention"),
+        operation_mention=_optional("operation_mention"),
+    )
 
 
 def _parse_extraction_result(content: str, required_fields: list[str]) -> ExtractionResult:

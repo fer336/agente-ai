@@ -100,6 +100,15 @@ CANCEL_APPOINTMENT_ACTION = "cancel_appointment"
 #: `STAGE_AWAITING_CONFIRMATION` confirm/reject cycle as the other three.
 CREATE_PATIENT_ACTION = "create_patient"
 
+#: `UnderstandingResult.operation_mention` -> this node's own action
+#: tokens, so a patient who says "quiero cancelar mi turno" skips the
+#: operation menu they already answered in words.
+_OPERATION_BY_MENTION = {
+    "create": CREATE_APPOINTMENT_ACTION,
+    "reschedule": RESCHEDULE_APPOINTMENT_ACTION,
+    "cancel": CANCEL_APPOINTMENT_ACTION,
+}
+
 #: Button payload contract for this flow (PRD.md §6: deterministic, never
 #: LLM-classified).
 OPERATION_CREATE_PAYLOAD = "OPERATION_CREATE"
@@ -1376,6 +1385,46 @@ def create_appointment_node(
                 return await _offer_specialties(
                     conversation_id, {**collected_data, "operation": operation}
                 )
+            return {
+                "response_text": _ASK_IDENTIFICATION_MESSAGE,
+                "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": {
+                    **collected_data,
+                    "stage": STAGE_AWAITING_IDENTIFICATION,
+                    "operation": operation,
+                },
+            }
+
+        # No stage yet. Before showing the menu, honour whatever the
+        # patient already said in prose — `resolve_interaction` left the
+        # raw mentions here, and re-asking for something they just told us
+        # is exactly what made this bot feel like a form.
+        operation = _OPERATION_BY_MENTION.get(
+            str(collected_data.get("operation_mention") or "")
+        )
+        specialty_mention = collected_data.get("specialty_mention")
+
+        if specialty_mention is not None:
+            specialties = await list_specialties.execute()
+            index = _resolve_by_name(str(specialty_mention), [s.name for s in specialties])
+            if index is not None:
+                # A named specialty only ever means booking — you don't
+                # cancel "an ortodoncia".
+                chosen = specialties[index]
+                return await _offer_professionals(
+                    conversation_id,
+                    chosen.id,
+                    chosen.name,
+                    {**collected_data, "operation": CREATE_APPOINTMENT_ACTION},
+                )
+
+        if operation == CREATE_APPOINTMENT_ACTION:
+            return await _offer_specialties(
+                conversation_id, {**collected_data, "operation": operation}
+            )
+        if operation is not None:
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {
                 "response_text": _ASK_IDENTIFICATION_MESSAGE,
                 "response_buttons": None,
