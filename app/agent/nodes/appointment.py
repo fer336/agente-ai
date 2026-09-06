@@ -54,6 +54,11 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.dni import Dni
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_APPOINTMENT_PAYLOAD,
+    MENU_SPECIALTIES_PAYLOAD,
+)
 from app.domain.value_objects.phone_number import PhoneNumber
 
 _SEARCH_WINDOW = timedelta(days=30)
@@ -210,6 +215,19 @@ _OPERATION_BUTTONS = [
 _CONFIRM_BUTTONS = [
     InteractiveButton(id=CONFIRM_APPOINTMENT_PAYLOAD, title="✅ Confirmar"),
     InteractiveButton(id=REJECT_APPOINTMENT_PAYLOAD, title="❌ Cancelar"),
+]
+#: Tapping any of these abandons whatever stage is in flight — see `node`.
+_MAIN_MENU_PAYLOADS = frozenset(
+    {MENU_APPOINTMENT_PAYLOAD, MENU_SPECIALTIES_PAYLOAD, MENU_ADMIN_PAYLOAD}
+)
+#: How many consecutive unreadable identification attempts before the
+#: patient is offered a human instead. Mirrors `fallback.py`'s own ceiling:
+#: without one, `identification_retry_count` just counted upward while the
+#: patient rewrote their DNI forever.
+_ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS = 2
+_IDENTIFICATION_ESCAPE_BUTTONS = [
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
+    InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
 ]
 
 
@@ -779,6 +797,16 @@ def create_appointment_node(
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
 
+        if stage is not None and state["button_payload"] in _MAIN_MENU_PAYLOADS:
+            # A main-menu tap is an unambiguous "start over", never an
+            # answer to whatever question is currently on screen. Seen
+            # live: a patient trapped mid-identification tapped "Turnos"
+            # and the agent went right on asking for their DNI. Every
+            # per-stage counter is dropped with the stage, so an abandoned
+            # flow's retry history never follows them into the next one.
+            collected_data = {}
+            stage = None
+
         if stage == STAGE_AWAITING_CONFIRMATION:
             pending_action_id = state.get("pending_action_id")
             button_payload = state["button_payload"]
@@ -916,11 +944,22 @@ def create_appointment_node(
                             }
                         new_patient = recovered
 
-                    # Only ever reached via `STAGE_AWAITING_IDENTIFICATION`
-                    # proposing this action, which itself only does so when
-                    # `operation == CREATE_APPOINTMENT_ACTION`. The patient
-                    # already picked their slot before identifying, so
-                    # continue with that exact slot — never re-search.
+                    if collected_data.get("pending_selected_slot") is None:
+                        # Registration reached from reschedule/cancel: there
+                        # is no slot to propose, and a patient created one
+                        # second ago has nothing to reschedule. Booking is
+                        # the only thing left that helps them.
+                        return await _offer_specialties(
+                            conversation_id,
+                            {
+                                **collected_data,
+                                "operation": CREATE_APPOINTMENT_ACTION,
+                                "patient": _patient_to_primitives(new_patient),
+                            },
+                        )
+                    # The patient already picked their slot before
+                    # identifying, so continue with that exact slot — never
+                    # re-search.
                     return await _propose_selected_slot(
                         conversation_id, _patient_to_primitives(new_patient), collected_data
                     )
@@ -1152,26 +1191,42 @@ def create_appointment_node(
             parsed = _resolve_identification(state["user_message"], remembered_full_name)
             if parsed is None:
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
+                escalating = retry_count > _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS
+                context: dict[str, object] = {
+                    "situacion": (
+                        "Todavía falta el nombre completo o el DNI para poder buscar al "
+                        "paciente en el sistema."
+                    ),
+                    "formato_requerido": (
+                        "Nombre completo y DNI en un mismo mensaje, ejemplo: "
+                        "Juan Pérez, 30123456. Incluí ese ejemplo en tu respuesta."
+                    ),
+                    # The model used to be told WE had failed ("no pudimos
+                    # identificar", "no llegué a registrar bien tus datos"),
+                    # and it dutifully apologised for a broken system on
+                    # every turn. State what is still missing instead.
+                    "tono": (
+                        "Cordial y breve. No te disculpes ni digas que fallaste o que "
+                        "perdiste los datos: simplemente pedí lo que falta."
+                    ),
+                    "intentos_seguidos": retry_count,
+                }
+                if escalating:
+                    context["instruccion_extra"] = (
+                        "Ofrecele además pasarlo con administración, sin insistir."
+                    )
                 text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
                     "identification_retry",
-                    {
-                        "situacion": (
-                            "El paciente escribió algo, pero no pudimos identificar su "
-                            "nombre completo y su DNI juntos en el mensaje."
-                        ),
-                        "formato_requerido": (
-                            "Nombre completo y DNI en un mismo mensaje, ejemplo: "
-                            "Juan Pérez, 30123456. Incluí ese ejemplo en tu respuesta."
-                        ),
-                        "intentos_seguidos": retry_count,
-                    },
+                    context,
                     _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE,
                 )
+                if escalating:
+                    await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
                 return {
                     "response_text": text,
-                    "response_buttons": None,
+                    "response_buttons": _IDENTIFICATION_ESCAPE_BUTTONS if escalating else None,
                     "requires_handoff": False,
                     "collected_data": {
                         **collected_data,
@@ -1217,15 +1272,17 @@ def create_appointment_node(
                 }
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
             if identified_patient is None:
-                if collected_data.get("operation") != CREATE_APPOINTMENT_ACTION:
-                    # Rescheduling/cancelling requires an existing patient
-                    # with an existing appointment — there is nothing to
-                    # offer to create here.
-                    return {
-                        "response_text": _PATIENT_NOT_FOUND_MESSAGE,
-                        "response_buttons": None,
-                        "requires_handoff": False,
-                    }
+                # Offered WHATEVER they came to do, not just for CREATE.
+                # Gating this on `operation == CREATE` produced the worst
+                # bug this flow has had: a patient who opened with "voy a
+                # llegar más tarde" (read as rescheduling) hit a branch
+                # that returned no `collected_data` at all, so the stage
+                # stayed on identification and every later message came
+                # back through the same reprompt — a loop with no exit.
+                # Someone Dentalink has never seen has no appointment to
+                # reschedule or cancel either, so registering them is the
+                # only move that leads anywhere from here.
+                #
                 # DNI is well-formed but Dentalink has no matching record —
                 # propose creating a new patient rather than dead-ending.
                 # `phone` comes from this WhatsApp contact's own identity
