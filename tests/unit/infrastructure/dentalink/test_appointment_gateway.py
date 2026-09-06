@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -16,6 +17,16 @@ from tests.fixtures.gateways import (
     make_tool_execution_repository,
 )
 from tests.fixtures.seed_objects import make_patient, make_slot
+
+#: Search windows are timezone-aware in production (`_offer_slots` builds
+#: them from `datetime.now(UTC)`), and slots now come back aware too. Naive
+#: windows here used to pass while production raised `TypeError: can't
+#: compare offset-naive and offset-aware datetimes`.
+_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
+
+
+def _at(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=_TZ)
 
 
 class _StubDentalinkClient:
@@ -60,6 +71,7 @@ def _gateway(client: _StubDentalinkClient) -> DentalinkAppointmentGateway:
         default_branch_id="1",
         default_chair_id="5",
         default_duration_minutes=30,
+        clinic_timezone=_TZ,
     )
 
 
@@ -84,7 +96,7 @@ async def test_search_availability_issues_one_request_for_a_single_day_range():
     slots = await gateway.search_availability(
         specialty_id="cleaning",
         professional_id=None,
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 16, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
     )
 
     assert len(client.get_calls) == 1
@@ -96,6 +108,41 @@ async def test_search_availability_issues_one_request_for_a_single_day_range():
         "duracion": {"eq": "30"},
     }
     assert [s.id for s in slots] == ["slot-1"]
+
+
+@pytest.mark.asyncio
+async def test_search_availability_skips_an_unparseable_slot_instead_of_losing_the_day():
+    # One malformed record in the clinic's agenda used to raise straight
+    # out of the whole search, so a single bad row blocked EVERY patient
+    # from booking anything. A slot we cannot read is a slot we cannot
+    # offer — it is not a reason to drop the ones we can.
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v5/agendas": [
+                {
+                    "id": "bad",
+                    "id_profesional": "626",
+                    "fecha": "el martes",
+                    "hora_inicio": "09:00",
+                },
+                {
+                    "id": "good",
+                    "id_profesional": "626",
+                    "fecha": "2026-08-15",
+                    "hora_inicio": "15:30",
+                },
+            ]
+        }
+    )
+    gateway = _gateway(client)
+
+    slots = await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
+    )
+
+    assert [s.id for s in slots] == ["good"]
 
 
 @pytest.mark.asyncio
@@ -118,7 +165,7 @@ async def test_search_availability_filters_out_non_matching_specialty():
     slots = await gateway.search_availability(
         specialty_id="cleaning",
         professional_id=None,
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 16, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
     )
 
     assert slots == []
@@ -132,7 +179,7 @@ async def test_search_availability_includes_professional_filter_when_given():
     await gateway.search_availability(
         specialty_id=None,
         professional_id="626",
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 16, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
     )
 
     _, params = client.get_calls[0]
@@ -148,7 +195,7 @@ async def test_search_availability_issues_one_request_per_calendar_day():
     await gateway.search_availability(
         specialty_id=None,
         professional_id=None,
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 18, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 18, 0, 0)),
     )
 
     dates_queried = [
@@ -199,7 +246,7 @@ async def test_search_availability_stops_querying_once_it_has_enough_slots():
     slots = await gateway.search_availability(
         specialty_id=None,
         professional_id="626",
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 9, 14, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 9, 14, 0, 0)),
         limit=3,
     )
 
@@ -217,7 +264,7 @@ async def test_search_availability_without_a_limit_still_walks_the_whole_window(
     await gateway.search_availability(
         specialty_id=None,
         professional_id=None,
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 18, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 18, 0, 0)),
     )
 
     assert len(client.get_calls) == 3
@@ -329,7 +376,7 @@ async def test_reschedule_appointment_uses_id_sesion_field_name():
     }
     gateway = _gateway(client)
     new_slot = make_slot(
-        id_="slot-2", start=datetime(2026, 8, 2, 11, 0), end=datetime(2026, 8, 2, 11, 30)
+        id_="slot-2", start=_at(2026, 8, 2, 11, 0), end=_at(2026, 8, 2, 11, 30)
     )
 
     appointment = await gateway.reschedule_appointment("55", new_slot, idempotency_key="key-2")
@@ -425,7 +472,7 @@ async def test_search_availability_records_a_completed_tool_execution():
         await gateway.search_availability(
             specialty_id="cleaning",
             professional_id=None,
-            date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 16, 0, 0)),
+            date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
         )
 
     executions = await tool_execution_repository.get_by_agent_run_id("run-1")
@@ -476,7 +523,7 @@ async def test_search_availability_does_not_record_anything_outside_a_trace_cont
     slots = await gateway.search_availability(
         specialty_id=None,
         professional_id=None,
-        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 16, 0, 0)),
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
     )
 
     assert slots == []

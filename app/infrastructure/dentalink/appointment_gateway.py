@@ -1,4 +1,5 @@
-from datetime import timedelta
+import logging
+from datetime import timedelta, tzinfo
 
 from app.application.errors.error_types import (
     APPOINTMENT_NOT_FOUND,
@@ -29,6 +30,8 @@ from app.infrastructure.dentalink.schemas import (
     slot_from_agenda,
 )
 from app.infrastructure.observability.tool_tracing import traced_call
+
+logger = logging.getLogger(__name__)
 
 _PROVIDER = "dentalink"
 
@@ -110,11 +113,13 @@ class DentalinkAppointmentGateway:
         default_branch_id: str,
         default_chair_id: str,
         default_duration_minutes: int,
+        clinic_timezone: tzinfo,
     ) -> None:
         self._client = client
         self._default_branch_id = default_branch_id
         self._default_chair_id = default_chair_id
         self._default_duration_minutes = default_duration_minutes
+        self._clinic_timezone = clinic_timezone
         self._cancellation_state_id: str | None = None
         self._cancellation_state_resolved = False
 
@@ -160,9 +165,22 @@ class DentalinkAppointmentGateway:
                     params=build_q_param(filters, allowed_fields=_AGENDA_FILTER_FIELDS),
                 )
                 for raw_slot in as_list(raw_slots):
-                    slot = slot_from_agenda(
-                        raw_slot, default_duration_minutes=self._default_duration_minutes
-                    )
+                    try:
+                        slot = slot_from_agenda(
+                            raw_slot,
+                            default_duration_minutes=self._default_duration_minutes,
+                            timezone=self._clinic_timezone,
+                        )
+                    except DentalinkInvalidResponseError:
+                        # A slot we cannot read is a slot we cannot offer —
+                        # not a reason to drop the ones we can. Before this,
+                        # one malformed row in the clinic's agenda raised
+                        # straight out of the search and blocked every
+                        # patient from booking anything.
+                        logger.warning(
+                            "dentalink.unparseable_agenda_slot day=%s raw=%r", day, raw_slot
+                        )
+                        continue
                     if specialty_id is not None and slot.specialty_id != specialty_id:
                         continue
                     if date_range.contains(slot.time_range.start):
@@ -225,7 +243,11 @@ class DentalinkAppointmentGateway:
             cancelled_state_id = await self._resolve_cancellation_state_id()
             raw_citas = await self._client.get(f"/v1/pacientes/{patient_id}/citas")
             return [
-                appointment_from_cita(raw, cancelled_state_id=cancelled_state_id)
+                appointment_from_cita(
+                    raw,
+                    cancelled_state_id=cancelled_state_id,
+                    timezone=self._clinic_timezone,
+                )
                 for raw in as_list(raw_citas)
             ]
 
@@ -264,7 +286,9 @@ class DentalinkAppointmentGateway:
                 "duracion": duration_minutes,
             }
             raw = await self._client.post("/v1/citas/", json=payload)
-            return appointment_from_cita(as_dict(raw), cancelled_state_id=None)
+            return appointment_from_cita(
+                as_dict(raw), cancelled_state_id=None, timezone=self._clinic_timezone
+            )
 
         return await traced_call(
             tool_name="CreateAppointmentTool",
@@ -301,7 +325,9 @@ class DentalinkAppointmentGateway:
                 if exc.status_code == 404:
                     raise AppointmentNotFoundError(appointment_id) from exc
                 raise
-            return appointment_from_cita(as_dict(raw), cancelled_state_id=None)
+            return appointment_from_cita(
+                as_dict(raw), cancelled_state_id=None, timezone=self._clinic_timezone
+            )
 
         return await traced_call(
             tool_name="RescheduleAppointmentTool",
