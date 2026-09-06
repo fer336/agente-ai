@@ -202,6 +202,17 @@ class IngestMessageUseCase:
             # handoff to the Etapa 5 seam is skipped.
             return
 
+        if is_new_conversation:
+            # The welcome sent above IS the answer to a first message: it
+            # greets, says what the bot can do, and offers the menu.
+            # Running the agent for that same turn sent the patient two
+            # near-identical messages seconds apart — the welcome, then
+            # the agent's own "no te entendí" carrying the very same menu
+            # (seen live on a real first "Hola"). The message stays
+            # persisted for history; only this one turn's agent hand-off
+            # is skipped.
+            return
+
         await self._schedule_processing(
             conversation_key,
             message.id,

@@ -221,6 +221,38 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
 
 
 @pytest.mark.asyncio
+async def test_the_welcome_is_the_whole_reply_for_a_brand_new_conversation():
+    # Seen live: a patient's first "Hola" got the welcome AND, seconds
+    # later, the agent's own answer to that same "Hola" — which is the
+    # very same menu worded as "no te entendí". The welcome already IS the
+    # answer to a first message, so the agent must not run for it.
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.01)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+    await asyncio.sleep(0.05)
+
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_second_message_of_a_conversation_does_reach_the_agent():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        debounce_seconds=0.01,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+    await asyncio.sleep(0.05)
+
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_welcome_menu_includes_the_configured_image_when_set():
     messaging_gateway = make_ycloud_messaging_gateway()
     use_case = _build_use_case(
@@ -292,7 +324,13 @@ async def test_agent_mode_proceeds_to_debounce():
 @pytest.mark.asyncio
 async def test_multiple_messages_grouped_into_one_handoff():
     agent_invoker = make_agent_invoker()
-    use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    use_case = _build_use_case(
+        agent_invoker=agent_invoker,
+        conversation_repository=conversation_repository,
+        debounce_seconds=0.05,
+    )
 
     await use_case.execute(
         _make_dto(external_message_id="wamid.1", from_phone="+5491122334455", text="Hola")
@@ -358,8 +396,11 @@ async def test_typing_indicator_failure_does_not_block_the_agent_invocation():
             raise RuntimeError("YCloud is briefly down")
 
     agent_invoker = make_agent_invoker()
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     use_case = _build_use_case(
         agent_invoker=agent_invoker,
+        conversation_repository=conversation_repository,
         send_reply=make_send_reply_use_case(_FailingMessagingGateway()),
         debounce_seconds=0.05,
     )
@@ -399,7 +440,13 @@ async def test_grouped_messages_use_the_last_non_null_button_payload():
 @pytest.mark.asyncio
 async def test_single_message_still_produces_valid_dto():
     agent_invoker = make_agent_invoker()
-    use_case = _build_use_case(agent_invoker=agent_invoker, debounce_seconds=0.05)
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491100000022", mode="agent"))
+    use_case = _build_use_case(
+        agent_invoker=agent_invoker,
+        conversation_repository=conversation_repository,
+        debounce_seconds=0.05,
+    )
 
     await use_case.execute(
         _make_dto(external_message_id="wamid.1", from_phone="+5491100000022", text="Hola sola")

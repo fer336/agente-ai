@@ -90,7 +90,7 @@ def test_settings_defaults_ycloud_and_debounce_fields_when_no_env_vars(monkeypat
     assert settings.ycloud_api_key == ""
     assert settings.ycloud_webhook_secret == ""
     assert settings.ycloud_whatsapp_number == ""
-    assert settings.message_debounce_seconds == 6
+    assert settings.message_debounce_seconds == 3
 
 
 def test_settings_reads_ycloud_and_debounce_fields_from_env(monkeypatch):
