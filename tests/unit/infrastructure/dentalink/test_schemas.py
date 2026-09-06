@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from app.domain.value_objects.appointment_id import AppointmentId
@@ -65,6 +67,28 @@ def test_slot_from_agenda_falls_back_to_id_dentista_and_default_duration():
 
     assert slot.professional_id == "900"
     assert slot.time_range.duration().total_seconds() == 45 * 60
+
+
+def test_slot_from_agenda_parses_the_day_first_dates_real_dentalink_sends():
+    # Seen in production: `/v5/agendas` answers `"fecha": "07/09/2026"`,
+    # not the ISO date the docs' examples show. `datetime.fromisoformat`
+    # rejects it, which took every booking down with
+    # `DentalinkInvalidResponseError`. Dentalink is Chilean (HealthAtom),
+    # so the day comes first — this is 7 September, not 9 July.
+    slot = slot_from_agenda(
+        {"id_profesional": 626, "fecha": "07/09/2026", "hora_inicio": "10:30"},
+        default_duration_minutes=30,
+    )
+
+    assert slot.time_range.start == datetime(2026, 9, 7, 10, 30)
+
+
+def test_slot_from_agenda_still_rejects_a_date_that_is_neither_format():
+    with pytest.raises(DentalinkInvalidResponseError):
+        slot_from_agenda(
+            {"id_profesional": 1, "fecha": "el martes", "hora_inicio": "10:30"},
+            default_duration_minutes=30,
+        )
 
 
 def test_slot_from_agenda_raises_when_professional_id_is_missing():

@@ -218,9 +218,29 @@ def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | Non
 
 
 def _parse_datetime(fecha: str, hora: str) -> datetime:
+    """Parses Dentalink's `fecha` + `hora_inicio` pair, in either format it sends.
+
+    The docs' examples are ISO (`2026-08-15`), but a real account's
+    `/v5/agendas` answers day-first (`07/09/2026`) — which
+    `datetime.fromisoformat` rejects, and which took every booking down
+    in production with `DentalinkInvalidResponseError`. Both are accepted
+    here rather than picking one, since the same helper reads `/v1/citas`
+    too and the two endpoints are not known to agree.
+
+    Day-first, not month-first: Dentalink is Chilean (HealthAtom), and the
+    production sample `07/09/2026` was a slot for the day after 2026-09-06
+    — September 7th, which month-first would have read as a date two
+    months in the past. Guessing per-value from whether a component
+    exceeds 12 is NOT an option: it would silently mis-date every
+    unambiguous day (`07/09` -> July 9th) while getting `13/09` right.
+    """
     hora_normalized = hora if len(hora) > 5 else f"{hora}:00"
     try:
         return datetime.fromisoformat(f"{fecha}T{hora_normalized}")
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(f"{fecha} {hora_normalized}", "%d/%m/%Y %H:%M:%S")
     except ValueError as exc:
         raise DentalinkInvalidResponseError(
             f"could not parse Dentalink fecha/hora as a datetime: {fecha!r} {hora!r}"
