@@ -325,13 +325,26 @@ class IngestMessageUseCase:
         # 7's dedicated worker process exists. Superseded runs self-detect
         # via `DebounceTracker.is_stale()` in `_debounce_and_process` rather
         # than being explicitly cancelled.
-        task = asyncio.create_task(self._debounce_and_process(conversation_key, token))
+        # A button tap is atomic and deliberate: the patient picked one of
+        # the options the agent itself offered, and there is no second half
+        # of the thought still being typed. Waiting out the debounce window
+        # for it only adds dead time to menus, slot picks and confirmations.
+        # Free text is the only thing that arrives in bursts, so it is the
+        # only thing that still pays for the window.
+        task = asyncio.create_task(
+            self._debounce_and_process(
+                conversation_key, token, skip_debounce=button_payload is not None
+            )
+        )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _debounce_and_process(self, conversation_key: str, token: str) -> None:
+    async def _debounce_and_process(
+        self, conversation_key: str, token: str, *, skip_debounce: bool = False
+    ) -> None:
         config = await self._runtime_config_service.get_config()
-        await asyncio.sleep(config.debounce_seconds)
+        if not skip_debounce:
+            await asyncio.sleep(config.debounce_seconds)
 
         if await self._debounce_tracker.is_stale(conversation_key, token):
             # A newer message re-touched the window; the newer scheduled

@@ -59,15 +59,17 @@ class Settings(BaseSettings):
     dentalink_default_chair_id: str = ""
     dentalink_default_duration_minutes: int = 30
 
-    #: Dead time every patient waits before the agent even starts, so it
-    #: is charged on top of the LLM's own ~2-3s. Kept short on purpose:
-    #: `DebounceTracker.touch()` RESTARTS this window on every new message,
-    #: so someone typing in bursts still gets their messages grouped into
-    #: one reply — the base value only decides how long the patient who
-    #: sent a single message waits for nothing. WhatsApp gives no "user is
-    #: typing" signal (verified against YCloud's full webhook event list),
-    #: so a message arriving is the only cue available.
-    message_debounce_seconds: int = 3
+    #: How long FREE TEXT waits before the agent starts, so it is charged
+    #: on top of the LLM's own ~2-3s. `DebounceTracker.touch()` RESTARTS
+    #: this window on every new message, so someone typing in bursts gets
+    #: their messages grouped into one reply — the base value only decides
+    #: how long the patient who sent a single message waits for nothing.
+    #: WhatsApp gives no "user is typing" signal (verified against YCloud's
+    #: full webhook event list), so a message arriving is the only cue.
+    #: Button taps do NOT wait at all — see `IngestMessageUseCase.
+    #: _schedule_processing`, which skips the window when a
+    #: `button_payload` is present.
+    message_debounce_seconds: int = 6
     #: PRD.md §68's documented name/default — how long a `PendingAction`
     #: proposal stays confirmable before the (not-yet-built) expiry worker
     #: would expire it (PRD.md §16.1).

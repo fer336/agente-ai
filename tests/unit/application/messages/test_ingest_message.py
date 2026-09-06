@@ -236,6 +236,47 @@ async def test_the_welcome_is_the_whole_reply_for_a_brand_new_conversation():
 
 
 @pytest.mark.asyncio
+async def test_a_button_tap_skips_the_debounce_window_entirely():
+    # A button tap is atomic and deliberate — nobody taps "Confirmar" and
+    # then keeps typing the same thought — so there is nothing to wait
+    # for. Free text is the only thing that arrives in bursts.
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        debounce_seconds=30,
+    )
+
+    await use_case.execute(
+        _make_dto(from_phone="+5491122334455", button_payload="CONFIRM_APPOINTMENT")
+    )
+    await asyncio.sleep(0.05)
+
+    # Answered well inside a 30s window that free text would still be
+    # waiting out.
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_free_text_still_waits_out_its_debounce_window():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        debounce_seconds=30,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455", text="quiero un turno"))
+    await asyncio.sleep(0.05)
+
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
 async def test_the_second_message_of_a_conversation_does_reach_the_agent():
     conversation_repository = make_conversation_repository()
     await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
