@@ -74,6 +74,42 @@ async def test_fallback_node_tracks_consecutive_attempts_in_collected_data():
 
 
 @pytest.mark.asyncio
+async def test_first_fallback_never_tells_the_llm_to_escalate():
+    # Seen live: the very first "Hola" came back as "ya intentamos un par
+    # de veces...", because the escalation instruction was handed to the
+    # model on every turn, not only on a repeat miss.
+    seen: list[ResponseContext] = []
+
+    class _RecordingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            seen.append(context)
+            return "ok"
+
+    node = create_fallback_node(_RecordingLLMProvider())
+
+    await node(make_agent_state(user_message="Hola", collected_data={}))
+
+    assert seen[0].collected_data["intentos_seguidos_sin_resolver"] == 1
+    assert not any("administración" in str(value) for value in seen[0].collected_data.values())
+
+
+@pytest.mark.asyncio
+async def test_repeat_fallback_does_tell_the_llm_to_escalate():
+    seen: list[ResponseContext] = []
+
+    class _RecordingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            seen.append(context)
+            return "ok"
+
+    node = create_fallback_node(_RecordingLLMProvider())
+
+    await node(make_agent_state(user_message="???", collected_data={"fallback_count": 1}))
+
+    assert any("administración" in str(value) for value in seen[0].collected_data.values())
+
+
+@pytest.mark.asyncio
 async def test_fallback_node_tells_the_llm_how_many_consecutive_attempts_happened():
     seen_contexts: list[ResponseContext] = []
 

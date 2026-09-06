@@ -23,6 +23,10 @@ _MAIN_MENU_MESSAGE = (
     "Noto que las opciones que te dimos no son las que buscás. Elegí una de estas, o si "
     "preferís hablar con administración tocá esa opción:"
 )
+#: A first miss gets a plain "no te entendí"; only a repeat one
+#: offers administración.
+_ESCALATE_AFTER_ATTEMPTS = 2
+
 _MAIN_MENU_BUTTONS = [
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Turnos"),
     InteractiveButton(id=MENU_SPECIALTIES_PAYLOAD, title="Especialidades"),
@@ -52,22 +56,29 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
         collected_data = state["collected_data"]
         fallback_count = cast(int, collected_data.get("fallback_count", 0)) + 1
 
+        context: dict[str, object] = {
+            "situacion": (
+                "El paciente escribió algo que no coincide con ninguna opción "
+                "del menú principal de la clínica."
+            ),
+            "opciones_del_menu": ["Turnos", "Especialidades", "Administración"],
+            "intentos_seguidos_sin_resolver": fallback_count,
+        }
+        if fallback_count >= _ESCALATE_AFTER_ATTEMPTS:
+            # Only ever added on a REPEAT miss. Handing this instruction to
+            # the model on every turn made a patient's very first "Hola"
+            # come back as "ya intentamos un par de veces..." — the model
+            # follows the instruction whether or not it actually applies.
+            context["instruccion_extra"] = (
+                "Notá en el mensaje que ya lo intentamos antes y ofrecele con "
+                "calidez pasarlo directo con administración."
+            )
+
         text = await generate_or_fallback(
             llm_provider,
             state["conversation_id"],
             "fallback",
-            {
-                "situacion": (
-                    "El paciente escribió algo que no coincide con ninguna opción "
-                    "del menú principal de la clínica."
-                ),
-                "opciones_del_menu": ["Turnos", "Especialidades", "Administración"],
-                "intentos_seguidos_sin_resolver": fallback_count,
-                "si_2_o_mas_intentos": (
-                    "Notá en el mensaje que ya lo intentamos antes y ofrecele con "
-                    "calidez pasarlo directo con administración."
-                ),
-            },
+            context,
             _MAIN_MENU_MESSAGE,
         )
 
