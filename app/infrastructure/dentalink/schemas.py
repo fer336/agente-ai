@@ -18,7 +18,7 @@ schema. Confirm every field name against real Dentalink payloads before
 production use.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 
 from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
@@ -65,14 +65,16 @@ def professional_from_dentista(raw: dict[str, object]) -> Professional:
     )
 
 
-def slot_from_agenda(raw: dict[str, object], *, default_duration_minutes: int) -> AppointmentSlot:
+def slot_from_agenda(
+    raw: dict[str, object], *, default_duration_minutes: int, timezone: tzinfo
+) -> AppointmentSlot:
     professional_id = raw.get("id_profesional", raw.get("id_dentista"))
     if professional_id is None:
         raise DentalinkInvalidResponseError("agenda slot is missing id_profesional/id_dentista")
     if "fecha" not in raw or "hora_inicio" not in raw:
         raise DentalinkInvalidResponseError("agenda slot is missing fecha/hora_inicio")
 
-    start = _parse_datetime(str(raw["fecha"]), str(raw["hora_inicio"]))
+    start = _parse_datetime(str(raw["fecha"]), str(raw["hora_inicio"]), timezone)
     duration_minutes = int(str(raw.get("duracion", default_duration_minutes)))
     end = start + timedelta(minutes=duration_minutes)
 
@@ -85,13 +87,17 @@ def slot_from_agenda(raw: dict[str, object], *, default_duration_minutes: int) -
     )
 
 
-def appointment_from_cita(raw: dict[str, object], *, cancelled_state_id: str | None) -> Appointment:
+def appointment_from_cita(
+    raw: dict[str, object], *, cancelled_state_id: str | None, timezone: tzinfo
+) -> Appointment:
     if "id" not in raw:
         raise DentalinkInvalidResponseError("cita record is missing id")
 
     professional_id = raw.get("id_dentista", raw.get("id_profesional", ""))
     duration_minutes = int(str(raw.get("duracion", 30)))
-    start = _parse_datetime(str(raw.get("fecha", "")), str(raw.get("hora_inicio", "00:00")))
+    start = _parse_datetime(
+        str(raw.get("fecha", "")), str(raw.get("hora_inicio", "00:00")), timezone
+    )
     slot = AppointmentSlot(
         id=str(raw.get("id_sesion", raw["id"])),
         professional_id=str(professional_id),
@@ -217,8 +223,18 @@ def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | Non
     return None
 
 
-def _parse_datetime(fecha: str, hora: str) -> datetime:
+def _parse_datetime(fecha: str, hora: str, timezone: tzinfo) -> datetime:
     """Parses Dentalink's `fecha` + `hora_inicio` pair, in either format it sends.
+
+    The result is stamped with the clinic's timezone. Dentalink sends bare
+    wall-clock times with no offset — confirmed by its own 500 trace, which
+    showed it building dates with `America/Argentina/...`. Returning them
+    naive made `DateTimeRange.contains` raise `TypeError: can't compare
+    offset-naive and offset-aware datetimes` against the UTC window
+    `_offer_slots` builds, and would have booked appointments three hours
+    off, since `create_appointment` writes `.date()` and `%H:%M` straight
+    back to Dentalink. Stamping (not converting) is the point: 10:30 in the
+    payload is 10:30 at the clinic, and must read back as 10:30.
 
     The docs' examples are ISO (`2026-08-15`), but a real account's
     `/v5/agendas` answers day-first (`07/09/2026`) — which
@@ -235,16 +251,18 @@ def _parse_datetime(fecha: str, hora: str) -> datetime:
     unambiguous day (`07/09` -> July 9th) while getting `13/09` right.
     """
     hora_normalized = hora if len(hora) > 5 else f"{hora}:00"
+    parsed: datetime | None = None
     try:
-        return datetime.fromisoformat(f"{fecha}T{hora_normalized}")
+        parsed = datetime.fromisoformat(f"{fecha}T{hora_normalized}")
     except ValueError:
-        pass
-    try:
-        return datetime.strptime(f"{fecha} {hora_normalized}", "%d/%m/%Y %H:%M:%S")
-    except ValueError as exc:
-        raise DentalinkInvalidResponseError(
-            f"could not parse Dentalink fecha/hora as a datetime: {fecha!r} {hora!r}"
-        ) from exc
+        try:
+            parsed = datetime.strptime(f"{fecha} {hora_normalized}", "%d/%m/%Y %H:%M:%S")
+        except ValueError as exc:
+            raise DentalinkInvalidResponseError(
+                f"could not parse Dentalink fecha/hora as a datetime: {fecha!r} {hora!r}"
+            ) from exc
+    # An offset Dentalink sent itself wins over the configured default.
+    return parsed.replace(tzinfo=timezone) if parsed.tzinfo is None else parsed
 
 
 def _optional_str(value: object) -> str | None:

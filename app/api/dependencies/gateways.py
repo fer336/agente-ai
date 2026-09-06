@@ -1,4 +1,5 @@
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 from app.api.dependencies.checkpointer import get_agent_checkpointer
 from app.api.dependencies.config import get_runtime_config_service
@@ -67,6 +68,7 @@ def _get_real_appointment_gateway() -> DentalinkAppointmentGateway:
         default_branch_id=settings.dentalink_default_branch_id,
         default_chair_id=settings.dentalink_default_chair_id,
         default_duration_minutes=settings.dentalink_default_duration_minutes,
+        clinic_timezone=ZoneInfo(settings.clinic_timezone),
     )
 
 
