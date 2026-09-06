@@ -360,11 +360,32 @@ def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPoo
     return pool
 
 
+#: The domain types this graph puts in `collected_data`, and therefore into
+#: every checkpoint. LangGraph warns on deserializing any type not declared
+#: here ("Deserializing unregistered type ... This will be blocked in a
+#: future version") and will eventually refuse outright — declaring them is
+#: what keeps the appointment cursor readable across an upgrade. Only
+#: plain, trusted dataclasses of ours belong on this list.
+_CHECKPOINT_MSGPACK_MODULES = (
+    ("app.domain.value_objects.interactive_button", "InteractiveButton"),
+    ("app.domain.entities.specialty", "Specialty"),
+    ("app.domain.entities.professional", "Professional"),
+    ("app.domain.entities.appointment_slot", "AppointmentSlot"),
+    ("app.domain.entities.appointment", "Appointment"),
+    ("app.domain.value_objects.date_time_range", "DateTimeRange"),
+    ("app.domain.value_objects.appointment_id", "AppointmentId"),
+)
+
+
 async def create_checkpointer(pool: "PostgresCheckpointerPool") -> "AsyncPostgresSaver":
     """Wraps an open psycopg pool in an `AsyncPostgresSaver` and ensures its
     checkpoint tables exist (`AsyncPostgresSaver.setup()`)."""
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-    saver = AsyncPostgresSaver(pool)
+    saver = AsyncPostgresSaver(
+        pool,
+        serde=JsonPlusSerializer(allowed_msgpack_modules=_CHECKPOINT_MSGPACK_MODULES),
+    )
     await saver.setup()
     return saver

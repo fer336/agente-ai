@@ -48,7 +48,12 @@ class RevalidateAndRescheduleAppointmentUseCase:
                 raise AppointmentSlotUnavailableError(new_slot.id)
 
             still_available = await self._gateway.search_availability(
-                specialty_id=new_slot.specialty_id,
+                # NEVER `new_slot.specialty_id` — see the same comment in
+                # `RevalidateAndCreateAppointmentUseCase`. Real Dentalink
+                # slots always arrive with an empty specialty, so filtering
+                # on a stamped one matches nothing and kills every
+                # confirmation.
+                specialty_id=None,
                 professional_id=new_slot.professional_id,
                 date_range=new_slot.time_range,
             )

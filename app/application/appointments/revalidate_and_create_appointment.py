@@ -65,7 +65,15 @@ class RevalidateAndCreateAppointmentUseCase:
                 raise AppointmentSlotUnavailableError(slot.id)
 
             still_available = await self._gateway.search_availability(
-                specialty_id=slot.specialty_id,
+                # NEVER `slot.specialty_id`. Real Dentalink's `/v5/agendas`
+                # does not return `id_especialidad`, so every slot it
+                # yields carries `specialty_id == ""` — and the appointment
+                # node stamps the patient's chosen specialty onto the slot
+                # immediately before this runs. Filtering on that stamped
+                # value matched nothing and every confirmation died as
+                # "ese horario acaba de ocuparse". The slot id below is
+                # what identifies the slot; the specialty adds nothing.
+                specialty_id=None,
                 professional_id=slot.professional_id,
                 date_range=slot.time_range,
             )
