@@ -18,9 +18,11 @@ class SearchAvailabilityUseCase:
         specialty_id: str | None,
         professional_id: str | None,
         date_range: DateTimeRange,
+        limit: int | None = None,
     ) -> list[AppointmentSlot]:
         return await self._gateway.search_availability(
             specialty_id=specialty_id,
             professional_id=professional_id,
             date_range=date_range,
+            limit=limit,
         )

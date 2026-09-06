@@ -1,5 +1,10 @@
 from app.domain.entities.message import Message
-from app.domain.repositories.llm_provider import ExtractionResult, IntentResult, ResponseContext
+from app.domain.repositories.llm_provider import (
+    ExtractionResult,
+    IntentResult,
+    ResponseContext,
+    UnderstandingResult,
+)
 
 #: `create_fallback_node`'s LLM-generated wording, faked here with fixed
 #: variety keyed by `intentos_seguidos_sin_resolver` — same "usable
@@ -69,6 +74,30 @@ class FakeLLMProvider:
         if any(keyword in lowered for keyword in _APPOINTMENT_KEYWORDS):
             return IntentResult(intent="appointment", confidence=0.9)
         return IntentResult(intent="unknown", confidence=0.0)
+
+    async def understand(self, message: str, context: dict[str, object]) -> UnderstandingResult:
+        """Keyword-based like `classify_intent`, plus the mentions the real
+        provider extracts — enough for the graph to be exercised end to end
+        without a live model."""
+        lowered = message.lower()
+        intent_result = await self.classify_intent(message, context)
+
+        operation = None
+        if any(word in lowered for word in ("cancelar", "anular")):
+            operation = "cancel"
+        elif any(word in lowered for word in ("reagendar", "cambiar", "reprogramar")):
+            operation = "reschedule"
+        elif any(word in lowered for word in _APPOINTMENT_KEYWORDS):
+            operation = "create"
+
+        return UnderstandingResult(
+            intent=intent_result.intent,
+            confidence=intent_result.confidence,
+            answer=None,
+            specialty_mention=None,
+            professional_mention=None,
+            operation_mention=operation,
+        )
 
     async def extract_information(
         self, message: str, required_fields: list[str]

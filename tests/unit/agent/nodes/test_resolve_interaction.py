@@ -7,6 +7,7 @@ from app.agent.nodes.resolve_interaction import (
     MENU_SPECIALTIES_PAYLOAD,
     create_resolve_interaction_node,
 )
+from app.domain.repositories.llm_provider import UnderstandingResult
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 
@@ -17,7 +18,64 @@ async def test_classifies_appointment_intent():
 
     result = await node(make_agent_state(user_message="Quiero pedir un turno"))
 
-    assert result == {"intent": "appointment"}
+    assert result["intent"] == "appointment"
+
+
+@pytest.mark.asyncio
+async def test_a_plain_question_carries_the_models_own_answer():
+    # The whole point of the hybrid: a question the graph has no operation
+    # for gets answered in words instead of bouncing back the menu.
+    class _AnsweringLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(
+                intent="question",
+                confidence=0.95,
+                answer="Sí, atendemos los sábados a la mañana.",
+            )
+
+    node = create_resolve_interaction_node(_AnsweringLLMProvider())
+
+    result = await node(make_agent_state(user_message="¿atienden los sábados?"))
+
+    assert result["intent"] == "question"
+    assert result["collected_data"]["pending_answer"] == "Sí, atendemos los sábados a la mañana."
+
+
+@pytest.mark.asyncio
+async def test_mentions_are_carried_into_collected_data():
+    class _MentioningLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(
+                intent="appointment",
+                confidence=0.9,
+                specialty_mention="ortodoncia",
+                operation_mention="create",
+            )
+
+    node = create_resolve_interaction_node(_MentioningLLMProvider())
+
+    result = await node(make_agent_state(user_message="quiero un turno de ortodoncia"))
+
+    assert result["collected_data"]["specialty_mention"] == "ortodoncia"
+    assert result["collected_data"]["operation_mention"] == "create"
+
+
+@pytest.mark.asyncio
+async def test_a_question_mid_flow_never_derails_an_active_stage():
+    # A stage in progress still wins: only the handoff escape hatch may
+    # interrupt it (PRD.md §24.2), otherwise a stray question would drop
+    # the patient's half-finished booking.
+    class _AnsweringLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="question", confidence=0.95, answer="algo")
+
+    node = create_resolve_interaction_node(_AnsweringLLMProvider())
+
+    result = await node(
+        make_agent_state(user_message="una duda", collected_data={"stage": "awaiting_x"})
+    )
+
+    assert result["intent"] == "appointment"
 
 
 @pytest.mark.asyncio
@@ -26,7 +84,7 @@ async def test_classifies_insurance_intent():
 
     result = await node(make_agent_state(user_message="¿Trabajan con OSDE?"))
 
-    assert result == {"intent": "insurance"}
+    assert result["intent"] == "insurance"
 
 
 @pytest.mark.asyncio
@@ -35,7 +93,7 @@ async def test_classifies_handoff_intent():
 
     result = await node(make_agent_state(user_message="Necesito hablar con una persona"))
 
-    assert result == {"intent": "handoff"}
+    assert result["intent"] == "handoff"
 
 
 @pytest.mark.asyncio
@@ -44,7 +102,7 @@ async def test_classifies_unrecognized_message_as_unknown():
 
     result = await node(make_agent_state(user_message="Hola, buen día"))
 
-    assert result == {"intent": "unknown"}
+    assert result["intent"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -59,7 +117,7 @@ async def test_treats_low_confidence_classification_as_unknown():
 
     result = await node(make_agent_state(user_message="turno tal vez"))
 
-    assert result == {"intent": "unknown"}
+    assert result["intent"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -85,7 +143,7 @@ async def test_insurance_menu_button_payload_routes_to_insurance():
         make_agent_state(user_message="🏥 Obras sociales", button_payload=MENU_INSURANCE_PAYLOAD)
     )
 
-    assert result == {"intent": "insurance"}
+    assert result["intent"] == "insurance"
 
 
 @pytest.mark.asyncio
@@ -96,7 +154,7 @@ async def test_specialties_menu_button_payload_routes_to_specialties():
         make_agent_state(user_message="🦷 Especialidades", button_payload=MENU_SPECIALTIES_PAYLOAD)
     )
 
-    assert result == {"intent": "specialties"}
+    assert result["intent"] == "specialties"
 
 
 @pytest.mark.asyncio
@@ -105,7 +163,7 @@ async def test_classifies_specialties_intent():
 
     result = await node(make_agent_state(user_message="¿Qué especialidades tienen?"))
 
-    assert result == {"intent": "specialties"}
+    assert result["intent"] == "specialties"
 
 
 @pytest.mark.asyncio
@@ -116,7 +174,7 @@ async def test_admin_menu_button_payload_routes_to_handoff():
         make_agent_state(user_message="💬 Administración", button_payload=MENU_ADMIN_PAYLOAD)
     )
 
-    assert result == {"intent": "handoff"}
+    assert result["intent"] == "handoff"
 
 
 @pytest.mark.asyncio
@@ -131,7 +189,7 @@ async def test_unrecognized_button_payload_routes_to_unknown_without_classificat
         make_agent_state(user_message="stale button", button_payload="SOME_STALE_PAYLOAD")
     )
 
-    assert result == {"intent": "unknown"}
+    assert result["intent"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -181,4 +239,4 @@ async def test_active_stage_still_escapes_to_handoff_on_the_prd_global_exception
         )
     )
 
-    assert result == {"intent": "handoff"}
+    assert result["intent"] == "handoff"

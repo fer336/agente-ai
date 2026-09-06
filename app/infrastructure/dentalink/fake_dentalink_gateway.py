@@ -28,14 +28,16 @@ class FakeDentalinkGateway:
         specialty_id: str | None,
         professional_id: str | None,
         date_range: DateTimeRange,
+        limit: int | None = None,
     ) -> list[AppointmentSlot]:
-        return [
+        matches = [
             slot
             for slot in self._available_slots
             if (specialty_id is None or slot.specialty_id == specialty_id)
             and (professional_id is None or slot.professional_id == professional_id)
             and date_range.contains(slot.time_range.start)
         ]
+        return matches if limit is None else matches[:limit]
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:
         return [

@@ -177,6 +177,53 @@ async def test_list_professionals_maps_dentistas_response():
 
 
 @pytest.mark.asyncio
+async def test_search_availability_stops_querying_once_it_has_enough_slots():
+    # `/v5/agendas` only takes ONE date, so a 30-day window used to mean 30
+    # sequential HTTP calls — every time any patient asked for a slot.
+    # Live Dentalink answered `429 Too Many Attempts`. The caller only ever
+    # shows a handful, so stop as soon as that many are in hand.
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v5/agendas": [
+                {
+                    "id": "slot-1",
+                    "id_profesional": "626",
+                    "fecha": "2026-08-15",
+                    "hora_inicio": "09:00",
+                }
+            ]
+        }
+    )
+    gateway = _gateway(client)
+
+    slots = await gateway.search_availability(
+        specialty_id=None,
+        professional_id="626",
+        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 9, 14, 0, 0)),
+        limit=3,
+    )
+
+    # The stub returns one slot per day, so three days cover the limit —
+    # not the full 30-day window.
+    assert len(client.get_calls) == 3
+    assert len(slots) == 3
+
+
+@pytest.mark.asyncio
+async def test_search_availability_without_a_limit_still_walks_the_whole_window():
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+
+    await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(datetime(2026, 8, 15, 0, 0), datetime(2026, 8, 18, 0, 0)),
+    )
+
+    assert len(client.get_calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_list_professionals_filters_by_specialty_server_side():
     # Dentalink's /v1/dentistas supports `q={"id_especialidad":{"eq":N}}`
     # natively — fetching every dentist and filtering in Python is both

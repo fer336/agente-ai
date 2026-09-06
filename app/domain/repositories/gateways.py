@@ -22,7 +22,14 @@ class AppointmentGateway(Protocol):
         specialty_id: str | None,
         professional_id: str | None,
         date_range: DateTimeRange,
-    ) -> list[AppointmentSlot]: ...
+        limit: int | None = None,
+    ) -> list[AppointmentSlot]:
+        """`limit` lets an implementation stop searching early once it has
+        enough slots to show. Dentalink's agenda endpoint only accepts a
+        single date, so a wide `date_range` costs one HTTP call per day —
+        walking all of them after the caller already has what it needs is
+        what got this integration rate-limited (429) in production."""
+        ...
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]: ...
 

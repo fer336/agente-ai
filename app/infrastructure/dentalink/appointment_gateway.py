@@ -123,6 +123,7 @@ class DentalinkAppointmentGateway:
         specialty_id: str | None,
         professional_id: str | None,
         date_range: DateTimeRange,
+        limit: int | None = None,
     ) -> list[AppointmentSlot]:
         """WARNING: pass `specialty_id=None` against a real Dentalink account.
 
@@ -167,10 +168,15 @@ class DentalinkAppointmentGateway:
                     if date_range.contains(slot.time_range.start):
                         slots.append(slot)
 
+                if limit is not None and len(slots) >= limit:
+                    # One HTTP call per day: keep walking the window after
+                    # the caller has enough and Dentalink answers 429.
+                    return slots[:limit]
+
                 day += timedelta(days=1)
                 days_queried += 1
 
-            return slots
+            return slots if limit is None else slots[:limit]
 
         return await traced_call(
             tool_name="SearchAvailabilityTool",

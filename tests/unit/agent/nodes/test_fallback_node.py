@@ -74,6 +74,35 @@ async def test_fallback_node_tracks_consecutive_attempts_in_collected_data():
 
 
 @pytest.mark.asyncio
+async def test_a_pending_answer_is_delivered_instead_of_the_did_not_understand_text():
+    # `resolve_interaction` already had the model answer the question; this
+    # node just delivers it, keeping the menu buttons as a way forward.
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            raise AssertionError("must not re-generate when an answer is already available")
+
+    node = create_fallback_node(_ExplodingLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="¿atienden los sábados?",
+            collected_data={"pending_answer": "Sí, atendemos los sábados a la mañana."},
+        )
+    )
+
+    assert result["response_text"] == "Sí, atendemos los sábados a la mañana."
+    assert [button.id for button in result["response_buttons"]] == [
+        MENU_APPOINTMENT_PAYLOAD,
+        MENU_SPECIALTIES_PAYLOAD,
+        MENU_ADMIN_PAYLOAD,
+    ]
+    # Answering a question is not a failed turn: it must not count towards
+    # the escalate-to-administración counter.
+    assert "fallback_count" not in result["collected_data"]
+    assert "pending_answer" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
 async def test_first_fallback_never_tells_the_llm_to_escalate():
     # Seen live: the very first "Hola" came back as "ya intentamos un par
     # de veces...", because the escalation instruction was handed to the
