@@ -653,6 +653,9 @@ def create_appointment_node(
             specialty_id=None,
             professional_id=cast(str | None, collected_data.get("chosen_professional_id")),
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
+            # Only this many are ever shown, and each extra day searched is
+            # another Dentalink request — see the port's own docstring.
+            limit=_MAX_OPTIONS_SHOWN,
         )
         if not slots:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
