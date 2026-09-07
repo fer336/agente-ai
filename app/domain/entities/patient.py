@@ -16,3 +16,8 @@ class Patient:
     #: `AppointmentGateway.create_appointment`'s caller) never identify by
     #: DNI at all.
     dni: str | None = None
+    #: Only ever populated by the registration Flow (WhatsApp Flow) —
+    #: never required for identification (PRD.md §32 uses full name + DNI
+    #: only), only collected on new-patient registration to relay along
+    #: with the booking confirmation.
+    email: str | None = None

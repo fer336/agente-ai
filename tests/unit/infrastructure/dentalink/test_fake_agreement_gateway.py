@@ -61,5 +61,35 @@ async def test_get_patient_agreements_returns_empty_list_for_unknown_patient():
     assert await gateway.get_patient_agreements("unknown") == []
 
 
+@pytest.mark.asyncio
+async def test_link_patient_agreement_adds_the_agreement_to_that_patient():
+    osde = make_agreement(id_="agr-1", name="OSDE")
+    gateway = make_agreement_gateway(agreements=[osde])
+
+    await gateway.link_patient_agreement("pat-1", "agr-1")
+
+    assert await gateway.get_patient_agreements("pat-1") == [osde]
+
+
+@pytest.mark.asyncio
+async def test_link_patient_agreement_is_idempotent():
+    osde = make_agreement(id_="agr-1", name="OSDE")
+    gateway = make_agreement_gateway(agreements=[osde])
+
+    await gateway.link_patient_agreement("pat-1", "agr-1")
+    await gateway.link_patient_agreement("pat-1", "agr-1")
+
+    assert await gateway.get_patient_agreements("pat-1") == [osde]
+
+
+@pytest.mark.asyncio
+async def test_link_patient_agreement_ignores_an_unknown_agreement_id():
+    gateway = make_agreement_gateway()
+
+    await gateway.link_patient_agreement("pat-1", "unknown")
+
+    assert await gateway.get_patient_agreements("pat-1") == []
+
+
 def test_fake_agreement_gateway_satisfies_agreement_gateway_protocol():
     assert isinstance(FakeAgreementGateway(), AgreementGateway)

@@ -1,6 +1,7 @@
 import pytest
 
 from app.application.messages.send_reply import SendReplyUseCase
+from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
@@ -80,6 +81,47 @@ async def test_send_reply_forwards_the_image_url_to_the_gateway():
     assert messaging_gateway.sent_buttons == [
         (PhoneNumber("+5491122334455"), "¡Hola!", buttons, "https://example.com/logo.png")
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_reply_sends_a_flow_when_given():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    flow = FlowRequest(
+        flow_id="flow-1",
+        flow_screen_id="VERIFICACION",
+        flow_cta="Completar",
+        flow_token="ycloud-+5491122334455",
+    )
+
+    await use_case.execute(
+        to=PhoneNumber("+5491122334455"),
+        text="Verificá tus datos",
+        flow=flow,
+    )
+
+    assert messaging_gateway.sent_flows == [
+        (PhoneNumber("+5491122334455"), "Verificá tus datos", flow)
+    ]
+    assert messaging_gateway.sent_messages == []
+    assert messaging_gateway.sent_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_prefers_flow_over_buttons_when_both_are_given():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    flow = FlowRequest(
+        flow_id="flow-1", flow_screen_id="VERIFICACION", flow_cta="Completar", flow_token="tok"
+    )
+    buttons = [InteractiveButton(id="x", title="X")]
+
+    await use_case.execute(
+        to=PhoneNumber("+5491122334455"), text="Hola", buttons=buttons, flow=flow
+    )
+
+    assert messaging_gateway.sent_flows == [(PhoneNumber("+5491122334455"), "Hola", flow)]
+    assert messaging_gateway.sent_buttons == []
 
 
 @pytest.mark.asyncio

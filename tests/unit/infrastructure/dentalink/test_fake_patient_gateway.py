@@ -75,6 +75,17 @@ async def test_create_patient_stores_and_returns_the_new_patient():
 
 
 @pytest.mark.asyncio
+async def test_create_patient_stores_the_email_when_given():
+    gateway = make_patient_gateway()
+
+    created = await gateway.create_patient(
+        "Maria Soto", _VALID_DNI, PhoneNumber("+56912345678"), email="maria@example.com"
+    )
+
+    assert created.email == "maria@example.com"
+
+
+@pytest.mark.asyncio
 async def test_create_patient_rejects_an_invalid_dni_before_storing_anything():
     gateway = make_patient_gateway()
 

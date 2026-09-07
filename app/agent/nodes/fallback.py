@@ -33,6 +33,41 @@ _MAIN_MENU_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
 ]
 
+#: The clinic's own Google Maps place link (given by the clinic owner) — a
+#: tap opens Maps and routes there directly. Kept as a literal constant and
+#: appended verbatim, never handed to the LLM to reproduce: a model
+#: "retyping" a URL risks mangling a query param or the place id, and
+#: WhatsApp only linkifies an exact URL.
+_CLINIC_MAPS_URL = (
+    "https://www.google.com/maps/place/Smiling+Pilar/@-34.437762,-58.7943606,17z/data="
+    "!3m1!4b1!4m12!1m5!8m4!1e2!2s104198081147178470610!3m1!1e1!3m5!1s0x95bc9f5dadc0c77f:"
+    "0x7773e52613d59177!8m2!3d-34.437762!4d-58.7917857!16s%2Fg%2F11rtqc418z"
+    "?hl=es-419&entry=ttu&g_ep=EgoyMDI2MDkwMi4wIKXMDSoASAFQAw%3D%3D"
+)
+_LOCATION_FALLBACK_MESSAGE = "Así llegás a la clínica, tocá para abrir el mapa:"
+#: Free-text triggers for "where are you / how do I get there" — same
+#: substring-match idiom `agreement.py` uses for coverage-detail keywords.
+_LOCATION_KEYWORDS = (
+    "ubicacion",
+    "ubicación",
+    "donde queda",
+    "dónde queda",
+    "donde quedan",
+    "donde estan",
+    "dónde están",
+    "direccion",
+    "dirección",
+    "como llego",
+    "cómo llego",
+    "como llegar",
+    "cómo llegar",
+)
+
+
+def _asks_for_location(text: str) -> bool:
+    lowered = text.casefold()
+    return any(keyword in lowered for keyword in _LOCATION_KEYWORDS)
+
 
 def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
     """Shows the main menu again for an unrecognized/low-confidence turn (PRD.md §8, §29).
@@ -54,6 +89,33 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
 
     async def node(state: AgentState) -> dict[str, object]:
         collected_data = state["collected_data"]
+
+        if _asks_for_location(state["user_message"]):
+            # Checked before `pending_answer`: the model's own free-text
+            # "question" answer might describe an address from memory
+            # (or nothing at all) instead of the clinic's real, verified
+            # link — this always wins when the patient is asking to get
+            # there, LLM answer or not.
+            intro = await generate_or_fallback(
+                llm_provider,
+                state["conversation_id"],
+                "location",
+                {
+                    "situacion": "El paciente pregunta dónde queda la clínica o cómo llegar.",
+                    "tono": (
+                        "Cordial y breve. No escribas la dirección en texto — el link de "
+                        "Maps que se agrega después ya la resuelve."
+                    ),
+                },
+                _LOCATION_FALLBACK_MESSAGE,
+            )
+            remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
+            return {
+                "response_text": f"{intro}\n{_CLINIC_MAPS_URL}",
+                "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": remaining,
+            }
 
         pending_answer = collected_data.get("pending_answer")
         if isinstance(pending_answer, str) and pending_answer.strip():

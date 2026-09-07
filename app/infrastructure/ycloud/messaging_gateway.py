@@ -1,4 +1,5 @@
 from app.application.errors.error_types import YCLOUD_AUTH_ERROR, YCLOUD_SEND_FAILURE
+from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.observability.tool_tracing import traced_call
@@ -65,6 +66,25 @@ class YCloudMessagingGateway:
             operation="send_buttons",
             request_summary=f"text_length={len(text)} buttons={len(buttons)}",
             call=lambda: self._client.send_buttons(str(to), text, buttons, image_url),
+            response_summary=lambda external_id: f"external_message_id={external_id}",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def send_flow(self, to: PhoneNumber, text: str, flow: FlowRequest) -> str:
+        return await traced_call(
+            tool_name="SendFlowTool",
+            provider=_PROVIDER,
+            operation="send_flow",
+            request_summary=f"text_length={len(text)} flow_id={flow.flow_id}",
+            call=lambda: self._client.send_flow(
+                str(to),
+                text,
+                flow_id=flow.flow_id,
+                flow_screen_id=flow.flow_screen_id,
+                flow_cta=flow.flow_cta,
+                flow_token=flow.flow_token,
+            ),
             response_summary=lambda external_id: f"external_message_id={external_id}",
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,

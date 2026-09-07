@@ -2,6 +2,7 @@ import pytest
 
 from app.domain.entities.tool_execution import COMPLETED, FAILED
 from app.domain.repositories.gateways import MessagingGateway
+from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.observability.trace_context import TraceContext, use_trace_context
@@ -18,6 +19,7 @@ class _StubYCloudClient:
     def __init__(self) -> None:
         self.text_calls: list[tuple[str, str]] = []
         self.button_calls: list[tuple[str, str, list[InteractiveButton], str | None]] = []
+        self.flow_calls: list[tuple[str, str, str, str, str, str]] = []
         self.contacts: dict[str, dict[str, object]] = {}
 
     async def send_text(self, to: str, text: str) -> str:
@@ -33,6 +35,18 @@ class _StubYCloudClient:
     ) -> str:
         self.button_calls.append((to, text, buttons, image_url))
         return "wamid.stub-2"
+
+    async def send_flow(
+        self,
+        to: str,
+        body_text: str,
+        flow_id: str,
+        flow_screen_id: str,
+        flow_cta: str,
+        flow_token: str,
+    ) -> str:
+        self.flow_calls.append((to, body_text, flow_id, flow_screen_id, flow_cta, flow_token))
+        return "wamid.stub-3"
 
     async def get_contact(self, contact_id: str) -> dict[str, object]:
         return self.contacts.get(contact_id, {})
@@ -77,6 +91,34 @@ async def test_send_buttons_forwards_the_image_url_to_the_client():
     assert client.button_calls == [
         ("+5491122334455", "¡Hola!", buttons, "https://example.com/logo.png")
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_flow_delegates_to_client_with_stringified_phone():
+    client = _StubYCloudClient()
+    gateway = YCloudMessagingGateway(client)
+    flow = FlowRequest(
+        flow_id="flow-1",
+        flow_screen_id="VERIFICACION",
+        flow_cta="Completar",
+        flow_token="ycloud-+5491122334455",
+    )
+
+    external_id = await gateway.send_flow(
+        PhoneNumber("+5491122334455"), "Verificá tus datos", flow
+    )
+
+    assert client.flow_calls == [
+        (
+            "+5491122334455",
+            "Verificá tus datos",
+            "flow-1",
+            "VERIFICACION",
+            "Completar",
+            "ycloud-+5491122334455",
+        )
+    ]
+    assert external_id == "wamid.stub-3"
 
 
 def test_ycloud_messaging_gateway_satisfies_messaging_gateway_protocol():

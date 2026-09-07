@@ -45,6 +45,7 @@ from app.domain.exceptions.errors import (
 )
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import (
+    AgreementGateway,
     AppointmentGateway,
     PatientGateway,
     SpecialtyGateway,
@@ -53,6 +54,8 @@ from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.dni import Dni
+from app.domain.value_objects.flow_request import FlowRequest
+from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
@@ -60,6 +63,10 @@ from app.domain.value_objects.menu_payloads import (
     MENU_SPECIALTIES_PAYLOAD,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.ycloud.flows import (
+    REGISTRATION_FLOW_SCREEN_ID,
+    VERIFICATION_FLOW_SCREEN_ID,
+)
 
 #: Each day in the window is one sequential Dentalink request (the API only
 #: filters `fecha` by exact day, never by range — see the gateway's own
@@ -87,6 +94,16 @@ STAGE_AWAITING_OPERATION_SELECTION = "awaiting_operation_selection"
 STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
+#: Flow-based identification (this session's own brief, no PRD.md
+#: section): sent instead of `STAGE_AWAITING_IDENTIFICATION`'s free-text
+#: ask whenever `verification_flow_id` is configured — see
+#: `_begin_identification`. A found patient moves to
+#: `STAGE_AWAITING_VERIFICATION_CONFIRMATION` to confirm the data is
+#: really theirs before it's ever used; not-found (or a rejected
+#: confirmation) moves straight to `STAGE_AWAITING_REGISTRATION_FLOW`.
+STAGE_AWAITING_VERIFICATION_FLOW = "awaiting_verification_flow"
+STAGE_AWAITING_VERIFICATION_CONFIRMATION = "awaiting_verification_confirmation"
+STAGE_AWAITING_REGISTRATION_FLOW = "awaiting_registration_flow"
 STAGE_AWAITING_APPOINTMENT_SELECTION = "awaiting_appointment_selection"
 STAGE_AWAITING_SLOT_SELECTION = "awaiting_slot_selection"
 STAGE_AWAITING_CONFIRMATION = "awaiting_confirmation"
@@ -184,6 +201,17 @@ _ASK_NAME_ONLY_MESSAGE = (
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
+)
+_SEND_VERIFICATION_FLOW_MESSAGE = (
+    "Te mando un formulario cortito para verificar tus datos — tocá el botón de abajo."
+)
+_SEND_REGISTRATION_FLOW_MESSAGE = (
+    "No te encontramos registrado todavía. Te mando un formulario para completar tus "
+    "datos — tocá el botón de abajo."
+)
+_FLOW_REMINDER_MESSAGE = (
+    "Por favor, completá el formulario que te mandé arriba — todavía no puedo tomar "
+    "estos datos por texto."
 )
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
@@ -450,6 +478,14 @@ def _new_patient_proposal_payload(
     return {"full_name": full_name, "dni": dni, "phone": str(phone)}
 
 
+def _verification_confirmation_message(patient: Patient) -> str:
+    return (
+        "Encontramos estos datos, ¿son correctos?\n\n"
+        f"Nombre: {patient.full_name}\n"
+        f"DNI: {patient.dni}"
+    )
+
+
 def _success_message(appointment: Appointment) -> str:
     slot = appointment.slot
     return (
@@ -549,6 +585,9 @@ def create_appointment_node(
     confirmation_timeout_seconds: int,
     llm_provider: LLMProvider,
     specialty_gateway: SpecialtyGateway,
+    agreement_gateway: AgreementGateway,
+    verification_flow_id: str = "",
+    registration_flow_id: str = "",
 ) -> AgentNode:
     """Full turno management stage machine — create, reschedule, cancel
     (PRD.md §9-16, §32, §72).
@@ -658,6 +697,84 @@ def create_appointment_node(
             },
             _ASK_IDENTIFICATION_MESSAGE,
         )
+
+    async def _begin_identification(
+        conversation_id: ConversationId, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Starts identification — sends the verification Flow when one is
+        configured (`verification_flow_id`), else falls back to the
+        original free-text ask. The three entry points that used to call
+        `_ask_identification_message` directly (post-slot, reschedule,
+        cancel) all start here now, so the Flow rollout is a single
+        on/off switch rather than three places to keep in sync.
+        """
+        if verification_flow_id:
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            intro = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "send_verification_flow",
+                {
+                    "situacion": (
+                        "Hay que identificar al paciente antes de seguir — le vamos a "
+                        "mandar un formulario corto para que confirme nombre y DNI."
+                    ),
+                },
+                _SEND_VERIFICATION_FLOW_MESSAGE,
+            )
+            return {
+                "response_text": intro,
+                "response_buttons": None,
+                "response_flow": FlowRequest(
+                    flow_id=verification_flow_id,
+                    flow_screen_id=VERIFICATION_FLOW_SCREEN_ID,
+                    flow_cta="Verificar",
+                    flow_token=str(conversation_id),
+                ),
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "stage": STAGE_AWAITING_VERIFICATION_FLOW},
+            }
+        return {
+            "response_text": await _ask_identification_message(conversation_id),
+            "response_buttons": None,
+            "requires_handoff": False,
+            "collected_data": {**collected_data, "stage": STAGE_AWAITING_IDENTIFICATION},
+        }
+
+    async def _begin_registration(
+        conversation_id: ConversationId, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Sends the registration Flow — reached when verification found no
+        match for the patient, or they rejected the found data as not
+        theirs. Requires `registration_flow_id` to be configured; callers
+        only ever reach here after `verification_flow_id` already sent a
+        Flow successfully, so both are expected to be configured together.
+        """
+        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+        intro = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "send_registration_flow",
+            {
+                "situacion": (
+                    "No encontramos al paciente registrado — hay que pedirle que "
+                    "complete sus datos con un formulario."
+                ),
+            },
+            _SEND_REGISTRATION_FLOW_MESSAGE,
+        )
+        return {
+            "response_text": intro,
+            "response_buttons": None,
+            "response_flow": FlowRequest(
+                flow_id=registration_flow_id,
+                flow_screen_id=REGISTRATION_FLOW_SCREEN_ID,
+                flow_cta="Completar",
+                flow_token=str(conversation_id),
+            ),
+            "requires_handoff": False,
+            "collected_data": {**collected_data, "stage": STAGE_AWAITING_REGISTRATION_FLOW},
+        }
 
     async def _cancel_follow_up(repositories: ProposalRepositories, pending_action_id: str) -> None:
         scheduled_actions = repositories.scheduled_actions
@@ -1169,17 +1286,9 @@ def create_appointment_node(
                 # this is the moment to ask who they are — the reordering
                 # this session's brief asked for. The chosen slot is
                 # carried forward so identification never re-searches.
-                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                return {
-                    "response_text": await _ask_identification_message(conversation_id),
-                    "response_buttons": None,
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **collected_data,
-                        "stage": STAGE_AWAITING_IDENTIFICATION,
-                        "pending_selected_slot": selected,
-                    },
-                }
+                return await _begin_identification(
+                    conversation_id, {**collected_data, "pending_selected_slot": selected}
+                )
 
             pending_action = await propose_appointment.execute(
                 conversation_id,
@@ -1280,6 +1389,107 @@ def create_appointment_node(
 
             raise AssertionError(  # pragma: no cover - impossible by construction
                 f"unsupported operation: {operation}"
+            )
+
+        if stage == STAGE_AWAITING_VERIFICATION_FLOW:
+            flow_fields = parse_flow_response_payload(state["button_payload"])
+            if flow_fields is None:
+                # The patient typed something instead of using the Flow —
+                # it's still open on their screen, so remind them rather
+                # than falling back to guessing from free text.
+                return {
+                    "response_text": _FLOW_REMINDER_MESSAGE,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                }
+            full_name = str(flow_fields.get("full_name") or "").strip()
+            raw_dni = str(flow_fields.get("dni") or "").strip()
+            try:
+                validated_dni = Dni(raw_dni)
+            except ValueError:
+                # The Flow's own required/number-only fields should have
+                # caught this, but if they somehow didn't, re-sending the
+                # same Flow is safer than getting stuck on bad data.
+                return await _begin_identification(conversation_id, collected_data)
+            identified_patient = await identify_patient.execute(full_name, validated_dni.value)
+            if identified_patient is None:
+                return await _begin_registration(conversation_id, collected_data)
+            await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+            return {
+                "response_text": _verification_confirmation_message(identified_patient),
+                "response_buttons": _CONFIRM_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": {
+                    **collected_data,
+                    "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+                    "patient": _patient_to_primitives(identified_patient),
+                    "verified_patient_id": identified_patient.id,
+                },
+            }
+
+        if stage == STAGE_AWAITING_VERIFICATION_CONFIRMATION:
+            button_payload = state["button_payload"]
+            if button_payload == CONFIRM_APPOINTMENT_PAYLOAD:
+                patient_primitives = cast(dict[str, object], collected_data.get("patient", {}))
+                patient_id = cast(str, collected_data.get("verified_patient_id", ""))
+                if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+                    return await _propose_selected_slot(
+                        conversation_id, patient_primitives, collected_data
+                    )
+                return await _offer_appointments(
+                    conversation_id, patient_primitives, patient_id, collected_data
+                )
+            if button_payload == REJECT_APPOINTMENT_PAYLOAD:
+                # "That's not me" — the found record isn't whoever is
+                # messaging; collect fresh data instead of risking someone
+                # else's identity.
+                return await _begin_registration(conversation_id, collected_data)
+            return {
+                "response_text": _CONFIRMATION_REMINDER,
+                "response_buttons": _CONFIRM_BUTTONS,
+                "requires_handoff": False,
+            }
+
+        if stage == STAGE_AWAITING_REGISTRATION_FLOW:
+            flow_fields = parse_flow_response_payload(state["button_payload"])
+            if flow_fields is None:
+                return {
+                    "response_text": _FLOW_REMINDER_MESSAGE,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                }
+            full_name = str(flow_fields.get("full_name") or "").strip()
+            raw_dni = str(flow_fields.get("dni") or "").strip()
+            email = str(flow_fields.get("email") or "").strip() or None
+            obra_social_name = str(flow_fields.get("obra_social") or "").strip()
+            try:
+                validated_dni = Dni(raw_dni)
+            except ValueError:
+                return await _begin_registration(conversation_id, collected_data)
+            contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
+            try:
+                new_patient = await patient_gateway.create_patient(
+                    full_name, validated_dni.value, contact_phone, email=email
+                )
+            except PatientAlreadyExistsError:
+                # Race: someone else registered this exact DNI between the
+                # verification check and this submission — look them up
+                # instead of failing the turn.
+                recovered = await identify_patient.execute(full_name, validated_dni.value)
+                if recovered is None:
+                    return await _begin_registration(conversation_id, collected_data)
+                new_patient = recovered
+            if obra_social_name:
+                agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
+                if agreement is not None:
+                    await agreement_gateway.link_patient_agreement(new_patient.id, agreement.id)
+            patient_primitives = _patient_to_primitives(new_patient)
+            if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+                return await _propose_selected_slot(
+                    conversation_id, patient_primitives, collected_data
+                )
+            return await _offer_appointments(
+                conversation_id, patient_primitives, new_patient.id, collected_data
             )
 
         if stage == STAGE_AWAITING_IDENTIFICATION:
@@ -1634,16 +1844,9 @@ def create_appointment_node(
                 return await _offer_specialties(
                     conversation_id, {**collected_data, "operation": operation}
                 )
-            return {
-                "response_text": await _ask_identification_message(conversation_id),
-                "response_buttons": None,
-                "requires_handoff": False,
-                "collected_data": {
-                    **collected_data,
-                    "stage": STAGE_AWAITING_IDENTIFICATION,
-                    "operation": operation,
-                },
-            }
+            return await _begin_identification(
+                conversation_id, {**collected_data, "operation": operation}
+            )
 
         # No stage yet. Before showing the menu, honour whatever the
         # patient already said in prose — `resolve_interaction` left the
@@ -1706,17 +1909,9 @@ def create_appointment_node(
                 conversation_id, {**collected_data, "operation": operation}
             )
         if operation is not None:
-            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            return {
-                "response_text": await _ask_identification_message(conversation_id),
-                "response_buttons": None,
-                "requires_handoff": False,
-                "collected_data": {
-                    **collected_data,
-                    "stage": STAGE_AWAITING_IDENTIFICATION,
-                    "operation": operation,
-                },
-            }
+            return await _begin_identification(
+                conversation_id, {**collected_data, "operation": operation}
+            )
 
         return {
             "response_text": _OPERATION_MENU_MESSAGE,

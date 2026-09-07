@@ -131,7 +131,9 @@ class DentalinkPatientGateway:
             error_type_of=_error_type_of,
         )
 
-    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
+    async def create_patient(
+        self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
+    ) -> Patient:
         """Creates a patient, tied to the requesting contact's own `phone`.
 
         Guardrails, in order: (1) DNI shape is validated before any HTTP
@@ -159,6 +161,13 @@ class DentalinkPatientGateway:
                 "apellidos": apellidos,
                 "celular": phone.value.lstrip("+"),
             }
+            if email is not None:
+                # UNVERIFIED against a live Dentalink account: `email` is a
+                # real, filterable field on `/v1/pacientes` (see
+                # `_ALLOWED_FILTER_FIELDS` above), which strongly suggests
+                # it is also accepted on create — but this hasn't been
+                # confirmed against a real POST response yet.
+                payload["email"] = email
             raw = await self._client.post("/v1/pacientes", json=payload)
             created = as_dict(raw)
             patient_id = created.get("id")
@@ -173,6 +182,7 @@ class DentalinkPatientGateway:
                 full_name=full_name.strip(),
                 phone=phone,
                 dni=validated_dni.value,
+                email=email,
             )
 
         return await traced_call(

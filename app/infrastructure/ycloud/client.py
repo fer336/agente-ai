@@ -16,10 +16,13 @@ class YCloudClient:
     report for the full list of open questions.
     """
 
-    def __init__(self, base_url: str, api_key: str, whatsapp_number: str) -> None:
+    def __init__(
+        self, base_url: str, api_key: str, whatsapp_number: str, waba_id: str = ""
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._whatsapp_number = whatsapp_number
+        self._waba_id = waba_id
 
     async def send_text(self, to: str, text: str) -> str:
         return await self._post_message(
@@ -58,6 +61,75 @@ class YCloudClient:
                 "interactive": interactive,
             }
         )
+
+    async def send_flow(
+        self,
+        to: str,
+        body_text: str,
+        flow_id: str,
+        flow_screen_id: str,
+        flow_cta: str,
+        flow_token: str,
+    ) -> str:
+        """Sends a WhatsApp Flow message — opens the given Flow's terminal
+        screen directly (this codebase's Flows are all single-screen: see
+        `app.infrastructure.ycloud.flows`). `flow_token` is caller-generated
+        and round-trips back in the completion webhook's `nfm_reply`, so it
+        must be enough to correlate the submission to a conversation (this
+        codebase uses the `ConversationId` itself). UNVERIFIED against a
+        live YCloud account — see this module's own docstring.
+        """
+        return await self._post_message(
+            {
+                "from": self._whatsapp_number,
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "flow",
+                    "body": {"text": body_text},
+                    "action": {
+                        "name": "flow",
+                        "parameters": {
+                            "flow_message_version": "3",
+                            "flow_token": flow_token,
+                            "flow_id": flow_id,
+                            "flow_cta": flow_cta,
+                            "flow_action": "navigate",
+                            "flow_action_payload": {"screen": flow_screen_id},
+                        },
+                    },
+                },
+            }
+        )
+
+    async def create_flow(
+        self, name: str, categories: list[str], flow_json: str, publish: bool = False
+    ) -> str:
+        """`POST /v2/whatsapp/flows` — creates (and optionally publishes) a
+        WhatsApp Flow. `flow_json` must already be a JSON **string**
+        (YCloud's `flowJson` field takes the stringified Flow definition,
+        never a nested object — see `app.infrastructure.ycloud.flows`,
+        which builds it with `json.dumps`). One-time setup call, not part
+        of any per-message hot path. UNVERIFIED against a live YCloud
+        account — see this module's own docstring.
+        """
+        url = f"{self._base_url}/v2/whatsapp/flows"
+        payload: dict[str, object] = {
+            "wabaId": self._waba_id,
+            "name": name,
+            "categories": categories,
+            "flowJson": flow_json,
+            "publish": publish,
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers={"X-API-Key": self._api_key}, json=payload)
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+            data = response.json()
+            return str(data["id"])
 
     async def send_typing_indicator(self, wamid: str) -> None:
         """`POST /v2/whatsapp/inboundMessages/{wamid}/typingIndicator` —

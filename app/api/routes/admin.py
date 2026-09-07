@@ -11,6 +11,7 @@ from app.api.dependencies.admin import (
     get_run_query_service,
 )
 from app.api.dependencies.auth import require_csrf, require_role
+from app.api.dependencies.gateways import get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
@@ -21,6 +22,11 @@ from app.domain.entities.agent_run import AgentRun
 from app.domain.entities.error_record import ErrorRecord
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
+from app.infrastructure.ycloud.client import YCloudClient
+from app.infrastructure.ycloud.flows import (
+    build_registration_flow_json,
+    build_verification_flow_json,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -321,4 +327,45 @@ async def get_config(
         groq_configured=bool(settings.groq_api_key),
         ycloud_configured=bool(settings.ycloud_api_key),
         dentalink_configured=bool(settings.dentalink_access_token),
+    )
+
+
+class FlowCreationResponse(BaseModel):
+    verification_flow_id: str
+    registration_flow_id: str
+
+
+@router.post("/flows/create", response_model=FlowCreationResponse)
+async def create_patient_flows(
+    _role: SessionPayload = Depends(require_role(ADMIN_TECHNICAL)),
+    _csrf: SessionPayload = Depends(require_csrf),
+    ycloud_client: YCloudClient = Depends(get_ycloud_client),
+) -> FlowCreationResponse:
+    """One-time setup action (no PRD.md section — this session's own
+    brief): creates and publishes both patient-identification WhatsApp
+    Flows against the real YCloud/Meta account.
+
+    Run this ONCE per environment, then copy the two returned ids into
+    `YCLOUD_VERIFICATION_FLOW_ID`/`YCLOUD_REGISTRATION_FLOW_ID` — nothing
+    persists this response, and re-running creates duplicate Flows rather
+    than updating the existing ones (Meta has no update-in-place for an
+    already-published Flow; editing forks a new draft instead).
+    `ADMIN_TECHNICAL`-only and CSRF-checked, same posture as this panel's
+    other mutating routes.
+    """
+    verification_flow_id = await ycloud_client.create_flow(
+        name="Verificación de paciente",
+        categories=["SIGN_UP"],
+        flow_json=build_verification_flow_json(),
+        publish=True,
+    )
+    registration_flow_id = await ycloud_client.create_flow(
+        name="Registro de paciente",
+        categories=["SIGN_UP"],
+        flow_json=build_registration_flow_json(),
+        publish=True,
+    )
+    return FlowCreationResponse(
+        verification_flow_id=verification_flow_id,
+        registration_flow_id=registration_flow_id,
     )

@@ -10,6 +10,7 @@ from app.api.dependencies.admin import (
     get_error_query_service,
     get_run_query_service,
 )
+from app.api.dependencies.gateways import get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
@@ -354,3 +355,72 @@ async def test_resolve_returns_404_for_a_missing_error():
     )
 
     assert response.status_code == 404
+
+
+# --- §75.3/§74.3: POST /admin/flows/create --------------------------------
+
+
+class _StubYCloudClient:
+    def __init__(self) -> None:
+        self.create_flow_calls: list[dict[str, object]] = []
+
+    async def create_flow(
+        self, name: str, categories: list[str], flow_json: str, publish: bool = False
+    ) -> str:
+        self.create_flow_calls.append(
+            {"name": name, "categories": categories, "flow_json": flow_json, "publish": publish}
+        )
+        return f"flow-{len(self.create_flow_calls)}"
+
+
+@pytest.fixture
+def _stub_ycloud_client() -> _StubYCloudClient:
+    stub = _StubYCloudClient()
+    app.dependency_overrides[get_ycloud_client] = lambda: stub
+    yield stub
+    del app.dependency_overrides[get_ycloud_client]
+
+
+@pytest.mark.asyncio
+async def test_admin_technical_creates_and_publishes_both_flows(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post(
+        "/admin/flows/create",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"verification_flow_id": "flow-1", "registration_flow_id": "flow-2"}
+    assert len(_stub_ycloud_client.create_flow_calls) == 2
+    assert all(call["publish"] is True for call in _stub_ycloud_client.create_flow_calls)
+
+
+@pytest.mark.asyncio
+async def test_creating_flows_is_rejected_without_a_csrf_header(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post("/admin/flows/create", cookies=cookies)
+
+    assert response.status_code == 403
+    assert _stub_ycloud_client.create_flow_calls == []
+
+
+@pytest.mark.asyncio
+async def test_read_only_cannot_create_flows(_stub_ycloud_client: _StubYCloudClient):
+    cookies = _session_cookies(READ_ONLY)
+
+    response = await _post(
+        "/admin/flows/create",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+    )
+
+    assert response.status_code == 403
+    assert _stub_ycloud_client.create_flow_calls == []

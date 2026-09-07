@@ -197,18 +197,19 @@ def _get_fake_ycloud_messaging_gateway() -> FakeYCloudMessagingGateway:
 
 
 @lru_cache
-def _get_ycloud_client() -> YCloudClient:
+def get_ycloud_client() -> YCloudClient:
     settings = get_settings()
     return YCloudClient(
         base_url=settings.ycloud_api_url,
         api_key=settings.ycloud_api_key,
         whatsapp_number=settings.ycloud_whatsapp_number,
+        waba_id=settings.ycloud_waba_id,
     )
 
 
 @lru_cache
 def _get_real_ycloud_messaging_gateway() -> YCloudMessagingGateway:
-    return YCloudMessagingGateway(_get_ycloud_client())
+    return YCloudMessagingGateway(get_ycloud_client())
 
 
 def get_messaging_gateway() -> MessagingGateway:
@@ -231,7 +232,7 @@ def _get_fake_ycloud_handoff_gateway() -> FakeYCloudHandoffGateway:
 
 @lru_cache
 def _get_real_ycloud_handoff_gateway() -> YCloudHandoffGateway:
-    return YCloudHandoffGateway(_get_ycloud_client())
+    return YCloudHandoffGateway(get_ycloud_client())
 
 
 def get_human_handoff_gateway() -> HumanHandoffGateway:
@@ -406,6 +407,8 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         incident_threshold_window_seconds=get_settings().incident_threshold_window_seconds,
         telegram_alert_cooldown_seconds=get_settings().telegram_alert_cooldown_seconds,
         checkpointer_provider=get_agent_checkpointer,
+        verification_flow_id=get_settings().ycloud_verification_flow_id,
+        registration_flow_id=get_settings().ycloud_registration_flow_id,
     )
 
 

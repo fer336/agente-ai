@@ -20,19 +20,24 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_OPERATION_SELECTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
+    STAGE_AWAITING_REGISTRATION_FLOW,
     STAGE_AWAITING_SLOT_SELECTION,
     STAGE_AWAITING_SPECIALTY_SELECTION,
+    STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+    STAGE_AWAITING_VERIFICATION_FLOW,
     _appointment_button,
     create_appointment_node,
 )
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_APPOINTMENT_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
+    make_agreement_gateway,
     make_conversation_repository,
     make_dentalink_gateway,
     make_patient_gateway,
@@ -40,6 +45,7 @@ from tests.fixtures.gateways import (
     make_specialty_gateway,
 )
 from tests.fixtures.seed_objects import (
+    make_agreement,
     make_conversation,
     make_patient,
     make_pending_action,
@@ -77,6 +83,9 @@ async def _make_node_and_conversation(
     conversation_id="conv-1",
     llm_provider=None,
     specialties=None,
+    agreements=None,
+    verification_flow_id="",
+    registration_flow_id="",
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
@@ -105,6 +114,9 @@ async def _make_node_and_conversation(
             if specialties is not None
             else [make_specialty(id_="cleaning", name="Ortodoncia")]
         ),
+        agreement_gateway=make_agreement_gateway(agreements=agreements),
+        verification_flow_id=verification_flow_id,
+        registration_flow_id=registration_flow_id,
     )
     return node, conversation_repository, appointment_gateway
 
@@ -1139,6 +1151,7 @@ async def test_confirmation_stage_confirms_new_patient_creation_and_offers_slots
         specialty_gateway=make_specialty_gateway(
             specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
         ),
+        agreement_gateway=make_agreement_gateway(),
     )
     payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:
@@ -1232,6 +1245,7 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
         specialty_gateway=make_specialty_gateway(
             specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
         ),
+        agreement_gateway=make_agreement_gateway(),
     )
     payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:
@@ -1291,6 +1305,7 @@ async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retr
         specialty_gateway=make_specialty_gateway(
             specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
         ),
+        agreement_gateway=make_agreement_gateway(),
     )
     payload = {"full_name": "cassera", "dni": "30313131", "phone": "+5491122334455"}
     async with repositories_provider() as repositories:
@@ -1953,3 +1968,261 @@ async def test_confirmation_stage_reoffers_slots_when_the_new_slot_was_taken_for
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
+
+
+# --- Flow-based identification (verification + registration Flows) -------
+
+
+@pytest.mark.asyncio
+async def test_begin_identification_sends_the_verification_flow_when_configured():
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(
+        available_slots=[slot], verification_flow_id="flow-verify"
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_professional_id": "prof-1",
+            "available_slots": [slot],
+            "professional_names": {"prof-1": "Dra. Laura Pérez"},
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_VERIFICATION_FLOW
+    assert result["response_flow"].flow_id == "flow-verify"
+    assert result["response_flow"].flow_token == "conv-1"
+    assert result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_begin_identification_falls_back_to_text_when_no_flow_configured():
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_professional_id": "prof-1",
+            "available_slots": [slot],
+            "professional_names": {"prof-1": "Dra. Laura Pérez"},
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert "response_flow" not in result
+
+
+@pytest.mark.asyncio
+async def test_verification_flow_response_for_a_known_patient_asks_to_confirm():
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(
+        available_slots=[slot],
+        patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")],
+        verification_flow_id="flow-verify",
+        registration_flow_id="flow-register",
+    )
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Juan Perez", "dni": "30123456"}}'
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_VERIFICATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_VERIFICATION_CONFIRMATION
+    assert result["collected_data"]["patient"]["full_name"] == "Juan Perez"
+    assert "Juan Perez" in result["response_text"]
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+
+
+@pytest.mark.asyncio
+async def test_verification_flow_response_for_an_unknown_patient_sends_registration_flow():
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], verification_flow_id="flow-verify", registration_flow_id="flow-register"
+    )
+    payload = (
+        f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Nadie Registrado", "dni": "30999999"}}'
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=payload,
+        collected_data={"stage": STAGE_AWAITING_VERIFICATION_FLOW},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_REGISTRATION_FLOW
+    assert result["response_flow"].flow_id == "flow-register"
+
+
+@pytest.mark.asyncio
+async def test_verification_flow_stage_reminds_when_the_reply_is_not_a_flow_response():
+    node, _, _ = await _make_node_and_conversation(verification_flow_id="flow-verify")
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="hola",
+        collected_data={"stage": STAGE_AWAITING_VERIFICATION_FLOW},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"]
+    assert "collected_data" not in result
+
+
+@pytest.mark.asyncio
+async def test_verification_confirmation_accepted_continues_to_slot_proposal():
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+            "patient": _PATIENT_PRIMITIVES,
+            "verified_patient_id": "pat-1",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["pending_action_id"]
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+
+
+@pytest.mark.asyncio
+async def test_verification_confirmation_rejected_sends_registration_flow():
+    node, _, _ = await _make_node_and_conversation(registration_flow_id="flow-register")
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=REJECT_APPOINTMENT_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+            "patient": _PATIENT_PRIMITIVES,
+            "verified_patient_id": "pat-1",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_REGISTRATION_FLOW
+    assert result["response_flow"].flow_id == "flow-register"
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_creates_the_patient_with_email_and_links_the_matched_agreement():
+    slot = _future_slot()
+    osde = make_agreement(id_="agr-1", name="OSDE")
+    node, _, appointment_gateway = await _make_node_and_conversation(
+        available_slots=[slot],
+        patients=[],
+        agreements=[osde],
+        conversation_id="ycloud-+5491122334455",
+    )
+    payload = (
+        f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Rosa Gomez", "dni": "30123456", '
+        f'"email": "rosa@example.com", "obra_social": "OSDE"}}'
+    )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_REGISTRATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["patient"]["full_name"] == "Rosa Gomez"
+    assert "collected_data" in result
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_ignores_an_unmatched_agreement_name():
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(
+        available_slots=[slot],
+        patients=[],
+        agreements=[],
+        conversation_id="ycloud-+5491122334455",
+    )
+    payload = (
+        f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Rosa Gomez", "dni": "30123456", '
+        f'"obra_social": "Alguna Cobertura Inexistente"}}'
+    )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_REGISTRATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["patient"]["full_name"] == "Rosa Gomez"
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_recovers_from_a_create_patient_race():
+    slot = _future_slot()
+    existing_patient = make_patient(id_="pat-existing", full_name="Rosa Gomez", dni="30123456")
+    node, _, _ = await _make_node_and_conversation(
+        available_slots=[slot],
+        patients=[existing_patient],
+        conversation_id="ycloud-+5491122334455",
+    )
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Rosa Gomez", "dni": "30123456"}}'
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_REGISTRATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_reminds_when_the_reply_is_not_a_flow_response():
+    node, _, _ = await _make_node_and_conversation(registration_flow_id="flow-register")
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="hola",
+        collected_data={"stage": STAGE_AWAITING_REGISTRATION_FLOW},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"]
+    assert "collected_data" not in result

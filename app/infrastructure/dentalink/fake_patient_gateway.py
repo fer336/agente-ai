@@ -22,7 +22,9 @@ class FakePatientGateway:
                 return patient
         return None
 
-    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
+    async def create_patient(
+        self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
+    ) -> Patient:
         validated_dni = Dni(dni)
         existing = self._find_by_rut(validated_dni)
         if existing is not None:
@@ -33,6 +35,7 @@ class FakePatientGateway:
             full_name=full_name.strip(),
             phone=phone,
             dni=validated_dni.value,
+            email=email,
         )
         self._patients.append(patient)
         return patient

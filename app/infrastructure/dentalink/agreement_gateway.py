@@ -31,3 +31,14 @@ class DentalinkAgreementGateway:
     async def get_patient_agreements(self, patient_id: str) -> list[Agreement]:
         raw_convenios = await self._client.get(f"/v1/pacientes/{patient_id}/convenios")
         return [agreement_from_convenio(raw) for raw in as_list(raw_convenios)]
+
+    async def link_patient_agreement(self, patient_id: str, agreement_id: str) -> None:
+        # UNVERIFIED against a live Dentalink account: `id_convenio` follows
+        # the `id_<entidad>` naming Dentalink uses everywhere else in this
+        # codebase (`id_especialidad`, `id_profesional`, `id_sucursal`), but
+        # the docs page for this exact endpoint was never reachable in full
+        # (truncated before the request-body section) — confirm against a
+        # real response before relying on this in production.
+        await self._client.post(
+            f"/v1/pacientes/{patient_id}/convenios", json={"id_convenio": agreement_id}
+        )

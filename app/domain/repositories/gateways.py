@@ -9,6 +9,7 @@ from app.domain.entities.specialty import Specialty
 from app.domain.entities.treatment import Treatment
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -67,7 +68,9 @@ class PatientGateway(Protocol):
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None: ...
 
-    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
+    async def create_patient(
+        self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
+    ) -> Patient:
         """Creates a new patient, tied to the requesting contact's own `phone`.
 
         Guardrail (IDOR/contact-isolation): `phone` must always be the
@@ -76,6 +79,9 @@ class PatientGateway(Protocol):
         record is provably linked to whoever asked for it. Implementations
         must reject a duplicate RUT (see `PatientAlreadyExistsError`)
         rather than silently creating a second record for the same person.
+
+        `email` is optional and only ever comes from the registration
+        Flow — never required for identification (PRD.md §32).
         """
         ...
 
@@ -89,6 +95,18 @@ class AgreementGateway(Protocol):
     async def find_agreement_by_name(self, name: str) -> Agreement | None: ...
 
     async def get_patient_agreements(self, patient_id: str) -> list[Agreement]: ...
+
+    async def link_patient_agreement(self, patient_id: str, agreement_id: str) -> None:
+        """Associates an existing agreement/convenio with a patient.
+
+        Used only by the registration Flow's "Obra Social" field: the
+        patient's answer is resolved to a real `Agreement` first (same
+        `find_agreement_by_name` catalog match `agreement.py` already
+        uses for Q&A), then linked here — Dentalink models convenio
+        membership as its own relationship, never a plain field on the
+        patient record itself (`POST /pacientes/{id}/convenios`).
+        """
+        ...
 
 
 @runtime_checkable
@@ -133,6 +151,10 @@ class MessagingGateway(Protocol):
         WhatsApp/YCloud recipient's servers fetch it themselves) attaches
         an image header above the body text, e.g. the welcome message's
         clinic logo (this session's brief)."""
+        ...
+
+    async def send_flow(self, to: PhoneNumber, text: str, flow: FlowRequest) -> str:
+        """Sends a WhatsApp Flow message and returns the external_message_id."""
         ...
 
     async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:

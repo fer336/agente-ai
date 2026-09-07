@@ -9,10 +9,15 @@ class _StubDentalinkClient:
     def __init__(self, responses: dict[str, object]) -> None:
         self._responses = responses
         self.get_calls: list[str] = []
+        self.post_calls: list[tuple[str, object]] = []
 
     async def get(self, path: str, params: dict[str, str] | None = None) -> object:
         self.get_calls.append(path)
         return self._responses[path]
+
+    async def post(self, path: str, json: object) -> object:
+        self.post_calls.append((path, json))
+        return self._responses.get(path, {})
 
 
 @pytest.mark.asyncio
@@ -77,6 +82,18 @@ async def test_get_patient_agreements_calls_the_patient_scoped_endpoint():
 
     assert [a.name for a in agreements] == ["OSDE"]
     assert client.get_calls == ["/v1/pacientes/pat-1/convenios"]
+
+
+@pytest.mark.asyncio
+async def test_link_patient_agreement_posts_to_the_patient_scoped_endpoint():
+    client = _StubDentalinkClient({})
+    gateway = DentalinkAgreementGateway(client)
+
+    await gateway.link_patient_agreement("pat-1", "convenio-9")
+
+    assert client.post_calls == [
+        ("/v1/pacientes/pat-1/convenios", {"id_convenio": "convenio-9"})
+    ]
 
 
 def test_dentalink_agreement_gateway_satisfies_agreement_gateway_protocol():

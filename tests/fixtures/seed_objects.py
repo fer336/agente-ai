@@ -181,6 +181,28 @@ def make_ycloud_button_reply_payload(
     }
 
 
+def make_ycloud_nfm_reply_payload(
+    whatsapp_number: str = "+5491100000001",
+    response_json: str = '{"full_name": "Rosa Gomez", "dni": "30123456"}',
+    external_message_id: str = "wamid.nfm-reply-1",
+    from_phone: str = "+5491122334455",
+) -> dict[str, object]:
+    """Raw YCloud completed-Flow webhook JSON body, valid-by-default."""
+    return {
+        "type": "whatsapp.inbound_message.received",
+        "whatsappInboundMessage": {
+            "id": external_message_id,
+            "from": from_phone,
+            "to": whatsapp_number,
+            "type": "interactive",
+            "interactive": {
+                "type": "nfm_reply",
+                "nfm_reply": {"name": "flow", "response_json": response_json},
+            },
+        },
+    }
+
+
 def make_ycloud_audio_payload(
     whatsapp_number: str = "+5491100000001",
     media_id: str = "media-1",

@@ -53,6 +53,9 @@ def test_conforming_class_satisfies_agreement_gateway_protocol():
         async def get_patient_agreements(self, patient_id):
             return []
 
+        async def link_patient_agreement(self, patient_id, agreement_id):
+            return None
+
     assert isinstance(ConformingAgreementGateway(), AgreementGateway)
 
 
@@ -86,6 +89,9 @@ def test_conforming_class_satisfies_messaging_gateway_protocol():
             return "external-id"
 
         async def send_buttons(self, to, text, buttons):
+            return "external-id"
+
+        async def send_flow(self, to, text, flow):
             return "external-id"
 
         async def get_contact_phone(self, ycloud_contact_id):

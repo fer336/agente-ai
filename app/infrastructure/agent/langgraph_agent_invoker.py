@@ -133,6 +133,8 @@ class LangGraphAgentInvoker:
         incident_threshold_window_seconds: int,
         telegram_alert_cooldown_seconds: int,
         checkpointer_provider: CheckpointerProvider | None = None,
+        verification_flow_id: str = "",
+        registration_flow_id: str = "",
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
@@ -157,6 +159,8 @@ class LangGraphAgentInvoker:
         self._incident_threshold_window_seconds = incident_threshold_window_seconds
         self._telegram_alert_cooldown_seconds = telegram_alert_cooldown_seconds
         self._checkpointer_provider = checkpointer_provider
+        self._verification_flow_id = verification_flow_id
+        self._registration_flow_id = registration_flow_id
 
     async def handle(
         self,
@@ -227,6 +231,8 @@ class LangGraphAgentInvoker:
                     trace_repositories.tool_executions,
                     error_service,
                     checkpointer=checkpointer,
+                    verification_flow_id=self._verification_flow_id,
+                    registration_flow_id=self._registration_flow_id,
                 )
 
                 previous_values: dict[str, Any] = {}
@@ -272,6 +278,7 @@ class LangGraphAgentInvoker:
                     "pending_action_id": previous_values.get("pending_action_id"),
                     "response_text": None,
                     "response_buttons": None,
+                    "response_flow": None,
                     "requires_handoff": False,
                     "error": None,
                 }
@@ -303,6 +310,7 @@ class LangGraphAgentInvoker:
                     # no reply — both are valid "say nothing" outcomes.
                     return
                 response_buttons = result.get("response_buttons")
+                response_flow = result.get("response_flow")
 
                 conversation = await repositories.conversations.get_by_id(conversation_id)
                 if conversation is None:
@@ -312,7 +320,9 @@ class LangGraphAgentInvoker:
                     return
                 phone = contact.phone
 
-        await self._send_reply.execute(phone, response_text, response_buttons)
+        await self._send_reply.execute(
+            phone, response_text, response_buttons, flow=response_flow
+        )
 
 
 def _final_status(node_executions: list[NodeExecution], result: dict[str, object]) -> str:
