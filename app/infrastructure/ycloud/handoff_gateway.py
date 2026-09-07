@@ -1,5 +1,9 @@
+import logging
+
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.ycloud.client import YCloudClient
+
+logger = logging.getLogger(__name__)
 
 #: The tag a human agent removes in YCloud's Shared Team Inbox to hand a
 #: conversation back to the bot (see
@@ -33,9 +37,18 @@ class YCloudHandoffGateway:
         phone = str(conversation_id).removeprefix("ycloud-")
         contact = await self._client.find_contact_by_phone(phone)
         if contact is None:
+            # This used to fail completely silently — the durable
+            # `conversation.mode = "human"` flip (done by the calling
+            # node) still happens regardless, so the bot correctly goes
+            # quiet, but a human agent watching YCloud's Shared Team
+            # Inbox never sees the "Human" tag appear, with no trace of
+            # why. Seen live: likely the AR mobile "9" prefix not
+            # matching however YCloud stored the contact.
+            logger.warning("ycloud_handoff.contact_not_found_by_phone phone=%s", phone)
             return
         contact_id = contact.get("id")
         if not contact_id:
+            logger.warning("ycloud_handoff.contact_missing_id phone=%s", phone)
             return
         raw_tags = contact.get("tags")
         current_tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
