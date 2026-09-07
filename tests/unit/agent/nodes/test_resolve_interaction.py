@@ -5,6 +5,8 @@ from app.agent.nodes.resolve_interaction import (
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+    OPERATION_VIEW_PAYLOAD,
     create_resolve_interaction_node,
 )
 from app.domain.repositories.llm_provider import UnderstandingResult
@@ -133,6 +135,24 @@ async def test_menu_button_payload_routes_deterministically_without_classificati
     )
 
     assert result == {"intent": "appointment"}
+
+
+@pytest.mark.asyncio
+async def test_welcome_list_operation_payloads_route_deterministically_to_appointment():
+    # The welcome list's booking rows carry `appointment.py`'s own
+    # operation payloads directly (this session's own brief) — must
+    # route the same as `MENU_APPOINTMENT_PAYLOAD`, no classification.
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def classify_intent(self, message, context):
+            raise AssertionError("must not classify when a button payload is present")
+
+    node = create_resolve_interaction_node(_ExplodingLLMProvider())
+
+    for payload in (OPERATION_CREATE_PAYLOAD, OPERATION_VIEW_PAYLOAD):
+        result = await node(
+            make_agent_state(user_message="Agendar una cita", button_payload=payload)
+        )
+        assert result == {"intent": "appointment"}
 
 
 @pytest.mark.asyncio

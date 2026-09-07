@@ -11,6 +11,7 @@ from app.agent.nodes.appointment import (
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
+    OPERATION_VIEW_PAYLOAD,
     REJECT_APPOINTMENT_PAYLOAD,
     RESCHEDULE_APPOINTMENT_ACTION,
     SELECT_APPOINTMENT_PAYLOAD_PREFIX,
@@ -198,6 +199,43 @@ async def test_a_stated_operation_skips_the_operation_menu():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
+async def test_the_welcome_lists_create_row_skips_the_operation_menu():
+    # The welcome list's booking rows carry these exact payloads directly
+    # (this session's own brief) — a first-ever tap must reach the same
+    # place a stated "quiero sacar un turno" already does, with no stage
+    # set yet at all.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=OPERATION_CREATE_PAYLOAD,
+        collected_data={},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
+async def test_the_welcome_lists_view_row_reaches_identification_like_reschedule():
+    # "Ver mi cita" has no dedicated operation yet (client hasn't defined
+    # a real read-only view) — provisionally routed through the same
+    # identification step RESCHEDULE already reaches.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=OPERATION_VIEW_PAYLOAD,
+        collected_data={},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
 
 
 @pytest.mark.asyncio
