@@ -17,6 +17,7 @@ def test_agent_state_accepts_all_fields_from_prd_section_31():
         "response_text": None,
         "response_buttons": None,
         "response_flow": None,
+        "response_location": None,
         "requires_handoff": False,
         "error": None,
     }
@@ -42,6 +43,7 @@ def test_agent_state_field_set_matches_prd_section_31_plus_repo_specific_fields(
         "response_text",
         "response_buttons",
         "response_flow",
+        "response_location",
         "requires_handoff",
         "error",
     }

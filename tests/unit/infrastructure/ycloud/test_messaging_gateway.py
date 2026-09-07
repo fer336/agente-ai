@@ -4,6 +4,7 @@ from app.domain.entities.tool_execution import COMPLETED, FAILED
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.observability.trace_context import TraceContext, use_trace_context
 from app.infrastructure.ycloud.exceptions import YCloudAPIError
@@ -20,6 +21,7 @@ class _StubYCloudClient:
         self.text_calls: list[tuple[str, str]] = []
         self.button_calls: list[tuple[str, str, list[InteractiveButton], str | None]] = []
         self.flow_calls: list[tuple[str, str, str, str, str, str]] = []
+        self.location_calls: list[tuple[str, float, float, str, str | None]] = []
         self.contacts: dict[str, dict[str, object]] = {}
 
     async def send_text(self, to: str, text: str) -> str:
@@ -47,6 +49,17 @@ class _StubYCloudClient:
     ) -> str:
         self.flow_calls.append((to, body_text, flow_id, flow_screen_id, flow_cta, flow_token))
         return "wamid.stub-3"
+
+    async def send_location(
+        self,
+        to: str,
+        latitude: float,
+        longitude: float,
+        name: str,
+        address: str | None = None,
+    ) -> str:
+        self.location_calls.append((to, latitude, longitude, name, address))
+        return "wamid.stub-4"
 
     async def get_contact(self, contact_id: str) -> dict[str, object]:
         return self.contacts.get(contact_id, {})
@@ -119,6 +132,31 @@ async def test_send_flow_delegates_to_client_with_stringified_phone():
         )
     ]
     assert external_id == "wamid.stub-3"
+
+
+@pytest.mark.asyncio
+async def test_send_location_delegates_to_client_with_stringified_phone():
+    client = _StubYCloudClient()
+    gateway = YCloudMessagingGateway(client)
+    location = LocationRequest(
+        latitude=-34.437762,
+        longitude=-58.7917857,
+        name="Smiling Pilar",
+        address="Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires",
+    )
+
+    external_id = await gateway.send_location(PhoneNumber("+5491122334455"), location)
+
+    assert client.location_calls == [
+        (
+            "+5491122334455",
+            -34.437762,
+            -58.7917857,
+            "Smiling Pilar",
+            "Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires",
+        )
+    ]
+    assert external_id == "wamid.stub-4"
 
 
 def test_ycloud_messaging_gateway_satisfies_messaging_gateway_protocol():

@@ -2,6 +2,7 @@ from typing import TypedDict
 
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.location_request import LocationRequest
 
 
 class AgentState(TypedDict):
@@ -41,6 +42,11 @@ class AgentState(TypedDict):
     #: `response_buttons` when both are somehow set; a node should only
     #: ever set one. `None` sends a normal text/button reply.
     response_flow: FlowRequest | None
+    #: A native WhatsApp location card to send instead of plain text/a
+    #: Flow — WhatsApp's location message type carries no text body of
+    #: its own, so `response_text` is ignored on this path. `None` sends
+    #: a normal reply.
+    response_location: LocationRequest | None
     requires_handoff: bool
     #: Set by a node's error-handling wrapper (not part of PRD.md §31's
     #: literal field list) when the node's business logic raised — routes

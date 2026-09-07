@@ -34,6 +34,30 @@ class YCloudClient:
             }
         )
 
+    async def send_location(
+        self,
+        to: str,
+        latitude: float,
+        longitude: float,
+        name: str,
+        address: str | None = None,
+    ) -> str:
+        location: dict[str, object] = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "name": name,
+        }
+        if address is not None:
+            location["address"] = address
+        return await self._post_message(
+            {
+                "from": self._whatsapp_number,
+                "to": to,
+                "type": "location",
+                "location": location,
+            }
+        )
+
     async def send_buttons(
         self,
         to: str,
