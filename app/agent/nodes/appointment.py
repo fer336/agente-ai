@@ -131,24 +131,24 @@ REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
 _DNI_PATTERN = re.compile(r"(\d{6,})")
 
 _CHOOSE_SPECIALTY_PROMPT = (
-    "¿Para qué especialidad querés el turno? Respondeme con el número:"
+    "Para qué especialidad querés el turno? Respondeme con el número:"
 )
 _SPECIALTY_NOT_UNDERSTOOD_MESSAGE = (
     "No pude identificar la especialidad. Respondeme con el número de la lista:"
 )
 _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
-    "¿Querés que te comunique con administración?"
+    "Querés que te comunique con administración?"
 )
-_CHOOSE_PROFESSIONAL_PROMPT = "¿Con qué profesional preferís atenderte? Respondeme con el número:"
+_CHOOSE_PROFESSIONAL_PROMPT = "Con qué profesional preferís atenderte? Respondeme con el número:"
 _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE = (
     "No pude identificar al profesional. Respondeme con el número de la lista:"
 )
 _NO_PROFESSIONALS_MESSAGE = (
     "No tengo profesionales cargados para esa especialidad. "
-    "¿Querés que te comunique con administración?"
+    "Querés que te comunique con administración?"
 )
-_OPERATION_MENU_MESSAGE = "¿Qué querés hacer?"
+_OPERATION_MENU_MESSAGE = "Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
 _ASK_IDENTIFICATION_MESSAGE = (
     "Para coordinar un turno necesito identificarte primero.\n\n"
@@ -166,17 +166,21 @@ _DNI_FORMAT_INVALID_MESSAGE = (
     "Ese DNI no parece válido. Escribime tu DNI solo con números "
     "(7 u 8 dígitos), por ejemplo: 30123456."
 )
+_NAME_INCOMPLETE_MESSAGE = (
+    "Necesito tu nombre Y apellido completos, no solo uno. Escribimelos junto "
+    "con tu DNI, por ejemplo: Juan Pérez, 30123456."
+)
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
 )
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
-    "¿Querés que te comunique con administración?"
+    "Querés que te comunique con administración?"
 )
 _NO_APPOINTMENTS_MESSAGE = (
     "No encontramos turnos próximos a tu nombre. "
-    "¿Querés que te comunique con administración?"
+    "Querés que te comunique con administración?"
 )
 _CHOOSE_SLOT_PROMPT = "Elegí un horario tocando uno de los botones:"
 _SLOT_SELECTION_REMINDER = (
@@ -194,14 +198,14 @@ _CONFIRMATION_REMINDER = (
     "Por favor, confirmá o cancelá tocando uno de los botones — todavía no puedo "
     "tomar la confirmación por texto."
 )
-_PROPOSAL_REJECTED_MESSAGE = "Listo, descartamos esa propuesta. ¿Necesitás algo más?"
+_PROPOSAL_REJECTED_MESSAGE = "Listo, descartamos esa propuesta. Necesitás algo más?"
 _SLOT_TAKEN_MESSAGE = (
     "Ese horario acaba de ocuparse mientras confirmábamos. No se realizó ningún cambio. "
     "Te muestro nuevas opciones disponibles:"
 )
 _PROPOSAL_NO_LONGER_VALID_MESSAGE = "Esa propuesta ya no está vigente. Busquemos otro horario:"
 _PROPOSAL_NOT_FOUND_MESSAGE = (
-    "No encontramos esa propuesta. Empecemos de nuevo — ¿querés sacar un turno?"
+    "No encontramos esa propuesta. Empecemos de nuevo — querés sacar un turno?"
 )
 _SESSION_LOST_MESSAGE = (
     "Se perdió el contexto de la conversación. Escribime de nuevo qué necesitás."
@@ -299,6 +303,20 @@ def numbered_list(names: list[str]) -> str:
     return _numbered_list(names)
 
 
+async def staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
+    """Specialty ids that at least one professional actually teaches.
+
+    A specialty with zero professionals staffed against it is a dead end —
+    offering it just to have the very next step ("no tengo profesionales
+    cargados para esa especialidad") strand the patient. One unfiltered
+    `list_professionals()` call here is cheap next to the alternative (one
+    `list_professionals(specialty_id=...)` call per specialty in the
+    catalog just to find out which are empty).
+    """
+    professionals = await gateway.list_professionals()
+    return {p.specialty_id for p in professionals if p.specialty_id}
+
+
 def choose_professional_prompt() -> str:
     """The exact wording this node uses to ask for a professional, so a
     patient handed over from `specialties.py` sees one consistent prompt."""
@@ -360,7 +378,7 @@ def _confirmation_message(slot: AppointmentSlot, professional_names: dict[str, s
         f"{professional_name}\n"
         f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
         f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
-        "¿Confirmás que querés reservar este turno?"
+        "Confirmás que querés reservar este turno?"
     )
 
 
@@ -374,7 +392,7 @@ def _cancel_confirmation_message(
         f"{professional_name}\n"
         f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
         f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
-        "¿Confirmás que querés cancelarlo?"
+        "Confirmás que querés cancelarlo?"
     )
 
 
@@ -387,14 +405,14 @@ def _reschedule_confirmation_message(
         f"{professional_name}\n"
         f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
         f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
-        "¿Confirmás el cambio?"
+        "Confirmás el cambio?"
     )
 
 
 def _new_patient_confirmation_message(full_name: str, dni: str) -> str:
     return (
         "No encontramos ningún paciente registrado con esos datos. "
-        "¿Confirmás que querés crear tu ficha con estos datos?\n\n"
+        "Confirmás que querés crear tu ficha con estos datos?\n\n"
         f"Nombre: {full_name}\n"
         f"DNI: {dni}"
     )
@@ -604,6 +622,8 @@ def create_appointment_node(
         conversation_id: ConversationId, collected_data: dict[str, object]
     ) -> dict[str, object]:
         specialties = await list_specialties.execute()
+        staffed = await staffed_specialty_ids(appointment_gateway)
+        specialties = [s for s in specialties if s.id in staffed]
         if not specialties:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {
@@ -935,12 +955,22 @@ def create_appointment_node(
                             await set_conversation_input_state.execute(
                                 conversation_id, FREE_INPUT
                             )
+                            # The message asks the patient to retype their
+                            # name+DNI — stay in STAGE_AWAITING_IDENTIFICATION
+                            # so that reply is actually parsed as the retry
+                            # it was asked for, instead of falling out of
+                            # the flow entirely (losing the slot they'd
+                            # already picked) and landing in generic intent
+                            # classification.
                             return {
                                 "response_text": _NEW_PATIENT_RACE_LOST_MESSAGE,
                                 "response_buttons": None,
                                 "requires_handoff": False,
                                 "pending_action_id": None,
-                                "collected_data": {**collected_data, "stage": None},
+                                "collected_data": {
+                                    **collected_data,
+                                    "stage": STAGE_AWAITING_IDENTIFICATION,
+                                },
                             }
                         new_patient = recovered
 
@@ -1234,6 +1264,42 @@ def create_appointment_node(
                     },
                 }
             full_name, dni = parsed
+            if len(full_name.split()) < 2:
+                # A single token ("cassera") looked syntactically fine to
+                # `_parse_identification` but isn't a full name — matching
+                # it against Dentalink by name+DNI fails even for a real,
+                # already-registered patient, and from there this flow
+                # cascades into "no lo encontramos" -> offering to create a
+                # duplicate record for someone who already exists. Catch it
+                # before any lookup runs, not after it misfires.
+                retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "full_name_incomplete",
+                    {
+                        "situacion": (
+                            "El paciente escribió un DNI pero el nombre parece "
+                            "incompleto (una sola palabra, falta nombre o apellido)."
+                        ),
+                        "nombre_recibido": full_name.strip(),
+                        "formato_requerido": (
+                            "Nombre Y apellido completos junto con el DNI, ejemplo: "
+                            "Juan Pérez, 30123456. Incluí ese ejemplo en tu respuesta."
+                        ),
+                        "intentos_seguidos": retry_count,
+                    },
+                    _NAME_INCOMPLETE_MESSAGE,
+                )
+                return {
+                    "response_text": text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "identification_retry_count": retry_count,
+                    },
+                }
             try:
                 validated_dni = Dni(dni)
             except ValueError:
