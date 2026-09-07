@@ -11,6 +11,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -162,6 +163,13 @@ class MessagingGateway(Protocol):
         """Sends a native WhatsApp location message and returns the
         external_message_id — a tap opens Maps directly, unlike a plain
         text link."""
+        ...
+
+    async def send_list(self, to: PhoneNumber, text: str, list_message: ListMessage) -> str:
+        """Sends an interactive list message and returns the
+        external_message_id — up to 10 rows, WhatsApp's own cap. A patient
+        picks a row, no need for `INTERACTIVE_SELECTION` free-text parsing
+        (PRD.md §6): the reply carries a known, deterministic row id."""
         ...
 
     async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:

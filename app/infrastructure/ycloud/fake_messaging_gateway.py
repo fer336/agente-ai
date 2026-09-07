@@ -1,5 +1,6 @@
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -14,6 +15,7 @@ class FakeYCloudMessagingGateway:
         ] = []
         self.sent_flows: list[tuple[PhoneNumber, str, FlowRequest]] = []
         self.sent_locations: list[tuple[PhoneNumber, LocationRequest]] = []
+        self.sent_lists: list[tuple[PhoneNumber, str, ListMessage]] = []
         self.contact_phones: dict[str, PhoneNumber] = {}
         self.typing_indicators_sent: list[str] = []
         self._next_id = 1
@@ -38,6 +40,10 @@ class FakeYCloudMessagingGateway:
 
     async def send_location(self, to: PhoneNumber, location: LocationRequest) -> str:
         self.sent_locations.append((to, location))
+        return self._next_external_id()
+
+    async def send_list(self, to: PhoneNumber, text: str, list_message: ListMessage) -> str:
+        self.sent_lists.append((to, text, list_message))
         return self._next_external_id()
 
     async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:

@@ -10,6 +10,7 @@ _INBOUND_MESSAGE_EVENT_TYPE = "whatsapp.inbound_message.received"
 _TEXT_MESSAGE_TYPE = "text"
 _INTERACTIVE_MESSAGE_TYPE = "interactive"
 _BUTTON_REPLY_TYPE = "button_reply"
+_LIST_REPLY_TYPE = "list_reply"
 _NFM_REPLY_TYPE = "nfm_reply"
 _AUDIO_MESSAGE_TYPE = "audio"
 
@@ -56,6 +57,8 @@ def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: 
             return False
         if message.interactive.type == _BUTTON_REPLY_TYPE:
             return message.interactive.button_reply is not None
+        if message.interactive.type == _LIST_REPLY_TYPE:
+            return message.interactive.list_reply is not None
         if message.interactive.type == _NFM_REPLY_TYPE:
             return message.interactive.nfm_reply is not None
         return False
@@ -100,6 +103,16 @@ def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessage
                 from_phone=PhoneNumber(phone_value),
                 text=button_reply.title,
                 button_payload=button_reply.id,
+            )
+        list_reply = message.interactive.list_reply
+        if list_reply is not None:
+            # Same convention as `button_reply`: `id` is the deterministic
+            # payload, `title` is the human-readable stand-in for `text`.
+            return InboundMessageDTO(
+                external_message_id=message.id,
+                from_phone=PhoneNumber(phone_value),
+                text=list_reply.title,
+                button_payload=list_reply.id,
             )
         nfm_reply = message.interactive.nfm_reply
         if nfm_reply is not None:

@@ -1,6 +1,7 @@
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -14,12 +15,15 @@ class SendReplyUseCase:
     agents in YCloud's own Shared Team Inbox — no second write to a
     distinct "mirror" gateway is needed.
 
-    `flow`/`location`/`buttons` are mutually exclusive — a node should
-    only ever set one — checked in that order of specificity. `location`
-    sends WhatsApp's native location card (`MessagingGateway.send_location`),
-    which has no room for a `text` body of its own (WhatsApp's location
-    message type carries only coordinates/name/address), so `text` is
-    ignored on that path. Otherwise, when `buttons` is given, sends an
+    `flow`/`location`/`list_message`/`buttons` are mutually exclusive — a
+    node should only ever set one — checked in that order of specificity.
+    `location` sends WhatsApp's native location card
+    (`MessagingGateway.send_location`), which has no room for a `text`
+    body of its own (WhatsApp's location message type carries only
+    coordinates/name/address), so `text` is ignored on that path.
+    `list_message` sends an interactive list (up to 10 rows — beyond
+    that, a node falls back to a numbered text list instead, e.g. the
+    specialty catalog). Otherwise, when `buttons` is given, sends an
     interactive button message (`MessagingGateway.send_buttons`) instead
     of plain text — needed by PRD.md §6's `INTERACTIVE_SELECTION`/
     `SENSITIVE_CONFIRMATION` states, which require a real tappable button,
@@ -38,11 +42,14 @@ class SendReplyUseCase:
         image_url: str | None = None,
         flow: FlowRequest | None = None,
         location: LocationRequest | None = None,
+        list_message: ListMessage | None = None,
     ) -> None:
         if flow is not None:
             await self._messaging_gateway.send_flow(to, text, flow)
         elif location is not None:
             await self._messaging_gateway.send_location(to, location)
+        elif list_message is not None:
+            await self._messaging_gateway.send_list(to, text, list_message)
         elif buttons:
             await self._messaging_gateway.send_buttons(to, text, buttons, image_url)
         else:

@@ -280,6 +280,7 @@ class LangGraphAgentInvoker:
                     "response_buttons": None,
                     "response_flow": None,
                     "response_location": None,
+                    "response_list": None,
                     "requires_handoff": False,
                     "error": None,
                 }
@@ -308,6 +309,7 @@ class LangGraphAgentInvoker:
                 response_buttons = result.get("response_buttons")
                 response_flow = result.get("response_flow")
                 response_location = result.get("response_location")
+                response_list = result.get("response_list")
                 if not response_text and response_flow is None and response_location is None:
                     # Either the conversation is already in HUMAN mode (graph
                     # ends silently, PRD.md §21) or a node genuinely produced
@@ -331,6 +333,7 @@ class LangGraphAgentInvoker:
             response_buttons,
             flow=response_flow,
             location=response_location,
+            list_message=response_list,
         )
 
 
