@@ -10,6 +10,10 @@ from app.infrastructure.dentalink.exceptions import (
 )
 
 
+async def _no_sleep(_seconds: float) -> None:
+    return None
+
+
 def _capture_requests(monkeypatch: pytest.MonkeyPatch, response: httpx.Response):
     captured: list[httpx.Request] = []
 
@@ -259,6 +263,114 @@ async def test_get_gives_up_after_max_attempts_on_persistent_timeout(
         await client.get("/v1/pacientes")
 
     assert attempts == 3  # bounded retry, not unbounded
+
+
+@pytest.mark.asyncio
+async def test_get_retries_a_429_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(
+                429, json={"error": {"code": 429, "message": "Too Many Attempts."}}
+            )
+        return httpx.Response(200, json={"data": []})
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    monkeypatch.setattr(client_module.asyncio, "sleep", _no_sleep)
+    client = DentalinkClient(
+        base_url="https://api.dentalink.healthatom.com/api",
+        access_token="secret-token",
+        timeout_seconds=15,
+    )
+
+    result = await client.get("/v5/agendas")
+
+    assert attempts == 3
+    assert result == {"data": []}
+
+
+@pytest.mark.asyncio
+async def test_get_gives_up_after_max_attempts_on_persistent_429(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(429, json={"error": {"code": 429, "message": "Too Many Attempts."}})
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    monkeypatch.setattr(client_module.asyncio, "sleep", _no_sleep)
+    client = DentalinkClient(
+        base_url="https://api.dentalink.healthatom.com/api",
+        access_token="secret-token",
+        timeout_seconds=15,
+    )
+
+    with pytest.raises(DentalinkAPIError) as exc_info:
+        await client.get("/v5/agendas")
+
+    assert attempts == 3  # bounded retry, not unbounded
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_get_honours_retry_after_header_on_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 2:
+            return httpx.Response(
+                429,
+                headers={"Retry-After": "2"},
+                json={"error": {"code": 429, "message": "Too Many Attempts."}},
+            )
+        return httpx.Response(200, json={"data": []})
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    slept_for: list[float] = []
+
+    async def _capture_sleep(seconds: float) -> None:
+        slept_for.append(seconds)
+
+    monkeypatch.setattr(client_module.asyncio, "sleep", _capture_sleep)
+    client = DentalinkClient(
+        base_url="https://api.dentalink.healthatom.com/api",
+        access_token="secret-token",
+        timeout_seconds=15,
+    )
+
+    result = await client.get("/v5/agendas")
+
+    assert result == {"data": []}
+    assert slept_for == [2.0]
 
 
 @pytest.mark.asyncio

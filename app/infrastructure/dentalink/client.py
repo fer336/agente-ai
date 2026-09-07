@@ -9,12 +9,33 @@ from app.infrastructure.dentalink.exceptions import (
     DentalinkTimeoutError,
 )
 
-#: Bounded retry, transient network errors only (`httpx.TimeoutException`) —
-#: never on a 4xx/5xx application response, which `_request` only sees
-#: *after* a response was successfully received (retrying those would risk
-#: e.g. double-creating a patient/appointment on a slow-but-successful write).
+#: Bounded retry. Two transient conditions are retried here:
+#: `httpx.TimeoutException` (no response was ever received) and HTTP 429
+#: (a response WAS received, but Dentalink is rate-limiting us — confirmed
+#: in production: a 30-day `/v5/agendas` search that never accumulates
+#: enough slots to stop early fires one request per day and Dentalink
+#: answers "429 Too Many Attempts" partway through). Never any other 4xx/5xx
+#: — those are only ever seen *after* a response was successfully received,
+#: and retrying e.g. a 409 could double-create a patient/appointment on a
+#: write that actually succeeded server-side.
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 0.05
+#: Fallback backoff for a 429 that carries no `Retry-After` header. Kept
+#: separate from `_RETRY_BACKOFF_SECONDS` because a rate limit is Dentalink
+#: deliberately asking for more spacing, not a fluke worth retrying fast.
+_RATE_LIMIT_BACKOFF_SECONDS = 0.5
+
+
+def _rate_limit_backoff_seconds(response: httpx.Response, attempt: int) -> float:
+    """Honours Dentalink's own `Retry-After` (seconds) when present; falls
+    back to a fixed per-attempt backoff otherwise."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return max(float(retry_after), 0.0)
+        except ValueError:
+            pass
+    return _RATE_LIMIT_BACKOFF_SECONDS * attempt
 
 
 class DentalinkClient:
@@ -66,7 +87,6 @@ class DentalinkClient:
                     response = await client.request(
                         method, url, headers=headers, params=params, json=json
                     )
-                break
             except httpx.TimeoutException as exc:
                 if attempt == _MAX_ATTEMPTS:
                     # Never include request/response bodies or the token
@@ -75,6 +95,11 @@ class DentalinkClient:
                         f"Dentalink request to {path} timed out after {attempt} attempts"
                     ) from exc
                 await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            if response.status_code == 429 and attempt < _MAX_ATTEMPTS:
+                await asyncio.sleep(_rate_limit_backoff_seconds(response, attempt))
+                continue
+            break
         assert response is not None  # loop always breaks or raises above
 
         if response.status_code in (401, 403):
