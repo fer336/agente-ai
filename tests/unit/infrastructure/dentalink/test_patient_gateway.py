@@ -132,6 +132,46 @@ async def test_create_patient_sends_split_name_and_normalized_phone(
 
 
 @pytest.mark.asyncio
+async def test_create_patient_includes_email_when_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search_response = httpx.Response(200, json={"data": []})
+    create_response = httpx.Response(201, json={"id": 99})
+    client, captured = _client_with_responses(
+        monkeypatch, [search_response, create_response]
+    )
+    gateway = DentalinkPatientGateway(client)
+
+    created = await gateway.create_patient(
+        "Maria Soto Perez",
+        _VALID_DNI,
+        PhoneNumber("+5491122334455"),
+        email="maria@example.com",
+    )
+
+    assert created.email == "maria@example.com"
+    body = json.loads(captured[1].content)
+    assert body["email"] == "maria@example.com"
+
+
+@pytest.mark.asyncio
+async def test_create_patient_omits_email_field_when_not_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search_response = httpx.Response(200, json={"data": []})
+    create_response = httpx.Response(201, json={"id": 99})
+    client, captured = _client_with_responses(
+        monkeypatch, [search_response, create_response]
+    )
+    gateway = DentalinkPatientGateway(client)
+
+    await gateway.create_patient("Maria Soto Perez", _VALID_DNI, PhoneNumber("+5491122334455"))
+
+    body = json.loads(captured[1].content)
+    assert "email" not in body
+
+
+@pytest.mark.asyncio
 async def test_create_patient_raises_a_typed_conflict_instead_of_duplicating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

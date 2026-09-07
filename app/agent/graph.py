@@ -105,6 +105,8 @@ def build_graph(
     agent_run_id: str,
     tool_execution_repository: ToolExecutionRepository,
     error_service: ErrorService,
+    verification_flow_id: str = "",
+    registration_flow_id: str = "",
 ) -> StateGraph[AgentState, None, AgentState, AgentState]:
     """Builds the (uncompiled) agent graph (PRD.md §29):
 
@@ -174,6 +176,9 @@ def build_graph(
                 confirmation_timeout_seconds,
                 llm_provider,
                 specialty_gateway,
+                agreement_gateway,
+                verification_flow_id,
+                registration_flow_id,
             ),
             node_execution_repository,
             agent_run_id,
@@ -282,6 +287,8 @@ def compile_graph(
     tool_execution_repository: ToolExecutionRepository,
     error_service: ErrorService,
     checkpointer: "BaseCheckpointSaver[Any] | None" = None,
+    verification_flow_id: str = "",
+    registration_flow_id: str = "",
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Compiles the graph, optionally with a checkpointer.
 
@@ -307,6 +314,8 @@ def compile_graph(
         agent_run_id,
         tool_execution_repository,
         error_service,
+        verification_flow_id=verification_flow_id,
+        registration_flow_id=registration_flow_id,
     ).compile(checkpointer=checkpointer)
 
 

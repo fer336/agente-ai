@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 
 
@@ -35,6 +36,11 @@ class AgentState(TypedDict):
     #: empty) sends a plain text reply instead. Reset fresh every turn by
     #: `AgentInvoker.handle` — never carried over via the checkpointer.
     response_buttons: list[InteractiveButton] | None
+    #: A WhatsApp Flow to send instead of plain text/buttons (this
+    #: session's own brief — no PRD.md section). Takes priority over
+    #: `response_buttons` when both are somehow set; a node should only
+    #: ever set one. `None` sends a normal text/button reply.
+    response_flow: FlowRequest | None
     requires_handoff: bool
     #: Set by a node's error-handling wrapper (not part of PRD.md §31's
     #: literal field list) when the node's business logic raised — routes

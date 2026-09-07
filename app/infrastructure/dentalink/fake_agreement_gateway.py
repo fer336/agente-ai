@@ -24,3 +24,11 @@ class FakeAgreementGateway:
 
     async def get_patient_agreements(self, patient_id: str) -> list[Agreement]:
         return list(self._patient_agreements.get(patient_id, []))
+
+    async def link_patient_agreement(self, patient_id: str, agreement_id: str) -> None:
+        agreement = next((a for a in self._agreements if a.id == agreement_id), None)
+        if agreement is None:
+            return
+        linked = self._patient_agreements.setdefault(patient_id, [])
+        if agreement not in linked:
+            linked.append(agreement)

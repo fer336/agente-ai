@@ -378,6 +378,110 @@ async def test_get_media_raises_ycloud_api_error_on_non_2xx_response(
 
 
 @pytest.mark.asyncio
+async def test_send_flow_posts_the_flow_interactive_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    await client.send_flow(
+        "+5491122334455",
+        "Verificá tus datos",
+        flow_id="flow-1",
+        flow_screen_id="VERIFICACION",
+        flow_cta="Completar",
+        flow_token="ycloud-+5491122334455",
+    )
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url == "https://api.ycloud.com/v2/whatsapp/messages"
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    body = json.loads(request.content)
+    assert body == {
+        "from": "+5491100000001",
+        "to": "+5491122334455",
+        "type": "interactive",
+        "interactive": {
+            "type": "flow",
+            "body": {"text": "Verificá tus datos"},
+            "action": {
+                "name": "flow",
+                "parameters": {
+                    "flow_message_version": "3",
+                    "flow_token": "ycloud-+5491122334455",
+                    "flow_id": "flow-1",
+                    "flow_cta": "Completar",
+                    "flow_action": "navigate",
+                    "flow_action_payload": {"screen": "VERIFICACION"},
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_flow_posts_to_the_flows_endpoint_with_the_waba_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch, json_response={"id": "flow-99", "success": True})
+    client = YCloudClient(
+        base_url="https://api.ycloud.com",
+        api_key="yc-key-abc",
+        whatsapp_number="+5491100000001",
+        waba_id="waba-1",
+    )
+
+    flow_id = await client.create_flow(
+        name="Registro de paciente",
+        categories=["SIGN_UP"],
+        flow_json='{"version": "6.2", "screens": []}',
+        publish=True,
+    )
+
+    assert flow_id == "flow-99"
+    request = captured[0]
+    assert request.url == "https://api.ycloud.com/v2/whatsapp/flows"
+    assert request.headers["x-api-key"] == "yc-key-abc"
+    assert request.method == "POST"
+    body = json.loads(request.content)
+    assert body == {
+        "wabaId": "waba-1",
+        "name": "Registro de paciente",
+        "categories": ["SIGN_UP"],
+        "flowJson": '{"version": "6.2", "screens": []}',
+        "publish": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_flow_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="invalid flow json")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError) as exc_info:
+        await client.create_flow(name="Bad", categories=["SIGN_UP"], flow_json="{}")
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_send_typing_indicator_posts_to_the_wamid_scoped_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

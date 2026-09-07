@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     ycloud_api_key: str = ""
     ycloud_webhook_secret: str = ""
     ycloud_whatsapp_number: str = ""
+    #: WhatsApp Business Account id — only needed for the Flow-management
+    #: API (`YCloudClient.create_flow`), nothing else in this codebase
+    #: reads it yet.
+    ycloud_waba_id: str = ""
+    #: Ids returned once by `POST /admin/flows/create` (this session's own
+    #: brief) — copy them in here after running that endpoint. `""` means
+    #: the identification flow hasn't been provisioned yet.
+    ycloud_verification_flow_id: str = ""
+    ycloud_registration_flow_id: str = ""
 
     #: Publicly reachable URL for the clinic's logo (this session's brief)
     #: — YCloud/WhatsApp's own servers fetch it, so it can't be a local

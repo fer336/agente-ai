@@ -1,4 +1,5 @@
 from app.application.messages.inbound_message_dto import InboundMessageDTO
+from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
@@ -9,7 +10,13 @@ _INBOUND_MESSAGE_EVENT_TYPE = "whatsapp.inbound_message.received"
 _TEXT_MESSAGE_TYPE = "text"
 _INTERACTIVE_MESSAGE_TYPE = "interactive"
 _BUTTON_REPLY_TYPE = "button_reply"
+_NFM_REPLY_TYPE = "nfm_reply"
 _AUDIO_MESSAGE_TYPE = "audio"
+
+#: Human-readable stand-in for a Flow submission's `text` — the actual
+#: field values live in the `button_payload` JSON, not here (same
+#: convention `button_reply` already uses: `text` is display-only).
+_FLOW_SUBMITTED_TEXT = "Formulario completado."
 
 _CONTACT_ATTRIBUTES_CHANGED_EVENT_TYPE = "contact.attributes_changed"
 _TAG_ADDED_ACTION = "ADDED"
@@ -45,11 +52,13 @@ def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: 
     if message.type == _TEXT_MESSAGE_TYPE:
         return True
     if message.type == _INTERACTIVE_MESSAGE_TYPE:
-        return (
-            message.interactive is not None
-            and message.interactive.type == _BUTTON_REPLY_TYPE
-            and message.interactive.button_reply is not None
-        )
+        if message.interactive is None:
+            return False
+        if message.interactive.type == _BUTTON_REPLY_TYPE:
+            return message.interactive.button_reply is not None
+        if message.interactive.type == _NFM_REPLY_TYPE:
+            return message.interactive.nfm_reply is not None
+        return False
     if message.type == _AUDIO_MESSAGE_TYPE:
         return message.audio is not None and bool(message.audio.id.strip())
     return False
@@ -91,6 +100,14 @@ def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessage
                 from_phone=PhoneNumber(phone_value),
                 text=button_reply.title,
                 button_payload=button_reply.id,
+            )
+        nfm_reply = message.interactive.nfm_reply
+        if nfm_reply is not None:
+            return InboundMessageDTO(
+                external_message_id=message.id,
+                from_phone=PhoneNumber(phone_value),
+                text=_FLOW_SUBMITTED_TEXT,
+                button_payload=f"{FLOW_RESPONSE_PAYLOAD_PREFIX}{nfm_reply.response_json}",
             )
 
     if message.type == _AUDIO_MESSAGE_TYPE and message.audio is not None:

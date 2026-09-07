@@ -6,6 +6,7 @@ from app.infrastructure.ycloud.schemas import (
     YCloudInboundEventPayload,
 )
 from app.infrastructure.ycloud.webhook_parser import (
+    FLOW_RESPONSE_PAYLOAD_PREFIX,
     extract_tag_mode_change,
     is_processable_message,
     is_tag_mode_change_event,
@@ -14,6 +15,7 @@ from app.infrastructure.ycloud.webhook_parser import (
 from tests.fixtures.seed_objects import (
     make_ycloud_audio_payload,
     make_ycloud_button_reply_payload,
+    make_ycloud_nfm_reply_payload,
     make_ycloud_payload,
     make_ycloud_tag_change_payload,
 )
@@ -98,6 +100,37 @@ def test_is_processable_message_rejects_non_button_reply_interactive_type():
     payload = YCloudInboundEventPayload.model_validate(raw)
 
     assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
+
+
+def test_is_processable_message_accepts_a_completed_flow_reply():
+    payload = YCloudInboundEventPayload.model_validate(
+        make_ycloud_nfm_reply_payload(whatsapp_number=_WHATSAPP_NUMBER)
+    )
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is True
+
+
+def test_is_processable_message_rejects_interactive_message_missing_nfm_reply():
+    raw = make_ycloud_nfm_reply_payload(whatsapp_number=_WHATSAPP_NUMBER)
+    raw["whatsappInboundMessage"]["interactive"] = {"type": "nfm_reply", "nfm_reply": None}
+    payload = YCloudInboundEventPayload.model_validate(raw)
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
+
+
+def test_to_inbound_message_dto_maps_a_completed_flow_reply_to_a_prefixed_payload():
+    raw = make_ycloud_nfm_reply_payload(
+        whatsapp_number=_WHATSAPP_NUMBER,
+        response_json='{"full_name": "Rosa Gomez", "dni": "30123456"}',
+    )
+    payload = YCloudInboundEventPayload.model_validate(raw)
+
+    dto = to_inbound_message_dto(payload)
+
+    assert dto.button_payload == (
+        f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Rosa Gomez", "dni": "30123456"}}'
+    )
+    assert dto.text
 
 
 def test_to_inbound_message_dto_maps_id_phone_and_text():

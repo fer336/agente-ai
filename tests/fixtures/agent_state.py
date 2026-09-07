@@ -23,6 +23,7 @@ def make_agent_state(**overrides: object) -> AgentState:
         "pending_action_id": None,
         "response_text": None,
         "response_buttons": None,
+        "response_flow": None,
         "requires_handoff": False,
         "error": None,
     }

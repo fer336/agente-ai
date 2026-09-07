@@ -26,9 +26,24 @@ class YCloudButtonReply(BaseModel):
     title: str = ""
 
 
+class YCloudNfmReply(BaseModel):
+    """A completed WhatsApp Flow submission (`interactive.type="nfm_reply"`).
+
+    `response_json` is a **stringified** JSON object (Meta's own
+    convention, not YCloud-specific) whose keys match the `name` of each
+    `TextInput` in the Flow's own JSON (see
+    `app.infrastructure.ycloud.flows`) — parse it with `json.loads`, never
+    assume its shape without doing so.
+    """
+
+    name: str = ""
+    response_json: str = ""
+
+
 class YCloudInteractive(BaseModel):
     type: str = ""
     button_reply: YCloudButtonReply | None = None
+    nfm_reply: YCloudNfmReply | None = None
 
 
 class YCloudAudioMessage(BaseModel):
