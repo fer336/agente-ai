@@ -61,6 +61,10 @@ from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    OPERATION_CANCEL_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+    OPERATION_RESCHEDULE_PAYLOAD,
+    OPERATION_VIEW_PAYLOAD,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.flows import (
@@ -136,11 +140,16 @@ _OPERATION_BY_MENTION = {
     "cancel": CANCEL_APPOINTMENT_ACTION,
 }
 
-#: Button payload contract for this flow (PRD.md §6: deterministic, never
-#: LLM-classified).
-OPERATION_CREATE_PAYLOAD = "OPERATION_CREATE"
-OPERATION_RESCHEDULE_PAYLOAD = "OPERATION_RESCHEDULE"
-OPERATION_CANCEL_PAYLOAD = "OPERATION_CANCEL"
+#: Shared by `STAGE_AWAITING_OPERATION_SELECTION` (tapped from that stage's
+#: own menu) and the "no stage yet" fallback (tapped directly from the
+#: welcome list, skipping that menu entirely) — one mapping, so both entry
+#: points can never drift out of sync with each other.
+_OPERATION_BY_PAYLOAD = {
+    OPERATION_CREATE_PAYLOAD: CREATE_APPOINTMENT_ACTION,
+    OPERATION_RESCHEDULE_PAYLOAD: RESCHEDULE_APPOINTMENT_ACTION,
+    OPERATION_CANCEL_PAYLOAD: CANCEL_APPOINTMENT_ACTION,
+    OPERATION_VIEW_PAYLOAD: RESCHEDULE_APPOINTMENT_ACTION,
+}
 SELECT_APPOINTMENT_PAYLOAD_PREFIX = "SELECT_APPOINTMENT:"
 SELECT_SLOT_PAYLOAD_PREFIX = "SELECT_SLOT:"
 CONFIRM_APPOINTMENT_PAYLOAD = "CONFIRM_APPOINTMENT"
@@ -1821,13 +1830,7 @@ def create_appointment_node(
         if stage == STAGE_AWAITING_OPERATION_SELECTION:
             button_payload = state["button_payload"]
             operation = (
-                {
-                    OPERATION_CREATE_PAYLOAD: CREATE_APPOINTMENT_ACTION,
-                    OPERATION_RESCHEDULE_PAYLOAD: RESCHEDULE_APPOINTMENT_ACTION,
-                    OPERATION_CANCEL_PAYLOAD: CANCEL_APPOINTMENT_ACTION,
-                }.get(button_payload)
-                if button_payload is not None
-                else None
+                _OPERATION_BY_PAYLOAD.get(button_payload) if button_payload is not None else None
             )
             if operation is None:
                 return {
@@ -1848,12 +1851,18 @@ def create_appointment_node(
                 conversation_id, {**collected_data, "operation": operation}
             )
 
-        # No stage yet. Before showing the menu, honour whatever the
-        # patient already said in prose — `resolve_interaction` left the
-        # raw mentions here, and re-asking for something they just told us
-        # is exactly what made this bot feel like a form.
-        operation = _OPERATION_BY_MENTION.get(
-            str(collected_data.get("operation_mention") or "")
+        # No stage yet. A button tap wins outright (PRD.md §6: deterministic
+        # over guessed) — the welcome list's booking rows carry these exact
+        # payloads directly, skipping the operation menu entirely. Absent
+        # that, honour whatever the patient already said in prose —
+        # `resolve_interaction` left the raw mentions here, and re-asking
+        # for something they just told us is exactly what made this bot
+        # feel like a form.
+        button_payload = state["button_payload"]
+        operation = (
+            _OPERATION_BY_PAYLOAD.get(button_payload)
+            if button_payload is not None
+            else _OPERATION_BY_MENTION.get(str(collected_data.get("operation_mention") or ""))
         )
         specialty_mention = collected_data.get("specialty_mention")
 

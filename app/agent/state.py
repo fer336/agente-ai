@@ -2,6 +2,7 @@ from typing import TypedDict
 
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 
 
@@ -47,6 +48,10 @@ class AgentState(TypedDict):
     #: its own, so `response_text` is ignored on this path. `None` sends
     #: a normal reply.
     response_location: LocationRequest | None
+    #: An interactive list to send instead of plain text/buttons — for a
+    #: menu with more than 3 options but still within WhatsApp's 10-row
+    #: cap. `None` sends a normal reply.
+    response_list: ListMessage | None
     requires_handoff: bool
     #: Set by a node's error-handling wrapper (not part of PRD.md §31's
     #: literal field list) when the node's business logic raised — routes

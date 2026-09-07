@@ -1,6 +1,7 @@
 from app.application.errors.error_types import YCLOUD_AUTH_ERROR, YCLOUD_SEND_FAILURE
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.observability.tool_tracing import traced_call
@@ -103,6 +104,24 @@ class YCloudMessagingGateway:
                 longitude=location.longitude,
                 name=location.name,
                 address=location.address,
+            ),
+            response_summary=lambda external_id: f"external_message_id={external_id}",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def send_list(self, to: PhoneNumber, text: str, list_message: ListMessage) -> str:
+        return await traced_call(
+            tool_name="SendListTool",
+            provider=_PROVIDER,
+            operation="send_list",
+            request_summary=f"text_length={len(text)} rows={len(list_message.rows)}",
+            call=lambda: self._client.send_list(
+                str(to),
+                text,
+                button_label=list_message.button_label,
+                rows=list_message.rows,
+                section_title=list_message.section_title,
             ),
             response_summary=lambda external_id: f"external_message_id={external_id}",
             http_status_of=_http_status_of,

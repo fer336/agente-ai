@@ -25,6 +25,7 @@ def make_agent_state(**overrides: object) -> AgentState:
         "response_buttons": None,
         "response_flow": None,
         "response_location": None,
+        "response_list": None,
         "requires_handoff": False,
         "error": None,
     }

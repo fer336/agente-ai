@@ -23,11 +23,15 @@ from app.domain.repositories.media_processing_job_repository import MediaProcess
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
-from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
-    MENU_APPOINTMENT_PAYLOAD,
+    MENU_LOCATION_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    OPERATION_CANCEL_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+    OPERATION_RESCHEDULE_PAYLOAD,
+    OPERATION_VIEW_PAYLOAD,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.redis.debounce import DebounceTracker
@@ -43,21 +47,46 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 #: PRD.md §7's welcome message — sent exactly once, on a conversation's
 #: very first inbound message (see `_resolve_or_create_conversation`'s
 #: "just created" branch, the only place that can know this). The clinic
-#: name is written in literally here rather than read from `Settings`:
-#: this deployment serves one clinic ("diseñado exclusivamente para una
-#: clínica específica", PRD.md intro), same single-tenant assumption as
-#: `dentalink_default_branch_id`. `*asterisks*` are WhatsApp's bold
-#: markup, not Markdown.
-_WELCOME_TEXT = (
-    "Hola 👋 Bienvenido a *Smiling Pilar*. Soy el agente de turnos de la clínica.\n"
-    "Puedo ayudarte a sacar un turno, contarte qué especialidades atendemos "
-    "o comunicarte con administración. *Para continuar te pido que selecciones una opción:*"
+#: name/address/hours are written in literally here rather than read from
+#: `Settings`: this deployment serves one clinic ("diseñado exclusivamente
+#: para una clínica específica", PRD.md intro), same single-tenant
+#: assumption as `dentalink_default_branch_id`. `*asterisks*` are
+#: WhatsApp's bold markup, not Markdown. The Maps link is the clinic's own
+#: (given by the owner) and appended verbatim, same reasoning as
+#: `fallback.py`'s native location card: never hand a URL to the LLM to
+#: reproduce.
+_CLINIC_MAPS_URL = (
+    "https://www.google.com/maps/place/Smiling+Pilar/@-34.437762,-58.7943606,17z/data="
+    "!3m1!4b1!4m12!1m5!8m4!1e2!2s104198081147178470610!3m1!1e1!3m5!1s0x95bc9f5dadc0c77f:"
+    "0x7773e52613d59177!8m2!3d-34.437762!4d-58.7917857!16s%2Fg%2F11rtqc418z"
+    "?hl=es-419&entry=ttu&g_ep=EgoyMDI2MDkwMi4wIKXMDSoASAFQAw%3D%3D"
 )
-_WELCOME_BUTTONS = [
-    InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Turnos"),
-    InteractiveButton(id=MENU_SPECIALTIES_PAYLOAD, title="Especialidades"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
-]
+_WELCOME_TEXT = (
+    "¡Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷\n"
+    "Centro Odontológico Integral\n\n"
+    "📍 Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires\n"
+    f"{_CLINIC_MAPS_URL}\n\n"
+    "🕐 Horario de atención: lunes a viernes de 10:00 a 18:00\n\n"
+    "📸 Mirá nuestros tratamientos en Instagram: instagram.com/smiling.pilar\n\n"
+    "¿En qué te puedo ayudar hoy?"
+)
+#: Row titles stay under WhatsApp's 24-char cap per row (Meta's own limit,
+#: see `ListRow`) — booking rows reuse `appointment.py`'s own operation
+#: payloads directly (`_OPERATION_BY_PAYLOAD`), so tapping one here skips
+#: `STAGE_AWAITING_OPERATION_SELECTION`'s menu entirely instead of asking
+#: the same question twice.
+_WELCOME_LIST = ListMessage(
+    button_label="Elegí una opción",
+    rows=[
+        ListRow(id=OPERATION_CREATE_PAYLOAD, title="Agendar una cita"),
+        ListRow(id=OPERATION_RESCHEDULE_PAYLOAD, title="Reprogramar mi cita"),
+        ListRow(id=OPERATION_CANCEL_PAYLOAD, title="Cancelar mi cita"),
+        ListRow(id=MENU_SPECIALTIES_PAYLOAD, title="Tratamientos y precios"),
+        ListRow(id=MENU_LOCATION_PAYLOAD, title="Cómo llegar / horarios"),
+        ListRow(id=MENU_ADMIN_PAYLOAD, title="Hablar con un asesor"),
+        ListRow(id=OPERATION_VIEW_PAYLOAD, title="Ver mi cita"),
+    ],
+)
 
 
 @dataclass(frozen=True)
@@ -169,11 +198,14 @@ class IngestMessageUseCase:
                 # audio-vs-text branch below so a brand-new conversation's
                 # first message gets the welcome menu even if that first
                 # message is itself an audio note.
+                # No `image_url` here (unlike the old button-based welcome):
+                # WhatsApp's list message header only supports a text
+                # header, never an image — the clinic logo has nowhere to
+                # attach on this message type.
                 await self._send_reply.execute(
                     dto.from_phone,
                     _WELCOME_TEXT,
-                    _WELCOME_BUTTONS,
-                    image_url=self._welcome_image_url,
+                    list_message=_WELCOME_LIST,
                 )
 
             if dto.message_type == "audio":

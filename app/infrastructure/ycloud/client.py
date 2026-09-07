@@ -1,6 +1,7 @@
 import httpx
 
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListRow
 from app.infrastructure.ycloud.exceptions import YCloudAPIError
 
 
@@ -83,6 +84,39 @@ class YCloudClient:
                 "to": to,
                 "type": "interactive",
                 "interactive": interactive,
+            }
+        )
+
+    async def send_list(
+        self,
+        to: str,
+        text: str,
+        button_label: str,
+        rows: list[ListRow],
+        section_title: str | None = None,
+    ) -> str:
+        """Sends an interactive list message — up to 10 rows in one
+        section, WhatsApp's own cap (more than that needs a numbered text
+        list instead, e.g. the specialty catalog)."""
+        section: dict[str, object] = {
+            "rows": [
+                {"id": row.id, "title": row.title}
+                | ({"description": row.description} if row.description is not None else {})
+                for row in rows
+            ]
+        }
+        if section_title is not None:
+            section["title"] = section_title
+        return await self._post_message(
+            {
+                "from": self._whatsapp_number,
+                "to": to,
+                "type": "interactive",
+                "interactive": {
+                    "type": "list",
+                    "body": {"text": text},
+                    "action": {"button": button_label, "sections": [section]},
+                },
             }
         )
 

@@ -212,15 +212,26 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
 
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
-    assert len(messaging_gateway.sent_buttons) == 1
-    phone, text, buttons, image_url = messaging_gateway.sent_buttons[0]
+    assert len(messaging_gateway.sent_lists) == 1
+    phone, text, list_message = messaging_gateway.sent_lists[0]
     assert phone == PhoneNumber("+5491122334455")
     # Anchored on the clinic's name rather than on the surrounding wording:
     # the copy itself is edited freely, but a welcome that greets nobody in
     # particular is a real defect.
     assert "Smiling Pilar" in text
-    assert [button.title for button in buttons] == ["Turnos", "Especialidades", "Administración"]
-    assert image_url is None
+    assert [row.title for row in list_message.rows] == [
+        "Agendar una cita",
+        "Reprogramar mi cita",
+        "Cancelar mi cita",
+        "Tratamientos y precios",
+        "Cómo llegar / horarios",
+        "Hablar con un asesor",
+        "Ver mi cita",
+    ]
+    # Meta's own row limits (title <=24 chars, description <=72) — a row
+    # that silently grows past either gets rejected by WhatsApp itself,
+    # not by us, so this must be caught here instead.
+    assert all(len(row.title) <= 24 for row in list_message.rows)
 
 
 @pytest.mark.asyncio
@@ -297,7 +308,12 @@ async def test_the_second_message_of_a_conversation_does_reach_the_agent():
 
 
 @pytest.mark.asyncio
-async def test_welcome_menu_includes_the_configured_image_when_set():
+async def test_welcome_menu_ignores_the_configured_image_url():
+    # WhatsApp's list message header only supports text, never an image —
+    # `welcome_image_url` has nowhere to attach on this message type
+    # (unlike the old button-based welcome). Configuring it must not
+    # error; it's just a no-op until the welcome goes back to buttons or
+    # gains some other image-capable slot.
     messaging_gateway = make_ycloud_messaging_gateway()
     use_case = _build_use_case(
         send_reply=make_send_reply_use_case(messaging_gateway),
@@ -306,8 +322,8 @@ async def test_welcome_menu_includes_the_configured_image_when_set():
 
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
-    _, _, _, image_url = messaging_gateway.sent_buttons[0]
-    assert image_url == "https://s3.qeva.xyz/agente-clinica/public/smiling-pilar-logo.png"
+    assert len(messaging_gateway.sent_lists) == 1
+    assert messaging_gateway.sent_buttons == []
 
 
 @pytest.mark.asyncio
@@ -323,6 +339,7 @@ async def test_existing_conversation_never_gets_the_welcome_menu_again():
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     assert messaging_gateway.sent_buttons == []
+    assert messaging_gateway.sent_lists == []
 
 
 @pytest.mark.asyncio
@@ -332,7 +349,7 @@ async def test_welcome_menu_still_fires_when_the_first_message_is_audio():
 
     await use_case.execute(_make_audio_dto(from_phone="+5491122334455"))
 
-    assert len(messaging_gateway.sent_buttons) == 1
+    assert len(messaging_gateway.sent_lists) == 1
 
 
 @pytest.mark.asyncio

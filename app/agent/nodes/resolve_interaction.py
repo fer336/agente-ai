@@ -6,6 +6,10 @@ from app.domain.value_objects.menu_payloads import (
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    OPERATION_CANCEL_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+    OPERATION_RESCHEDULE_PAYLOAD,
+    OPERATION_VIEW_PAYLOAD,
 )
 
 #: Minimum classifier confidence to act on it — below this, PRD.md §8's
@@ -33,6 +37,16 @@ _MENU_BUTTON_INTENTS = {
     MENU_INSURANCE_PAYLOAD: "insurance",
     MENU_ADMIN_PAYLOAD: "handoff",
     MENU_SPECIALTIES_PAYLOAD: "specialties",
+    #: The welcome list's booking rows (this session's own brief) name
+    #: the operation directly — same payload ids `appointment.py`'s
+    #: `STAGE_AWAITING_OPERATION_SELECTION` already handles, so tapping
+    #: one from the very first message skips that menu entirely instead
+    #: of asking the patient to pick "Turnos" first and the operation
+    #: second.
+    OPERATION_CREATE_PAYLOAD: "appointment",
+    OPERATION_RESCHEDULE_PAYLOAD: "appointment",
+    OPERATION_CANCEL_PAYLOAD: "appointment",
+    OPERATION_VIEW_PAYLOAD: "appointment",
 }
 
 

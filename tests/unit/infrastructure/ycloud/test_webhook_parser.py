@@ -15,6 +15,7 @@ from app.infrastructure.ycloud.webhook_parser import (
 from tests.fixtures.seed_objects import (
     make_ycloud_audio_payload,
     make_ycloud_button_reply_payload,
+    make_ycloud_list_reply_payload,
     make_ycloud_nfm_reply_payload,
     make_ycloud_payload,
     make_ycloud_tag_change_payload,
@@ -131,6 +132,34 @@ def test_to_inbound_message_dto_maps_a_completed_flow_reply_to_a_prefixed_payloa
         f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Rosa Gomez", "dni": "30123456"}}'
     )
     assert dto.text
+
+
+def test_is_processable_message_accepts_a_list_reply():
+    payload = YCloudInboundEventPayload.model_validate(
+        make_ycloud_list_reply_payload(whatsapp_number=_WHATSAPP_NUMBER)
+    )
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is True
+
+
+def test_is_processable_message_rejects_interactive_message_missing_list_reply():
+    raw = make_ycloud_list_reply_payload(whatsapp_number=_WHATSAPP_NUMBER)
+    raw["whatsappInboundMessage"]["interactive"] = {"type": "list_reply", "list_reply": None}
+    payload = YCloudInboundEventPayload.model_validate(raw)
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
+
+
+def test_to_inbound_message_dto_maps_a_list_reply_to_its_row_id_and_title():
+    raw = make_ycloud_list_reply_payload(
+        whatsapp_number=_WHATSAPP_NUMBER, row_id="MENU_CREATE", row_title="Agendar una cita"
+    )
+    payload = YCloudInboundEventPayload.model_validate(raw)
+
+    dto = to_inbound_message_dto(payload)
+
+    assert dto.button_payload == "MENU_CREATE"
+    assert dto.text == "Agendar una cita"
 
 
 def test_to_inbound_message_dto_maps_id_phone_and_text():

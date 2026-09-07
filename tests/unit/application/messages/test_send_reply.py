@@ -3,6 +3,7 @@ import pytest
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
@@ -152,6 +153,48 @@ async def test_send_reply_prefers_location_over_buttons_when_both_are_given():
     )
 
     assert messaging_gateway.sent_locations == [(PhoneNumber("+5491122334455"), location)]
+    assert messaging_gateway.sent_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_sends_a_list_message_when_given():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    list_message = ListMessage(
+        button_label="Elegí una opción",
+        rows=[ListRow(id="MENU_CREATE", title="Agendar una cita")],
+    )
+
+    await use_case.execute(
+        to=PhoneNumber("+5491122334455"),
+        text="¿En qué te puedo ayudar?",
+        list_message=list_message,
+    )
+
+    assert messaging_gateway.sent_lists == [
+        (PhoneNumber("+5491122334455"), "¿En qué te puedo ayudar?", list_message)
+    ]
+    assert messaging_gateway.sent_messages == []
+    assert messaging_gateway.sent_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_prefers_list_message_over_buttons_when_both_are_given():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    list_message = ListMessage(button_label="Opciones", rows=[ListRow(id="A", title="A")])
+    buttons = [InteractiveButton(id="x", title="X")]
+
+    await use_case.execute(
+        to=PhoneNumber("+5491122334455"),
+        text="Hola",
+        buttons=buttons,
+        list_message=list_message,
+    )
+
+    assert messaging_gateway.sent_lists == [
+        (PhoneNumber("+5491122334455"), "Hola", list_message)
+    ]
     assert messaging_gateway.sent_buttons == []
 
 

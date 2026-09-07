@@ -4,6 +4,7 @@ from app.domain.entities.tool_execution import COMPLETED, FAILED
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.observability.trace_context import TraceContext, use_trace_context
@@ -22,6 +23,7 @@ class _StubYCloudClient:
         self.button_calls: list[tuple[str, str, list[InteractiveButton], str | None]] = []
         self.flow_calls: list[tuple[str, str, str, str, str, str]] = []
         self.location_calls: list[tuple[str, float, float, str, str | None]] = []
+        self.list_calls: list[tuple[str, str, str, list[ListRow], str | None]] = []
         self.contacts: dict[str, dict[str, object]] = {}
 
     async def send_text(self, to: str, text: str) -> str:
@@ -60,6 +62,17 @@ class _StubYCloudClient:
     ) -> str:
         self.location_calls.append((to, latitude, longitude, name, address))
         return "wamid.stub-4"
+
+    async def send_list(
+        self,
+        to: str,
+        text: str,
+        button_label: str,
+        rows: list[ListRow],
+        section_title: str | None = None,
+    ) -> str:
+        self.list_calls.append((to, text, button_label, rows, section_title))
+        return "wamid.stub-5"
 
     async def get_contact(self, contact_id: str) -> dict[str, object]:
         return self.contacts.get(contact_id, {})
@@ -157,6 +170,31 @@ async def test_send_location_delegates_to_client_with_stringified_phone():
         )
     ]
     assert external_id == "wamid.stub-4"
+
+
+@pytest.mark.asyncio
+async def test_send_list_delegates_to_client_with_stringified_phone():
+    client = _StubYCloudClient()
+    gateway = YCloudMessagingGateway(client)
+    rows = [ListRow(id="MENU_CREATE", title="Agendar una cita")]
+    list_message = ListMessage(
+        button_label="Elegí una opción", rows=rows, section_title="Menú principal"
+    )
+
+    external_id = await gateway.send_list(
+        PhoneNumber("+5491122334455"), "¿En qué te puedo ayudar?", list_message
+    )
+
+    assert client.list_calls == [
+        (
+            "+5491122334455",
+            "¿En qué te puedo ayudar?",
+            "Elegí una opción",
+            rows,
+            "Menú principal",
+        )
+    ]
+    assert external_id == "wamid.stub-5"
 
 
 def test_ycloud_messaging_gateway_satisfies_messaging_gateway_protocol():

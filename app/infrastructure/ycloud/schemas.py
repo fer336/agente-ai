@@ -40,10 +40,21 @@ class YCloudNfmReply(BaseModel):
     response_json: str = ""
 
 
+class YCloudListReply(BaseModel):
+    """A tapped row in an interactive list message (`interactive.type=
+    "list_reply"`) — same Meta convention as `button_reply`, just with an
+    extra optional `description`."""
+
+    id: str = ""
+    title: str = ""
+    description: str | None = None
+
+
 class YCloudInteractive(BaseModel):
     type: str = ""
     button_reply: YCloudButtonReply | None = None
     nfm_reply: YCloudNfmReply | None = None
+    list_reply: YCloudListReply | None = None
 
 
 class YCloudAudioMessage(BaseModel):

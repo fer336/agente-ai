@@ -181,6 +181,30 @@ def make_ycloud_button_reply_payload(
     }
 
 
+def make_ycloud_list_reply_payload(
+    whatsapp_number: str = "+5491100000001",
+    row_id: str = "MENU_CREATE",
+    row_title: str = "Agendar una cita",
+    row_description: str | None = None,
+    external_message_id: str = "wamid.list-reply-1",
+    from_phone: str = "+5491122334455",
+) -> dict[str, object]:
+    """Raw YCloud interactive list-reply webhook JSON body, valid-by-default."""
+    list_reply: dict[str, object] = {"id": row_id, "title": row_title}
+    if row_description is not None:
+        list_reply["description"] = row_description
+    return {
+        "type": "whatsapp.inbound_message.received",
+        "whatsappInboundMessage": {
+            "id": external_message_id,
+            "from": from_phone,
+            "to": whatsapp_number,
+            "type": "interactive",
+            "interactive": {"type": "list_reply", "list_reply": list_reply},
+        },
+    }
+
+
 def make_ycloud_nfm_reply_payload(
     whatsapp_number: str = "+5491100000001",
     response_json: str = '{"full_name": "Rosa Gomez", "dni": "30123456"}',

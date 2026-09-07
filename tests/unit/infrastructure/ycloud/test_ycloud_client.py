@@ -5,6 +5,7 @@ import pytest
 
 import app.infrastructure.ycloud.client as client_module
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListRow
 from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.exceptions import YCloudAPIError
 
@@ -375,6 +376,75 @@ async def test_get_media_raises_ycloud_api_error_on_non_2xx_response(
         await client.get_media("missing")
 
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_send_list_posts_the_list_interactive_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+    rows = [
+        ListRow(id="MENU_CREATE", title="Agendar una cita"),
+        ListRow(id="MENU_VIEW", title="Ver mi cita", description="Ver tu próxima cita"),
+    ]
+
+    await client.send_list(
+        "+5491122334455",
+        "¿En qué te puedo ayudar?",
+        button_label="Elegí una opción",
+        rows=rows,
+        section_title="Menú principal",
+    )
+
+    body = json.loads(captured[0].content)
+    assert body == {
+        "from": "+5491100000001",
+        "to": "+5491122334455",
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": "¿En qué te puedo ayudar?"},
+            "action": {
+                "button": "Elegí una opción",
+                "sections": [
+                    {
+                        "title": "Menú principal",
+                        "rows": [
+                            {"id": "MENU_CREATE", "title": "Agendar una cita"},
+                            {
+                                "id": "MENU_VIEW",
+                                "title": "Ver mi cita",
+                                "description": "Ver tu próxima cita",
+                            },
+                        ],
+                    }
+                ],
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_list_omits_section_title_when_not_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    await client.send_list(
+        "+5491122334455",
+        "Elegí:",
+        button_label="Opciones",
+        rows=[ListRow(id="A", title="A")],
+    )
+
+    body = json.loads(captured[0].content)
+    assert "title" not in body["interactive"]["action"]["sections"][0]
 
 
 @pytest.mark.asyncio
