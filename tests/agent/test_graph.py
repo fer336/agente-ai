@@ -30,7 +30,12 @@ from tests.fixtures.gateways import (
     make_specialty_gateway,
     make_tool_execution_repository,
 )
-from tests.fixtures.seed_objects import make_agreement, make_conversation, make_specialty
+from tests.fixtures.seed_objects import (
+    make_agreement,
+    make_conversation,
+    make_professional,
+    make_specialty,
+)
 
 
 def _build_graph(conversation_repository=None):
@@ -56,11 +61,12 @@ def _compile(
     conversation_repository=None,
     agreement_gateway=None,
     specialty_gateway=None,
+    appointment_gateway=None,
     checkpointer=None,
     error_service=None,
 ):
     return compile_graph(
-        appointment_gateway=FakeDentalinkGateway(),
+        appointment_gateway=appointment_gateway or FakeDentalinkGateway(),
         agreement_gateway=agreement_gateway or FakeAgreementGateway(),
         specialty_gateway=specialty_gateway or make_specialty_gateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
@@ -115,7 +121,12 @@ async def test_specialties_message_routes_through_the_specialties_node():
     await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
     compiled = _compile(
         conversation_repository=conversation_repository,
-        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(name="Ortodoncia")]),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="spec-1", name="Ortodoncia")]
+        ),
+        appointment_gateway=FakeDentalinkGateway(
+            professionals=[make_professional(specialty_id="spec-1")]
+        ),
     )
 
     result = await compiled.ainvoke(

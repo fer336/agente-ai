@@ -28,15 +28,15 @@ from app.infrastructure.transcription.exceptions import TranscriptionError
 logger = logging.getLogger(__name__)
 
 _FALLBACK_EMPTY_TRANSCRIPT = (
-    "No pude entender el audio. ¿Podés escribir tu consulta o enviar un nuevo audio?"
+    "No pude entender el audio. Podés escribir tu consulta o enviar un nuevo audio?"
 )
 _FALLBACK_TRANSCRIPTION_FAILED = (
-    "No pude procesar tu audio en este momento. ¿Podés escribir tu consulta o "
+    "No pude procesar tu audio en este momento. Podés escribir tu consulta o "
     "enviar un nuevo audio?"
 )
 _FALLBACK_REJECTED = (
     "No pude procesar ese audio (formato, tamaño o duración no soportados). "
-    "¿Podés escribir tu consulta?"
+    "Podés escribir tu consulta?"
 )
 
 

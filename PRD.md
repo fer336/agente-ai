@@ -954,7 +954,7 @@ Si no existe información confiable:
 
 ```text
 Esta consulta necesita ser revisada por administración.
-¿Querés que te comunique con ellos?
+Querés que te comunique con ellos?
 ```
 
 El sistema nunca inventará porcentajes, montos ni condiciones de cobertura.

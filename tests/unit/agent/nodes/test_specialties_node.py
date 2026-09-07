@@ -43,15 +43,25 @@ async def test_naming_a_specialty_lists_its_professionals_and_continues_the_book
 
 
 @pytest.mark.asyncio
-async def test_naming_a_specialty_with_no_professionals_still_lists_the_catalog():
+async def test_naming_an_unstaffed_specialty_falls_back_to_the_staffed_catalog():
+    # "General" has zero professionals staffed, so it is excluded from the
+    # catalog entirely (an unstaffed specialty is a dead end) — naming it
+    # anyway must never crash or advance the stage, it just falls back to
+    # whatever IS staffed.
     node = _node(
-        specialties=[make_specialty(id_="spec-2", name="General")],
-        professionals=[],
+        specialties=[
+            make_specialty(id_="spec-1", name="Ortodoncia"),
+            make_specialty(id_="spec-2", name="General"),
+        ],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="spec-1"),
+        ],
     )
 
     result = await node(make_agent_state(user_message="quiero general"))
 
-    assert "General" in result["response_text"]
+    assert "Ortodoncia" in result["response_text"]
+    assert "General" not in result["response_text"]
     assert "collected_data" not in result
 
 
@@ -61,7 +71,11 @@ async def test_lists_every_configured_specialty():
         specialties=[
             make_specialty(id_="spec-1", name="Ortodoncia"),
             make_specialty(id_="spec-2", name="Endodoncia"),
-        ]
+        ],
+        professionals=[
+            make_professional(id_="prof-1", specialty_id="spec-1"),
+            make_professional(id_="prof-2", specialty_id="spec-2"),
+        ],
     )
 
     result = await node(make_agent_state(user_message="¿Qué especialidades tienen?"))

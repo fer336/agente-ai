@@ -4,6 +4,7 @@ from app.agent.nodes.appointment import (
     choose_professional_prompt,
     numbered_list,
     resolve_by_name,
+    staffed_specialty_ids,
 )
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -15,7 +16,7 @@ from app.domain.repositories.gateways import AppointmentGateway, SpecialtyGatewa
 #: invents a specialty name.
 _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tenemos especialidades cargadas. "
-    "¿Querés que te comunique con administración para consultarlo?"
+    "Querés que te comunique con administración para consultarlo?"
 )
 
 
@@ -44,6 +45,8 @@ def create_specialties_node(
 
     async def node(state: AgentState) -> dict[str, object]:
         specialties = await list_specialties.execute()
+        staffed = await staffed_specialty_ids(appointment_gateway)
+        specialties = [s for s in specialties if s.id in staffed]
 
         if not specialties:
             return {"response_text": _NO_SPECIALTIES_MESSAGE, "requires_handoff": False}

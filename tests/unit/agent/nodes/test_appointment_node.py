@@ -116,7 +116,7 @@ async def test_first_turn_shows_the_operation_menu():
     result = await node(make_agent_state(conversation_id="conv-1", collected_data={}))
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
-    assert "¿Qué querés hacer?" in result["response_text"]
+    assert "Qué querés hacer?" in result["response_text"]
     assert {b.id for b in result["response_buttons"]} == {
         OPERATION_CREATE_PAYLOAD,
         OPERATION_RESCHEDULE_PAYLOAD,
@@ -234,7 +234,11 @@ async def test_operation_menu_create_shows_the_numbered_specialty_list():
         specialties=[
             make_specialty(id_="cleaning", name="Ortodoncia"),
             make_specialty(id_="whitening", name="Endodoncia"),
-        ]
+        ],
+        professionals=[
+            make_professional(id_="prof-1", specialty_id="cleaning"),
+            make_professional(id_="prof-2", specialty_id="whitening"),
+        ],
     )
     state = make_agent_state(
         conversation_id="conv-1",
@@ -816,6 +820,32 @@ async def test_identification_stage_reprompts_when_dni_shape_is_invalid():
 
 
 @pytest.mark.asyncio
+async def test_identification_stage_reprompts_when_full_name_is_a_single_word():
+    # "cassera" alone passes `_parse_identification`'s own syntax check
+    # (some text plus a 6+ digit run) but isn't a full name — matching a
+    # single token against Dentalink by name+DNI fails even for an
+    # already-registered patient, and used to cascade into "no lo
+    # encontramos" -> offering to create a duplicate record for someone
+    # who already exists (seen live in production).
+    node, _, _ = await _make_node_and_conversation(patients=[])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="cassera 30313131",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["response_text"]
+    assert result["collected_data"]["identification_retry_count"] == 1
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert "pending_action_id" not in result
+
+
+@pytest.mark.asyncio
 async def test_dni_invalid_reprompt_remembers_the_already_parsed_full_name():
     node, _, _ = await _make_node_and_conversation(patients=[])
     state = make_agent_state(
@@ -1134,6 +1164,63 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
 
 
 @pytest.mark.asyncio
+async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retry():
+    # `create_patient` raised `PatientAlreadyExistsError` (the DNI is
+    # already registered) but the recovery lookup by name+DNI found no
+    # match (the patient typed an incomplete/mismatched name) — the
+    # response text asks the patient to retype name+DNI, so the stage must
+    # stay on identification for that reply to actually be parsed as the
+    # retry it was asked for, instead of falling out of the flow (and
+    # losing the slot already picked) into generic intent classification.
+    slot = _future_slot()
+    repositories_provider = make_proposal_repositories_provider()
+    conversation_repository = make_conversation_repository()
+    existing_patient = make_patient(id_="pat-existing", full_name="Pedro Cassera", dni="30313131")
+    patient_gateway = make_patient_gateway(patients=[existing_patient])
+    appointment_gateway = make_dentalink_gateway(available_slots=[slot])
+    await conversation_repository.save(
+        make_conversation(id_="ycloud-+5491122334455", mode="agent")
+    )
+    node = create_appointment_node(
+        appointment_gateway=appointment_gateway,
+        patient_gateway=patient_gateway,
+        proposal_repositories_provider=repositories_provider,
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+    )
+    payload = {"full_name": "cassera", "dni": "30313131", "phone": "+5491122334455"}
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1",
+                conversation_id="ycloud-+5491122334455",
+                action_type=CREATE_PATIENT_ACTION,
+                status="pending",
+                payload=payload,
+            )
+        )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["pending_selected_slot"] == slot
+
+
+@pytest.mark.asyncio
 async def test_slot_selection_stage_reminds_instead_of_advancing_on_free_text():
     slot = _future_slot()
     node, _, _ = await _make_node_and_conversation(available_slots=[slot])
@@ -1206,7 +1293,7 @@ async def test_slot_selection_stage_proposes_immediately_when_rescheduling():
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     }
-    assert "¿Confirmás" in result["response_text"]
+    assert "Confirmás" in result["response_text"]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "SENSITIVE_CONFIRMATION"
