@@ -61,7 +61,12 @@ from app.domain.value_objects.menu_payloads import (
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 
-_SEARCH_WINDOW = timedelta(days=30)
+#: Each day in the window is one sequential Dentalink request (the API only
+#: filters `fecha` by exact day, never by range — see the gateway's own
+#: docstring). A 30-day window meant walking up to 30 requests before ever
+#: reaching "no hay turnos", which was enough on its own to trip Dentalink's
+#: undocumented rate limit. 14 trades a little reach for far fewer requests.
+_SEARCH_WINDOW = timedelta(days=14)
 #: WhatsApp/Meta rejects an interactive message with more than 3 reply
 #: buttons. Nothing downstream (`SendReplyUseCase`, `YCloudMessagingGateway`,
 #: `YCloudClient`) enforces it, so every button list is capped here.
