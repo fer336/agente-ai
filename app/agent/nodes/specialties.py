@@ -2,6 +2,7 @@ from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     choose_professional_prompt,
+    match_named_professional,
     numbered_list,
     resolve_by_name,
     staffed_specialty_ids,
@@ -57,7 +58,31 @@ def create_specialties_node(
 
         index = resolve_by_name(state["user_message"], [s.name for s in specialties])
         if index is None:
-            return {"response_text": catalog, "requires_handoff": False}
+            matched_professional = await match_named_professional(
+                appointment_gateway, state["user_message"]
+            )
+            if matched_professional is None:
+                return {"response_text": catalog, "requires_handoff": False}
+            specialty_name = next(
+                (s.name for s in specialties if s.id == matched_professional.specialty_id),
+                "esa especialidad",
+            )
+            listing = numbered_list([matched_professional.full_name])
+            return {
+                "response_text": (
+                    f"Para {specialty_name} atiende:\n\n{listing}\n\n{choose_professional_prompt()}"
+                ),
+                "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": {
+                    **state["collected_data"],
+                    "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+                    "operation": CREATE_APPOINTMENT_ACTION,
+                    "chosen_specialty_id": matched_professional.specialty_id,
+                    "chosen_specialty_name": specialty_name,
+                    "professional_options": [matched_professional],
+                },
+            }
 
         chosen = specialties[index]
         professionals = await appointment_gateway.list_professionals(specialty_id=chosen.id)
