@@ -38,7 +38,7 @@ async def test_derives_to_admin_for_coverage_amount_questions():
 
     assert result["response_text"] == (
         "Esta consulta necesita ser revisada por administración.\n"
-        "¿Querés que te comunique con ellos?"
+        "Querés que te comunique con ellos?"
     )
 
 

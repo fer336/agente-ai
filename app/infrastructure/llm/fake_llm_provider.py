@@ -12,18 +12,18 @@ from app.domain.repositories.llm_provider import (
 #: rather than a single repeated string, so local/dev exercises the same
 #: "never say it twice, escalate on repeat" behavior a real LLM would give.
 _FALLBACK_MESSAGES = (
-    "Che, no llegué a entender bien eso último. ¿Me marcás una de estas opciones?",
+    "Che, no llegué a entender bien eso último. Me marcás una de estas opciones?",
     "Mmm, no me quedó claro qué necesitás. Fijate si alguna de estas te sirve.",
 )
 _FALLBACK_MESSAGE_REPEATED = (
-    "Veo que venimos yendo y viniendo con esto. ¿Querés que te pase directo con "
+    "Veo que venimos yendo y viniendo con esto. Querés que te pase directo con "
     "administración?"
 )
 
 #: `create_appointment_node`'s identification-stage retry prompts — same
 #: varied-wording spirit as the fallback messages above.
 _IDENTIFICATION_RETRY_MESSAGES = (
-    "No logré separar bien tu nombre del DNI ahí. ¿Me lo escribís junto, tipo "
+    "No logré separar bien tu nombre del DNI ahí. Me lo escribís junto, tipo "
     "Juan Pérez, 30123456?",
     "Sigo sin poder leerlo bien. Probá escribiendo primero tu nombre completo y "
     "después tu DNI, todo en un mismo mensaje: Juan Pérez, 30123456.",

@@ -11,7 +11,7 @@ _COVERAGE_DETAIL_KEYWORDS = ("cuánto", "cuanto", "porcentaje", "%", "monto", "c
 #: PRD.md §20's exact required message for an unverifiable coverage question.
 _DERIVE_TO_ADMIN_MESSAGE = (
     "Esta consulta necesita ser revisada por administración.\n"
-    "¿Querés que te comunique con ellos?"
+    "Querés que te comunique con ellos?"
 )
 
 
@@ -40,7 +40,7 @@ def create_agreement_node(
             return {
                 "response_text": (
                     "No encontramos esa obra social o prepaga en nuestros convenios "
-                    "disponibles. ¿Podés confirmarme el nombre exacto?"
+                    "disponibles. Podés confirmarme el nombre exacto?"
                 ),
                 "requires_handoff": False,
             }

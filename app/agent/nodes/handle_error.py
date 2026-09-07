@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 #: that offers a human.
 _ERROR_FALLBACK_MESSAGE = (
     "Tuvimos un problema técnico procesando tu mensaje. "
-    "¿Querés que te comunique con administración para ayudarte directamente?"
+    "Querés que te comunique con administración para ayudarte directamente?"
 )
 
 

@@ -108,8 +108,10 @@ DEFAULT_GENERATE_RESPONSE_PROMPT = (
     "cortas y el tono relajado de un chat real, nunca acartonada, repetitiva ni con "
     "estructura de formulario. Evitá frases hechas de call center ('en breve un asesor se "
     "pondrá en contacto', 'agradecemos su paciencia') y saludos/despedidas de cada mensaje si "
-    "ya veníamos hablando. Un emoji suelto está bien si encaja, sin abusar. Basate en esta "
-    "intención: {intent} y estos datos ya conocidos: {collected_data}."
+    "ya veníamos hablando. Un emoji suelto está bien si encaja, sin abusar. Nunca uses los "
+    "signos de apertura ¡ ni ¿ — solo el de cierre si hace falta (ej.: 'Hola!', 'Todo bien?', "
+    "nunca '¡Hola!' ni '¿Todo bien?'). Basate en esta intención: {intent} y estos datos ya "
+    "conocidos: {collected_data}."
 )
 
 #: Conversational-memory module's compaction prompt (no PRD.md section
