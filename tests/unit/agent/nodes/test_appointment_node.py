@@ -149,6 +149,31 @@ async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
 
 
 @pytest.mark.asyncio
+async def test_a_named_professional_skips_the_specialty_question_too():
+    # "quiero un turno con el doctor Carlos Adahenao" already answers who
+    # the patient wants — asking for a specialty they never need to name
+    # is exactly the bug seen live for `specialty_mention` alone.
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="implants", name="Implantología")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Carlos Adahenao", specialty_id="implants")
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero un turno con el doctor Carlos adahenao",
+        collected_data={"professional_mention": "Carlos Adahenao"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["collected_data"]["chosen_specialty_id"] == "implants"
+    assert "Carlos Adahenao" in result["response_text"]
+
+
+@pytest.mark.asyncio
 async def test_a_stated_operation_skips_the_operation_menu():
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(
@@ -222,7 +247,8 @@ async def test_operation_menu_reschedule_asks_for_identification():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
-    assert "DNI" in result["response_text"]
+    # Wording is now LLM-generated (varied on purpose) — just require a reply.
+    assert result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -460,7 +486,8 @@ async def test_slot_selection_in_the_create_flow_goes_to_identification():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["collected_data"]["pending_selected_slot"] == slot
     assert "pending_action_id" not in result
-    assert "DNI" in result["response_text"]
+    # Wording is now LLM-generated (varied on purpose) — just require a reply.
+    assert result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -567,7 +594,8 @@ async def test_operation_menu_cancel_asks_for_identification():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["collected_data"]["operation"] == CANCEL_APPOINTMENT_ACTION
-    assert "DNI" in result["response_text"]
+    # Wording is now LLM-generated (varied on purpose) — just require a reply.
+    assert result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -846,6 +874,72 @@ async def test_identification_stage_reprompts_when_full_name_is_a_single_word():
 
 
 @pytest.mark.asyncio
+async def test_identification_completes_across_two_messages_dni_then_name():
+    # The graph must iterate instead of demanding both in one message:
+    # DNI first, then a plain name-only reply completes identification.
+    node, _, _ = await _make_node_and_conversation(
+        patients=[make_patient(full_name="Pedro Cassera", dni="30313131")]
+    )
+    first_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="30313131",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    first_result = await node(first_state)
+
+    assert first_result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert first_result["collected_data"]["identification_dni"] == "30313131"
+    assert "identification_full_name" not in first_result["collected_data"]
+
+    second_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Pedro Cassera",
+        collected_data=first_result["collected_data"],
+    )
+
+    second_result = await node(second_state)
+
+    assert second_result["collected_data"].get("stage") != STAGE_AWAITING_IDENTIFICATION
+
+
+@pytest.mark.asyncio
+async def test_identification_completes_across_two_messages_name_then_dni():
+    node, _, _ = await _make_node_and_conversation(
+        patients=[make_patient(full_name="Pedro Cassera", dni="30313131")]
+    )
+    first_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Pedro Cassera",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    first_result = await node(first_state)
+
+    # No DNI has ever appeared yet — there is no signal this is an
+    # identification attempt at all, so it's treated the same as any
+    # other unparseable text, not remembered as a bare name.
+    assert first_result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert first_result["collected_data"]["identification_retry_count"] == 1
+
+    second_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Pedro Cassera, 30313131",
+        collected_data=first_result["collected_data"],
+    )
+
+    second_result = await node(second_state)
+
+    assert second_result["collected_data"].get("stage") != STAGE_AWAITING_IDENTIFICATION
+
+
+@pytest.mark.asyncio
 async def test_dni_invalid_reprompt_remembers_the_already_parsed_full_name():
     node, _, _ = await _make_node_and_conversation(patients=[])
     state = make_agent_state(
@@ -906,7 +1000,10 @@ async def test_identification_stage_combines_a_bare_dni_correction_with_the_reme
 
 
 @pytest.mark.asyncio
-async def test_bare_dni_message_without_a_remembered_name_still_reprompts_for_both():
+async def test_bare_dni_message_without_a_remembered_name_asks_for_the_name():
+    # A bare DNI is a real signal (a 6+ digit run), even with no name text
+    # of its own — the graph should keep the DNI and ask for just the
+    # missing piece, not throw it away and demand both again.
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(
         conversation_id="conv-1",
@@ -917,7 +1014,9 @@ async def test_bare_dni_message_without_a_remembered_name_still_reprompts_for_bo
     result = await node(state)
 
     assert result["response_text"]
-    assert result["collected_data"]["identification_retry_count"] == 1
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["identification_dni"] == "30123456"
+    assert "identification_retry_count" not in result.get("collected_data", {})
     assert "patient" not in result.get("collected_data", {})
 
 
@@ -1218,6 +1317,10 @@ async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retr
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["collected_data"]["pending_selected_slot"] == slot
+    # Neither the mismatched name nor the DNI it was matched against
+    # should survive — the patient was asked to write both again, fresh.
+    assert result["collected_data"]["identification_full_name"] is None
+    assert result["collected_data"]["identification_dni"] is None
 
 
 @pytest.mark.asyncio

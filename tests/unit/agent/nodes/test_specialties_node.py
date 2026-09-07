@@ -43,6 +43,31 @@ async def test_naming_a_specialty_lists_its_professionals_and_continues_the_book
 
 
 @pytest.mark.asyncio
+async def test_naming_a_professional_directly_skips_the_specialty_question():
+    # Seen live: "Quiero un turno con el doctor Carlos Adahenao" kept
+    # getting "Para qué especialidad querés el turno?" forever — naming a
+    # professional carries no specialty name for the catalog match to
+    # catch, so the mention was silently discarded.
+    node = _node(
+        specialties=[make_specialty(id_="spec-1", name="Implantología")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Carlos Adahenao", specialty_id="spec-1"),
+            make_professional(id_="prof-2", full_name="Camila Carasatorre", specialty_id="spec-1"),
+        ],
+    )
+
+    result = await node(
+        make_agent_state(user_message="Quiero un turno con el doctor Carlos adahenao")
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
+    assert "Carlos Adahenao" in result["response_text"]
+    assert "Camila Carasatorre" not in result["response_text"]
+
+
+@pytest.mark.asyncio
 async def test_naming_an_unstaffed_specialty_falls_back_to_the_staffed_catalog():
     # "General" has zero professionals staffed, so it is excluded from the
     # catalog entirely (an unstaffed specialty is a dead end) — naming it

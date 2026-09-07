@@ -157,11 +157,11 @@ _OPERATION_MENU_MESSAGE = "Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
 _ASK_IDENTIFICATION_MESSAGE = (
     "Para coordinar un turno necesito identificarte primero.\n\n"
-    "Escribime tu *nombre completo* y tu *DNI* (por ejemplo: Juan Pérez, 30123456)."
+    "Escribime tu *nombre completo* y tu *DNI* (por ejemplo: Rosa Gómez, 30123456)."
 )
 _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE = (
     "No pude leer bien tus datos. Escribime tu nombre completo y tu DNI juntos, "
-    "por ejemplo: Juan Pérez, 30123456."
+    "por ejemplo: Rosa Gómez, 30123456."
 )
 _PATIENT_NOT_FOUND_MESSAGE = (
     "No encontramos ningún paciente con esos datos. Revisá que el nombre y el DNI "
@@ -173,7 +173,13 @@ _DNI_FORMAT_INVALID_MESSAGE = (
 )
 _NAME_INCOMPLETE_MESSAGE = (
     "Necesito tu nombre Y apellido completos, no solo uno. Escribimelos junto "
-    "con tu DNI, por ejemplo: Juan Pérez, 30123456."
+    "con tu DNI, por ejemplo: Rosa Gómez, 30123456."
+)
+_ASK_DNI_ONLY_MESSAGE = (
+    "Gracias! Ahora decime tu *DNI* (7 u 8 dígitos), por ejemplo: 30123456."
+)
+_ASK_NAME_ONLY_MESSAGE = (
+    "Gracias! Ahora decime tu *nombre completo*, por ejemplo: Rosa Gómez."
 )
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
@@ -240,21 +246,21 @@ _IDENTIFICATION_ESCAPE_BUTTONS = [
 ]
 
 
-def _parse_identification(text: str) -> tuple[str, str] | None:
-    """Extracts (full_name, dni) from free text (PRD.md §32).
-
-    Looks for a 6-9 digit run anywhere in the message and treats the rest as
-    the full name — matches the format suggested to the patient
-    (`_ASK_IDENTIFICATION_MESSAGE`): "Juan Pérez, 30123456".
+def _extract_identification_pieces(text: str) -> tuple[str | None, str | None]:
+    """Splits free text into whichever (full_name, dni) pieces it actually
+    contains — either can be missing, since the patient may answer across
+    two messages instead of PRD.md §32's suggested one-shot format
+    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI and
+    whatever surrounds it is the name; with no digit run at all, the whole
+    message is treated as a name-only answer.
     """
     match = _DNI_PATTERN.search(text)
-    if match is None:
-        return None
-    dni = match.group(1)
-    full_name = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
-    if not full_name:
-        return None
-    return full_name, dni
+    if match is not None:
+        dni = match.group(1)
+        full_name = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
+        return full_name or None, dni
+    stripped = text.strip()
+    return stripped or None, None
 
 
 #: A patient answering a numbered list types "2", "2." or "opción 2" —
@@ -322,33 +328,48 @@ async def staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     return {p.specialty_id for p in professionals if p.specialty_id}
 
 
+async def match_named_professional(gateway: AppointmentGateway, text: str) -> Professional | None:
+    """Finds a professional named directly in free text (e.g. "quiero un
+    turno con el doctor Carlos Adahenao") — a patient who already knows
+    exactly who they want shouldn't have to name a specialty first. Shared
+    by this node's own `professional_mention` fallback and `specialties.py`'s
+    equivalent free-text matching.
+    """
+    professionals = await gateway.list_professionals()
+    index = _resolve_by_name(text, [professional.full_name for professional in professionals])
+    return professionals[index] if index is not None else None
+
+
 def choose_professional_prompt() -> str:
     """The exact wording this node uses to ask for a professional, so a
     patient handed over from `specialties.py` sees one consistent prompt."""
     return _CHOOSE_PROFESSIONAL_PROMPT
 
 
-def _resolve_identification(
-    text: str, remembered_full_name: str | None
-) -> tuple[str, str] | None:
-    """Tries a fresh `(full_name, dni)` parse of `text` alone; if that fails
-    but `text` is a bare DNI-like digit run with no name text of its own
-    and a full name was already confirmed on an earlier attempt in this
-    same identification stage (`remembered_full_name`), combines them
-    instead of discarding the already-good name and asking for everything
-    again — this session's own brief, prompted by a real conversation
-    where a patient corrected just their DNI after already typing a valid
-    name on the previous (DNI-format-invalid) attempt.
+def _merge_identification(
+    text: str,
+    remembered_full_name: str | None,
+    remembered_dni: str | None,
+) -> tuple[str | None, str | None]:
+    """Merges this turn's free text with whatever the patient already gave
+    earlier in this same identification stage. A piece the patient
+    addresses this turn always overrides what was remembered — a fresh
+    correction should never be shadowed by a stale answer — and a piece
+    left untouched this turn falls back to what was already remembered, so
+    the patient never has to repeat something they already got right.
+
+    A message with no digit run is only read as a bare name when a DNI is
+    already on record (remembered from an earlier turn) — otherwise there
+    is no signal that this text is an identification attempt at all, and
+    ordinary chatter ("hola quiero un turno") would get misread as a name.
     """
-    parsed = _parse_identification(text)
-    if parsed is not None:
-        return parsed
-    if remembered_full_name is None:
-        return None
-    match = _DNI_PATTERN.search(text)
-    if match is None:
-        return None
-    return remembered_full_name, match.group(1)
+    full_name, dni = _extract_identification_pieces(text)
+    if dni is None and remembered_dni is None:
+        return None, None
+    return (
+        full_name if full_name is not None else remembered_full_name,
+        dni if dni is not None else remembered_dni,
+    )
 
 
 def _format_slot_option(slot: AppointmentSlot, professional_names: dict[str, str]) -> str:
@@ -614,6 +635,29 @@ def create_appointment_node(
     cancel_appointment = CancelAppointmentUseCase(appointment_gateway)
     set_conversation_input_state = SetConversationInputStateUseCase(conversation_repository)
     list_specialties = ListSpecialtiesUseCase(specialty_gateway)
+
+    async def _ask_identification_message(conversation_id: ConversationId) -> str:
+        """Varied wording for the very first identification prompt — three
+        different entry points (post-slot, reschedule, cancel) all reach
+        this same ask, and a patient bouncing between them shouldn't see
+        the identical canned sentence every time."""
+        return await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "ask_identification",
+            {
+                "situacion": (
+                    "Hay que identificar al paciente antes de seguir: pedile su nombre "
+                    "completo y su DNI."
+                ),
+                "formato_requerido": (
+                    "Nombre y apellido completos, y DNI (7 u 8 dígitos), en uno o dos "
+                    "mensajes, ejemplo: Rosa Gómez, 30123456. Incluí ese ejemplo en tu "
+                    "respuesta."
+                ),
+            },
+            _ASK_IDENTIFICATION_MESSAGE,
+        )
 
     async def _cancel_follow_up(repositories: ProposalRepositories, pending_action_id: str) -> None:
         scheduled_actions = repositories.scheduled_actions
@@ -966,15 +1010,34 @@ def create_appointment_node(
                             # it was asked for, instead of falling out of
                             # the flow entirely (losing the slot they'd
                             # already picked) and landing in generic intent
-                            # classification.
+                            # classification. Both remembered pieces are
+                            # cleared: the name+DNI just confirmed are the
+                            # ones that turned out not to match, so keeping
+                            # either around could resurrect the same bad
+                            # pair instead of forcing a genuinely fresh one.
+                            text = await generate_or_fallback(
+                                llm_provider,
+                                str(conversation_id),
+                                "identification_name_mismatch",
+                                {
+                                    "situacion": (
+                                        "Encontramos un paciente con ese DNI, pero registrado "
+                                        "con otro nombre. Por seguridad hay que pedirle que "
+                                        "vuelva a escribir nombre y DNI completos."
+                                    ),
+                                },
+                                _NEW_PATIENT_RACE_LOST_MESSAGE,
+                            )
                             return {
-                                "response_text": _NEW_PATIENT_RACE_LOST_MESSAGE,
+                                "response_text": text,
                                 "response_buttons": None,
                                 "requires_handoff": False,
                                 "pending_action_id": None,
                                 "collected_data": {
                                     **collected_data,
                                     "stage": STAGE_AWAITING_IDENTIFICATION,
+                                    "identification_full_name": None,
+                                    "identification_dni": None,
                                 },
                             }
                         new_patient = recovered
@@ -1108,7 +1171,7 @@ def create_appointment_node(
                 # carried forward so identification never re-searches.
                 await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
                 return {
-                    "response_text": _ASK_IDENTIFICATION_MESSAGE,
+                    "response_text": await _ask_identification_message(conversation_id),
                     "response_buttons": None,
                     "requires_handoff": False,
                     "collected_data": {
@@ -1223,8 +1286,11 @@ def create_appointment_node(
             remembered_full_name = cast(
                 str | None, collected_data.get("identification_full_name")
             )
-            parsed = _resolve_identification(state["user_message"], remembered_full_name)
-            if parsed is None:
+            remembered_dni = cast(str | None, collected_data.get("identification_dni"))
+            merged_full_name, merged_dni = _merge_identification(
+                state["user_message"], remembered_full_name, remembered_dni
+            )
+            if merged_full_name is None and merged_dni is None:
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
                 escalating = retry_count > _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS
                 context: dict[str, object] = {
@@ -1233,8 +1299,8 @@ def create_appointment_node(
                         "paciente en el sistema."
                     ),
                     "formato_requerido": (
-                        "Nombre completo y DNI en un mismo mensaje, ejemplo: "
-                        "Juan Pérez, 30123456. Incluí ese ejemplo en tu respuesta."
+                        "Nombre completo y DNI, en un mismo mensaje o en dos, ejemplo: "
+                        "Rosa Gómez, 30123456. Incluí ese ejemplo en tu respuesta."
                     ),
                     # The model used to be told WE had failed ("no pudimos
                     # identificar", "no llegué a registrar bien tus datos"),
@@ -1268,15 +1334,16 @@ def create_appointment_node(
                         "identification_retry_count": retry_count,
                     },
                 }
-            full_name, dni = parsed
-            if len(full_name.split()) < 2:
+            if merged_full_name is not None and len(merged_full_name.split()) < 2:
                 # A single token ("cassera") looked syntactically fine to
-                # `_parse_identification` but isn't a full name — matching
-                # it against Dentalink by name+DNI fails even for a real,
-                # already-registered patient, and from there this flow
-                # cascades into "no lo encontramos" -> offering to create a
+                # the extractor but isn't a full name — matching it against
+                # Dentalink by name+DNI fails even for a real, already-
+                # registered patient, and from there this flow cascades
+                # into "no lo encontramos" -> offering to create a
                 # duplicate record for someone who already exists. Catch it
-                # before any lookup runs, not after it misfires.
+                # before any lookup runs, not after it misfires. Whatever
+                # DNI came with it (or was already remembered) is kept —
+                # only the name needs fixing.
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
                 text = await generate_or_fallback(
                     llm_provider,
@@ -1284,13 +1351,13 @@ def create_appointment_node(
                     "full_name_incomplete",
                     {
                         "situacion": (
-                            "El paciente escribió un DNI pero el nombre parece "
-                            "incompleto (una sola palabra, falta nombre o apellido)."
+                            "El nombre del paciente parece incompleto "
+                            "(una sola palabra, falta nombre o apellido)."
                         ),
-                        "nombre_recibido": full_name.strip(),
+                        "nombre_recibido": merged_full_name.strip(),
                         "formato_requerido": (
-                            "Nombre Y apellido completos junto con el DNI, ejemplo: "
-                            "Juan Pérez, 30123456. Incluí ese ejemplo en tu respuesta."
+                            "Nombre Y apellido completos, ejemplo: Rosa Gómez. "
+                            "Incluí ese ejemplo en tu respuesta."
                         ),
                         "intentos_seguidos": retry_count,
                     },
@@ -1303,8 +1370,55 @@ def create_appointment_node(
                     "collected_data": {
                         **collected_data,
                         "identification_retry_count": retry_count,
+                        "identification_dni": merged_dni,
                     },
                 }
+            if merged_full_name is None:
+                # DNI in hand, still no usable name — ask for just that
+                # instead of repeating the whole "nombre y DNI" prompt
+                # (PRD.md never demanded a single message, and the patient
+                # already got half of this right).
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "identification_missing_name",
+                    {
+                        "situacion": "El paciente ya dio su DNI, todavía falta el nombre completo.",
+                        "formato_requerido": "Nombre y apellido completos, ejemplo: Rosa Gómez.",
+                    },
+                    _ASK_NAME_ONLY_MESSAGE,
+                )
+                return {
+                    "response_text": text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {**collected_data, "identification_dni": merged_dni},
+                }
+            if merged_dni is None:
+                # Full name in hand, still no DNI — same idea, ask for just
+                # what's missing.
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "identification_missing_dni",
+                    {
+                        "situacion": "El paciente ya dio su nombre completo, todavía falta el DNI.",
+                        "formato_requerido": "Solo números, 7 u 8 dígitos, ejemplo: 30123456.",
+                    },
+                    _ASK_DNI_ONLY_MESSAGE,
+                )
+                return {
+                    "response_text": text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "identification_full_name": merged_full_name.strip(),
+                    },
+                }
+            # Both pieces are confirmed non-`None` past this point — the
+            # three branches above return early for every other case.
+            full_name, dni = merged_full_name, merged_dni
             try:
                 validated_dni = Dni(dni)
             except ValueError:
@@ -1339,6 +1453,10 @@ def create_appointment_node(
                         **collected_data,
                         "identification_retry_count": retry_count,
                         "identification_full_name": full_name.strip(),
+                        # Don't remember a DNI that just failed format
+                        # validation — a later name-only reply must not
+                        # resurrect it as if it had been fine.
+                        "identification_dni": None,
                     },
                 }
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
@@ -1517,7 +1635,7 @@ def create_appointment_node(
                     conversation_id, {**collected_data, "operation": operation}
                 )
             return {
-                "response_text": _ASK_IDENTIFICATION_MESSAGE,
+                "response_text": await _ask_identification_message(conversation_id),
                 "response_buttons": None,
                 "requires_handoff": False,
                 "collected_data": {
@@ -1550,6 +1668,39 @@ def create_appointment_node(
                     {**collected_data, "operation": CREATE_APPOINTMENT_ACTION},
                 )
 
+        professional_mention = collected_data.get("professional_mention")
+        if professional_mention is not None:
+            # A patient who names a professional directly ("quiero un
+            # turno con el doctor Carlos Adahenao") knows exactly who they
+            # want — the specialty is what they don't need to say, and
+            # nothing here used to read this mention at all (seen live:
+            # the bot kept asking "Para qué especialidad?" and just
+            # discarded the name it was already given).
+            matched_professional = await match_named_professional(
+                appointment_gateway, str(professional_mention)
+            )
+            if matched_professional is not None:
+                specialties = await list_specialties.execute()
+                specialty_name = next(
+                    (s.name for s in specialties if s.id == matched_professional.specialty_id),
+                    "esa especialidad",
+                )
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                listing = _numbered_list([matched_professional.full_name])
+                return {
+                    "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+                        "operation": CREATE_APPOINTMENT_ACTION,
+                        "chosen_specialty_id": matched_professional.specialty_id,
+                        "chosen_specialty_name": specialty_name,
+                        "professional_options": [matched_professional],
+                    },
+                }
+
         if operation == CREATE_APPOINTMENT_ACTION:
             return await _offer_specialties(
                 conversation_id, {**collected_data, "operation": operation}
@@ -1557,7 +1708,7 @@ def create_appointment_node(
         if operation is not None:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {
-                "response_text": _ASK_IDENTIFICATION_MESSAGE,
+                "response_text": await _ask_identification_message(conversation_id),
                 "response_buttons": None,
                 "requires_handoff": False,
                 "collected_data": {
