@@ -94,6 +94,9 @@ def test_conforming_class_satisfies_messaging_gateway_protocol():
         async def send_flow(self, to, text, flow):
             return "external-id"
 
+        async def send_location(self, to, location):
+            return "external-id"
+
         async def get_contact_phone(self, ycloud_contact_id):
             return None
 

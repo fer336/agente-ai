@@ -139,6 +139,49 @@ async def test_repeat_fallback_does_tell_the_llm_to_escalate():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "¿dónde queda la clínica?",
+        "donde estan ubicados",
+        "como llego",
+        "cual es la dirección",
+    ],
+)
+async def test_a_location_question_sends_the_native_location_card(message: str) -> None:
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            raise AssertionError("a location question must never go through the LLM")
+
+    node = create_fallback_node(_ExplodingLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    location = result["response_location"]
+    assert location is not None
+    assert location.name == "Smiling Pilar"
+    assert location.address == "Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires"
+    assert location.latitude == pytest.approx(-34.437762)
+    assert location.longitude == pytest.approx(-58.7917857)
+    assert result["response_buttons"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_location_question_clears_a_stale_pending_answer():
+    node = create_fallback_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="como llego",
+            collected_data={"pending_answer": "algo viejo"},
+        )
+    )
+
+    assert "pending_answer" not in result["collected_data"]
+    assert result["response_location"] is not None
+
+
+@pytest.mark.asyncio
 async def test_fallback_node_tells_the_llm_how_many_consecutive_attempts_happened():
     seen_contexts: list[ResponseContext] = []
 

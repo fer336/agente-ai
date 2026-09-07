@@ -11,6 +11,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 
 
@@ -155,6 +156,12 @@ class MessagingGateway(Protocol):
 
     async def send_flow(self, to: PhoneNumber, text: str, flow: FlowRequest) -> str:
         """Sends a WhatsApp Flow message and returns the external_message_id."""
+        ...
+
+    async def send_location(self, to: PhoneNumber, location: LocationRequest) -> str:
+        """Sends a native WhatsApp location message and returns the
+        external_message_id — a tap opens Maps directly, unlike a plain
+        text link."""
         ...
 
     async def get_contact_phone(self, ycloud_contact_id: str) -> PhoneNumber | None:

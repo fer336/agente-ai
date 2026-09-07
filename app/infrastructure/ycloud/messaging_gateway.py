@@ -1,6 +1,7 @@
 from app.application.errors.error_types import YCLOUD_AUTH_ERROR, YCLOUD_SEND_FAILURE
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.observability.tool_tracing import traced_call
 from app.infrastructure.ycloud.client import YCloudClient
@@ -84,6 +85,24 @@ class YCloudMessagingGateway:
                 flow_screen_id=flow.flow_screen_id,
                 flow_cta=flow.flow_cta,
                 flow_token=flow.flow_token,
+            ),
+            response_summary=lambda external_id: f"external_message_id={external_id}",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def send_location(self, to: PhoneNumber, location: LocationRequest) -> str:
+        return await traced_call(
+            tool_name="SendLocationTool",
+            provider=_PROVIDER,
+            operation="send_location",
+            request_summary=f"name={location.name}",
+            call=lambda: self._client.send_location(
+                str(to),
+                latitude=location.latitude,
+                longitude=location.longitude,
+                name=location.name,
+                address=location.address,
             ),
             response_summary=lambda external_id: f"external_message_id={external_id}",
             http_status_of=_http_status_of,

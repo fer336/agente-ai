@@ -423,6 +423,55 @@ async def test_send_flow_posts_the_flow_interactive_payload(
 
 
 @pytest.mark.asyncio
+async def test_send_location_posts_the_location_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    await client.send_location(
+        "+5491122334455",
+        latitude=-34.437762,
+        longitude=-58.7917857,
+        name="Smiling Pilar",
+        address="Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires",
+    )
+
+    assert len(captured) == 1
+    body = json.loads(captured[0].content)
+    assert body == {
+        "from": "+5491100000001",
+        "to": "+5491122334455",
+        "type": "location",
+        "location": {
+            "latitude": -34.437762,
+            "longitude": -58.7917857,
+            "name": "Smiling Pilar",
+            "address": "Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_location_omits_address_when_not_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    await client.send_location(
+        "+5491122334455", latitude=-34.437762, longitude=-58.7917857, name="Smiling Pilar"
+    )
+
+    body = json.loads(captured[0].content)
+    assert "address" not in body["location"]
+
+
+@pytest.mark.asyncio
 async def test_create_flow_posts_to_the_flows_endpoint_with_the_waba_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

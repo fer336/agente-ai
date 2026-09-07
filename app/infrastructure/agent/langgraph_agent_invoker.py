@@ -279,6 +279,7 @@ class LangGraphAgentInvoker:
                     "response_text": None,
                     "response_buttons": None,
                     "response_flow": None,
+                    "response_location": None,
                     "requires_handoff": False,
                     "error": None,
                 }
@@ -304,13 +305,17 @@ class LangGraphAgentInvoker:
                 )
 
                 response_text = result.get("response_text")
-                if not response_text:
-                    # Either the conversation is already in HUMAN mode (graph
-                    # ends silently, PRD.md §21) or a node genuinely produced
-                    # no reply — both are valid "say nothing" outcomes.
-                    return
                 response_buttons = result.get("response_buttons")
                 response_flow = result.get("response_flow")
+                response_location = result.get("response_location")
+                if not response_text and response_flow is None and response_location is None:
+                    # Either the conversation is already in HUMAN mode (graph
+                    # ends silently, PRD.md §21) or a node genuinely produced
+                    # no reply — both are valid "say nothing" outcomes. A
+                    # location message carries no text of its own, so its
+                    # presence alone is enough to know there's something to
+                    # send.
+                    return
 
                 conversation = await repositories.conversations.get_by_id(conversation_id)
                 if conversation is None:
@@ -321,7 +326,11 @@ class LangGraphAgentInvoker:
                 phone = contact.phone
 
         await self._send_reply.execute(
-            phone, response_text, response_buttons, flow=response_flow
+            phone,
+            response_text or "",
+            response_buttons,
+            flow=response_flow,
+            location=response_location,
         )
 
 

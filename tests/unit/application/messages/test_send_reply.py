@@ -3,6 +3,7 @@ import pytest
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 
@@ -121,6 +122,36 @@ async def test_send_reply_prefers_flow_over_buttons_when_both_are_given():
     )
 
     assert messaging_gateway.sent_flows == [(PhoneNumber("+5491122334455"), "Hola", flow)]
+    assert messaging_gateway.sent_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_sends_a_location_when_given():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    location = LocationRequest(
+        latitude=-34.437762, longitude=-58.7917857, name="Smiling Pilar"
+    )
+
+    await use_case.execute(to=PhoneNumber("+5491122334455"), text="", location=location)
+
+    assert messaging_gateway.sent_locations == [(PhoneNumber("+5491122334455"), location)]
+    assert messaging_gateway.sent_messages == []
+    assert messaging_gateway.sent_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_prefers_location_over_buttons_when_both_are_given():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = SendReplyUseCase(messaging_gateway)
+    location = LocationRequest(latitude=1.0, longitude=2.0, name="Smiling Pilar")
+    buttons = [InteractiveButton(id="x", title="X")]
+
+    await use_case.execute(
+        to=PhoneNumber("+5491122334455"), text="Hola", buttons=buttons, location=location
+    )
+
+    assert messaging_gateway.sent_locations == [(PhoneNumber("+5491122334455"), location)]
     assert messaging_gateway.sent_buttons == []
 
 
