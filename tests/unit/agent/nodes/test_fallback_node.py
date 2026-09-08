@@ -43,6 +43,33 @@ async def test_fallback_node_uses_the_llm_generated_text():
 
 
 @pytest.mark.asyncio
+async def test_fallback_node_forwards_recent_messages_and_contact_memory_to_the_llm():
+    # Regression: this used to build `ResponseContext` with no conversation
+    # history, so a fallback reply had no way to know it (or the patient)
+    # had just spoken one message ago.
+    captured: list[ResponseContext] = []
+
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            captured.append(context)
+            return "ok"
+
+    node = create_fallback_node(_CapturingLLMProvider())
+    recent = [{"role": "user", "content": "asdkjaslkdj"}]
+
+    await node(
+        make_agent_state(
+            user_message="asdkjaslkdj",
+            recent_messages=recent,
+            contact_memory_summary="Paciente frecuente.",
+        )
+    )
+
+    assert captured[0].recent_messages == recent
+    assert captured[0].contact_memory == "Paciente frecuente."
+
+
+@pytest.mark.asyncio
 async def test_fallback_node_falls_back_to_a_static_message_when_the_llm_provider_fails():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def generate_response(self, context: ResponseContext) -> str:

@@ -150,6 +150,8 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             "fallback",
             context,
             _MAIN_MENU_MESSAGE,
+            state["recent_messages"],
+            state["contact_memory_summary"],
         )
 
         return {

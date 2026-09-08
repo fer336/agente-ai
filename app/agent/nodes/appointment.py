@@ -717,7 +717,11 @@ def create_appointment_node(
     set_conversation_input_state = SetConversationInputStateUseCase(conversation_repository)
     list_specialties = ListSpecialtiesUseCase(specialty_gateway)
 
-    async def _ask_identification_message(conversation_id: ConversationId) -> str:
+    async def _ask_identification_message(
+        conversation_id: ConversationId,
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> str:
         """Varied wording for the very first identification prompt — three
         different entry points (post-slot, reschedule, cancel) all reach
         this same ask, and a patient bouncing between them shouldn't see
@@ -738,10 +742,15 @@ def create_appointment_node(
                 ),
             },
             _ASK_IDENTIFICATION_MESSAGE,
+            recent_messages,
+            contact_memory,
         )
 
     async def _begin_identification(
-        conversation_id: ConversationId, collected_data: dict[str, object]
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
     ) -> dict[str, object]:
         """Starts identification — sends the verification Flow when one is
         configured (`verification_flow_id`), else falls back to the
@@ -763,6 +772,8 @@ def create_appointment_node(
                     ),
                 },
                 _SEND_VERIFICATION_FLOW_MESSAGE,
+                recent_messages,
+                contact_memory,
             )
             return {
                 "response_text": intro,
@@ -777,14 +788,19 @@ def create_appointment_node(
                 "collected_data": {**collected_data, "stage": STAGE_AWAITING_VERIFICATION_FLOW},
             }
         return {
-            "response_text": await _ask_identification_message(conversation_id),
+            "response_text": await _ask_identification_message(
+                conversation_id, recent_messages, contact_memory
+            ),
             "response_buttons": None,
             "requires_handoff": False,
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_IDENTIFICATION},
         }
 
     async def _begin_registration(
-        conversation_id: ConversationId, collected_data: dict[str, object]
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
     ) -> dict[str, object]:
         """Sends the registration Flow — reached when verification found no
         match for the patient, or they rejected the found data as not
@@ -804,6 +820,8 @@ def create_appointment_node(
                 ),
             },
             _SEND_REGISTRATION_FLOW_MESSAGE,
+            recent_messages,
+            contact_memory,
         )
         return {
             "response_text": intro,
@@ -1217,6 +1235,8 @@ def create_appointment_node(
                                     ),
                                 },
                                 _NEW_PATIENT_RACE_LOST_MESSAGE,
+                                state["recent_messages"],
+                                state["contact_memory_summary"],
                             )
                             return {
                                 "response_text": text,
@@ -1356,7 +1376,10 @@ def create_appointment_node(
                 # this session's brief asked for. The chosen slot is
                 # carried forward so identification never re-searches.
                 return await _begin_identification(
-                    conversation_id, {**collected_data, "pending_selected_slot": selected}
+                    conversation_id,
+                    {**collected_data, "pending_selected_slot": selected},
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
 
             pending_action = await propose_appointment.execute(
@@ -1543,10 +1566,20 @@ def create_appointment_node(
                 # The Flow's own required/number-only fields should have
                 # caught this, but if they somehow didn't, re-sending the
                 # same Flow is safer than getting stuck on bad data.
-                return await _begin_identification(conversation_id, collected_data)
+                return await _begin_identification(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
             if identified_patient is None:
-                return await _begin_registration(conversation_id, collected_data)
+                return await _begin_registration(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
             await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
             return {
                 "response_text": _verification_confirmation_message(identified_patient),
@@ -1576,7 +1609,12 @@ def create_appointment_node(
                 # "That's not me" — the found record isn't whoever is
                 # messaging; collect fresh data instead of risking someone
                 # else's identity.
-                return await _begin_registration(conversation_id, collected_data)
+                return await _begin_registration(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
             return {
                 "response_text": _CONFIRMATION_REMINDER,
                 "response_buttons": _CONFIRM_BUTTONS,
@@ -1598,7 +1636,12 @@ def create_appointment_node(
             try:
                 validated_dni = Dni(raw_dni)
             except ValueError:
-                return await _begin_registration(conversation_id, collected_data)
+                return await _begin_registration(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
             contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
             try:
                 new_patient = await patient_gateway.create_patient(
@@ -1610,7 +1653,12 @@ def create_appointment_node(
                 # instead of failing the turn.
                 recovered = await identify_patient.execute(full_name, validated_dni.value)
                 if recovered is None:
-                    return await _begin_registration(conversation_id, collected_data)
+                    return await _begin_registration(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
                 new_patient = recovered
             if obra_social_name:
                 agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
@@ -1663,6 +1711,8 @@ def create_appointment_node(
                     "identification_retry",
                     context,
                     _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 if escalating:
                     await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
@@ -1703,6 +1753,8 @@ def create_appointment_node(
                         "intentos_seguidos": retry_count,
                     },
                     _NAME_INCOMPLETE_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 return {
                     "response_text": text,
@@ -1728,6 +1780,8 @@ def create_appointment_node(
                         "formato_requerido": "Nombre y apellido completos, ejemplo: Rosa Gómez.",
                     },
                     _ASK_NAME_ONLY_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 return {
                     "response_text": text,
@@ -1747,6 +1801,8 @@ def create_appointment_node(
                         "formato_requerido": "Solo números, 7 u 8 dígitos, ejemplo: 30123456.",
                     },
                     _ASK_DNI_ONLY_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 return {
                     "response_text": text,
@@ -1785,6 +1841,8 @@ def create_appointment_node(
                         "intentos_seguidos": retry_count,
                     },
                     _DNI_FORMAT_INVALID_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 return {
                     "response_text": text,
@@ -1877,6 +1935,8 @@ def create_appointment_node(
                         "intentos_seguidos": retry_count,
                     },
                     _SPECIALTY_NOT_UNDERSTOOD_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 return {
                     "response_text": f"{text}\n\n{listing}",
@@ -1927,6 +1987,8 @@ def create_appointment_node(
                         "intentos_seguidos": retry_count,
                     },
                     _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
                 return {
                     "response_text": f"{text}\n\n{listing}",
@@ -1970,7 +2032,10 @@ def create_appointment_node(
                     conversation_id, {**collected_data, "operation": operation}
                 )
             return await _begin_identification(
-                conversation_id, {**collected_data, "operation": operation}
+                conversation_id,
+                {**collected_data, "operation": operation},
+                state["recent_messages"],
+                state["contact_memory_summary"],
             )
 
         # No stage yet. A button tap wins outright (PRD.md §6: deterministic
@@ -2041,7 +2106,10 @@ def create_appointment_node(
             )
         if operation is not None:
             return await _begin_identification(
-                conversation_id, {**collected_data, "operation": operation}
+                conversation_id,
+                {**collected_data, "operation": operation},
+                state["recent_messages"],
+                state["contact_memory_summary"],
             )
 
         situacion = (
@@ -2062,6 +2130,8 @@ def create_appointment_node(
                 "tono": "Cordial y breve, como alguien de la clínica atendiendo por WhatsApp.",
             },
             _MAIN_MENU_RESET_MESSAGE if returned_to_main_menu else _OPERATION_MENU_MESSAGE,
+            state["recent_messages"],
+            state["contact_memory_summary"],
         )
         return {
             "response_text": text,
