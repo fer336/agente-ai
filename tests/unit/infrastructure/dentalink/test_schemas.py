@@ -188,9 +188,7 @@ def test_appointment_from_cita_defaults_to_confirmed_when_cancelled_state_id_is_
 
 def test_appointment_from_cita_raises_when_id_is_missing():
     with pytest.raises(DentalinkInvalidResponseError):
-        appointment_from_cita(
-            {"id_paciente": "pat-1"}, cancelled_state_id=None, timezone=_TZ
-        )
+        appointment_from_cita({"id_paciente": "pat-1"}, cancelled_state_id=None, timezone=_TZ)
 
 
 def test_agreement_from_convenio_maps_id_and_nombre():
@@ -229,6 +227,36 @@ def test_resolve_cancellation_state_id_returns_none_when_no_match():
     state_id = resolve_cancellation_state_id([{"id": 1, "nombre": "Confirmada"}])
 
     assert state_id is None
+
+
+def test_resolve_cancellation_state_id_uses_the_anulacion_flag_as_primary_signal():
+    state_id = resolve_cancellation_state_id(
+        [
+            {"id": 1, "nombre": "Confirmada", "anulacion": 0, "uso_interno": 0},
+            {"id": 9, "nombre": "Anulada", "anulacion": 1, "uso_interno": 0},
+        ]
+    )
+
+    assert state_id == "9"
+
+
+def test_resolve_cancellation_state_id_skips_states_reserved_for_internal_use():
+    # Regression, seen live (2026-09-08): PUTting a `uso_interno == 1`
+    # anulación state fails with a 400 ("reservado para uso interno del
+    # software") — this account has 7 `anulacion == 1` states and only
+    # plain "Anulado" is safe for an external API caller to set. Reduced
+    # from the real `GET /v1/citas/estados` response, in the same
+    # (unsorted-by-safety) order it was returned in.
+    estados = [
+        {"id": 20, "nombre": "Anulado por pcte. via Whatsapp", "anulacion": 1, "uso_interno": 1},
+        {"id": 18, "nombre": "Anulado vía validación", "anulacion": 1, "uso_interno": 1},
+        {"id": 16, "nombre": "Anulado por reprogramación", "anulacion": 1, "uso_interno": 1},
+        {"id": 1, "nombre": "Anulado", "anulacion": 1, "uso_interno": 0},
+    ]
+
+    state_id = resolve_cancellation_state_id(estados)
+
+    assert state_id == "1"
 
 
 def test_treatment_from_tratamiento_maps_confirmed_live_shape():

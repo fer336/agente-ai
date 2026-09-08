@@ -132,9 +132,7 @@ def patient_from_paciente(raw: dict[str, object]) -> Patient:
 
     raw_phone = raw.get("celular") or raw.get("telefono")
     if not raw_phone:
-        raise DentalinkInvalidResponseError(
-            f"paciente {patient_id} record has no celular/telefono"
-        )
+        raise DentalinkInvalidResponseError(f"paciente {patient_id} record has no celular/telefono")
     phone = _phone_from_dentalink(str(raw_phone))
 
     rut = raw.get("rut")
@@ -159,9 +157,7 @@ def _phone_from_dentalink(raw_value: str) -> PhoneNumber:
     try:
         return PhoneNumber(candidate)
     except ValueError as exc:
-        raise DentalinkInvalidResponseError(
-            f"unparseable phone number: {raw_value!r}"
-        ) from exc
+        raise DentalinkInvalidResponseError(f"unparseable phone number: {raw_value!r}") from exc
 
 
 def agreement_from_convenio(raw: dict[str, object]) -> Agreement:
@@ -209,6 +205,15 @@ def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | Non
     (case/accent-insensitive substring against "anula"/"cancela") only for
     an estado that omits the flag entirely — defensive, in case another
     account's API version doesn't send it.
+
+    A candidate with `uso_interno == 1` is always skipped: seen live
+    (2026-09-08) this account has SEVEN `anulacion == 1` states, and every
+    one of them except plain "Anulado" (`uso_interno == 0`) is reserved for
+    Dentalink's own automations ("Anulado por pcte. via Whatsapp", "Anulado
+    por reprogramación", ...) — PUTting one of those ourselves fails with a
+    400: "El estado enviado esta reservado para uso interno del software."
+    Iteration order isn't guaranteed, so without this filter the first
+    `anulacion == 1` match found can easily be one of the reserved ones.
     """
     for estado in estados:
         if "anulacion" in estado:
@@ -216,10 +221,11 @@ def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | Non
         else:
             name = str(estado.get("nombre", "")).casefold()
             is_cancellation = "anula" in name or "cancela" in name
-        if is_cancellation:
-            state_id = estado.get("id")
-            if state_id is not None:
-                return str(state_id)
+        if not is_cancellation or estado.get("uso_interno") == 1:
+            continue
+        state_id = estado.get("id")
+        if state_id is not None:
+            return str(state_id)
     return None
 
 
