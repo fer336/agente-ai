@@ -296,6 +296,33 @@ async def test_generate_response_includes_contact_memory_in_the_system_prompt() 
 
 
 @pytest.mark.asyncio
+async def test_generate_response_flags_contact_memory_as_possibly_stale() -> None:
+    # Regression, seen live: the compaction worker only runs on a periodic
+    # sweep, so `contact_memory` can lag behind an action taken earlier in
+    # THIS SAME conversation (e.g. a just-cancelled appointment) — the
+    # model trusted the stale summary over its own immediately preceding
+    # message and told a patient they still had a turno right after
+    # cancelling it. The prompt must say this summary can be outdated and
+    # subordinate to the live conversation/collected data.
+    client = _StubClient("ok")
+    provider = _make_provider(client)
+
+    await provider.generate_response(
+        ResponseContext(
+            conversation_id="conv-1",
+            intent="unknown",
+            collected_data={},
+            contact_memory="Tiene un turno para el 18/09 a las 13:00.",
+        )
+    )
+
+    _, messages, _ = client.calls[0]
+    content = messages[0]["content"]
+    assert "desactualizado" in content
+    assert "priman siempre" in content
+
+
+@pytest.mark.asyncio
 async def test_generate_response_omits_contact_memory_line_when_absent() -> None:
     client = _StubClient("ok")
     provider = _make_provider(client)
@@ -305,4 +332,4 @@ async def test_generate_response_omits_contact_memory_line_when_absent() -> None
     )
 
     _, messages, _ = client.calls[0]
-    assert "Lo que ya sabemos" not in messages[0]["content"]
+    assert "sabíamos de este paciente" not in messages[0]["content"]
