@@ -281,8 +281,24 @@ _CONFIRM_BUTTONS = [
 #: Tapping any of these abandons whatever stage is in flight — see `node`.
 #: `MENU_ADMIN_PAYLOAD` is deliberately NOT here: `resolve_interaction.py`
 #: now routes it to `intent="handoff"` before this node ever runs, so it
-#: can never arrive as `button_payload` mid-stage any more.
-_MAIN_MENU_PAYLOADS = frozenset({MENU_APPOINTMENT_PAYLOAD, MENU_SPECIALTIES_PAYLOAD})
+#: can never arrive as `button_payload` mid-stage any more. The 4
+#: `OPERATION_*` payloads are the welcome list's own booking rows (bug
+#: found live: the same WhatsApp number reused across a leftover
+#: `STAGE_AWAITING_IDENTIFICATION` from an earlier reschedule/cancel test —
+#: tapping "Agendar una cita" from a freshly resent welcome menu was
+#: silently swallowed by that stale stage instead of starting the tapped
+#: operation, since only the two generic menu buttons reset it) — without
+#: them here, a stale stage always wins over an explicit new pick.
+_MAIN_MENU_PAYLOADS = frozenset(
+    {
+        MENU_APPOINTMENT_PAYLOAD,
+        MENU_SPECIALTIES_PAYLOAD,
+        OPERATION_CREATE_PAYLOAD,
+        OPERATION_RESCHEDULE_PAYLOAD,
+        OPERATION_CANCEL_PAYLOAD,
+        OPERATION_VIEW_PAYLOAD,
+    }
+)
 #: How many consecutive unreadable identification attempts before the
 #: patient is offered a human instead. Mirrors `fallback.py`'s own ceiling:
 #: without one, `identification_retry_count` just counted upward while the
@@ -297,7 +313,7 @@ _IDENTIFICATION_ESCAPE_BUTTONS = [
 #: mid-list had no button to tap, only the admin-escalation phrase (PRD.md
 #: §24.2). One button is safe to add there (WhatsApp caps interactive
 #: replies at 3, and these stages send none of their own).
-_MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Menú principal")
+_MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Volver al Menú")
 #: `MENU_ADMIN_PAYLOAD` here is never handled inside this stage: any button
 #: with that payload is intercepted upstream by `resolve_interaction.py`,
 #: which routes it straight to `intent="handoff"` regardless of the active
@@ -1654,11 +1670,11 @@ def create_appointment_node(
                 recovered = await identify_patient.execute(full_name, validated_dni.value)
                 if recovered is None:
                     return await _begin_registration(
-                    conversation_id,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                        conversation_id,
+                        collected_data,
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
                 new_patient = recovered
             if obra_social_name:
                 agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
@@ -2113,7 +2129,7 @@ def create_appointment_node(
             )
 
         situacion = (
-            'El paciente tocó "Menú principal" para abandonar lo que estaba haciendo y '
+            'El paciente tocó "Volver al Menú" para abandonar lo que estaba haciendo y '
             "empezar de nuevo."
             if returned_to_main_menu
             else (

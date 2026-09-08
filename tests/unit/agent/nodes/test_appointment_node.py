@@ -179,6 +179,33 @@ async def test_main_menu_button_mid_stage_resets_and_shows_a_distinct_message():
 
 
 @pytest.mark.asyncio
+async def test_a_welcome_list_operation_row_abandons_a_stale_stage_for_a_different_operation():
+    # Regression, seen live: the same WhatsApp number had left a stale
+    # `STAGE_AWAITING_IDENTIFICATION`/RESCHEDULE from an earlier test still
+    # checkpointed (LangGraph's `thread_id` is the phone-derived
+    # `conversation_id`, independent of any `Conversation` row) when the
+    # welcome menu got resent and the patient tapped "Agendar una cita" —
+    # only `MENU_APPOINTMENT_PAYLOAD`/`MENU_SPECIALTIES_PAYLOAD` reset the
+    # stage, so the stale RESCHEDULE silently won and the patient was asked
+    # to identify themselves, then shown THEIR EXISTING appointment instead
+    # of ever being asked which specialty they wanted.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=OPERATION_CREATE_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
 async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the_llm():
     # Regression: `generate_or_fallback` calls used to build `ResponseContext`
     # with no conversation history at all, so the model had no way to know
