@@ -7,6 +7,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.graph import compile_graph
 from app.agent.nodes.appointment import OPERATION_CREATE_PAYLOAD
+from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact_memory import ContactMemory
@@ -17,6 +18,7 @@ from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
     LangGraphAgentInvoker,
 )
+from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
     make_agent_run_repository,
@@ -25,6 +27,7 @@ from tests.fixtures.gateways import (
     make_contact_repository,
     make_conversation_repository,
     make_dentalink_gateway,
+    make_error_repository,
     make_error_service,
     make_linear_gateway,
     make_llm_provider,
@@ -156,6 +159,39 @@ async def test_handle_sends_the_graphs_response_to_the_contacts_phone():
     phone, text = messaging_gateway.sent_messages[0]
     assert phone == PhoneNumber("+5491122334455")
     assert "OSDE" in text
+
+
+@pytest.mark.asyncio
+async def test_a_send_reply_failure_is_reported_instead_of_left_unobserved():
+    # Regression, seen live: a YCloud `ReadTimeout` while sending the final
+    # reply propagated all the way up to the fire-and-forget task in
+    # `IngestMessageUseCase._debounce_and_process()` with nothing catching
+    # it — no `ErrorRecord`, no Telegram alert, nothing but a raw asyncio
+    # "Task exception was never retrieved" line. `send_reply.execute()` runs
+    # AFTER `compiled_graph.ainvoke()` returns, so every node's own
+    # `TraceContext` is already torn down and `MessagingGateway`'s own
+    # `traced_call` sees no ambient context to report through.
+    class _FailingMessagingGateway(FakeYCloudMessagingGateway):
+        async def send_text_message(self, to, text):
+            raise TimeoutError("boom")
+
+    errors = make_error_repository()
+    invoker, conversation_repository, contact_repository, _, _ = _make_invoker(
+        messaging_gateway=_FailingMessagingGateway(),
+        trace_repositories_provider=make_trace_repositories_provider(errors=errors),
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    recorded = await errors.list_recent()
+    assert len(recorded) == 1
+    assert recorded[0].source == "ycloud"
+    assert recorded[0].error_type == YCLOUD_SEND_FAILURE
+    assert recorded[0].conversation_id == ConversationId("conv-1")
 
 
 @pytest.mark.asyncio
@@ -389,9 +425,7 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
 @pytest.mark.asyncio
 async def test_handle_records_an_agent_run_with_a_terminal_status():
     agent_run_repository = make_agent_run_repository()
-    trace_repositories_provider = make_trace_repositories_provider(
-        agent_runs=agent_run_repository
-    )
+    trace_repositories_provider = make_trace_repositories_provider(agent_runs=agent_run_repository)
     invoker, conversation_repository, contact_repository, _, _ = _make_invoker(
         agreement_gateway=make_agreement_gateway(agreements=[make_agreement(name="OSDE")]),
         trace_repositories_provider=trace_repositories_provider,
@@ -416,9 +450,7 @@ async def test_handle_records_an_agent_run_with_a_terminal_status():
 @pytest.mark.asyncio
 async def test_handle_records_an_agent_run_with_handoff_status():
     agent_run_repository = make_agent_run_repository()
-    trace_repositories_provider = make_trace_repositories_provider(
-        agent_runs=agent_run_repository
-    )
+    trace_repositories_provider = make_trace_repositories_provider(agent_runs=agent_run_repository)
     invoker, conversation_repository, contact_repository, _, _ = _make_invoker(
         trace_repositories_provider=trace_repositories_provider,
     )
@@ -443,9 +475,7 @@ async def test_handle_records_an_agent_run_with_failed_status_when_a_node_raises
             raise RuntimeError("boom")
 
     agent_run_repository = make_agent_run_repository()
-    trace_repositories_provider = make_trace_repositories_provider(
-        agent_runs=agent_run_repository
-    )
+    trace_repositories_provider = make_trace_repositories_provider(agent_runs=agent_run_repository)
     invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
         llm_provider=_BrokenLLMProvider(),
         trace_repositories_provider=trace_repositories_provider,
