@@ -334,6 +334,43 @@ async def test_get_patient_appointments_resolves_status_from_estados():
 
 
 @pytest.mark.asyncio
+async def test_get_patient_appointments_treats_any_reserved_anulacion_state_as_cancelled():
+    # Regression, seen live (2026-09-08): a cita cancelled outside our own
+    # `cancel_appointment` call (Dentalink's own portal/WhatsApp
+    # integration) can land on a `uso_interno == 1` state we could never
+    # write ourselves — it must still show as cancelled here.
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v1/citas/estados": [
+                {
+                    "id": 20,
+                    "nombre": "Anulado por pcte. via Whatsapp",
+                    "anulacion": 1,
+                    "uso_interno": 1,
+                },
+                {"id": 1, "nombre": "Anulado", "anulacion": 1, "uso_interno": 0},
+                {"id": 24, "nombre": "Confirmado", "anulacion": 0, "uso_interno": 1},
+            ],
+            "/v1/pacientes/pat-1/citas": [
+                {
+                    "id": 10,
+                    "id_paciente": "pat-1",
+                    "id_dentista": "626",
+                    "fecha": "2026-08-15",
+                    "hora_inicio": "10:00",
+                    "id_estado": 20,
+                },
+            ],
+        }
+    )
+    gateway = _gateway(client)
+
+    appointments = await gateway.get_patient_appointments("pat-1")
+
+    assert appointments[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_create_appointment_sends_the_documented_required_fields():
     client = _StubDentalinkClient()
     client.post_response = {
@@ -375,9 +412,7 @@ async def test_reschedule_appointment_uses_id_sesion_field_name():
         "hora_inicio": "11:00",
     }
     gateway = _gateway(client)
-    new_slot = make_slot(
-        id_="slot-2", start=_at(2026, 8, 2, 11, 0), end=_at(2026, 8, 2, 11, 30)
-    )
+    new_slot = make_slot(id_="slot-2", start=_at(2026, 8, 2, 11, 0), end=_at(2026, 8, 2, 11, 30))
 
     appointment = await gateway.reschedule_appointment("55", new_slot, idempotency_key="key-2")
 

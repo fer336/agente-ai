@@ -18,6 +18,7 @@ schema. Confirm every field name against real Dentalink payloads before
 production use.
 """
 
+from collections.abc import Collection
 from datetime import datetime, timedelta, tzinfo
 
 from app.domain.entities.agreement import Agreement
@@ -88,7 +89,7 @@ def slot_from_agenda(
 
 
 def appointment_from_cita(
-    raw: dict[str, object], *, cancelled_state_id: str | None, timezone: tzinfo
+    raw: dict[str, object], *, cancelled_state_ids: Collection[str] | None, timezone: tzinfo
 ) -> Appointment:
     if "id" not in raw:
         raise DentalinkInvalidResponseError("cita record is missing id")
@@ -105,7 +106,16 @@ def appointment_from_cita(
         time_range=DateTimeRange(start, start + timedelta(minutes=duration_minutes)),
     )
     id_estado = _optional_str(raw.get("id_estado"))
-    is_cancelled = cancelled_state_id is not None and id_estado == cancelled_state_id
+    # Every `anulacion == 1` state counts here, not just the one this
+    # account is allowed to PUT (`resolve_cancellation_state_id`, used only
+    # to cancel via our own API call) — a cita anulada through some other
+    # channel (Dentalink's own portal/WhatsApp integration, seen live using
+    # states we can never write ourselves) must still show as cancelled.
+    is_cancelled = (
+        cancelled_state_ids is not None
+        and id_estado is not None
+        and id_estado in cancelled_state_ids
+    )
     status = "cancelled" if is_cancelled else "confirmed"
     return Appointment(
         id=AppointmentId(str(raw["id"])),
@@ -195,38 +205,64 @@ def treatment_from_tratamiento(raw: dict[str, object]) -> Treatment:
     )
 
 
+def _is_cancellation_estado(estado: dict[str, object]) -> bool:
+    """Shared anulación/cancelación signal for both resolvers below.
+
+    Confirmed against a live Dentalink account (2026-09-04): each estado
+    carries a real `anulacion` flag (`1` for a cancellation state, `0`
+    otherwise), used here as the primary signal. Falls back to the old
+    name-based match (case/accent-insensitive substring against
+    "anula"/"cancela") only for an estado that omits the flag entirely —
+    defensive, in case another account's API version doesn't send it.
+    """
+    if "anulacion" in estado:
+        return estado.get("anulacion") == 1
+    name = str(estado.get("nombre", "")).casefold()
+    return "anula" in name or "cancela" in name
+
+
 def resolve_cancellation_state_id(estados: list[dict[str, object]]) -> str | None:
-    """Finds the anulación/cancelación state id among `GET /v1/citas/estados` (PRD.md §27.5).
+    """Finds the ONE anulación state id that is safe for US to PUT (PRD.md §27.5).
 
-    Never hardcoded — PRD.md explicitly forbids it. Confirmed against a live
-    Dentalink account (2026-09-04): each estado carries a real `anulacion`
-    flag (`1` for a cancellation state, `0` otherwise), used here as the
-    primary signal. Falls back to the old name-based match
-    (case/accent-insensitive substring against "anula"/"cancela") only for
-    an estado that omits the flag entirely — defensive, in case another
-    account's API version doesn't send it.
-
-    A candidate with `uso_interno == 1` is always skipped: seen live
-    (2026-09-08) this account has SEVEN `anulacion == 1` states, and every
-    one of them except plain "Anulado" (`uso_interno == 0`) is reserved for
-    Dentalink's own automations ("Anulado por pcte. via Whatsapp", "Anulado
-    por reprogramación", ...) — PUTting one of those ourselves fails with a
+    Never hardcoded — PRD.md explicitly forbids it. A candidate with
+    `uso_interno == 1` is always skipped: seen live (2026-09-08) this
+    account has SEVEN `anulacion == 1` states, and every one of them except
+    plain "Anulado" (`uso_interno == 0`) is reserved for Dentalink's own
+    automations ("Anulado por pcte. via Whatsapp", "Anulado por
+    reprogramación", ...) — PUTting one of those ourselves fails with a
     400: "El estado enviado esta reservado para uso interno del software."
     Iteration order isn't guaranteed, so without this filter the first
     `anulacion == 1` match found can easily be one of the reserved ones.
+
+    Use this ONLY for the `id_estado` we write via `cancel_appointment` —
+    for "is this existing cita cancelled", use
+    `resolve_cancellation_state_ids` (plural) instead, since a cita
+    cancelled through another channel can carry any of the reserved ids
+    this function deliberately excludes.
     """
     for estado in estados:
-        if "anulacion" in estado:
-            is_cancellation = estado.get("anulacion") == 1
-        else:
-            name = str(estado.get("nombre", "")).casefold()
-            is_cancellation = "anula" in name or "cancela" in name
-        if not is_cancellation or estado.get("uso_interno") == 1:
+        if not _is_cancellation_estado(estado) or estado.get("uso_interno") == 1:
             continue
         state_id = estado.get("id")
         if state_id is not None:
             return str(state_id)
     return None
+
+
+def resolve_cancellation_state_ids(estados: list[dict[str, object]]) -> frozenset[str]:
+    """Finds EVERY anulación state id, for detecting an already-cancelled cita.
+
+    Unlike `resolve_cancellation_state_id` (singular), this does NOT filter
+    out `uso_interno == 1` states — a cita anulada through some other
+    channel (Dentalink's own portal/WhatsApp integration) can land on any
+    of them, and it must still show as cancelled to us even though we could
+    never write that same id ourselves.
+    """
+    return frozenset(
+        str(estado["id"])
+        for estado in estados
+        if _is_cancellation_estado(estado) and "id" in estado
+    )
 
 
 def _parse_datetime(fecha: str, hora: str, timezone: tzinfo) -> datetime:
