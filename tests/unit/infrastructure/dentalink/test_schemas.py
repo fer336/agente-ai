@@ -10,6 +10,7 @@ from app.infrastructure.dentalink.schemas import (
     appointment_from_cita,
     professional_from_dentista,
     resolve_cancellation_state_id,
+    resolve_cancellation_state_ids,
     slot_from_agenda,
     treatment_from_tratamiento,
 )
@@ -150,7 +151,7 @@ def test_appointment_from_cita_maps_confirmed_status_when_id_estado_is_not_cance
             "duracion": 30,
             "id_estado": 1,
         },
-        cancelled_state_id="9",
+        cancelled_state_ids={"9"},
         timezone=_TZ,
     )
 
@@ -169,17 +170,31 @@ def test_appointment_from_cita_maps_cancelled_status_when_id_estado_matches():
             "hora_inicio": "15:30",
             "id_estado": 9,
         },
-        cancelled_state_id="9",
+        cancelled_state_ids={"9"},
         timezone=_TZ,
     )
 
     assert appointment.status == "cancelled"
 
 
-def test_appointment_from_cita_defaults_to_confirmed_when_cancelled_state_id_is_unknown():
+def test_appointment_from_cita_maps_cancelled_status_for_any_matching_id_in_the_set():
+    # Regression: a cita cancelled via a channel other than our own
+    # `cancel_appointment` call (Dentalink's own portal/WhatsApp
+    # integration) can land on any of several reserved anulación states,
+    # not just the one we're allowed to write ourselves.
+    appointment = appointment_from_cita(
+        {"id": 42, "id_paciente": "pat-1", "fecha": "2026-08-15", "id_estado": 20},
+        cancelled_state_ids={"1", "9", "20"},
+        timezone=_TZ,
+    )
+
+    assert appointment.status == "cancelled"
+
+
+def test_appointment_from_cita_defaults_to_confirmed_when_cancelled_state_ids_is_unknown():
     appointment = appointment_from_cita(
         {"id": 42, "id_paciente": "pat-1", "fecha": "2026-08-15", "id_estado": 9},
-        cancelled_state_id=None,
+        cancelled_state_ids=None,
         timezone=_TZ,
     )
 
@@ -188,9 +203,7 @@ def test_appointment_from_cita_defaults_to_confirmed_when_cancelled_state_id_is_
 
 def test_appointment_from_cita_raises_when_id_is_missing():
     with pytest.raises(DentalinkInvalidResponseError):
-        appointment_from_cita(
-            {"id_paciente": "pat-1"}, cancelled_state_id=None, timezone=_TZ
-        )
+        appointment_from_cita({"id_paciente": "pat-1"}, cancelled_state_ids=None, timezone=_TZ)
 
 
 def test_agreement_from_convenio_maps_id_and_nombre():
@@ -229,6 +242,53 @@ def test_resolve_cancellation_state_id_returns_none_when_no_match():
     state_id = resolve_cancellation_state_id([{"id": 1, "nombre": "Confirmada"}])
 
     assert state_id is None
+
+
+def test_resolve_cancellation_state_id_uses_the_anulacion_flag_as_primary_signal():
+    state_id = resolve_cancellation_state_id(
+        [
+            {"id": 1, "nombre": "Confirmada", "anulacion": 0, "uso_interno": 0},
+            {"id": 9, "nombre": "Anulada", "anulacion": 1, "uso_interno": 0},
+        ]
+    )
+
+    assert state_id == "9"
+
+
+def test_resolve_cancellation_state_id_skips_states_reserved_for_internal_use():
+    # Regression, seen live (2026-09-08): PUTting a `uso_interno == 1`
+    # anulación state fails with a 400 ("reservado para uso interno del
+    # software") — this account has 7 `anulacion == 1` states and only
+    # plain "Anulado" is safe for an external API caller to set. Reduced
+    # from the real `GET /v1/citas/estados` response, in the same
+    # (unsorted-by-safety) order it was returned in.
+    estados = [
+        {"id": 20, "nombre": "Anulado por pcte. via Whatsapp", "anulacion": 1, "uso_interno": 1},
+        {"id": 18, "nombre": "Anulado vía validación", "anulacion": 1, "uso_interno": 1},
+        {"id": 16, "nombre": "Anulado por reprogramación", "anulacion": 1, "uso_interno": 1},
+        {"id": 1, "nombre": "Anulado", "anulacion": 1, "uso_interno": 0},
+    ]
+
+    state_id = resolve_cancellation_state_id(estados)
+
+    assert state_id == "1"
+
+
+def test_resolve_cancellation_state_ids_returns_every_anulacion_state_regardless_of_uso_interno():
+    # Unlike the singular resolver, this one must NOT filter by
+    # `uso_interno` — a cita cancelled through Dentalink's own automations
+    # can land on any of these ids, and all of them must count as
+    # "cancelled" when listing a patient's appointments.
+    estados = [
+        {"id": 20, "nombre": "Anulado por pcte. via Whatsapp", "anulacion": 1, "uso_interno": 1},
+        {"id": 18, "nombre": "Anulado vía validación", "anulacion": 1, "uso_interno": 1},
+        {"id": 1, "nombre": "Anulado", "anulacion": 1, "uso_interno": 0},
+        {"id": 24, "nombre": "Confirmado", "anulacion": 0, "uso_interno": 1},
+    ]
+
+    state_ids = resolve_cancellation_state_ids(estados)
+
+    assert state_ids == {"20", "18", "1"}
 
 
 def test_treatment_from_tratamiento_maps_confirmed_live_shape():

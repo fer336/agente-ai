@@ -27,6 +27,7 @@ from app.infrastructure.dentalink.schemas import (
     as_list,
     professional_from_dentista,
     resolve_cancellation_state_id,
+    resolve_cancellation_state_ids,
     slot_from_agenda,
 )
 from app.infrastructure.observability.tool_tracing import traced_call
@@ -77,6 +78,7 @@ def _error_type_of(exc: Exception) -> str:
         return APPOINTMENT_NOT_FOUND
     return DENTALINK_INVALID_RESPONSE
 
+
 #: Hard cap on how many per-day `/v5/agendas` calls one `search_availability`
 #: call may issue. PRD.md §27.2's documented filter takes a single `fecha`,
 #: not a range, so a multi-day `date_range` is served by iterating one
@@ -121,6 +123,7 @@ class DentalinkAppointmentGateway:
         self._default_duration_minutes = default_duration_minutes
         self._clinic_timezone = clinic_timezone
         self._cancellation_state_id: str | None = None
+        self._cancellation_state_ids: frozenset[str] = frozenset()
         self._cancellation_state_resolved = False
 
     async def search_availability(
@@ -240,12 +243,12 @@ class DentalinkAppointmentGateway:
 
     async def get_patient_appointments(self, patient_id: str) -> list[Appointment]:
         async def _call() -> list[Appointment]:
-            cancelled_state_id = await self._resolve_cancellation_state_id()
+            cancelled_state_ids = await self._resolve_cancellation_state_ids()
             raw_citas = await self._client.get(f"/v1/pacientes/{patient_id}/citas")
             return [
                 appointment_from_cita(
                     raw,
-                    cancelled_state_id=cancelled_state_id,
+                    cancelled_state_ids=cancelled_state_ids,
                     timezone=self._clinic_timezone,
                 )
                 for raw in as_list(raw_citas)
@@ -287,7 +290,7 @@ class DentalinkAppointmentGateway:
             }
             raw = await self._client.post("/v1/citas/", json=payload)
             return appointment_from_cita(
-                as_dict(raw), cancelled_state_id=None, timezone=self._clinic_timezone
+                as_dict(raw), cancelled_state_ids=None, timezone=self._clinic_timezone
             )
 
         return await traced_call(
@@ -326,7 +329,7 @@ class DentalinkAppointmentGateway:
                     raise AppointmentNotFoundError(appointment_id) from exc
                 raise
             return appointment_from_cita(
-                as_dict(raw), cancelled_state_id=None, timezone=self._clinic_timezone
+                as_dict(raw), cancelled_state_ids=None, timezone=self._clinic_timezone
             )
 
         return await traced_call(
@@ -367,10 +370,18 @@ class DentalinkAppointmentGateway:
         )
 
     async def _resolve_cancellation_state_id(self) -> str | None:
-        if not self._cancellation_state_resolved:
-            raw_estados = await self._client.get("/v1/citas/estados")
-            self._cancellation_state_id = resolve_cancellation_state_id(as_list(raw_estados))
-            self._cancellation_state_resolved = True
+        await self._fetch_cancellation_states()
         return self._cancellation_state_id
 
+    async def _resolve_cancellation_state_ids(self) -> frozenset[str]:
+        await self._fetch_cancellation_states()
+        return self._cancellation_state_ids
 
+    async def _fetch_cancellation_states(self) -> None:
+        if self._cancellation_state_resolved:
+            return
+        raw_estados = await self._client.get("/v1/citas/estados")
+        estados = as_list(raw_estados)
+        self._cancellation_state_id = resolve_cancellation_state_id(estados)
+        self._cancellation_state_ids = resolve_cancellation_state_ids(estados)
+        self._cancellation_state_resolved = True
