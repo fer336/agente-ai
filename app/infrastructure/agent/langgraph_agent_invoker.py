@@ -13,6 +13,7 @@ from app.agent.graph import compile_graph
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
+from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.memory.memory_service import MemoryService
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositoriesProvider
@@ -171,9 +172,7 @@ class LangGraphAgentInvoker:
     ) -> None:
         config: RunnableConfig = {"configurable": {"thread_id": str(conversation_id)}}
         checkpointer = (
-            await self._checkpointer_provider()
-            if self._checkpointer_provider is not None
-            else None
+            await self._checkpointer_provider() if self._checkpointer_provider is not None else None
         )
 
         agent_run_id = str(uuid4())
@@ -327,14 +326,37 @@ class LangGraphAgentInvoker:
                     return
                 phone = contact.phone
 
-        await self._send_reply.execute(
-            phone,
-            response_text or "",
-            response_buttons,
-            flow=response_flow,
-            location=response_location,
-            list_message=response_list,
-        )
+        try:
+            await self._send_reply.execute(
+                phone,
+                response_text or "",
+                response_buttons,
+                flow=response_flow,
+                location=response_location,
+                list_message=response_list,
+            )
+        except Exception as exc:  # noqa: BLE001 - reported below, never left unobserved
+            # This call happens AFTER `compiled_graph.ainvoke()` returns, so
+            # every node's own `TraceContext` (`with_error_handling`) has
+            # already been torn down — `MessagingGateway`'s own
+            # `traced_call` sees no ambient context on failure and silently
+            # skips BOTH the `ErrorRecord` and the Telegram/Linear alerting
+            # `error_service.report()` would otherwise trigger. Seen live: a
+            # YCloud `ReadTimeout` here propagated all the way up to the
+            # fire-and-forget task in `IngestMessageUseCase.
+            # _debounce_and_process()` with nothing catching it — the
+            # patient's reply was silently lost, and the only trace was a
+            # raw asyncio "Task exception was never retrieved" line.
+            await error_service.report(
+                source="ycloud",
+                error_type=YCLOUD_SEND_FAILURE,
+                message=str(exc),
+                trace_id=trace_id,
+                conversation_id=conversation_id,
+                agent_run_id=agent_run_id,
+                technical_detail=repr(exc),
+                operation="send_reply",
+            )
 
 
 def _final_status(node_executions: list[NodeExecution], result: dict[str, object]) -> str:
