@@ -41,7 +41,12 @@ from app.infrastructure.dentalink.exceptions import (
     DentalinkTimeoutError,
 )
 from app.infrastructure.dentalink.query_filter import build_q_param
-from app.infrastructure.dentalink.schemas import as_dict, as_list, patient_from_paciente
+from app.infrastructure.dentalink.schemas import (
+    as_dict,
+    as_list,
+    full_names_match,
+    patient_from_paciente,
+)
 from app.infrastructure.observability.tool_tracing import traced_call
 
 _PROVIDER = "dentalink"
@@ -114,7 +119,7 @@ class DentalinkPatientGateway:
             candidate = await self._find_by_rut(validated_dni)
             if candidate is None:
                 return None
-            if candidate.full_name.strip().casefold() != full_name.strip().casefold():
+            if not full_names_match(candidate.full_name, full_name):
                 return None
             return candidate
 

@@ -2,6 +2,7 @@ from app.domain.entities.patient import Patient
 from app.domain.exceptions.errors import PatientAlreadyExistsError
 from app.domain.value_objects.dni import Dni
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.dentalink.schemas import full_names_match
 
 
 class FakePatientGateway:
@@ -11,11 +12,10 @@ class FakePatientGateway:
         self._patients = list(patients) if patients else []
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None:
-        normalized_name = full_name.strip().casefold()
         normalized_dni = dni.strip()
         for patient in self._patients:
             if (
-                patient.full_name.strip().casefold() == normalized_name
+                full_names_match(patient.full_name, full_name)
                 and patient.dni is not None
                 and patient.dni.strip() == normalized_dni
             ):

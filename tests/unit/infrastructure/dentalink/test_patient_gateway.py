@@ -90,8 +90,13 @@ async def test_find_patient_returns_none_when_name_does_not_match(
         200,
         json={
             "data": [
-                {"id": 28, "rut": "30111222", "nombre": "Maria", "apellidos": "Soto",
-                 "celular": "1122334455"}
+                {
+                    "id": 28,
+                    "rut": "30111222",
+                    "nombre": "Maria",
+                    "apellidos": "Soto",
+                    "celular": "1122334455",
+                }
             ]
         },
     )
@@ -104,14 +109,43 @@ async def test_find_patient_returns_none_when_name_does_not_match(
 
 
 @pytest.mark.asyncio
+async def test_find_patient_matches_reversed_name_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Seen live: patients often type "Apellido Nombre" instead of the
+    # order Dentalink's own nombre/apellidos split produces — the DNI
+    # filter already narrowed this to exactly one real patient, so word
+    # order alone must not fail the match.
+    response = httpx.Response(
+        200,
+        json={
+            "data": [
+                {
+                    "id": 28,
+                    "rut": "30111222",
+                    "nombre": "Maria",
+                    "apellidos": "Soto",
+                    "celular": "1122334455",
+                }
+            ]
+        },
+    )
+    client, _ = _client_with_responses(monkeypatch, [response])
+    gateway = DentalinkPatientGateway(client)
+
+    found = await gateway.find_patient("Soto Maria", _VALID_DNI)
+
+    assert found is not None
+    assert found.id == "28"
+
+
+@pytest.mark.asyncio
 async def test_create_patient_sends_split_name_and_normalized_phone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     search_response = httpx.Response(200, json={"data": []})
     create_response = httpx.Response(201, json={"id": 99})
-    client, captured = _client_with_responses(
-        monkeypatch, [search_response, create_response]
-    )
+    client, captured = _client_with_responses(monkeypatch, [search_response, create_response])
     gateway = DentalinkPatientGateway(client)
 
     created = await gateway.create_patient(
@@ -137,9 +171,7 @@ async def test_create_patient_includes_email_when_given(
 ) -> None:
     search_response = httpx.Response(200, json={"data": []})
     create_response = httpx.Response(201, json={"id": 99})
-    client, captured = _client_with_responses(
-        monkeypatch, [search_response, create_response]
-    )
+    client, captured = _client_with_responses(monkeypatch, [search_response, create_response])
     gateway = DentalinkPatientGateway(client)
 
     created = await gateway.create_patient(
@@ -160,9 +192,7 @@ async def test_create_patient_omits_email_field_when_not_given(
 ) -> None:
     search_response = httpx.Response(200, json={"data": []})
     create_response = httpx.Response(201, json={"id": 99})
-    client, captured = _client_with_responses(
-        monkeypatch, [search_response, create_response]
-    )
+    client, captured = _client_with_responses(monkeypatch, [search_response, create_response])
     gateway = DentalinkPatientGateway(client)
 
     await gateway.create_patient("Maria Soto Perez", _VALID_DNI, PhoneNumber("+5491122334455"))
@@ -179,8 +209,13 @@ async def test_create_patient_raises_a_typed_conflict_instead_of_duplicating(
         200,
         json={
             "data": [
-                {"id": 28, "rut": "30111222", "nombre": "Maria", "apellidos": "Soto",
-                 "celular": "1122334455"}
+                {
+                    "id": 28,
+                    "rut": "30111222",
+                    "nombre": "Maria",
+                    "apellidos": "Soto",
+                    "celular": "1122334455",
+                }
             ]
         },
     )
