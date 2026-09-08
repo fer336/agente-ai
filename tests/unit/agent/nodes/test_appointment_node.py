@@ -4,6 +4,7 @@ import pytest
 
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
+    _MAIN_MENU_RESET_MESSAGE,
     _VIEW_OTHER_PROFESSIONALS_PAYLOAD,
     CANCEL_APPOINTMENT_ACTION,
     CONFIRM_APPOINTMENT_PAYLOAD,
@@ -136,6 +137,40 @@ async def test_first_turn_shows_the_operation_menu():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
     # Wording is now LLM-generated (varied on purpose) — just require a reply.
     assert result["response_text"]
+    assert {b.id for b in result["response_buttons"]} == {
+        OPERATION_CREATE_PAYLOAD,
+        OPERATION_RESCHEDULE_PAYLOAD,
+        OPERATION_CANCEL_PAYLOAD,
+    }
+
+
+@pytest.mark.asyncio
+async def test_main_menu_button_mid_stage_resets_and_shows_a_distinct_message():
+    # Regression: this used to be indistinguishable from the very first
+    # message's generic "Qué querés hacer?" — the patient just abandoned a
+    # whole flow, so the reset deserves its own acknowledgement.
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ExplodingLLMProvider())
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Menú principal",
+        button_payload=MENU_APPOINTMENT_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
     assert {b.id for b in result["response_buttons"]} == {
         OPERATION_CREATE_PAYLOAD,
         OPERATION_RESCHEDULE_PAYLOAD,
@@ -332,7 +367,9 @@ async def test_operation_menu_create_shows_the_numbered_specialty_list():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
-    assert result["response_buttons"] is None
+    # A single escape button fits under WhatsApp's 3-button cap even
+    # though selection itself is by number, not buttons.
+    assert [b.id for b in result["response_buttons"]] == [MENU_APPOINTMENT_PAYLOAD]
     assert "1." in result["response_text"]
     assert "Ortodoncia" in result["response_text"]
     assert "2." in result["response_text"]
