@@ -179,6 +179,41 @@ async def test_main_menu_button_mid_stage_resets_and_shows_a_distinct_message():
 
 
 @pytest.mark.asyncio
+async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the_llm():
+    # Regression: `generate_or_fallback` calls used to build `ResponseContext`
+    # with no conversation history at all, so the model had no way to know
+    # it (or the patient) had just spoken — reliably re-greeting on
+    # back-to-back replies (seen live: two consecutive messages both opened
+    # with "Hola"). `AgentState["recent_messages"]`/`["contact_memory_summary"]`
+    # must actually reach the LLM call, not just exist unused on the state.
+    from app.domain.repositories.llm_provider import ResponseContext
+
+    captured: list[ResponseContext] = []
+
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            captured.append(context)
+            return "ok"
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_CapturingLLMProvider())
+    recent = [
+        {"role": "user", "content": "Hola"},
+        {"role": "assistant", "content": "Hola! Como estas?"},
+    ]
+    state = make_agent_state(
+        conversation_id="conv-1",
+        collected_data={},
+        recent_messages=recent,
+        contact_memory_summary="Paciente frecuente.",
+    )
+
+    await node(state)
+
+    assert captured[0].recent_messages == recent
+    assert captured[0].contact_memory == "Paciente frecuente."
+
+
+@pytest.mark.asyncio
 async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
     # "quiero un turno de ortodoncia" already answered both menus, so the
     # patient must not be walked back through either of them.

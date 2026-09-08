@@ -101,7 +101,10 @@ DEFAULT_EXTRACT_INFORMATION_PROMPT = (
 )
 
 #: `{intent}` and `{collected_data}` are substituted per-turn — same
-#: required-placeholder validation as the extraction prompt above.
+#: required-placeholder validation as the extraction prompt above. The
+#: "evitá saludos... si ya veníamos hablando" instruction below only works
+#: when the model can actually SEE that prior conversation — see
+#: `generate_response`'s own handling of `context.recent_messages`.
 DEFAULT_GENERATE_RESPONSE_PROMPT = (
     "Sos una persona real que atiende el WhatsApp de una clínica dental en Argentina, no un "
     "bot. Respondele al paciente como le hablarías vos: natural, cercana, con oraciones "
@@ -275,7 +278,21 @@ class OpenAICompatibleLLMProvider:
         prompt = config.generate_response_prompt.replace("{intent}", context.intent).replace(
             "{collected_data}", str(context.collected_data)
         )
-        messages = [{"role": "system", "content": prompt}]
+        if context.contact_memory:
+            # A per-contact summary (their name, preferences, prior visits
+            # — see `MemoryService.compact`), not this turn's own recent
+            # history below. Appended rather than templated: this prompt
+            # is admin-editable and a saved version predating this field
+            # has nowhere to put a `{contact_memory}` placeholder.
+            prompt = f"{prompt}\n\nLo que ya sabemos de este paciente: {context.contact_memory}"
+        # `context.recent_messages` (populated once per turn by
+        # `LangGraphAgentInvoker.handle()`, see that method) rides along as
+        # real prior turns, not prose in the system prompt — without them
+        # the model has no way to know it already greeted the patient one
+        # message ago and reliably re-greets on back-to-back replies (seen
+        # live: two consecutive LLM-generated messages both opened with
+        # "Hola").
+        messages = [{"role": "system", "content": prompt}, *context.recent_messages]
 
         async def _call() -> str:
             return await self._client.chat_completion(

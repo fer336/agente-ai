@@ -178,9 +178,7 @@ async def test_classify_intent_raises_on_unrecognized_intent_label() -> None:
 
 @pytest.mark.asyncio
 async def test_extract_information_parses_fields_and_missing_fields() -> None:
-    client = _StubClient(
-        '{"fields": {"full_name": "Juan Perez"}, "missing_fields": ["dni"]}'
-    )
+    client = _StubClient('{"fields": {"full_name": "Juan Perez"}, "missing_fields": ["dni"]}')
     provider = _make_provider(client)
 
     result = await provider.extract_information(
@@ -192,13 +190,9 @@ async def test_extract_information_parses_fields_and_missing_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_information_substitutes_required_fields_into_the_configured_prompt() -> (
-    None
-):
+async def test_extract_information_substitutes_required_fields_into_the_configured_prompt() -> None:
     client = _StubClient('{"fields": {}, "missing_fields": []}')
-    provider = _make_provider(
-        client, extract_information_prompt="Necesito: {required_fields}."
-    )
+    provider = _make_provider(client, extract_information_prompt="Necesito: {required_fields}.")
 
     await provider.extract_information("hola", required_fields=["full_name", "dni"])
 
@@ -255,3 +249,60 @@ async def test_generate_response_substitutes_intent_and_collected_data_into_the_
         "role": "system",
         "content": "Intención: appointment. Datos: {'dni': '30111222'}.",
     }
+
+
+@pytest.mark.asyncio
+async def test_generate_response_forwards_recent_messages_as_real_chat_history() -> None:
+    # Regression, seen live: two consecutive LLM-generated replies both
+    # opened with "Hola" because the model had no visibility into what it
+    # (or the patient) had just said — `messages` used to be system-only.
+    client = _StubClient("ok")
+    provider = _make_provider(client)
+    recent_messages = [
+        {"role": "user", "content": "Hola"},
+        {"role": "assistant", "content": "Hola! Como estas?"},
+        {"role": "user", "content": "No, puedo elegir otra cosa?"},
+    ]
+
+    await provider.generate_response(
+        ResponseContext(
+            conversation_id="conv-1",
+            intent="unknown",
+            collected_data={},
+            recent_messages=recent_messages,
+        )
+    )
+
+    _, messages, _ = client.calls[0]
+    assert messages[1:] == recent_messages
+
+
+@pytest.mark.asyncio
+async def test_generate_response_includes_contact_memory_in_the_system_prompt() -> None:
+    client = _StubClient("ok")
+    provider = _make_provider(client)
+
+    await provider.generate_response(
+        ResponseContext(
+            conversation_id="conv-1",
+            intent="unknown",
+            collected_data={},
+            contact_memory="Paciente frecuente, prefiere turnos por la tarde.",
+        )
+    )
+
+    _, messages, _ = client.calls[0]
+    assert "Paciente frecuente, prefiere turnos por la tarde." in messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_omits_contact_memory_line_when_absent() -> None:
+    client = _StubClient("ok")
+    provider = _make_provider(client)
+
+    await provider.generate_response(
+        ResponseContext(conversation_id="conv-1", intent="unknown", collected_data={})
+    )
+
+    _, messages, _ = client.calls[0]
+    assert "Lo que ya sabemos" not in messages[0]["content"]
