@@ -57,9 +57,9 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 #: plus a raw long URL upfront read as clutter (this session's own
 #: feedback after seeing it live).
 _WELCOME_TEXT = (
-    "¡Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷\n"
+    "Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷\n"
     "Centro Odontológico Integral\n\n"
-    "🕐 Horario de atención: lunes a viernes de 10:00 a 18:00\n\n"
+    "🕐 Horario de atención: lunes a viernes de *10:00* a *18:00*\n\n"
     "📸 Mirá nuestros tratamientos en Instagram: instagram.com/smiling.pilar\n\n"
     "¿En qué te puedo ayudar hoy?"
 )
@@ -73,13 +73,13 @@ _WELCOME_TEXT = (
 _WELCOME_LIST = ListMessage(
     button_label="Elegí una opción",
     rows=[
-        ListRow(id=OPERATION_CREATE_PAYLOAD, title="Agendar una cita"),
-        ListRow(id=OPERATION_RESCHEDULE_PAYLOAD, title="Reprogramar mi cita"),
-        ListRow(id=OPERATION_CANCEL_PAYLOAD, title="Cancelar mi cita"),
-        ListRow(id=MENU_SPECIALTIES_PAYLOAD, title="Tratamientos y precios"),
+        ListRow(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
+        ListRow(id=OPERATION_RESCHEDULE_PAYLOAD, title="🔄 Reprogramar mi cita"),
+        ListRow(id=OPERATION_CANCEL_PAYLOAD, title="❌ Cancelar mi cita"),
+        ListRow(id=MENU_SPECIALTIES_PAYLOAD, title="🦷 Tratamientos y precios"),
         ListRow(id=MENU_LOCATION_PAYLOAD, title="📍 Cómo llegar"),
-        ListRow(id=MENU_ADMIN_PAYLOAD, title="Hablar con un asesor"),
-        ListRow(id=OPERATION_VIEW_PAYLOAD, title="Ver mi cita"),
+        ListRow(id=MENU_ADMIN_PAYLOAD, title="💬 Hablar con un asesor"),
+        ListRow(id=OPERATION_VIEW_PAYLOAD, title="📋 Ver mi cita"),
     ],
 )
 
@@ -392,9 +392,7 @@ class IngestMessageUseCase:
                 # the lock and will process this conversation's group, or
                 # the next inbound message re-touches the debounce window
                 # and schedules a fresh attempt. No retry/requeue happens.
-                logger.warning(
-                    "ingest_message.lock_not_acquired conversation=%s", conversation_key
-                )
+                logger.warning("ingest_message.lock_not_acquired conversation=%s", conversation_key)
                 return
 
             async with self._repositories_provider() as repositories:

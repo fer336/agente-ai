@@ -198,6 +198,29 @@ async def test_admin_menu_button_payload_routes_to_handoff():
 
 
 @pytest.mark.asyncio
+async def test_admin_menu_button_payload_routes_to_handoff_even_with_an_active_stage():
+    # Bug found live: `appointment.py`'s own escape buttons (identification
+    # retries, no-slots choice) offer "Administración" mid-flow, but this
+    # used to fall into the generic "any button mid-stage -> appointment"
+    # rule below and silently reset instead of ever reaching a human.
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def classify_intent(self, message, context):
+            raise AssertionError("must not classify when a button payload is present")
+
+    node = create_resolve_interaction_node(_ExplodingLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="👤 Administración",
+            button_payload=MENU_ADMIN_PAYLOAD,
+            collected_data={"stage": "awaiting_identification"},
+        )
+    )
+
+    assert result["intent"] == "handoff"
+
+
+@pytest.mark.asyncio
 async def test_unrecognized_button_payload_routes_to_unknown_without_classification():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def classify_intent(self, message, context):

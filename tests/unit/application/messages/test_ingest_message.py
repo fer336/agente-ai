@@ -172,9 +172,7 @@ async def test_existing_contact_resolved_not_duplicated():
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     matching = [
-        c
-        for c in contact_repository._contacts_by_id.values()
-        if str(c.phone) == "+5491122334455"
+        c for c in contact_repository._contacts_by_id.values() if str(c.phone) == "+5491122334455"
     ]
     assert matching == [existing]
 
@@ -220,13 +218,13 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
     # particular is a real defect.
     assert "Smiling Pilar" in text
     assert [row.title for row in list_message.rows] == [
-        "Agendar una cita",
-        "Reprogramar mi cita",
-        "Cancelar mi cita",
-        "Tratamientos y precios",
+        "📅 Agendar una cita",
+        "🔄 Reprogramar mi cita",
+        "❌ Cancelar mi cita",
+        "🦷 Tratamientos y precios",
         "📍 Cómo llegar",
-        "Hablar con un asesor",
-        "Ver mi cita",
+        "💬 Hablar con un asesor",
+        "📋 Ver mi cita",
     ]
     # Meta's own row limits (title <=24 chars, description <=72) — a row
     # that silently grows past either gets rejected by WhatsApp itself,
@@ -404,9 +402,7 @@ async def test_multiple_messages_grouped_into_one_handoff():
     )
     await asyncio.sleep(0.02)
     await use_case.execute(
-        _make_dto(
-            external_message_id="wamid.3", from_phone="+5491122334455", text="para mañana"
-        )
+        _make_dto(external_message_id="wamid.3", from_phone="+5491122334455", text="para mañana")
     )
     await asyncio.sleep(0.15)
 
@@ -586,9 +582,7 @@ async def test_concurrent_ingestion_for_a_new_phone_can_race_and_create_duplicat
         ),
     )
 
-    matching = [
-        c for c in shared_fake._contacts_by_id.values() if str(c.phone) == "+5491100000099"
-    ]
+    matching = [c for c in shared_fake._contacts_by_id.values() if str(c.phone) == "+5491100000099"]
     assert len(matching) == 2, (
         "expected the documented race to produce 2 duplicate Contact rows for the "
         "same phone — if this now produces 1, the race has been fixed and this test "
@@ -622,9 +616,7 @@ async def test_audio_message_is_persisted_with_media_metadata_and_no_debounce():
     assert message.media_status == "pending"
     # No debounce/agent-invocation yet — there is no transcript.
     assert agent_invoker.calls == []
-    assert (
-        await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
-    )
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
 
 
 @pytest.mark.asyncio

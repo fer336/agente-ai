@@ -116,6 +116,11 @@ STAGE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 #: jumping straight to "quieres hablar con administración" reads as giving
 #: up on the patient too fast when other professionals might still have room).
 STAGE_AWAITING_NO_SLOTS_CHOICE = "awaiting_no_slots_choice"
+#: Reschedule used to search every professional in the clinic for a new
+#: slot (product brief: seen live showing a completely different
+#: specialty than the original appointment) — now the patient is asked
+#: first whether to keep the same professional or pick another.
+STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE = "awaiting_reschedule_professional_choice"
 
 #: `PendingAction.action_type` values (PRD.md §16's documented enum) — also
 #: doubles as `collected_data["operation"]` while a proposal doesn't exist
@@ -159,6 +164,8 @@ SELECT_APPOINTMENT_PAYLOAD_PREFIX = "SELECT_APPOINTMENT:"
 SELECT_SLOT_PAYLOAD_PREFIX = "SELECT_SLOT:"
 CONFIRM_APPOINTMENT_PAYLOAD = "CONFIRM_APPOINTMENT"
 REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
+RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD = "RESCHEDULE_KEEP_PROFESSIONAL"
+RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD = "RESCHEDULE_CHANGE_PROFESSIONAL"
 
 #: No upper bound on digit count here — `Dni` (7-8 digits) is the real
 #: gatekeeper for validity. Capping this at 9 used to truncate a longer
@@ -183,6 +190,7 @@ _NO_PROFESSIONALS_MESSAGE = (
     "Querés que te comunique con administración?"
 )
 _OPERATION_MENU_MESSAGE = "Qué querés hacer?"
+_MAIN_MENU_RESET_MESSAGE = "Listo, volvemos al principio. Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
 _ASK_IDENTIFICATION_MESSAGE = (
     "Para coordinar un turno necesito identificarte primero.\n\n"
@@ -271,9 +279,10 @@ _CONFIRM_BUTTONS = [
     InteractiveButton(id=REJECT_APPOINTMENT_PAYLOAD, title="❌ Cancelar"),
 ]
 #: Tapping any of these abandons whatever stage is in flight — see `node`.
-_MAIN_MENU_PAYLOADS = frozenset(
-    {MENU_APPOINTMENT_PAYLOAD, MENU_SPECIALTIES_PAYLOAD, MENU_ADMIN_PAYLOAD}
-)
+#: `MENU_ADMIN_PAYLOAD` is deliberately NOT here: `resolve_interaction.py`
+#: now routes it to `intent="handoff"` before this node ever runs, so it
+#: can never arrive as `button_payload` mid-stage any more.
+_MAIN_MENU_PAYLOADS = frozenset({MENU_APPOINTMENT_PAYLOAD, MENU_SPECIALTIES_PAYLOAD})
 #: How many consecutive unreadable identification attempts before the
 #: patient is offered a human instead. Mirrors `fallback.py`'s own ceiling:
 #: without one, `identification_retry_count` just counted upward while the
@@ -283,6 +292,12 @@ _IDENTIFICATION_ESCAPE_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
 ]
+#: Product brief: the specialty/professional selection stages used numbered
+#: TEXT lists with no way out at all — a patient who changed their mind
+#: mid-list had no button to tap, only the admin-escalation phrase (PRD.md
+#: §24.2). One button is safe to add there (WhatsApp caps interactive
+#: replies at 3, and these stages send none of their own).
+_MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Menú principal")
 #: `MENU_ADMIN_PAYLOAD` here is never handled inside this stage: any button
 #: with that payload is intercepted upstream by `resolve_interaction.py`,
 #: which routes it straight to `intent="handoff"` regardless of the active
@@ -292,6 +307,13 @@ _NO_SLOTS_CHOICE_BUTTONS = [
     InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
 ]
+_RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS = [
+    InteractiveButton(id=RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD, title="✅ Mismo profesional"),
+    InteractiveButton(id=RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD, title="🔄 Elegir otro"),
+]
+_RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER = (
+    "Por favor, elegí una opción tocando un botón: mantener el mismo profesional o elegir otro."
+)
 
 
 def _extract_identification_pieces(text: str) -> tuple[str | None, str | None]:
@@ -823,7 +845,7 @@ def create_appointment_node(
         listing = _numbered_list([specialty.name for specialty in specialties])
         return {
             "response_text": f"{_CHOOSE_SPECIALTY_PROMPT}\n\n{listing}",
-            "response_buttons": None,
+            "response_buttons": [_MAIN_MENU_BUTTON],
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
@@ -852,7 +874,7 @@ def create_appointment_node(
         listing = _numbered_list([professional.full_name for professional in professionals])
         return {
             "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
-            "response_buttons": None,
+            "response_buttons": [_MAIN_MENU_BUTTON],
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
@@ -936,7 +958,10 @@ def create_appointment_node(
             "collected_data": {
                 **collected_data,
                 "stage": STAGE_AWAITING_SLOT_SELECTION,
-                "patient": patient,
+                # Never let an explicit `None` here (the CREATE flow's own
+                # "not identified yet" state) erase a patient RESCHEDULE
+                # already identified earlier in `collected_data`.
+                "patient": patient if patient is not None else collected_data.get("patient"),
                 "available_slots": options,
                 "professional_names": professional_names,
             },
@@ -1031,6 +1056,7 @@ def create_appointment_node(
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
 
+        returned_to_main_menu = False
         if stage is not None and state["button_payload"] in _MAIN_MENU_PAYLOADS:
             # A main-menu tap is an unambiguous "start over", never an
             # answer to whatever question is currently on screen. Seen
@@ -1040,6 +1066,7 @@ def create_appointment_node(
             # flow's retry history never follows them into the next one.
             collected_data = {}
             stage = None
+            returned_to_main_menu = True
 
         if stage == STAGE_AWAITING_CONFIRMATION:
             pending_action_id = state.get("pending_action_id")
@@ -1423,15 +1450,66 @@ def create_appointment_node(
                 }
 
             if operation == RESCHEDULE_APPOINTMENT_ACTION:
-                return await _offer_slots(
-                    conversation_id,
-                    patient,
-                    {**collected_data, "rescheduling_appointment_id": str(selected_appointment.id)},
+                rescheduling_professional_id = selected_appointment.slot.professional_id
+                professional_name = professional_names.get(
+                    rescheduling_professional_id, "tu profesional actual"
                 )
+                await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+                return {
+                    "response_text": (
+                        f"Tu turno es con {professional_name}. ¿Querés mantener el mismo "
+                        "profesional o elegir otro?"
+                    ),
+                    "response_buttons": _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **collected_data,
+                        "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
+                        "rescheduling_appointment_id": str(selected_appointment.id),
+                        "rescheduling_professional_id": rescheduling_professional_id,
+                    },
+                }
 
             raise AssertionError(  # pragma: no cover - impossible by construction
                 f"unsupported operation: {operation}"
             )
+
+        if stage == STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE:
+            button_payload = state["button_payload"]
+            rescheduling_professional_id = cast(
+                str, collected_data.get("rescheduling_professional_id", "")
+            )
+            patient = cast(dict[str, object] | None, collected_data.get("patient"))
+            if button_payload in (
+                RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD,
+                RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD,
+            ):
+                professionals = await appointment_gateway.list_professionals()
+                current = next(
+                    (p for p in professionals if p.id == rescheduling_professional_id), None
+                )
+                specialty_id = current.specialty_id if current is not None else None
+                specialty_name = "esa especialidad"
+                if current is not None:
+                    specialties = await list_specialties.execute()
+                    specialty_name = next(
+                        (s.name for s in specialties if s.id == current.specialty_id),
+                        specialty_name,
+                    )
+                if button_payload == RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD and specialty_id:
+                    return await _offer_professionals(
+                        conversation_id, specialty_id, specialty_name, collected_data
+                    )
+                extra: dict[str, object] = {"chosen_professional_id": rescheduling_professional_id}
+                if specialty_id:
+                    extra["chosen_specialty_id"] = specialty_id
+                    extra["chosen_specialty_name"] = specialty_name
+                return await _offer_slots(conversation_id, patient, {**collected_data, **extra})
+            return {
+                "response_text": _RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER,
+                "response_buttons": _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS,
+                "requires_handoff": False,
+            }
 
         if stage == STAGE_AWAITING_NO_SLOTS_CHOICE:
             if state["button_payload"] == _VIEW_OTHER_PROFESSIONALS_PAYLOAD:
@@ -1802,7 +1880,7 @@ def create_appointment_node(
                 )
                 return {
                     "response_text": f"{text}\n\n{listing}",
-                    "response_buttons": None,
+                    "response_buttons": [_MAIN_MENU_BUTTON],
                     "requires_handoff": False,
                     "collected_data": {
                         **collected_data,
@@ -1852,7 +1930,7 @@ def create_appointment_node(
                 )
                 return {
                     "response_text": f"{text}\n\n{listing}",
-                    "response_buttons": None,
+                    "response_buttons": [_MAIN_MENU_BUTTON],
                     "requires_handoff": False,
                     "collected_data": {
                         **collected_data,
@@ -1945,7 +2023,7 @@ def create_appointment_node(
                 listing = _numbered_list([matched_professional.full_name])
                 return {
                     "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
-                    "response_buttons": None,
+                    "response_buttons": [_MAIN_MENU_BUTTON],
                     "requires_handoff": False,
                     "collected_data": {
                         **collected_data,
@@ -1966,18 +2044,24 @@ def create_appointment_node(
                 conversation_id, {**collected_data, "operation": operation}
             )
 
+        situacion = (
+            'El paciente tocó "Menú principal" para abandonar lo que estaba haciendo y '
+            "empezar de nuevo."
+            if returned_to_main_menu
+            else (
+                "El paciente quiere hacer algo con un turno, pero todavía no dijo "
+                "si es para sacar uno nuevo, reagendar o cancelar."
+            )
+        )
         text = await generate_or_fallback(
             llm_provider,
             str(conversation_id),
             "operation_menu",
             {
-                "situacion": (
-                    "El paciente quiere hacer algo con un turno, pero todavía no dijo "
-                    "si es para sacar uno nuevo, reagendar o cancelar."
-                ),
+                "situacion": situacion,
                 "tono": "Cordial y breve, como alguien de la clínica atendiendo por WhatsApp.",
             },
-            _OPERATION_MENU_MESSAGE,
+            _MAIN_MENU_RESET_MESSAGE if returned_to_main_menu else _OPERATION_MENU_MESSAGE,
         )
         return {
             "response_text": text,
