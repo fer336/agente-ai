@@ -179,9 +179,7 @@ class OpenAICompatibleLLMProvider:
         messages = [{"role": "system", "content": config.classify_intent_prompt}]
         recent_messages = context.get("recent_messages")
         if recent_messages:
-            messages.append(
-                {"role": "system", "content": f"Contexto reciente: {recent_messages}"}
-            )
+            messages.append({"role": "system", "content": f"Contexto reciente: {recent_messages}"})
         contact_memory = context.get("contact_memory")
         if contact_memory:
             messages.append(
@@ -215,9 +213,7 @@ class OpenAICompatibleLLMProvider:
         messages = [{"role": "system", "content": DEFAULT_UNDERSTAND_PROMPT}]
         recent_messages = context.get("recent_messages")
         if recent_messages:
-            messages.append(
-                {"role": "system", "content": f"Contexto reciente: {recent_messages}"}
-            )
+            messages.append({"role": "system", "content": f"Contexto reciente: {recent_messages}"})
         contact_memory = context.get("contact_memory")
         if contact_memory:
             messages.append(
@@ -284,7 +280,22 @@ class OpenAICompatibleLLMProvider:
             # history below. Appended rather than templated: this prompt
             # is admin-editable and a saved version predating this field
             # has nowhere to put a `{contact_memory}` placeholder.
-            prompt = f"{prompt}\n\nLo que ya sabemos de este paciente: {context.contact_memory}"
+            #
+            # Explicitly flagged as possibly stale and subordinate to
+            # `recent_messages`/`collected_data` — seen live: `compact()`
+            # only runs on a periodic worker sweep (`app/workers/
+            # memory_tasks.py`), so this summary can lag behind actions
+            # taken earlier in THIS SAME conversation. Without this
+            # caveat, the model trusted an old summary ("tenés el turno
+            # para el 18/09") over its own immediately preceding message
+            # confirming the patient had just cancelled that appointment.
+            prompt = (
+                f"{prompt}\n\nEsto es lo que sabíamos de este paciente ANTES de este "
+                "mensaje — puede estar desactualizado si algo cambió en esta misma "
+                "conversación (un turno agendado, cancelado o reprogramado recién). Si "
+                "contradice el historial reciente de abajo o los datos ya conocidos, esos "
+                f"dos priman siempre: {context.contact_memory}"
+            )
         # `context.recent_messages` (populated once per turn by
         # `LangGraphAgentInvoker.handle()`, see that method) rides along as
         # real prior turns, not prose in the system prompt — without them
