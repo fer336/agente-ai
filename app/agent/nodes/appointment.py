@@ -111,6 +111,11 @@ STAGE_AWAITING_REGISTRATION_FLOW = "awaiting_registration_flow"
 STAGE_AWAITING_APPOINTMENT_SELECTION = "awaiting_appointment_selection"
 STAGE_AWAITING_SLOT_SELECTION = "awaiting_slot_selection"
 STAGE_AWAITING_CONFIRMATION = "awaiting_confirmation"
+#: No slots for the chosen professional: offer other professionals of the
+#: same specialty before ever mentioning administración (product brief —
+#: jumping straight to "quieres hablar con administración" reads as giving
+#: up on the patient too fast when other professionals might still have room).
+STAGE_AWAITING_NO_SLOTS_CHOICE = "awaiting_no_slots_choice"
 
 #: `PendingAction.action_type` values (PRD.md §16's documented enum) — also
 #: doubles as `collected_data["operation"]` while a proposal doesn't exist
@@ -161,9 +166,7 @@ REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
 #: name instead of the whole thing failing `Dni`'s length check cleanly.
 _DNI_PATTERN = re.compile(r"(\d{6,})")
 
-_CHOOSE_SPECIALTY_PROMPT = (
-    "Para qué especialidad querés el turno? Respondeme con el número:"
-)
+_CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Respondeme con el número:"
 _SPECIALTY_NOT_UNDERSTOOD_MESSAGE = (
     "No pude identificar la especialidad. Respondeme con el número de la lista:"
 )
@@ -201,12 +204,8 @@ _NAME_INCOMPLETE_MESSAGE = (
     "Necesito tu nombre Y apellido completos, no solo uno. Escribimelos junto "
     "con tu DNI, por ejemplo: Rosa Gómez, 30123456."
 )
-_ASK_DNI_ONLY_MESSAGE = (
-    "Gracias! Ahora decime tu *DNI* (7 u 8 dígitos), por ejemplo: 30123456."
-)
-_ASK_NAME_ONLY_MESSAGE = (
-    "Gracias! Ahora decime tu *nombre completo*, por ejemplo: Rosa Gómez."
-)
+_ASK_DNI_ONLY_MESSAGE = "Gracias! Ahora decime tu *DNI* (7 u 8 dígitos), por ejemplo: 30123456."
+_ASK_NAME_ONLY_MESSAGE = "Gracias! Ahora decime tu *nombre completo*, por ejemplo: Rosa Gómez."
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
@@ -226,9 +225,12 @@ _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
     "Querés que te comunique con administración?"
 )
+_NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE = (
+    "No encontramos horarios disponibles con ese profesional en los próximos días. "
+    "¿Querés ver otros profesionales de la misma especialidad?"
+)
 _NO_APPOINTMENTS_MESSAGE = (
-    "No encontramos turnos próximos a tu nombre. "
-    "Querés que te comunique con administración?"
+    "No encontramos turnos próximos a tu nombre. Querés que te comunique con administración?"
 )
 _CHOOSE_SLOT_PROMPT = "Elegí un horario tocando uno de los botones:"
 _SLOT_SELECTION_REMINDER = (
@@ -280,6 +282,15 @@ _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS = 2
 _IDENTIFICATION_ESCAPE_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
+]
+#: `MENU_ADMIN_PAYLOAD` here is never handled inside this stage: any button
+#: with that payload is intercepted upstream by `resolve_interaction.py`,
+#: which routes it straight to `intent="handoff"` regardless of the active
+#: stage — the same mechanism `_IDENTIFICATION_ESCAPE_BUTTONS` relies on.
+_VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
+_NO_SLOTS_CHOICE_BUTTONS = [
+    InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
 ]
 
 
@@ -871,6 +882,36 @@ def create_appointment_node(
             limit=_MAX_OPTIONS_SHOWN,
         )
         if not slots:
+            chosen_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+            chosen_professional_id = cast(str | None, collected_data.get("chosen_professional_id"))
+            if chosen_specialty_id and chosen_professional_id:
+                # Only meaningful for the CREATE flow, where a specific
+                # professional was chosen — RESCHEDULE already searches
+                # every professional (see the comment above), so "no slots"
+                # there means nobody has room and there is no "other
+                # professional" to offer.
+                specialty_professionals = await appointment_gateway.list_professionals(
+                    specialty_id=chosen_specialty_id
+                )
+                other_professionals = [
+                    professional
+                    for professional in specialty_professionals
+                    if professional.id != chosen_professional_id
+                ]
+                if other_professionals:
+                    await set_conversation_input_state.execute(
+                        conversation_id, INTERACTIVE_SELECTION
+                    )
+                    return {
+                        "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+                        "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
+                        "requires_handoff": False,
+                        "pending_action_id": None,
+                        "collected_data": {
+                            **collected_data,
+                            "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
+                        },
+                    }
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {
                 "response_text": _NO_SLOTS_MESSAGE,
@@ -908,9 +949,7 @@ def create_appointment_node(
     ) -> dict[str, object]:
         """Proposes the slot the patient already picked, now that we know
         who they are — never re-searches availability."""
-        selected = cast(
-            AppointmentSlot | None, collected_data.get("pending_selected_slot")
-        )
+        selected = cast(AppointmentSlot | None, collected_data.get("pending_selected_slot"))
         if selected is None:
             return {
                 "response_text": _SESSION_LOST_MESSAGE,
@@ -1127,9 +1166,7 @@ def create_appointment_node(
                         # than failing the turn.
                         recovered = await identify_patient.execute(full_name, dni)
                         if recovered is None:
-                            await set_conversation_input_state.execute(
-                                conversation_id, FREE_INPUT
-                            )
+                            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
                             # The message asks the patient to retype their
                             # name+DNI — stay in STAGE_AWAITING_IDENTIFICATION
                             # so that reply is actually parsed as the retry
@@ -1234,9 +1271,7 @@ def create_appointment_node(
 
         if stage == STAGE_AWAITING_SLOT_SELECTION:
             button_payload = state["button_payload"]
-            available_slots = cast(
-                list[AppointmentSlot], collected_data.get("available_slots", [])
-            )
+            available_slots = cast(list[AppointmentSlot], collected_data.get("available_slots", []))
             patient = cast(dict[str, object] | None, collected_data.get("patient"))
             # In the CREATE flow the patient is not identified yet at this
             # point (that now happens after picking a slot), so only the
@@ -1251,9 +1286,7 @@ def create_appointment_node(
                     "collected_data": {},
                 }
 
-            if button_payload is None or not button_payload.startswith(
-                SELECT_SLOT_PAYLOAD_PREFIX
-            ):
+            if button_payload is None or not button_payload.startswith(SELECT_SLOT_PAYLOAD_PREFIX):
                 message = (
                     _SLOT_SELECTION_REMINDER
                     if button_payload is None
@@ -1400,6 +1433,19 @@ def create_appointment_node(
                 f"unsupported operation: {operation}"
             )
 
+        if stage == STAGE_AWAITING_NO_SLOTS_CHOICE:
+            if state["button_payload"] == _VIEW_OTHER_PROFESSIONALS_PAYLOAD:
+                no_slots_specialty_id = cast(str, collected_data.get("chosen_specialty_id", ""))
+                no_slots_specialty_name = cast(str, collected_data.get("chosen_specialty_name", ""))
+                return await _offer_professionals(
+                    conversation_id, no_slots_specialty_id, no_slots_specialty_name, collected_data
+                )
+            return {
+                "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+                "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
+                "requires_handoff": False,
+            }
+
         if stage == STAGE_AWAITING_VERIFICATION_FLOW:
             flow_fields = parse_flow_response_payload(state["button_payload"])
             if flow_fields is None:
@@ -1502,9 +1548,7 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_IDENTIFICATION:
-            remembered_full_name = cast(
-                str | None, collected_data.get("identification_full_name")
-            )
+            remembered_full_name = cast(str | None, collected_data.get("identification_full_name"))
             remembered_dni = cast(str | None, collected_data.get("identification_dni"))
             merged_full_name, merged_dni = _merge_identification(
                 state["user_message"], remembered_full_name, remembered_dni
@@ -1922,8 +1966,21 @@ def create_appointment_node(
                 conversation_id, {**collected_data, "operation": operation}
             )
 
+        text = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "operation_menu",
+            {
+                "situacion": (
+                    "El paciente quiere hacer algo con un turno, pero todavía no dijo "
+                    "si es para sacar uno nuevo, reagendar o cancelar."
+                ),
+                "tono": "Cordial y breve, como alguien de la clínica atendiendo por WhatsApp.",
+            },
+            _OPERATION_MENU_MESSAGE,
+        )
         return {
-            "response_text": _OPERATION_MENU_MESSAGE,
+            "response_text": text,
             "response_buttons": _OPERATION_BUTTONS,
             "requires_handoff": False,
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_OPERATION_SELECTION},

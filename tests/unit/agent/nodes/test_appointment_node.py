@@ -4,6 +4,7 @@ import pytest
 
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
+    _VIEW_OTHER_PROFESSIONALS_PAYLOAD,
     CANCEL_APPOINTMENT_ACTION,
     CONFIRM_APPOINTMENT_PAYLOAD,
     CREATE_APPOINTMENT_ACTION,
@@ -19,6 +20,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_APPOINTMENT_SELECTION,
     STAGE_AWAITING_CONFIRMATION,
     STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_OPERATION_SELECTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_REGISTRATION_FLOW,
@@ -129,7 +131,8 @@ async def test_first_turn_shows_the_operation_menu():
     result = await node(make_agent_state(conversation_id="conv-1", collected_data={}))
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
-    assert "Qué querés hacer?" in result["response_text"]
+    # Wording is now LLM-generated (varied on purpose) — just require a reply.
+    assert result["response_text"]
     assert {b.id for b in result["response_buttons"]} == {
         OPERATION_CREATE_PAYLOAD,
         OPERATION_RESCHEDULE_PAYLOAD,
@@ -487,9 +490,7 @@ async def test_professional_selection_shows_only_that_doctors_slots():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_professional_id"] == "prof-1"
-    assert [b.id for b in result["response_buttons"]] == [
-        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"
-    ]
+    assert [b.id for b in result["response_buttons"]] == [f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"]
 
 
 @pytest.mark.asyncio
@@ -875,6 +876,97 @@ async def test_professional_selection_offers_administracion_when_no_slots_availa
 
 
 @pytest.mark.asyncio
+async def test_professional_selection_offers_other_professionals_when_no_slots_but_others_exist():
+    # Same empty-agenda situation, but this time a second doctor of the
+    # same specialty exists — the product brief: never jump straight to
+    # "hablar con administración" while there's someone else to offer.
+    node, conversation_repository, _ = await _make_node_and_conversation(
+        available_slots=[],
+        professionals=[
+            make_professional(id_="prof-1", specialty_id="cleaning"),
+            make_professional(id_="prof-2", specialty_id="cleaning"),
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="1",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
+    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert "administración" not in result["response_text"]
+    assert "otros profesionales" in result["response_text"]
+    button_ids = [b.id for b in result["response_buttons"]]
+    assert _VIEW_OTHER_PROFESSIONALS_PAYLOAD in button_ids
+    assert MENU_ADMIN_PAYLOAD in button_ids
+    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
+    assert conversation is not None
+    assert conversation.input_state == "INTERACTIVE_SELECTION"
+
+
+@pytest.mark.asyncio
+async def test_no_slots_choice_stage_offers_other_professionals_on_button_tap():
+    node, _, _ = await _make_node_and_conversation(
+        professionals=[
+            make_professional(id_="prof-1", specialty_id="cleaning"),
+            make_professional(id_="prof-2", specialty_id="cleaning"),
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Ver otros profesionales",
+        button_payload=_VIEW_OTHER_PROFESSIONALS_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "chosen_professional_id": "prof-1",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert [p.id for p in result["collected_data"]["professional_options"]] == [
+        "prof-1",
+        "prof-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_slots_choice_stage_reminds_on_unrecognized_input():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="no entiendo",
+        collected_data={
+            "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "chosen_professional_id": "prof-1",
+        },
+    )
+
+    result = await node(state)
+
+    assert "collected_data" not in result
+    button_ids = [b.id for b in result["response_buttons"]]
+    assert _VIEW_OTHER_PROFESSIONALS_PAYLOAD in button_ids
+    assert MENU_ADMIN_PAYLOAD in button_ids
+
+
+@pytest.mark.asyncio
 async def test_identification_stage_reprompts_when_dni_shape_is_invalid():
     # "123456" matches `_DNI_PATTERN` (6-9 digits) but is too short for a
     # real Argentine DNI (7-8 digits) — must re-ask for just the DNI, not
@@ -1175,9 +1267,7 @@ async def test_confirmation_stage_confirms_new_patient_creation_and_offers_slots
     conversation_repository = make_conversation_repository()
     patient_gateway = make_patient_gateway(patients=[])
     appointment_gateway = make_dentalink_gateway(available_slots=[slot])
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+5491122334455", mode="agent")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     node = create_appointment_node(
         appointment_gateway=appointment_gateway,
         patient_gateway=patient_gateway,
@@ -1269,9 +1359,7 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
     existing_patient = make_patient(id_="pat-existing", full_name="Maria Soto", dni="30111222")
     patient_gateway = make_patient_gateway(patients=[existing_patient])
     appointment_gateway = make_dentalink_gateway(available_slots=[slot])
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+5491122334455", mode="agent")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     node = create_appointment_node(
         appointment_gateway=appointment_gateway,
         patient_gateway=patient_gateway,
@@ -1329,9 +1417,7 @@ async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retr
     existing_patient = make_patient(id_="pat-existing", full_name="Pedro Cassera", dni="30313131")
     patient_gateway = make_patient_gateway(patients=[existing_patient])
     appointment_gateway = make_dentalink_gateway(available_slots=[slot])
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+5491122334455", mode="agent")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     node = create_appointment_node(
         appointment_gateway=appointment_gateway,
         patient_gateway=patient_gateway,
@@ -1852,9 +1938,7 @@ async def test_appointment_selection_stage_offers_new_slots_for_reschedule():
 @pytest.mark.asyncio
 async def test_slot_selection_stage_proposes_reschedule_when_rescheduling():
     new_slot = _future_slot(id_="slot-new")
-    node, conversation_repository, _ = await _make_node_and_conversation(
-        available_slots=[new_slot]
-    )
+    node, conversation_repository, _ = await _make_node_and_conversation(available_slots=[new_slot])
     state = make_agent_state(
         conversation_id="conv-1",
         button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{new_slot.id}",
