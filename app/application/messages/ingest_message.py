@@ -47,25 +47,18 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 #: PRD.md §7's welcome message — sent exactly once, on a conversation's
 #: very first inbound message (see `_resolve_or_create_conversation`'s
 #: "just created" branch, the only place that can know this). The clinic
-#: name/address/hours are written in literally here rather than read from
+#: name/hours are written in literally here rather than read from
 #: `Settings`: this deployment serves one clinic ("diseñado exclusivamente
 #: para una clínica específica", PRD.md intro), same single-tenant
 #: assumption as `dentalink_default_branch_id`. `*asterisks*` are
-#: WhatsApp's bold markup, not Markdown. The Maps link is the clinic's own
-#: (given by the owner) and appended verbatim, same reasoning as
-#: `fallback.py`'s native location card: never hand a URL to the LLM to
-#: reproduce.
-_CLINIC_MAPS_URL = (
-    "https://www.google.com/maps/place/Smiling+Pilar/@-34.437762,-58.7943606,17z/data="
-    "!3m1!4b1!4m12!1m5!8m4!1e2!2s104198081147178470610!3m1!1e1!3m5!1s0x95bc9f5dadc0c77f:"
-    "0x7773e52613d59177!8m2!3d-34.437762!4d-58.7917857!16s%2Fg%2F11rtqc418z"
-    "?hl=es-419&entry=ttu&g_ep=EgoyMDI2MDkwMi4wIKXMDSoASAFQAw%3D%3D"
-)
+#: WhatsApp's bold markup, not Markdown. Address/Maps link are
+#: deliberately NOT repeated here — "Cómo llegar" already sends the real
+#: location card on demand (`fallback.py`), and showing the full address
+#: plus a raw long URL upfront read as clutter (this session's own
+#: feedback after seeing it live).
 _WELCOME_TEXT = (
     "¡Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷\n"
     "Centro Odontológico Integral\n\n"
-    "📍 Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires\n"
-    f"{_CLINIC_MAPS_URL}\n\n"
     "🕐 Horario de atención: lunes a viernes de 10:00 a 18:00\n\n"
     "📸 Mirá nuestros tratamientos en Instagram: instagram.com/smiling.pilar\n\n"
     "¿En qué te puedo ayudar hoy?"
@@ -74,7 +67,9 @@ _WELCOME_TEXT = (
 #: see `ListRow`) — booking rows reuse `appointment.py`'s own operation
 #: payloads directly (`_OPERATION_BY_PAYLOAD`), so tapping one here skips
 #: `STAGE_AWAITING_OPERATION_SELECTION`'s menu entirely instead of asking
-#: the same question twice.
+#: the same question twice. "Cómo llegar" (not "... / horarios") since the
+#: welcome text above already states the hours — pairing both read as
+#: redundant.
 _WELCOME_LIST = ListMessage(
     button_label="Elegí una opción",
     rows=[
@@ -82,7 +77,7 @@ _WELCOME_LIST = ListMessage(
         ListRow(id=OPERATION_RESCHEDULE_PAYLOAD, title="Reprogramar mi cita"),
         ListRow(id=OPERATION_CANCEL_PAYLOAD, title="Cancelar mi cita"),
         ListRow(id=MENU_SPECIALTIES_PAYLOAD, title="Tratamientos y precios"),
-        ListRow(id=MENU_LOCATION_PAYLOAD, title="Cómo llegar / horarios"),
+        ListRow(id=MENU_LOCATION_PAYLOAD, title="📍 Cómo llegar"),
         ListRow(id=MENU_ADMIN_PAYLOAD, title="Hablar con un asesor"),
         ListRow(id=OPERATION_VIEW_PAYLOAD, title="Ver mi cita"),
     ],
