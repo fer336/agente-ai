@@ -48,6 +48,19 @@ async def test_find_patient_returns_none_when_name_does_not_match():
 
 
 @pytest.mark.asyncio
+async def test_find_patient_matches_reversed_name_order():
+    # Seen live: patients often type "Apellido Nombre" instead of the
+    # order the record uses — the DNI already narrows this to exactly one
+    # real patient, so word order alone must not fail the match.
+    patient = make_patient(id_="pat-1", full_name="Juan Pérez", dni="30111222")
+    gateway = make_patient_gateway(patients=[patient])
+
+    found = await gateway.find_patient("Pérez Juan", "30111222")
+
+    assert found == patient
+
+
+@pytest.mark.asyncio
 async def test_find_patient_returns_none_when_patient_has_no_dni_on_record():
     patient = make_patient(id_="pat-1", full_name="Juan Pérez", dni=None)
     gateway = make_patient_gateway(patients=[patient])
@@ -63,9 +76,7 @@ def test_fake_patient_gateway_satisfies_patient_gateway_protocol():
 async def test_create_patient_stores_and_returns_the_new_patient():
     gateway = make_patient_gateway()
 
-    created = await gateway.create_patient(
-        "Maria Soto", _VALID_DNI, PhoneNumber("+56912345678")
-    )
+    created = await gateway.create_patient("Maria Soto", _VALID_DNI, PhoneNumber("+56912345678"))
 
     assert created.full_name == "Maria Soto"
     assert created.dni == _VALID_DNI

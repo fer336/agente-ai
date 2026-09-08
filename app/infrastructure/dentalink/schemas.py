@@ -311,6 +311,22 @@ def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
 
 
+def full_names_match(a: str, b: str) -> bool:
+    """True when both names contain the same words, in any order.
+
+    Patients often type their name "Apellido Nombre" instead of the
+    "Nombre Apellido" order Dentalink stores it in, or the reverse — seen
+    live as a real cause of "no te encontramos" for someone who genuinely
+    is in the system. An exact ordered-string comparison rejected that
+    case even though the DNI lookup had already narrowed the candidate
+    down to exactly one real patient. Comparing word sets instead of the
+    raw string still requires knowing every word of the real name, just
+    not the order they come in — the DNI match still does the actual
+    identity gatekeeping (PRD.md §32).
+    """
+    return sorted(a.strip().casefold().split()) == sorted(b.strip().casefold().split())
+
+
 def _as_float(value: object) -> float:
     return float(str(value)) if value is not None else 0.0
 

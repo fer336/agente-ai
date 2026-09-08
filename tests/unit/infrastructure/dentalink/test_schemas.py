@@ -8,6 +8,7 @@ from app.infrastructure.dentalink.exceptions import DentalinkInvalidResponseErro
 from app.infrastructure.dentalink.schemas import (
     agreement_from_convenio,
     appointment_from_cita,
+    full_names_match,
     professional_from_dentista,
     resolve_cancellation_state_id,
     resolve_cancellation_state_ids,
@@ -289,6 +290,18 @@ def test_resolve_cancellation_state_ids_returns_every_anulacion_state_regardless
     state_ids = resolve_cancellation_state_ids(estados)
 
     assert state_ids == {"20", "18", "1"}
+
+
+def test_full_names_match_ignores_word_order():
+    assert full_names_match("Juan Pérez", "Pérez Juan") is True
+
+
+def test_full_names_match_is_case_and_whitespace_insensitive():
+    assert full_names_match("  juan   pérez ", "PÉREZ JUAN") is True
+
+
+def test_full_names_match_rejects_a_genuinely_different_name():
+    assert full_names_match("Juan Pérez", "Juan Gómez") is False
 
 
 def test_treatment_from_tratamiento_maps_confirmed_live_shape():
