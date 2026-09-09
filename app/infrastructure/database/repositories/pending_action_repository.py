@@ -33,6 +33,7 @@ class SqlAlchemyPendingActionRepository:
         model.confirmation_token = str(pending_action.confirmation_token)
         model.status = pending_action.status
         model.expires_at = pending_action.expires_at
+        model.workflow_generation = pending_action.workflow_generation
         await self._session.flush()
 
     async def get_pending_for_conversation(
@@ -41,6 +42,18 @@ class SqlAlchemyPendingActionRepository:
         result = await self._session.execute(
             select(PendingActionModel).where(
                 PendingActionModel.conversation_id == str(conversation_id),
+                PendingActionModel.status == "pending",
+            )
+        )
+        return [_to_entity(model) for model in result.scalars()]
+
+    async def get_pending_for_conversation_generation(
+        self, conversation_id: ConversationId, workflow_generation: int
+    ) -> list[PendingAction]:
+        result = await self._session.execute(
+            select(PendingActionModel).where(
+                PendingActionModel.conversation_id == str(conversation_id),
+                PendingActionModel.workflow_generation == workflow_generation,
                 PendingActionModel.status == "pending",
             )
         )
@@ -80,4 +93,5 @@ def _to_entity(model: PendingActionModel) -> PendingAction:
         confirmation_token=ConfirmationToken(value=model.confirmation_token),
         status=model.status,
         expires_at=model.expires_at,
+        workflow_generation=model.workflow_generation,
     )

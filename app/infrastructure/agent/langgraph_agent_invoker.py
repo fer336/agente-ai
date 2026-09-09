@@ -170,7 +170,6 @@ class LangGraphAgentInvoker:
         user_message: str,
         button_payload: str | None,
     ) -> None:
-        config: RunnableConfig = {"configurable": {"thread_id": str(conversation_id)}}
         checkpointer = (
             await self._checkpointer_provider() if self._checkpointer_provider is not None else None
         )
@@ -214,6 +213,17 @@ class LangGraphAgentInvoker:
             )
 
             async with self._repositories_provider() as repositories:
+                # Capture the generation exactly once. A terminal node may rotate
+                # persistence while this invocation is still finishing on the old thread.
+                workflow_conversation = await repositories.conversations.get_by_id(conversation_id)
+                generation = (
+                    workflow_conversation.workflow_session_generation
+                    if workflow_conversation is not None
+                    else 1
+                )
+                config: RunnableConfig = {
+                    "configurable": {"thread_id": f"{conversation_id}:session:{generation}"}
+                }
                 compiled_graph = compile_graph(
                     self._appointment_gateway,
                     self._agreement_gateway,

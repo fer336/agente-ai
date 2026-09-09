@@ -24,6 +24,17 @@ class FakePendingActionRepository:
             and pending_action.status == "pending"
         ]
 
+    async def get_pending_for_conversation_generation(
+        self, conversation_id: ConversationId, workflow_generation: int
+    ) -> list[PendingAction]:
+        return [
+            pending_action
+            for pending_action in self._by_id.values()
+            if str(pending_action.conversation_id) == str(conversation_id)
+            and pending_action.workflow_generation == workflow_generation
+            and pending_action.status == "pending"
+        ]
+
     async def mark_expired_if_pending(self, pending_action_id: str) -> bool:
         pending_action = self._by_id.get(pending_action_id)
         if pending_action is None or pending_action.status != "pending":

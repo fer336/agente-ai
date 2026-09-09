@@ -16,6 +16,12 @@ class PendingActionRepository(Protocol):
         self, conversation_id: ConversationId
     ) -> list[PendingAction]: ...
 
+    async def get_pending_for_conversation_generation(
+        self, conversation_id: ConversationId, workflow_generation: int
+    ) -> list[PendingAction]:
+        """Lists still-pending actions bound to one workflow generation."""
+        ...
+
     async def mark_expired_if_pending(self, pending_action_id: str) -> bool:
         """Atomically transitions `pending` -> `expired`.
 

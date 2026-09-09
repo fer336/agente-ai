@@ -17,3 +17,4 @@ class ScheduledAction:
     scheduled_for: datetime
     idempotency_key: IdempotencyKey
     attempts: int
+    workflow_generation: int = 1

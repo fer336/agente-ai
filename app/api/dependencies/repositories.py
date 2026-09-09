@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies.db import _get_session_factory, get_db_session
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.audio.transcribe_audio import TranscriptionRepositories
+from app.application.conversations.rotate_workflow_session import WorkflowSessionRepositories
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
 from app.domain.repositories.contact_repository import ContactRepository
@@ -101,6 +102,21 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
             contacts=SqlAlchemyContactRepository(session),
             conversations=SqlAlchemyConversationRepository(session),
             media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
+        )
+        await session.commit()
+
+
+@asynccontextmanager
+async def open_sqlalchemy_workflow_session_repositories() -> AsyncIterator[
+    WorkflowSessionRepositories
+]:
+    """Provides the one transaction that owns workflow rotation and cleanup."""
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield WorkflowSessionRepositories(
+            conversations=SqlAlchemyConversationRepository(session),
+            pending_actions=SqlAlchemyPendingActionRepository(session),
+            scheduled_actions=SqlAlchemyScheduledActionRepository(session),
         )
         await session.commit()
 

@@ -315,6 +315,7 @@ def make_pending_action(
     confirmation_token: str = "token-1",
     status: str = "pending",
     expires_at: datetime | None = None,
+    workflow_generation: int = 1,
 ) -> PendingAction:
     return PendingAction(
         id=id_,
@@ -326,6 +327,7 @@ def make_pending_action(
         expires_at=(
             expires_at if expires_at is not None else datetime.now(UTC) + timedelta(minutes=2)
         ),
+        workflow_generation=workflow_generation,
     )
 
 
@@ -338,6 +340,7 @@ def make_scheduled_action(
     scheduled_for: datetime | None = None,
     idempotency_key: str = "idem-1",
     attempts: int = 0,
+    workflow_generation: int = 1,
 ) -> ScheduledAction:
     return ScheduledAction(
         id=id_,
@@ -350,6 +353,7 @@ def make_scheduled_action(
         ),
         idempotency_key=IdempotencyKey(value=idempotency_key),
         attempts=attempts,
+        workflow_generation=workflow_generation,
     )
 
 

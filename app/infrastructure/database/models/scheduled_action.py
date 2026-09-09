@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -24,6 +24,9 @@ class ScheduledActionModel(Base):
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    workflow_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="1"
+    )
     last_error: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
