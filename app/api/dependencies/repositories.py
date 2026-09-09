@@ -4,7 +4,11 @@ from contextlib import asynccontextmanager
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies.db import _get_session_factory, get_db_session
+from app.api.dependencies.db import (
+    _get_session_factory,
+    get_committing_db_session,
+    get_db_session,
+)
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.audio.transcribe_audio import TranscriptionRepositories
 from app.application.conversations.rotate_workflow_session import WorkflowSessionRepositories
@@ -73,6 +77,23 @@ def get_conversation_repository(
     session: AsyncSession = Depends(get_db_session),
 ) -> ConversationRepository:
     """FastAPI dependency providing the `ConversationRepository` port (real, Postgres-backed)."""
+    return SqlAlchemyConversationRepository(session)
+
+
+def get_committing_conversation_repository(
+    session: AsyncSession = Depends(get_committing_db_session),
+) -> ConversationRepository:
+    """Like `get_conversation_repository`, but the session COMMITS when the
+    route returns successfully.
+
+    For webhook routes whose conversation writes (mode flips, lazy-timeout
+    stamps) must survive past the request — plain `get_db_session` leaves
+    them flushed-but-uncommitted and silently discarded on session close,
+    the exact pitfall `open_sqlalchemy_message_repositories` documents for
+    the process-singleton use cases. Verified live: an SMB-echo `/bot`
+    reactivation logged `smb_echo_handled` yet never persisted `mode`
+    because the injected repo rode a non-committing session.
+    """
     return SqlAlchemyConversationRepository(session)
 
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.dependencies.gateways import get_messaging_gateway
-from app.api.dependencies.repositories import get_conversation_repository
+from app.api.dependencies.repositories import get_committing_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.application.conversations.handle_smb_message_echo import HandleSmbMessageEchoUseCase
 from app.application.conversations.sync_conversation_mode_from_tag import (
@@ -66,7 +66,9 @@ async def receive_ycloud_webhook(
     settings: Settings = Depends(get_settings),
     use_case: IngestMessageUseCase = Depends(get_ingest_message_use_case),
     messaging_gateway: MessagingGateway = Depends(get_messaging_gateway),
-    conversation_repository: ConversationRepository = Depends(get_conversation_repository),
+    conversation_repository: ConversationRepository = Depends(
+        get_committing_conversation_repository
+    ),
 ) -> WebhookAckResponse:
     """YCloud is the sole webhook counterparty (WhatsApp -> YCloud -> us).
 

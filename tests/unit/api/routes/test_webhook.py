@@ -5,7 +5,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.dependencies.gateways import get_messaging_gateway
-from app.api.dependencies.repositories import get_conversation_repository
+from app.api.dependencies.repositories import (
+    get_committing_conversation_repository,
+    get_conversation_repository,
+)
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL
@@ -282,7 +285,13 @@ def _tag_webhook_fakes():
     messaging_gateway = FakeYCloudMessagingGateway()
     conversation_repository = FakeConversationRepository()
     app.dependency_overrides[get_messaging_gateway] = lambda: messaging_gateway
+    # The webhook route now rides the committing dependency (its writes must
+    # outlive the request); override BOTH so tests keep using this fake for
+    # either wiring.
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repository
+    app.dependency_overrides[get_committing_conversation_repository] = (
+        lambda: conversation_repository
+    )
 
     yield _TagWebhookFakes(
         messaging_gateway=messaging_gateway, conversation_repository=conversation_repository
@@ -290,6 +299,7 @@ def _tag_webhook_fakes():
 
     del app.dependency_overrides[get_messaging_gateway]
     del app.dependency_overrides[get_conversation_repository]
+    del app.dependency_overrides[get_committing_conversation_repository]
 
 
 @pytest.mark.asyncio
