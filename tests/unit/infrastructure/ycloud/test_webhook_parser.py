@@ -4,11 +4,15 @@ from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
+    YCloudSmbMessageEchoEventPayload,
 )
 from app.infrastructure.ycloud.webhook_parser import (
     FLOW_RESPONSE_PAYLOAD_PREFIX,
+    extract_bot_reactivation_command,
+    extract_smb_echo_patient_phone,
     extract_tag_mode_change,
     is_processable_message,
+    is_smb_message_echo_event,
     is_tag_mode_change_event,
     to_inbound_message_dto,
 )
@@ -18,6 +22,7 @@ from tests.fixtures.seed_objects import (
     make_ycloud_list_reply_payload,
     make_ycloud_nfm_reply_payload,
     make_ycloud_payload,
+    make_ycloud_smb_echo_payload,
     make_ycloud_tag_change_payload,
 )
 
@@ -331,3 +336,75 @@ def test_extract_tag_mode_change_returns_none_when_contact_id_missing():
     payload = YCloudContactAttributesChangedEventPayload.model_validate(raw)
 
     assert extract_tag_mode_change(payload) is None
+
+
+def test_is_smb_message_echo_event_accepts_matching_type():
+    assert is_smb_message_echo_event("whatsapp.smb.message.echoes") is True
+
+
+def test_is_smb_message_echo_event_rejects_other_types():
+    assert is_smb_message_echo_event("whatsapp.inbound_message.received") is False
+
+
+def test_extract_smb_echo_patient_phone_returns_to_phone():
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(patient_phone="+549****4455")
+    )
+
+    assert extract_smb_echo_patient_phone(payload) == "+549****4455"
+
+
+def test_extract_smb_echo_patient_phone_adds_leading_plus_when_missing():
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(patient_phone="549****4455")
+    )
+
+    assert extract_smb_echo_patient_phone(payload) == "+549****4455"
+
+
+def test_extract_smb_echo_patient_phone_returns_none_when_missing():
+    raw = make_ycloud_smb_echo_payload()
+    raw["whatsappMessage"]["to"] = ""
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(raw)
+
+    assert extract_smb_echo_patient_phone(payload) is None
+
+
+def test_extract_smb_echo_patient_phone_returns_none_when_whitespace_only():
+    raw = make_ycloud_smb_echo_payload()
+    raw["whatsappMessage"]["to"] = "   "
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(raw)
+
+    assert extract_smb_echo_patient_phone(payload) is None
+
+
+def test_extract_bot_reactivation_command_matches_exact_lowercase():
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(patient_phone="+549****4455", text_body="/bot")
+    )
+
+    assert extract_bot_reactivation_command(payload) == "+549****4455"
+
+
+def test_extract_bot_reactivation_command_is_case_insensitive_and_trims():
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(text_body="  /BoT  ")
+    )
+
+    assert extract_bot_reactivation_command(payload) == "+549****4455"
+
+
+def test_extract_bot_reactivation_command_returns_none_for_other_text():
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(text_body="Hola, ya te ayudo")
+    )
+
+    assert extract_bot_reactivation_command(payload) is None
+
+
+def test_extract_bot_reactivation_command_returns_none_for_non_text_message():
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(message_type="image")
+    )
+
+    assert extract_bot_reactivation_command(payload) is None

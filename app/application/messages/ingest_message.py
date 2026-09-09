@@ -3,12 +3,13 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from redis.asyncio import Redis
 
 from app.application.config.runtime_config_service import RuntimeConfigService
+from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.contact import Contact
@@ -23,17 +24,8 @@ from app.domain.repositories.media_processing_job_repository import MediaProcess
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
-from app.domain.value_objects.list_message import ListMessage, ListRow
-from app.domain.value_objects.menu_payloads import (
-    MENU_ADMIN_PAYLOAD,
-    MENU_LOCATION_PAYLOAD,
-    MENU_SPECIALTIES_PAYLOAD,
-    OPERATION_CANCEL_PAYLOAD,
-    OPERATION_CREATE_PAYLOAD,
-    OPERATION_RESCHEDULE_PAYLOAD,
-    OPERATION_VIEW_PAYLOAD,
-)
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.redis.debounce import DebounceTracker
 from app.infrastructure.redis.lock import redis_lock
 
@@ -44,44 +36,22 @@ logger = logging.getLogger(__name__)
 _AUDIO_RATE_LIMIT_KEY_PREFIX = "audio_rate_limit:conversation:"
 _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 
-#: PRD.md §7's welcome message — sent exactly once, on a conversation's
-#: very first inbound message (see `_resolve_or_create_conversation`'s
-#: "just created" branch, the only place that can know this). The clinic
-#: name/hours are written in literally here rather than read from
-#: `Settings`: this deployment serves one clinic ("diseñado exclusivamente
-#: para una clínica específica", PRD.md intro), same single-tenant
-#: assumption as `dentalink_default_branch_id`. `*asterisks*` are
-#: WhatsApp's bold markup, not Markdown. Address/Maps link are
-#: deliberately NOT repeated here — "Cómo llegar" already sends the real
-#: location card on demand (`fallback.py`), and showing the full address
-#: plus a raw long URL upfront read as clutter (this session's own
-#: feedback after seeing it live).
-_WELCOME_TEXT = (
-    "Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷\n"
-    "Centro Odontológico Integral\n\n"
-    "🕐 Horario de atención: lunes a viernes de *10:00* a *18:00*\n\n"
-    "📸 Mirá nuestros tratamientos en Instagram: instagram.com/smiling.pilar\n\n"
-    "¿En qué te puedo ayudar hoy?"
-)
-#: Row titles stay under WhatsApp's 24-char cap per row (Meta's own limit,
-#: see `ListRow`) — booking rows reuse `appointment.py`'s own operation
-#: payloads directly (`_OPERATION_BY_PAYLOAD`), so tapping one here skips
-#: `STAGE_AWAITING_OPERATION_SELECTION`'s menu entirely instead of asking
-#: the same question twice. "Cómo llegar" (not "... / horarios") since the
-#: welcome text above already states the hours — pairing both read as
-#: redundant.
-_WELCOME_LIST = ListMessage(
-    button_label="Elegí una opción",
-    rows=[
-        ListRow(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
-        ListRow(id=OPERATION_RESCHEDULE_PAYLOAD, title="🔄 Reprogramar mi cita"),
-        ListRow(id=OPERATION_CANCEL_PAYLOAD, title="❌ Cancelar mi cita"),
-        ListRow(id=MENU_SPECIALTIES_PAYLOAD, title="🦷 Tratamientos y precios"),
-        ListRow(id=MENU_LOCATION_PAYLOAD, title="📍 Cómo llegar"),
-        ListRow(id=MENU_ADMIN_PAYLOAD, title="💬 Hablar con un asesor"),
-        ListRow(id=OPERATION_VIEW_PAYLOAD, title="📋 Ver mi cita"),
-    ],
-)
+#: How long a conversation stays parked in `mode="human"` after the LAST
+#: staff reply before this use case auto-reactivates the bot on the next
+#: inbound patient message — the "lazy timeout" half of the message-
+#: command + lazy-timeout handoff mechanism that replaces the unreliable
+#: YCloud tag toggle (see `app.application.conversations.
+#: handle_smb_message_echo` for the other half, the `/bot` command, and
+#: this PR's report for why the tag mechanism was abandoned: PATCH calls
+#: return 200 OK but don't persist on this account's Coexistence-connected
+#: contacts). "Lazy" means there is no scheduler/cron polling for expiry —
+#: the check only happens inline, on the next patient message that
+#: actually arrives while `mode="human"`, which is also the only moment
+#: this matters (PRD.md §23: an idle conversation costs nothing either
+#: way). Confirmed with the user: resets on EVERY staff reply, not just
+#: the initial handoff, and does NOT fire at all if the staff never
+#: replied even once (`conversation.last_human_reply_at is None`).
+_HUMAN_MODE_REACTIVATION_TIMEOUT = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -199,8 +169,8 @@ class IngestMessageUseCase:
                 # attach on this message type.
                 await self._send_reply.execute(
                     dto.from_phone,
-                    _WELCOME_TEXT,
-                    list_message=_WELCOME_LIST,
+                    WELCOME_TEXT,
+                    list_message=WELCOME_LIST,
                 )
 
             if dto.message_type == "audio":
@@ -226,6 +196,25 @@ class IngestMessageUseCase:
             await repositories.messages.save(message)
             conversation_mode = conversation.mode
 
+            if conversation_mode == "human" and self._human_mode_timeout_elapsed(conversation):
+                # Lazy timeout (see `_HUMAN_MODE_REACTIVATION_TIMEOUT`):
+                # more than the threshold has passed since the staff's
+                # LAST reply, so this inbound message itself is the
+                # trigger that flips the conversation back to the bot —
+                # there is no separate scheduler/cron doing this. Flipped
+                # inline, in the same unit of work as the message save
+                # above, so `conversation_mode` below reflects the new
+                # value and this same turn falls through to the normal
+                # agent hand-off instead of the Human-Mode Pause Gate.
+                await SetConversationModeUseCase(repositories.conversations).execute(
+                    conversation.id, "agent"
+                )
+                conversation_mode = "agent"
+                logger.info(
+                    "ingest_message.human_mode_lazy_timeout_reactivated conversation=%s",
+                    conversation_key,
+                )
+
         if conversation_mode == "human":
             # Human-Mode Pause Gate (spec): short-circuit BEFORE debounce/
             # lock/seam. The message above is still persisted — only the
@@ -250,6 +239,22 @@ class IngestMessageUseCase:
             dto.button_payload,
             str(external_message_id),
         )
+
+    def _human_mode_timeout_elapsed(self, conversation: Conversation) -> bool:
+        """True when the lazy-timeout threshold has elapsed since the
+        conversation's LAST recorded human reply.
+
+        `last_human_reply_at is None` (handoff happened but staff never
+        actually replied yet) deliberately returns `False`, not `True` —
+        the timeout measures elapsed time SINCE a real reply, and there is
+        none to measure from yet (confirmed with the user: a
+        never-answered handoff must keep waiting for a human indefinitely,
+        not silently expire).
+        """
+        if conversation.last_human_reply_at is None:
+            return False
+        elapsed = datetime.now(UTC) - conversation.last_human_reply_at
+        return elapsed > _HUMAN_MODE_REACTIVATION_TIMEOUT
 
     async def _ingest_audio_message(
         self,

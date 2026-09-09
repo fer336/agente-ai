@@ -5,6 +5,7 @@ from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
@@ -37,6 +38,7 @@ _MENU_BUTTON_INTENTS = {
     MENU_INSURANCE_PAYLOAD: "insurance",
     MENU_ADMIN_PAYLOAD: "handoff",
     MENU_SPECIALTIES_PAYLOAD: "specialties",
+    MENU_MAIN_PAYLOAD: "appointment",
     #: The welcome list's booking rows (this session's own brief) name
     #: the operation directly — same payload ids `appointment.py`'s
     #: `STAGE_AWAITING_OPERATION_SELECTION` already handles, so tapping

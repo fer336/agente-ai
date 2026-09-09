@@ -4,6 +4,7 @@ from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
+    YCloudSmbMessageEchoEventPayload,
 )
 
 _INBOUND_MESSAGE_EVENT_TYPE = "whatsapp.inbound_message.received"
@@ -31,6 +32,17 @@ _TAG_REMOVED_ACTION = "REMOVED"
 #: absence of this ONE tag drives the toggle rather than two separate tags.
 #: Must match the exact tag name created in the YCloud dashboard.
 _HUMAN_TAG = "Human"
+
+_SMB_MESSAGE_ECHO_EVENT_TYPE = "whatsapp.smb.message.echoes"
+#: The exact staff-typed command that flips `mode` back to `"agent"`
+#: (task brief, confirmed with the user). Compared case-insensitively and
+#: trimmed — `SMB_ECHO_TEXT_MESSAGE_TYPE` guards this against ever
+#: matching a bot-sent reply: the bot never literally sends the text
+#: "/bot" to a patient, so an exact-match check here is safe regardless of
+#: whether YCloud's echo event distinguishes human-app-sent from
+#: bot-sent messages (it does not appear to — see this PR's report).
+_BOT_REACTIVATION_COMMAND = "/bot"
+_SMB_ECHO_TEXT_MESSAGE_TYPE = "text"
 
 
 def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: str) -> bool:
@@ -175,3 +187,37 @@ def extract_tag_mode_change(
         if extra.action == _TAG_REMOVED_ACTION:
             return contact.id, "agent"
     return None
+
+
+def is_smb_message_echo_event(event_type: str) -> bool:
+    return event_type == _SMB_MESSAGE_ECHO_EVENT_TYPE
+
+
+def extract_smb_echo_patient_phone(payload: YCloudSmbMessageEchoEventPayload) -> str | None:
+    """Returns the patient's phone (`whatsappMessage.to`) for ANY echoed
+    staff-sent message, regardless of its content — this is the recipient
+    whose conversation's lazy-timeout clock
+    (`app.application.conversations.handle_smb_message_echo`) must reset,
+    independent of whether the message happens to be the `/bot` command.
+    `None` when the phone is missing or whitespace-only (a
+    plausible-but-incomplete payload, same convention as
+    `to_inbound_message_dto`'s own guards).
+    """
+    message = payload.whatsappMessage
+    if not message.to.strip():
+        return None
+    return message.to if message.to.startswith("+") else f"+{message.to}"
+
+
+def extract_bot_reactivation_command(payload: YCloudSmbMessageEchoEventPayload) -> str | None:
+    """Returns the patient's phone from `whatsappMessage.to` when this echo
+    is a staff-typed `/bot` text message (trimmed, case-insensitive exact
+    match), else `None` — either the type isn't `"text"`, there's no body,
+    or the body isn't exactly the reactivation command.
+    """
+    message = payload.whatsappMessage
+    if message.type != _SMB_ECHO_TEXT_MESSAGE_TYPE or message.text is None:
+        return None
+    if message.text.body.strip().casefold() != _BOT_REACTIVATION_COMMAND:
+        return None
+    return extract_smb_echo_patient_phone(payload)

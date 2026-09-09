@@ -60,6 +60,7 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
@@ -67,6 +68,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_VIEW_PAYLOAD,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.ycloud.flows import (
     REGISTRATION_FLOW_SCREEN_ID,
     VERIFICATION_FLOW_SCREEN_ID,
@@ -116,6 +118,7 @@ STAGE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 #: jumping straight to "quieres hablar con administración" reads as giving
 #: up on the patient too fast when other professionals might still have room).
 STAGE_AWAITING_NO_SLOTS_CHOICE = "awaiting_no_slots_choice"
+STAGE_AWAITING_NO_AVAILABILITY_CHOICE = "awaiting_no_availability_choice"
 #: Reschedule used to search every professional in the clinic for a new
 #: slot (product brief: seen live showing a completely different
 #: specialty than the original appointment) — now the patient is asked
@@ -322,6 +325,10 @@ _VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
 _NO_SLOTS_CHOICE_BUTTONS = [
     InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
+]
+_NO_AVAILABILITY_BUTTONS = [
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS = [
     InteractiveButton(id=RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD, title="✅ Mismo profesional"),
@@ -1023,43 +1030,16 @@ def create_appointment_node(
             limit=_MAX_OPTIONS_SHOWN,
         )
         if not slots:
-            chosen_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
-            chosen_professional_id = cast(str | None, collected_data.get("chosen_professional_id"))
-            if chosen_specialty_id and chosen_professional_id:
-                # Only meaningful for the CREATE flow, where a specific
-                # professional was chosen — RESCHEDULE already searches
-                # every professional (see the comment above), so "no slots"
-                # there means nobody has room and there is no "other
-                # professional" to offer.
-                specialty_professionals = await appointment_gateway.list_professionals(
-                    specialty_id=chosen_specialty_id
-                )
-                other_professionals = [
-                    professional
-                    for professional in specialty_professionals
-                    if professional.id != chosen_professional_id
-                ]
-                if other_professionals:
-                    await set_conversation_input_state.execute(
-                        conversation_id, INTERACTIVE_SELECTION
-                    )
-                    return {
-                        "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
-                        "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
-                        "requires_handoff": False,
-                        "pending_action_id": None,
-                        "collected_data": {
-                            **collected_data,
-                            "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
-                        },
-                    }
-            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
             return {
                 "response_text": _NO_SLOTS_MESSAGE,
-                "response_buttons": None,
+                "response_buttons": _NO_AVAILABILITY_BUTTONS,
                 "requires_handoff": False,
                 "pending_action_id": None,
-                "collected_data": {},
+                "collected_data": {
+                    **collected_data,
+                    "stage": STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
+                },
             }
 
         options = slots[:_MAX_OPTIONS_SHOWN]
@@ -1174,6 +1154,17 @@ def create_appointment_node(
         conversation_id = ConversationId(state["conversation_id"])
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
+
+        if state["button_payload"] == MENU_MAIN_PAYLOAD:
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            return {
+                "response_text": WELCOME_TEXT,
+                "response_buttons": None,
+                "response_list": WELCOME_LIST,
+                "requires_handoff": False,
+                "pending_action_id": None,
+                "collected_data": {},
+            }
 
         returned_to_main_menu = False
         if stage is not None and state["button_payload"] in _MAIN_MENU_PAYLOADS:

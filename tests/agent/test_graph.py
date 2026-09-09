@@ -14,6 +14,8 @@ from app.agent.graph import (
     compile_graph,
 )
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
@@ -36,6 +38,72 @@ from tests.fixtures.seed_objects import (
     make_professional,
     make_specialty,
 )
+
+
+@pytest.mark.asyncio
+async def test_no_availability_choices_and_main_menu_are_canonical():
+    """Production graph regression: a terminal empty agenda gives the two
+    explicit exits, and Main Menu restores the complete canonical welcome list.
+    """
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    compiled = _compile(
+        conversation_repository=conversation_repository,
+        appointment_gateway=FakeDentalinkGateway(
+            available_slots=[],
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        ),
+    )
+    no_availability = await compiled.ainvoke(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="1",
+            collected_data={
+                "stage": "awaiting_professional_selection",
+                "operation": "create_appointment",
+                "chosen_specialty_id": "cleaning",
+                "chosen_specialty_name": "Ortodoncia",
+                "professional_options": [make_professional(id_="prof-1", specialty_id="cleaning")],
+            },
+        )
+    )
+
+    assert [(button.id, button.title) for button in no_availability["response_buttons"]] == [
+        (MENU_ADMIN_PAYLOAD, "Administración"),
+        (MENU_MAIN_PAYLOAD, "Menú principal"),
+    ]
+
+    main_menu = await compiled.ainvoke(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=MENU_MAIN_PAYLOAD,
+            collected_data=no_availability["collected_data"],
+        )
+    )
+
+    assert main_menu["response_text"] == WELCOME_TEXT
+    assert main_menu["response_list"] == WELCOME_LIST
+    assert main_menu["response_buttons"] is None
+
+
+@pytest.mark.asyncio
+async def test_no_availability_administration_choice_routes_to_handoff_and_human_mode():
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    compiled = _compile(conversation_repository=conversation_repository)
+
+    result = await compiled.ainvoke(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=MENU_ADMIN_PAYLOAD,
+            collected_data={"stage": "awaiting_no_availability_choice"},
+        )
+    )
+
+    assert result["requires_handoff"] is True
+    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
+    assert conversation is not None
+    assert conversation.mode == "human"
 
 
 def _build_graph(conversation_repository=None):
@@ -176,9 +244,7 @@ async def test_human_mode_conversation_ends_the_run_silently():
     await conversation_repository.save(make_conversation(id_="conv-1", mode="human"))
     compiled = _compile(conversation_repository=conversation_repository)
 
-    result = await compiled.ainvoke(
-        make_agent_state(conversation_id="conv-1", user_message="hola")
-    )
+    result = await compiled.ainvoke(make_agent_state(conversation_id="conv-1", user_message="hola"))
 
     assert result["response_text"] is None
 

@@ -23,3 +23,11 @@ class Conversation:
     mode: str
     created_at: datetime
     input_state: str = "FREE_INPUT"
+    #: Set on every `whatsapp.smb.message.echoes` event YCloud delivers for
+    #: a staff-sent WhatsApp Business App message while this conversation
+    #: is `mode="human"` (see `app.application.messages.ingest_message`'s
+    #: lazy timeout constant). `None` means either the conversation never
+    #: went to `"human"`, or it did but no staff reply has landed yet — in
+    #: both cases the lazy timeout below must NOT auto-reactivate, since
+    #: there is no actual human reply to measure elapsed time from.
+    last_human_reply_at: datetime | None = None

@@ -107,6 +107,7 @@ def make_conversation(
     mode: str = "agent",
     created_at: datetime | None = None,
     input_state: str = "FREE_INPUT",
+    last_human_reply_at: datetime | None = None,
 ) -> Conversation:
     return Conversation(
         id=ConversationId(id_),
@@ -114,6 +115,7 @@ def make_conversation(
         mode=mode,
         created_at=created_at if created_at is not None else datetime.now(UTC),
         input_state=input_state,
+        last_human_reply_at=last_human_reply_at,
     )
 
 
@@ -272,6 +274,36 @@ def make_ycloud_tag_change_payload(
                 }
             },
         },
+    }
+
+
+def make_ycloud_smb_echo_payload(
+    business_phone: str = "+549****0001",
+    patient_phone: str = "+549****4455",
+    message_type: str = "text",
+    text_body: str = "/bot",
+) -> dict[str, object]:
+    """Raw YCloud `whatsapp.smb.message.echoes` webhook JSON body,
+    valid-by-default — field names verified against YCloud's own published
+    example payloads at
+    https://docs.ycloud.com/reference/whatsapp-business-app-sent-message-sync-webhook-examples.
+    """
+    whatsapp_message: dict[str, object] = {
+        "id": "63f5d602367ea403f8175a6c",
+        "wamid": "wamid.smb-echo-1",
+        "status": "sent",
+        "from": business_phone,
+        "to": patient_phone,
+        "type": message_type,
+    }
+    if message_type == "text":
+        whatsapp_message["text"] = {"body": text_body}
+    return {
+        "id": "evt_smb-echo-1",
+        "type": "whatsapp.smb.message.echoes",
+        "apiVersion": "v2",
+        "createTime": "2026-09-09T12:00:00.000Z",
+        "whatsappMessage": whatsapp_message,
     }
 
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.api.dependencies.gateways import get_messaging_gateway
 from app.api.dependencies.repositories import get_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
+from app.application.conversations.handle_smb_message_echo import HandleSmbMessageEchoUseCase
 from app.application.conversations.sync_conversation_mode_from_tag import (
     SyncConversationModeFromTagUseCase,
 )
@@ -18,10 +19,14 @@ from app.domain.repositories.gateways import MessagingGateway
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
+    YCloudSmbMessageEchoEventPayload,
 )
 from app.infrastructure.ycloud.webhook_parser import (
+    extract_bot_reactivation_command,
+    extract_smb_echo_patient_phone,
     extract_tag_mode_change,
     is_processable_message,
+    is_smb_message_echo_event,
     is_tag_mode_change_event,
     to_inbound_message_dto,
 )
@@ -48,8 +53,10 @@ class WebhookAckResponse(BaseModel):
 @router.post(
     "/ycloud/{secret}",
     summary=(
-        "Receive a YCloud webhook event: `whatsapp.inbound_message.received` "
-        "or `contact.attributes_changed` (tag-driven bot/human toggle)"
+        "Receive a YCloud webhook event: `whatsapp.inbound_message.received`, "
+        "`whatsapp.smb.message.echoes` (staff `/bot` command + human-reply "
+        "timeout reset), or `contact.attributes_changed` (legacy tag-driven "
+        "bot/human toggle, kept for now but no longer the primary path)"
     ),
     response_model=WebhookAckResponse,
 )
@@ -121,6 +128,36 @@ async def receive_ycloud_webhook(
         else:
             logger.info(
                 "webhook.tag_mode_synced ycloud_contact_id=%s mode=%s", ycloud_contact_id, mode
+            )
+        return WebhookAckResponse(status="accepted")
+
+    if is_smb_message_echo_event(event_type):
+        echo_payload = YCloudSmbMessageEchoEventPayload.model_validate(payload)
+        patient_phone = extract_smb_echo_patient_phone(echo_payload)
+        if patient_phone is None:
+            return WebhookAckResponse(status="ignored")
+
+        is_reactivation_command = extract_bot_reactivation_command(echo_payload) is not None
+        handle_echo = HandleSmbMessageEchoUseCase(conversation_repository)
+        try:
+            await handle_echo.execute(
+                patient_phone, is_reactivation_command=is_reactivation_command
+            )
+        except Exception:
+            # Best-effort, same ack-and-drop stance as the tag branch above
+            # — a lookup/save failure here must never turn into a 500 that
+            # YCloud retries.
+            logger.warning(
+                "webhook.smb_echo_handling_failed patient_phone=%s is_reactivation_command=%s",
+                patient_phone,
+                is_reactivation_command,
+                exc_info=True,
+            )
+        else:
+            logger.info(
+                "webhook.smb_echo_handled patient_phone=%s is_reactivation_command=%s",
+                patient_phone,
+                is_reactivation_command,
             )
         return WebhookAckResponse(status="accepted")
 
