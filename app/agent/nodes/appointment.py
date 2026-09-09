@@ -332,13 +332,92 @@ _RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER = (
 )
 
 
+#: Words that never appear in a real full name but commonly appear in
+#: ordinary chatter — used to keep a name-only, no-digit message from being
+#: misread as identification when it's actually just conversation ("hola
+#: quiero un turno"). Deliberately small and Spanish-specific (PRD.md's own
+#: language): a false negative here just means one extra retry prompt, a
+#: false positive means silently losing a real name to `_merge_identification`
+#: discarding it as noise — the worse failure mode, per the bug this list
+#: guards against (see `_merge_identification`'s docstring).
+_NON_NAME_WORDS = frozenset(
+    {
+        "hola",
+        "buenas",
+        "buenos",
+        "dias",
+        "días",
+        "tardes",
+        "noches",
+        "quiero",
+        "queria",
+        "quería",
+        "querria",
+        "querría",
+        "quisiera",
+        "necesito",
+        "turno",
+        "turnos",
+        "cita",
+        "consulta",
+        "gracias",
+        "porfavor",
+        "porfa",
+        "ayuda",
+        "informacion",
+        "información",
+        "saber",
+        "como",
+        "cómo",
+        "cuando",
+        "cuándo",
+        "donde",
+        "dónde",
+        "que",
+        "qué",
+        "hacer",
+        "sacar",
+        "reservar",
+        "cancelar",
+        "reagendar",
+        "administracion",
+        "administración",
+        "hablar",
+        "persona",
+        "humano",
+        "no",
+        "si",
+        "sé",
+        "se",
+        "estoy",
+        "soy",
+        "registrado",
+        "registrada",
+        "creo",
+        "puedo",
+        "podes",
+        "podés",
+        "puede",
+    }
+)
+
+
+def _looks_like_a_name(text: str) -> bool:
+    """True when a no-digit message reads as a plausible full name rather
+    than ordinary chatter — see `_NON_NAME_WORDS`."""
+    words = text.casefold().split()
+    return bool(words) and not any(word.strip(".,!?¡¿") in _NON_NAME_WORDS for word in words)
+
+
 def _extract_identification_pieces(text: str) -> tuple[str | None, str | None]:
     """Splits free text into whichever (full_name, dni) pieces it actually
     contains — either can be missing, since the patient may answer across
     two messages instead of PRD.md §32's suggested one-shot format
     ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI and
-    whatever surrounds it is the name; with no digit run at all, the whole
-    message is treated as a name-only answer.
+    whatever surrounds it is the name; with no digit run at all, the
+    message is a name-only answer UNLESS it reads as ordinary chatter (see
+    `_looks_like_a_name`) — that check only matters here, since a DNI's
+    presence is already unambiguous proof of an identification attempt.
     """
     match = _DNI_PATTERN.search(text)
     if match is not None:
@@ -346,7 +425,9 @@ def _extract_identification_pieces(text: str) -> tuple[str | None, str | None]:
         full_name = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
         return full_name or None, dni
     stripped = text.strip()
-    return stripped or None, None
+    if not stripped or not _looks_like_a_name(stripped):
+        return None, None
+    return stripped, None
 
 
 #: A patient answering a numbered list types "2", "2." or "opción 2" —
@@ -444,14 +525,18 @@ def _merge_identification(
     left untouched this turn falls back to what was already remembered, so
     the patient never has to repeat something they already got right.
 
-    A message with no digit run is only read as a bare name when a DNI is
-    already on record (remembered from an earlier turn) — otherwise there
-    is no signal that this text is an identification attempt at all, and
-    ordinary chatter ("hola quiero un turno") would get misread as a name.
+    This is only ever called from `STAGE_AWAITING_IDENTIFICATION` (see this
+    node's `node()` dispatch) — the bot already asked specifically for
+    name+DNI, so any free text arriving here IS an identification attempt
+    by construction; there is no ordinary-chatter ambiguity left to guard
+    against. A message with no digit run is always read as a bare name
+    (bug found live: the old guard discarded a name-first answer entirely
+    whenever no DNI was on record yet — e.g. "Pedro Cassera" then
+    "30131313" — so by the time the DNI arrived, the name had never been
+    remembered and got asked for AGAIN even though the patient already
+    typed it).
     """
     full_name, dni = _extract_identification_pieces(text)
-    if dni is None and remembered_dni is None:
-        return None, None
     return (
         full_name if full_name is not None else remembered_full_name,
         dni if dni is not None else remembered_dni,

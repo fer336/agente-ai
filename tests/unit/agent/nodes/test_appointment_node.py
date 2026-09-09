@@ -1166,15 +1166,18 @@ async def test_identification_completes_across_two_messages_name_then_dni():
 
     first_result = await node(first_state)
 
-    # No DNI has ever appeared yet — there is no signal this is an
-    # identification attempt at all, so it's treated the same as any
-    # other unparseable text, not remembered as a bare name.
+    # A name-only answer, given first, must be remembered right away — not
+    # discarded and asked for again once the DNI arrives on the next turn
+    # (bug found live: "Pedro Cassera" then "30131313" used to lose the
+    # name and re-ask for it, since this stage always knows any free text
+    # is an identification answer, never ordinary chatter).
     assert first_result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert first_result["collected_data"]["identification_retry_count"] == 1
+    assert first_result["collected_data"]["identification_full_name"] == "Pedro Cassera"
+    assert "identification_retry_count" not in first_result["collected_data"]
 
     second_state = make_agent_state(
         conversation_id="conv-1",
-        user_message="Pedro Cassera, 30313131",
+        user_message="30313131",
         collected_data=first_result["collected_data"],
     )
 
