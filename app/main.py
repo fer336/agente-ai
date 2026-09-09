@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,22 @@ from app.api.routes.health import router as health_router
 from app.api.routes.internal_eval import router as internal_eval_router
 from app.api.routes.webhook import router as webhook_router
 from app.config.settings import get_settings
+
+#: The app's own `logger.info`/`logger.warning` calls (webhook handling,
+#: YCloud tag sync, error reporting, ...) are otherwise silently dropped in
+#: production: uvicorn only configures ITS OWN loggers (`uvicorn`,
+#: `uvicorn.access`, `uvicorn.error`), never the root logger our modules'
+#: `logging.getLogger(__name__)` calls attach to. Without this, only
+#: uvicorn's own access log line (method/path/status) reaches stdout —
+#: every application-level log line (e.g. `webhook.tag_mode_synced`,
+#: `ycloud_handoff.contact_not_found_by_phone`) never does, even though the
+#: code path that logs it did run. Must be configured before any module-level
+#: `logging.getLogger(__name__)` call actually logs, so this runs at import
+#: time, before `app = FastAPI(...)` below.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 
 @asynccontextmanager
