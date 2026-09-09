@@ -9,6 +9,7 @@ from uuid import uuid4
 from redis.asyncio import Redis
 
 from app.application.config.runtime_config_service import RuntimeConfigService
+from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.send_reply import SendReplyUseCase
@@ -150,6 +151,19 @@ class IngestMessageUseCase:
                 repositories.conversations, dto.from_phone, contact.id
             )
             conversation_key = str(conversation.id)
+            received_at = datetime.now(UTC)
+            rotate_workflow = RotateWorkflowSessionUseCase(repositories.conversations)
+            if rotate_workflow.is_inactive(conversation.workflow_last_activity_at, received_at):
+                rotated = await rotate_workflow.execute(
+                    conversation.id,
+                    expected_generation=conversation.workflow_session_generation,
+                )
+                if rotated:
+                    conversation.workflow_session_generation += 1
+                    conversation.input_state = "FREE_INPUT"
+            conversation.workflow_last_activity_at = received_at
+            await repositories.conversations.save(conversation)
+            workflow_key = f"{conversation_key}:session:{conversation.workflow_session_generation}"
 
             if is_new_conversation:
                 # Sent synchronously, inline in this same request — NOT
@@ -233,7 +247,7 @@ class IngestMessageUseCase:
             return
 
         await self._schedule_processing(
-            conversation_key,
+            workflow_key,
             message.id,
             message.text,
             dto.button_payload,
@@ -331,12 +345,15 @@ class IngestMessageUseCase:
             conversation = await repositories.conversations.get_by_id(conversation_id)
         if conversation is not None and conversation.mode == "human":
             return
+        if conversation is None:
+            return
+        workflow_key = f"{conversation_key}:session:{conversation.workflow_session_generation}"
 
         # No wamid to thread through here — a transcript has no inbound
         # webhook payload of its own, and the typing indicator is a
         # best-effort nicety (skipped, not worth a repository round-trip
         # to look one up for the audio-resume path specifically).
-        await self._schedule_processing(conversation_key, message_id, text, None, None)
+        await self._schedule_processing(workflow_key, message_id, text, None, None)
 
     async def _schedule_processing(
         self,
@@ -386,8 +403,12 @@ class IngestMessageUseCase:
             # run will process the (now larger) accumulated group instead.
             return
 
+        conversation_id_value, _, generation_value = conversation_key.rpartition(":session:")
+        if not conversation_id_value:
+            conversation_id_value = conversation_key
+            generation_value = "1"
         async with redis_lock(
-            self._redis_client, f"lock:conversation:{conversation_key}"
+            self._redis_client, f"lock:conversation:{conversation_id_value}"
         ) as acquired:
             if not acquired:
                 # Drop-on-failure, per the design's ADR: the message(s)
@@ -402,8 +423,15 @@ class IngestMessageUseCase:
 
             async with self._repositories_provider() as repositories:
                 conversation = await repositories.conversations.get_by_id(
-                    ConversationId(conversation_key)
+                    ConversationId(conversation_id_value)
                 )
+            if conversation is not None and (
+                conversation.workflow_session_generation != int(generation_value)
+            ):
+                # This timer belongs to an old workflow. Retain durable messages,
+                # but never merge them into the newly rotated operational state.
+                self._pending_messages.pop(conversation_key, None)
+                return
             if conversation is not None and conversation.mode == "human":
                 # Mode may have flipped to human while the debounce window
                 # was waiting — do not forward to the agent.
@@ -440,7 +468,7 @@ class IngestMessageUseCase:
                     )
 
             await self._agent_invoker.handle(
-                ConversationId(conversation_key), message_ids, user_message, button_payload
+                ConversationId(conversation_id_value), message_ids, user_message, button_payload
             )
 
     async def _resolve_or_create_contact(

@@ -22,6 +22,7 @@ from app.application.appointments.revalidate_and_reschedule_appointment import (
     RevalidateAndRescheduleAppointmentUseCase,
 )
 from app.application.appointments.search_availability import SearchAvailabilityUseCase
+from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
 from app.application.conversations.set_conversation_input_state import (
     FREE_INPUT,
     INTERACTIVE_SELECTION,
@@ -823,6 +824,7 @@ def create_appointment_node(
     )
     cancel_appointment = CancelAppointmentUseCase(appointment_gateway)
     set_conversation_input_state = SetConversationInputStateUseCase(conversation_repository)
+    rotate_workflow_session = RotateWorkflowSessionUseCase(conversation_repository)
     list_specialties = ListSpecialtiesUseCase(specialty_gateway)
 
     async def _ask_identification_message(
@@ -1152,6 +1154,12 @@ def create_appointment_node(
 
     async def node(state: AgentState) -> dict[str, object]:
         conversation_id = ConversationId(state["conversation_id"])
+        workflow_conversation = await conversation_repository.get_by_id(conversation_id)
+        workflow_generation = (
+            workflow_conversation.workflow_session_generation
+            if workflow_conversation is not None
+            else 1
+        )
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
 
@@ -1255,7 +1263,9 @@ def create_appointment_node(
                     appointment_id = str(confirmed_payload["appointment_id"])
                     idempotency_key = f"cancel:{conversation_id}:{pending_action_id}"
                     await cancel_appointment.execute(appointment_id, idempotency_key)
-                    await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                    await rotate_workflow_session.execute(
+                        conversation_id, expected_generation=workflow_generation
+                    )
                     return {
                         "response_text": _cancel_success_message(),
                         "response_buttons": None,
@@ -1281,7 +1291,9 @@ def create_appointment_node(
                         )
                         return offer
 
-                    await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                    await rotate_workflow_session.execute(
+                        conversation_id, expected_generation=workflow_generation
+                    )
                     return {
                         "response_text": _success_message(appointment),
                         "response_buttons": None,
@@ -1388,7 +1400,9 @@ def create_appointment_node(
                         )
                         return offer
 
-                    await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                    await rotate_workflow_session.execute(
+                        conversation_id, expected_generation=workflow_generation
+                    )
                     return {
                         "response_text": _reschedule_success_message(rescheduled),
                         "response_buttons": None,

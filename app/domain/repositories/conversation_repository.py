@@ -12,6 +12,12 @@ class ConversationRepository(Protocol):
 
     async def save(self, conversation: Conversation) -> None: ...
 
+    async def rotate_workflow_session(
+        self, conversation_id: ConversationId, expected_generation: int
+    ) -> bool:
+        """Atomically advance the workflow generation when it still matches."""
+        ...
+
     async def list_recent(self, limit: int = 50) -> list[Conversation]:
         """Lists the `limit` most recently created conversations, newest first.
 

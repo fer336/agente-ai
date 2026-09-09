@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.models.base import Base
@@ -29,3 +29,7 @@ class ConversationModel(Base):
     # reply — see the domain entity's docstring for why the lazy timeout
     # in `IngestMessageUseCase` treats those as NOT eligible to auto-expire.
     last_human_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    workflow_session_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="1"
+    )
+    workflow_last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -429,7 +429,9 @@ async def test_human_mode_past_timeout_reactivates_and_falls_through_to_debounce
 
     # Lazy timeout elapsed: this same inbound message falls through to the
     # normal agent turn instead of the Human-Mode Pause Gate.
-    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is not None
+    assert (
+        await redis_client.get("debounce:conversation:ycloud-+5491122334455:session:1") is not None
+    )
     conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert conversation is not None
     assert conversation.mode == "agent"
@@ -446,7 +448,9 @@ async def test_agent_mode_proceeds_to_debounce():
 
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
-    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is not None
+    assert (
+        await redis_client.get("debounce:conversation:ycloud-+5491122334455:session:1") is not None
+    )
 
 
 @pytest.mark.asyncio
