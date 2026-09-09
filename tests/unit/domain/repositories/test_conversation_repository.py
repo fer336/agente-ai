@@ -8,6 +8,9 @@ class ConformingConversationRepository:
     async def save(self, conversation):
         return None
 
+    async def rotate_workflow_session(self, conversation_id, expected_generation):
+        return False
+
     async def list_recent(self, limit=50):
         return []
 

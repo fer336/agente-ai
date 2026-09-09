@@ -250,7 +250,7 @@ async def test_handle_populates_agent_state_with_the_contacts_memory_context():
         error_service=make_error_service(),
         checkpointer=checkpointer,
     )
-    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1"}})
+    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1:session:1"}})
 
     assert snapshot.values["recent_messages"] == [{"role": "user", "content": "hola, soy Juan"}]
     assert (
@@ -417,7 +417,7 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
         error_service=make_error_service(),
         checkpointer=checkpointer,
     )
-    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1"}})
+    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1:session:1"}})
 
     assert snapshot.values["collected_data"]["available_slots"] == [slot]
 

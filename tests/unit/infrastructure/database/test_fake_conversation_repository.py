@@ -43,3 +43,18 @@ async def test_list_recent_orders_newest_first_and_respects_limit():
     fetched = await repository.list_recent(limit=2)
 
     assert [str(c.id) for c in fetched] == ["conv-recent-2", "conv-recent-1"]
+
+
+@pytest.mark.asyncio
+async def test_rotate_workflow_session_uses_generation_compare_and_swap():
+    repository = FakeConversationRepository()
+    conversation = make_conversation(id_="conv-rotate")
+    await repository.save(conversation)
+
+    assert await repository.rotate_workflow_session(conversation.id, expected_generation=1) is True
+    assert await repository.rotate_workflow_session(conversation.id, expected_generation=1) is False
+
+    rotated = await repository.get_by_id(conversation.id)
+    assert rotated is not None
+    assert rotated.workflow_session_generation == 2
+    assert rotated.input_state == "FREE_INPUT"
