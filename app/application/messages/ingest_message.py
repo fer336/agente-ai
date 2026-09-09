@@ -161,6 +161,13 @@ class IngestMessageUseCase:
                 if rotated:
                     conversation.workflow_session_generation += 1
                     conversation.input_state = "FREE_INPUT"
+                else:
+                    # Another accepted turn won the CAS while this one waited.
+                    # Refresh before saving activity so stale ORM/domain state
+                    # cannot write the old generation back.
+                    refreshed = await repositories.conversations.get_by_id(conversation.id)
+                    if refreshed is not None:
+                        conversation = refreshed
             conversation.workflow_last_activity_at = received_at
             await repositories.conversations.save(conversation)
             workflow_key = f"{conversation_key}:session:{conversation.workflow_session_generation}"
