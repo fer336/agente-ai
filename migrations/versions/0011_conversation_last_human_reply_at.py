@@ -17,7 +17,7 @@ two mechanisms this column now backs:
   `mode` back to `"agent"` once more than the configured threshold has
   elapsed since the last human reply.
 
-Revision ID: 0011_conversation_last_human_reply_at
+Revision ID: 0011_last_human_reply_at
 Revises: 0010_conversational_memory
 Create Date: 2026-09-09
 
@@ -29,7 +29,9 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0011_conversation_last_human_reply_at"
+# Kept <= 32 chars: alembic_version.version_num is varchar(32) and a longer
+# revision id fails the UPDATE with StringDataRightTruncationError at deploy.
+revision: str = "0011_last_human_reply_at"
 down_revision: str | None = "0010_conversational_memory"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

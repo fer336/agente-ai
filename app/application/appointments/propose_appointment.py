@@ -75,6 +75,7 @@ class ProposeAppointmentUseCase:
         conversation_id: ConversationId,
         action_type: str,
         payload: dict[str, object],
+        workflow_generation: int = 1,
     ) -> PendingAction:
         expires_at = datetime.now(UTC) + timedelta(seconds=self._confirmation_timeout_seconds)
         pending_action = PendingAction(
@@ -85,6 +86,7 @@ class ProposeAppointmentUseCase:
             confirmation_token=ConfirmationToken(value=str(uuid4())),
             status="pending",
             expires_at=expires_at,
+            workflow_generation=workflow_generation,
         )
         scheduled_action = ScheduledAction(
             id=str(uuid4()),
@@ -95,6 +97,7 @@ class ProposeAppointmentUseCase:
             scheduled_for=expires_at,
             idempotency_key=IdempotencyKey(value=f"expire:{pending_action.id}"),
             attempts=0,
+            workflow_generation=workflow_generation,
         )
         outbox_event = OutboxEvent(
             id=str(uuid4()),

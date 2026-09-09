@@ -9,7 +9,10 @@ from uuid import uuid4
 from redis.asyncio import Redis
 
 from app.application.config.runtime_config_service import RuntimeConfigService
-from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
+from app.application.conversations.rotate_workflow_session import (
+    RotateWorkflowSessionUseCase,
+    WorkflowSessionRepositoriesProvider,
+)
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.send_reply import SendReplyUseCase
@@ -102,6 +105,7 @@ class IngestMessageUseCase:
         send_reply: SendReplyUseCase,
         audio_rate_limit_per_minute: int = 0,
         welcome_image_url: str | None = None,
+        workflow_session_repositories_provider: WorkflowSessionRepositoriesProvider | None = None,
     ) -> None:
         self._repositories_provider = repositories_provider
         self._debounce_tracker = debounce_tracker
@@ -129,6 +133,7 @@ class IngestMessageUseCase:
         #: header above the welcome menu's body/buttons — `None` (the
         #: default) keeps every existing environment/test unaffected.
         self._welcome_image_url = welcome_image_url
+        self._workflow_session_repositories_provider = workflow_session_repositories_provider
         # Per-conversation accumulator of (message_id, text, button_payload,
         # wamid) tuples awaiting grouping into one Etapa-5 handoff. In-process
         # only — see the class docstring's singleton-lifetime note and the
@@ -152,7 +157,9 @@ class IngestMessageUseCase:
             )
             conversation_key = str(conversation.id)
             received_at = datetime.now(UTC)
-            rotate_workflow = RotateWorkflowSessionUseCase(repositories.conversations)
+            rotate_workflow = RotateWorkflowSessionUseCase(
+                self._workflow_session_repositories_provider or repositories.conversations
+            )
             if rotate_workflow.is_inactive(conversation.workflow_last_activity_at, received_at):
                 rotated = await rotate_workflow.execute(
                     conversation.id,

@@ -11,6 +11,9 @@ class ConformingPendingActionRepository:
     async def get_pending_for_conversation(self, conversation_id):
         return []
 
+    async def get_pending_for_conversation_generation(self, conversation_id, workflow_generation):
+        return []
+
     async def mark_expired_if_pending(self, pending_action_id):
         return False
 

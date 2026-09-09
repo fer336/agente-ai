@@ -16,3 +16,4 @@ class PendingAction:
     confirmation_token: ConfirmationToken
     status: str
     expires_at: datetime
+    workflow_generation: int = 1

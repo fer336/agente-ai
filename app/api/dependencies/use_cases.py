@@ -12,6 +12,7 @@ from app.api.dependencies.redis import get_debounce_tracker, get_shared_redis_cl
 from app.api.dependencies.repositories import (
     open_sqlalchemy_message_repositories,
     open_sqlalchemy_transcription_repositories,
+    open_sqlalchemy_workflow_session_repositories,
 )
 from app.application.audio.transcribe_audio import TranscribeAudioUseCase
 from app.application.messages.ingest_message import IngestMessageUseCase
@@ -39,6 +40,7 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         send_reply=SendReplyUseCase(get_messaging_gateway()),
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
         welcome_image_url=settings.welcome_image_url or None,
+        workflow_session_repositories_provider=open_sqlalchemy_workflow_session_repositories,
     )
 
 

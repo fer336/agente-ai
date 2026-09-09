@@ -35,6 +35,7 @@ class SqlAlchemyScheduledActionRepository:
         model.scheduled_for = scheduled_action.scheduled_for
         model.idempotency_key = str(scheduled_action.idempotency_key)
         model.attempts = scheduled_action.attempts
+        model.workflow_generation = scheduled_action.workflow_generation
         await self._session.flush()
 
     async def get_due(self, now: datetime, limit: int) -> list[ScheduledAction]:
@@ -85,4 +86,5 @@ def _to_entity(model: ScheduledActionModel) -> ScheduledAction:
         scheduled_for=model.scheduled_for,
         idempotency_key=IdempotencyKey(value=model.idempotency_key),
         attempts=model.attempts,
+        workflow_generation=model.workflow_generation,
     )

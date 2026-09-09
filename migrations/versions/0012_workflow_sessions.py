@@ -9,8 +9,6 @@ from alembic import op
 
 revision = "0012_workflow_sessions"
 down_revision = "0011_last_human_reply_at"
-branch_labels = None
-depends_on = None
 
 
 def upgrade() -> None:
