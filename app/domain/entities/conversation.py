@@ -31,3 +31,5 @@ class Conversation:
     #: both cases the lazy timeout below must NOT auto-reactivate, since
     #: there is no actual human reply to measure elapsed time from.
     last_human_reply_at: datetime | None = None
+    workflow_session_generation: int = 1
+    workflow_last_activity_at: datetime | None = None
