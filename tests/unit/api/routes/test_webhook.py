@@ -22,6 +22,7 @@ from tests.fixtures.gateways import make_ingest_message_use_case
 from tests.fixtures.seed_objects import (
     make_conversation,
     make_ycloud_payload,
+    make_ycloud_smb_echo_payload,
     make_ycloud_tag_change_payload,
 )
 
@@ -353,11 +354,81 @@ async def test_tag_change_for_unresolvable_contact_acked_not_500(_tag_webhook_fa
     assert response.json() == {"status": "accepted"}
 
 
+@pytest.mark.asyncio
+async def test_smb_echo_bot_command_reactivates_the_bot(_tag_webhook_fakes):
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550123"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="human", input_state="HUMAN")
+    )
+
+    response = await _post_webhook(
+        make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="/bot")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId(f"ycloud-{patient_phone}")
+    )
+    assert conversation is not None
+    assert conversation.mode == "agent"
+    assert conversation.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_plain_reply_resets_last_human_reply_at_without_flipping_mode(
+    _tag_webhook_fakes,
+):
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550124"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="human", input_state="HUMAN")
+    )
+
+    response = await _post_webhook(
+        make_ycloud_smb_echo_payload(
+            patient_phone=patient_phone, text_body="Ya te ayudo en un momento"
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId(f"ycloud-{patient_phone}")
+    )
+    assert conversation is not None
+    assert conversation.mode == "human"
+    assert conversation.last_human_reply_at is not None
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_for_unknown_conversation_acked_not_500(_tag_webhook_fakes):
+    response = await _post_webhook(
+        make_ycloud_smb_echo_payload(patient_phone="+549****9999", text_body="/bot")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_missing_patient_phone_acked_and_ignored(_tag_webhook_fakes):
+    raw = make_ycloud_smb_echo_payload()
+    raw["whatsappMessage"]["to"] = ""
+
+    response = await _post_webhook(raw)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+
+
 def test_route_has_openapi_metadata():
     schema = app.openapi()
     operation = schema["paths"]["/webhooks/ycloud/{secret}"]["post"]
 
     assert "whatsapp.inbound_message.received" in operation["summary"]
+    assert "whatsapp.smb.message.echoes" in operation["summary"]
     assert "contact.attributes_changed" in operation["summary"]
     assert operation["tags"] == ["webhooks"]
 

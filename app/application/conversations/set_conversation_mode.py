@@ -27,5 +27,6 @@ class SetConversationModeUseCase:
             mode=mode,
             created_at=conversation.created_at,
             input_state=conversation.input_state,
+            last_human_reply_at=conversation.last_human_reply_at,
         )
         await self._conversation_repository.save(updated)

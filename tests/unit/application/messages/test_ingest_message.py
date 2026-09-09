@@ -13,6 +13,7 @@ backed provider used in production DI
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -364,6 +365,74 @@ async def test_human_mode_blocks_handoff():
     # No debounce key was ever touched — the human-mode gate short-circuits
     # BEFORE debounce/lock/seam, per spec's "Human-Mode Pause Gate".
     assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
+
+
+@pytest.mark.asyncio
+async def test_human_mode_with_no_human_reply_yet_never_auto_reactivates():
+    # `last_human_reply_at is None` (handoff happened but staff never
+    # actually replied) must NOT auto-expire, no matter how much time has
+    # notionally passed -- there is no reply timestamp to measure from.
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(
+        make_conversation(id_="ycloud-+5491122334455", mode="human", last_human_reply_at=None)
+    )
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, redis_client=redis_client
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    assert conversation.mode == "human"
+
+
+@pytest.mark.asyncio
+async def test_human_mode_within_timeout_still_blocks_handoff():
+    conversation_repository = make_conversation_repository()
+    recent_reply = datetime.now(UTC) - timedelta(minutes=30)
+    await conversation_repository.save(
+        make_conversation(
+            id_="ycloud-+5491122334455", mode="human", last_human_reply_at=recent_reply
+        )
+    )
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, redis_client=redis_client
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    assert conversation.mode == "human"
+
+
+@pytest.mark.asyncio
+async def test_human_mode_past_timeout_reactivates_and_falls_through_to_debounce():
+    conversation_repository = make_conversation_repository()
+    stale_reply = datetime.now(UTC) - timedelta(hours=2)
+    await conversation_repository.save(
+        make_conversation(
+            id_="ycloud-+5491122334455", mode="human", last_human_reply_at=stale_reply
+        )
+    )
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, redis_client=redis_client
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    # Lazy timeout elapsed: this same inbound message falls through to the
+    # normal agent turn instead of the Human-Mode Pause Gate.
+    assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is not None
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
 
 
 @pytest.mark.asyncio

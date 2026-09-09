@@ -134,3 +134,53 @@ class YCloudContactAttributesChangedEventPayload(BaseModel):
 
     type: str = ""
     contactAttributesChanged: YCloudContactAttributesChanged = YCloudContactAttributesChanged()
+
+
+class YCloudSmbEchoText(BaseModel):
+    body: str = ""
+
+
+class YCloudSmbEchoMessage(BaseModel):
+    """The echoed message itself, nested under `whatsappMessage`.
+
+    Field names verified against YCloud's own published example payloads
+    at
+    https://docs.ycloud.com/reference/whatsapp-business-app-sent-message-sync-webhook-examples
+    (fetched live — not a guess): `from` is the BUSINESS number, `to` is
+    the WhatsApp user (our patient) the staff member replied to — the
+    reverse of `YCloudInboundMessage.from_`/`.to` on a patient-sent
+    message. `text` is only present when `type == "text"`; other echoed
+    message types (`image`/`video`/`audio`/`document`) are not modeled
+    here since neither of this event's two effects
+    (`app.application.conversations.handle_smb_message_echo`) needs their
+    payload — only that the echo happened for this `to` phone.
+    """
+
+    id: str = ""
+    wamid: str = ""
+    status: str = ""
+    from_: str = Field(default="", alias="from")
+    to: str = ""
+    type: str = ""
+    text: YCloudSmbEchoText | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class YCloudSmbMessageEchoEventPayload(BaseModel):
+    """Raw shape of a YCloud `whatsapp.smb.message.echoes` webhook event.
+
+    Fired for every OUTBOUND message sent by a human staff member typing
+    directly in the WhatsApp Business App (or a linked companion device)
+    against a Coexistence-connected number — NOT for messages our bot
+    sends via the API, and NOT for inbound messages the patient sends
+    (those arrive as `whatsapp.inbound_message.received`, see
+    `YCloudInboundEventPayload`). This is the mechanism this change uses
+    to detect a staff `/bot` command and to reset the lazy-timeout clock
+    on any staff reply — see this PR's report for why the YCloud
+    contact-tag mechanism (`YCloudContactAttributesChangedEventPayload`)
+    was abandoned as the sole path back to `mode="agent"`.
+    """
+
+    type: str = ""
+    whatsappMessage: YCloudSmbEchoMessage = YCloudSmbEchoMessage()

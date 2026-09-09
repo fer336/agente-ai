@@ -28,6 +28,7 @@ class SqlAlchemyConversationRepository:
         model.mode = conversation.mode
         model.input_state = conversation.input_state
         model.created_at = conversation.created_at
+        model.last_human_reply_at = conversation.last_human_reply_at
         await self._session.flush()
 
     async def list_recent(self, limit: int = 50) -> list[Conversation]:
@@ -44,4 +45,5 @@ def _to_entity(model: ConversationModel) -> Conversation:
         mode=model.mode,
         created_at=model.created_at,
         input_state=model.input_state,
+        last_human_reply_at=model.last_human_reply_at,
     )

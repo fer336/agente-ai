@@ -24,3 +24,8 @@ class ConversationModel(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
+    # Nullable: `None` distinguishes "never handed to a human" / "handed
+    # off but staff hasn't replied yet" from an actual timestamped human
+    # reply — see the domain entity's docstring for why the lazy timeout
+    # in `IngestMessageUseCase` treats those as NOT eligible to auto-expire.
+    last_human_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

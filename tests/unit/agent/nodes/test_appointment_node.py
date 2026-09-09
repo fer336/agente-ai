@@ -23,6 +23,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_APPOINTMENT_SELECTION,
     STAGE_AWAITING_CONFIRMATION,
     STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
     STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_OPERATION_SELECTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
@@ -39,7 +40,11 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
-from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_APPOINTMENT_PAYLOAD
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_APPOINTMENT_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
+)
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.fake_redis import InMemoryFakeRedis
@@ -970,18 +975,20 @@ async def test_professional_selection_offers_administracion_when_no_slots_availa
 
     result = await node(state)
 
-    assert result["collected_data"] == {}
-    assert "administración" in result["response_text"]
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_AVAILABILITY_CHOICE
+    assert [(button.id, button.title) for button in result["response_buttons"]] == [
+        (MENU_ADMIN_PAYLOAD, "Administración"),
+        (MENU_MAIN_PAYLOAD, "Menú principal"),
+    ]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
-    assert conversation.input_state == "FREE_INPUT"
+    assert conversation.input_state == "INTERACTIVE_SELECTION"
 
 
 @pytest.mark.asyncio
-async def test_professional_selection_offers_other_professionals_when_no_slots_but_others_exist():
-    # Same empty-agenda situation, but this time a second doctor of the
-    # same specialty exists — the product brief: never jump straight to
-    # "hablar con administración" while there's someone else to offer.
+async def test_professional_selection_offers_main_menu_even_when_other_professionals_exist():
+    # The requested terminal no-availability UX is stable regardless of
+    # whether another professional exists: administration or principal menu.
     node, conversation_repository, _ = await _make_node_and_conversation(
         available_slots=[],
         professionals=[
@@ -1003,13 +1010,11 @@ async def test_professional_selection_offers_other_professionals_when_no_slots_b
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
-    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
-    assert "administración" not in result["response_text"]
-    assert "otros profesionales" in result["response_text"]
-    button_ids = [b.id for b in result["response_buttons"]]
-    assert _VIEW_OTHER_PROFESSIONALS_PAYLOAD in button_ids
-    assert MENU_ADMIN_PAYLOAD in button_ids
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_AVAILABILITY_CHOICE
+    assert [(button.id, button.title) for button in result["response_buttons"]] == [
+        (MENU_ADMIN_PAYLOAD, "Administración"),
+        (MENU_MAIN_PAYLOAD, "Menú principal"),
+    ]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"

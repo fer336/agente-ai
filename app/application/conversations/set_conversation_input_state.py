@@ -33,5 +33,6 @@ class SetConversationInputStateUseCase:
             mode=conversation.mode,
             created_at=conversation.created_at,
             input_state=input_state,
+            last_human_reply_at=conversation.last_human_reply_at,
         )
         await self._conversation_repository.save(updated)

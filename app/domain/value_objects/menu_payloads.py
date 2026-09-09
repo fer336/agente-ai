@@ -15,6 +15,8 @@ location for any existing importer.
 MENU_APPOINTMENT_PAYLOAD = "MENU_APPOINTMENT"
 MENU_INSURANCE_PAYLOAD = "MENU_INSURANCE"
 MENU_ADMIN_PAYLOAD = "MENU_ADMIN"
+#: Explicit escape from an in-progress flow back to the canonical principal menu.
+MENU_MAIN_PAYLOAD = "MENU_MAIN"
 #: PRD.md §7's welcome menu's third option (this change) — surfaces the
 #: not-yet-built specialties lookup, distinct from `MENU_INSURANCE_PAYLOAD`'s
 #: separate, already-built obra social/prepaga flow.
