@@ -21,6 +21,14 @@ MENU_MAIN_PAYLOAD = "MENU_MAIN"
 #: not-yet-built specialties lookup, distinct from `MENU_INSURANCE_PAYLOAD`'s
 #: separate, already-built obra social/prepaga flow.
 MENU_SPECIALTIES_PAYLOAD = "MENU_SPECIALTIES"
+#: The welcome list's "Tratamientos y precios" row (this session's own
+#: brief). A static FAQ catalog of commonly-asked treatments
+#: (`app.domain.value_objects.treatment_catalog`) — distinct from
+#: `MENU_SPECIALTIES_PAYLOAD`, which this row used to point at by mistake:
+#: that one is the live Dentalink specialty/booking flow ("para qué
+#: especialidad querés el turno"), a different question from "qué
+#: tratamientos ofrecen y cuánto cuestan".
+MENU_TREATMENT_CATALOG_PAYLOAD = "MENU_TREATMENT_CATALOG"
 #: The welcome list's "Cómo llegar / horarios" row (this session's own
 #: brief). Deliberately NOT added to `resolve_interaction.py`'s
 #: `_MENU_BUTTON_INTENTS` — falling through as "unknown" routes it to

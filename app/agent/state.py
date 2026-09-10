@@ -1,4 +1,4 @@
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
@@ -35,6 +35,13 @@ class AgentState(TypedDict):
     #: own docstring) — the phone number alone is never sufficient proof.
     known_patient_name: str | None
     intent: str | None
+    #: Operational cursor metadata. Optional during the migration so old
+    #: checkpoints/fixtures remain readable; the real stage still lives in
+    #: collected_data until appointment.py is split into a subgraph.
+    active_flow: NotRequired[str | None]
+    active_node: NotRequired[str | None]
+    resume_node: NotRequired[str | None]
+    interruption: NotRequired[str | None]
     appointment_action: str | None
     collected_data: dict[str, object]
     missing_fields: list[str]

@@ -28,7 +28,18 @@ _PROVIDER = "llm"
 #: Kept in sync with the welcome menu's payload->intent contract
 #: (`app.agent.nodes.resolve_interaction._MENU_BUTTON_INTENTS`) and
 #: `graph.py`'s routing — a label outside this set would route nowhere.
-_INTENT_LABELS = ("appointment", "insurance", "specialties", "handoff", "unknown")
+#: `treatment_catalog` (this session's own brief) answers "qué tratamientos
+#: ofrecen / cuánto cuestan" with the static FAQ catalog
+#: (`app.domain.value_objects.treatment_catalog`) — distinct from
+#: `specialties`, which is the live Dentalink specialty/booking flow.
+_INTENT_LABELS = (
+    "appointment",
+    "insurance",
+    "specialties",
+    "treatment_catalog",
+    "handoff",
+    "unknown",
+)
 
 #: Default prompts (`RuntimeConfigService.get_config()`'s fallback when no
 #: admin has ever saved a `RuntimeAgentConfig` row yet) — same first-pass,
@@ -45,6 +56,8 @@ esta forma exacta, sin texto adicional:
 - appointment: pedir, cambiar o cancelar un turno.
 - insurance: preguntar por obra social, prepaga o convenios.
 - specialties: preguntar qué especialidades atiende la clínica.
+- treatment_catalog: preguntar qué tratamientos ofrece la clínica o cuánto cuestan (ej.: \
+blanqueamiento, limpieza, consulta, extracciones, alineadores), sin pedir turno.
 - handoff: pedir hablar con una persona, urgencias, reclamos, quejas, o cualquier cosa que \
 un bot no debería resolver solo.
 - unknown: cualquier otra cosa, saludos, o si no estás seguro.
@@ -67,15 +80,18 @@ Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin 
 {{"intent": "<una de: {", ".join(_UNDERSTANDING_LABELS)}>", "confidence": <0.0 a 1.0>, \
 "answer": <string o null>, "specialty_mention": <string o null>, \
 "professional_mention": <string o null>, \
-"operation_mention": <"create"|"reschedule"|"cancel"|null>}}
+"operation_mention": <"create"|"reschedule"|"cancel"|null>, \
+"navigation_target": <"specialty"|"professional"|"slot"|"main"|null>}}
 
 - appointment: quiere sacar, cambiar o cancelar un turno, o pregunta por horarios o por los \
 médicos de una especialidad.
 - insurance: pregunta por obra social, prepaga o convenios.
 - specialties: pregunta qué especialidades atiende la clínica, sin pedir turno.
+- treatment_catalog: pregunta qué tratamientos ofrece la clínica o cuánto cuestan (ej.: \
+blanqueamiento, limpieza, consulta, extracciones, alineadores), sin pedir turno.
 - handoff: pide hablar con una persona, urgencias, reclamos o quejas.
 - question: cualquier otra consulta genuina que puedas responder vos (horarios de atención, \
-dirección, formas de pago, cómo llegar, qué incluye un tratamiento).
+dirección, formas de pago, cómo llegar, qué incluye un tratamiento puntual).
 - unknown: saludos sueltos, mensajes vacíos o algo que no se entiende.
 
 Campos:
@@ -85,8 +101,12 @@ nunca inventes precios, horarios ni disponibilidad. Para cualquier otro intent v
 - "specialty_mention": la especialidad tal cual la nombró el paciente ("ortodoncia"), sin \
 traducir ni corregir. null si no nombró ninguna.
 - "professional_mention": el profesional tal cual lo nombró ("la doctora Pérez"). null si no.
-- "operation_mention": "create" si quiere sacar un turno, "reschedule" si quiere cambiarlo, \
-"cancel" si quiere cancelarlo. null si no lo dijo.
+- "operation_mention": "create" si quiere sacar un turno, "reschedule" si quiere cambiar un \
+turno EXISTENTE, "cancel" si quiere cancelarlo. Cambiar profesional/especialidad/horario dentro \
+del turno que está armando NO es reschedule. null si no lo dijo.
+- "navigation_target": si está dentro de un flujo y pide volver/cambiar una decisión anterior, \
+devolvé "specialty", "professional", "slot" o "main" según corresponda. Esto solo describe lo \
+que pidió; nunca confirma ni ejecuta una acción. null si no pidió navegar.
 """
 
 #: `{required_fields}` is substituted with the comma-joined list of fields
@@ -218,6 +238,22 @@ class OpenAICompatibleLLMProvider:
         if contact_memory:
             messages.append(
                 {"role": "system", "content": f"Resumen del contacto: {contact_memory}"}
+            )
+        workflow_context = {
+            key: context.get(key)
+            for key in ("active_flow", "active_stage", "workflow_data")
+            if context.get(key) is not None
+        }
+        if workflow_context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Estado operacional actual. Sirve para entender referencias y pedidos "
+                        "de navegación; NO obliga a clasificar el mensaje como appointment: "
+                        f"{workflow_context}"
+                    ),
+                }
             )
         messages.append({"role": "user", "content": message})
 
@@ -401,6 +437,7 @@ def _parse_understanding_result(content: str) -> UnderstandingResult:
         specialty_mention=_optional("specialty_mention"),
         professional_mention=_optional("professional_mention"),
         operation_mention=_optional("operation_mention"),
+        navigation_target=_optional("navigation_target"),
     )
 
 

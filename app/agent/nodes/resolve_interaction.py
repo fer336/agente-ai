@@ -1,14 +1,17 @@
+from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
-from app.domain.repositories.llm_provider import LLMProvider
+from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
+    MENU_LOCATION_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    MENU_TREATMENT_CATALOG_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
@@ -16,139 +19,195 @@ from app.domain.value_objects.menu_payloads import (
     SPECIALTY_PAYLOAD_PREFIX,
 )
 
-#: Minimum classifier confidence to act on it — below this, PRD.md §8's
-#: "Si no puede determinarlo con suficiente seguridad" applies and the
-#: turn routes to `fallback` instead.
 _MIN_INTENT_CONFIDENCE = 0.5
 
-#: PRD.md §7's welcome-menu button payloads — now sent for real by
-#: `IngestMessageUseCase` on a conversation's first turn (see that module's
-#: `_WELCOME_BUTTONS`). Re-exported here (defined in
-#: `app.domain.value_objects.menu_payloads`, see that module's own
-#: docstring for why) so every existing importer of these names from this
-#: module keeps working unchanged. Deterministic mapping, never
-#: LLM-classified, per PRD.md §6.
 __all__ = [
     "MENU_ADMIN_PAYLOAD",
     "MENU_APPOINTMENT_PAYLOAD",
     "MENU_INSURANCE_PAYLOAD",
+    "MENU_LOCATION_PAYLOAD",
     "MENU_SPECIALTIES_PAYLOAD",
+    "MENU_TREATMENT_CATALOG_PAYLOAD",
     "create_resolve_interaction_node",
 ]
 
-_MENU_BUTTON_INTENTS = {
+# These are truly global navigation/actions. They must win even while an
+# appointment stage is active. LIST_MORE/LIST_BACK and row payloads are NOT in
+# this table because their meaning depends on the currently rendered screen.
+_GLOBAL_BUTTON_INTENTS = {
     MENU_APPOINTMENT_PAYLOAD: "appointment",
     MENU_INSURANCE_PAYLOAD: "insurance",
     MENU_ADMIN_PAYLOAD: "handoff",
     MENU_SPECIALTIES_PAYLOAD: "specialties",
+    MENU_TREATMENT_CATALOG_PAYLOAD: "treatment_catalog",
+    MENU_LOCATION_PAYLOAD: "location",
     MENU_MAIN_PAYLOAD: "appointment",
-    #: The welcome list's booking rows (this session's own brief) name
-    #: the operation directly — same payload ids `appointment.py`'s
-    #: `STAGE_AWAITING_OPERATION_SELECTION` already handles, so tapping
-    #: one from the very first message skips that menu entirely instead
-    #: of asking the patient to pick "Turnos" first and the operation
-    #: second.
     OPERATION_CREATE_PAYLOAD: "appointment",
     OPERATION_RESCHEDULE_PAYLOAD: "appointment",
     OPERATION_CANCEL_PAYLOAD: "appointment",
     OPERATION_VIEW_PAYLOAD: "appointment",
-    #: Paginated interactive-list navigation (this change). With no active
-    #: stage, a stray tap must still land somewhere sane: 'Ver más' on a
-    #: stale list re-opens the specialties catalog (the only paginated
-    #: screen reachable without a stage), a `SPECIALTY:{id}` row tap opens
-    #: that specialty's professionals, and 'Volver atrás' re-shows the
-    #: welcome menu (the appointment node owns the main-menu reset).
+}
+
+_OPERATION_PAYLOADS = frozenset(
+    {
+        MENU_APPOINTMENT_PAYLOAD,
+        OPERATION_CREATE_PAYLOAD,
+        OPERATION_RESCHEDULE_PAYLOAD,
+        OPERATION_CANCEL_PAYLOAD,
+        OPERATION_VIEW_PAYLOAD,
+    }
+)
+
+_INFORMATION_INTENTS = frozenset(
+    {"insurance", "specialties", "treatment_catalog", "question", "location"}
+)
+_NAVIGATION_TARGETS = frozenset({"specialty", "service", "professional", "slot", "main"})
+
+# Only used when there is no active workflow. During a workflow these are
+# context-sensitive and must go back to appointment.py's current-stage handler.
+_IDLE_BUTTON_INTENTS = {
     LIST_MORE_PAYLOAD: "specialties",
     LIST_BACK_PAYLOAD: "appointment",
 }
 
-#: Prefix-matched payloads (checked before the exact-match table): any
-#: `SPECIALTY:{id}` row routes to the specialties node.
-_ROW_PAYLOAD_ROUTES: tuple[tuple[str, str], ...] = (
-    (SPECIALTY_PAYLOAD_PREFIX, "specialties"),
-)
+
+def _route_idle_button_payload(payload: str) -> str | None:
+    if payload.startswith(SPECIALTY_PAYLOAD_PREFIX):
+        return "specialties"
+    return _GLOBAL_BUTTON_INTENTS.get(payload) or _IDLE_BUTTON_INTENTS.get(payload)
 
 
-def _route_button_payload(payload: str) -> str | None:
-    for prefix, intent in _ROW_PAYLOAD_ROUTES:
-        if payload.startswith(prefix):
-            return intent
-    return _MENU_BUTTON_INTENTS.get(payload)
+def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in (
+            ("pending_answer", result.answer),
+            ("specialty_mention", result.specialty_mention),
+            ("professional_mention", result.professional_mention),
+            ("operation_mention", result.operation_mention),
+            ("navigation_target", result.navigation_target),
+        )
+        if value is not None
+    }
 
 
-def create_resolve_interaction_node(
-    llm_provider: LLMProvider,
-) -> AgentNode:
-    """Routes a turn to appointment/insurance/specialties/handoff/unknown (PRD.md §6, §8).
+def _temporary_result(
+    intent: str, state: AgentState, carried: dict[str, object] | None = None
+) -> dict[str, object]:
+    stage = state["collected_data"].get("stage")
+    result: dict[str, object] = {
+        "intent": intent,
+        "active_flow": "appointment",
+        "active_node": str(stage) if stage is not None else None,
+        "resume_node": str(stage) if stage is not None else None,
+        "interruption": "temporary",
+    }
+    if carried:
+        result["collected_data"] = {**state["collected_data"], **carried}
+    return result
 
-    - A button payload ALWAYS carries a known intent (PRD.md §6: "Botón ->
-      Intención conocida -> LangGraph") and is never reclassified. Mid-flow
-      (`collected_data["stage"]` set), any button routes straight back to
-      `appointment` — the node itself interprets the payload in the
-      context of its own stage — EXCEPT `MENU_ADMIN_PAYLOAD`, which always
-      means "hand off to a human" (PRD.md §24.2) regardless of the active
-      stage, same exception free text/audio gets below. Otherwise, a
-      recognized welcome-menu payload maps directly to its intent; an
-      unrecognized one (stale button, payload from a flow that no longer
-      applies) routes to `unknown` rather than guessing.
-    - Free text/audio is always classified via `LLMProvider.classify_intent`
-      — even mid-flow, ONLY to honor PRD.md §24.2's global escape hatches
-      ("solicitar administración", "no entiendo", urgencia): a `handoff`
-      classification wins and interrupts the active stage; anything else
-      mid-flow still routes back to `appointment` regardless of what was
-      said, since free text/audio must never itself advance
-      `INTERACTIVE_SELECTION`/`SENSITIVE_CONFIRMATION` (PRD.md §24.2's
-      table) — only a stage-appropriate button does.
+
+def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
+    """Global conversational router in front of the operational workflow.
+
+    An active appointment stage is a cursor, not a prison: strong global
+    informational intents may interrupt it temporarily, while stage-specific
+    free text/buttons still return to appointment. Explicit navigation requests
+    are carried to appointment.py, where dependency-aware invalidation decides
+    how far to move back without losing independent data.
     """
 
     async def node(state: AgentState) -> dict[str, object]:
-        has_active_stage = state["collected_data"].get("stage") is not None
+        collected_data = state["collected_data"]
+        stage = collected_data.get("stage")
+        has_active_stage = stage is not None
+        payload = state["button_payload"]
 
-        if state["button_payload"] is not None:
-            if state["button_payload"] == MENU_ADMIN_PAYLOAD:
-                # The one button-driven escape hatch that must survive an
-                # active stage (PRD.md §24.2, same exception free text/audio
-                # already gets below) — bug found live: this used to fall
-                # through to `appointment`'s generic mid-stage rule, so
-                # tapping "Administración" from `appointment.py`'s own
-                # escape buttons silently reset the flow instead of ever
-                # reaching a human.
-                return {"intent": "handoff"}
+        if payload is not None:
+            global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
+            if global_intent is not None:
+                if global_intent == "handoff":
+                    return {"intent": "handoff", "interruption": "terminate"}
+                if has_active_stage and global_intent in _INFORMATION_INTENTS:
+                    return _temporary_result(global_intent, state)
+                if has_active_stage and payload in _OPERATION_PAYLOADS:
+                    return {
+                        "intent": "appointment",
+                        "active_flow": "appointment",
+                        "active_node": str(stage),
+                        "resume_node": None,
+                        "interruption": "replace",
+                    }
+                return {"intent": global_intent}
+
             if has_active_stage:
+                # Context-sensitive list rows, pagination, slot buttons and
+                # confirmation buttons belong to the appointment stage that
+                # rendered them. Never LLM-classify a machine payload.
                 return {"intent": "appointment"}
-            intent = _route_button_payload(state["button_payload"])
+
+            intent = _route_idle_button_payload(payload)
             return {"intent": intent if intent is not None else "unknown"}
 
-        result = await llm_provider.understand(state["user_message"], context={})
+        # Verified location data is a deterministic global concern. Handle it
+        # before the LLM so an active stage cannot trap "dónde quedan?".
+        if asks_for_location(state["user_message"]):
+            if has_active_stage:
+                return _temporary_result("location", state)
+            return {"intent": "location"}
 
-        if has_active_stage:
-            if result.intent == "handoff" and result.confidence >= _MIN_INTENT_CONFIDENCE:
-                return {"intent": "handoff"}
-            return {"intent": "appointment"}
+        context: dict[str, object] = {
+            "recent_messages": state["recent_messages"],
+            "contact_memory": state["contact_memory_summary"],
+            "active_flow": "appointment" if has_active_stage else state.get("active_flow"),
+            "active_stage": stage,
+            # Raw workflow data is useful for references such as "ese horario"
+            # but the LLM still only extracts language; real IDs remain the
+            # graph/repository's responsibility.
+            "workflow_data": collected_data,
+        }
+        result = await llm_provider.understand(state["user_message"], context=context)
+        carried = _carried_understanding(result)
+
+        navigation_target = result.navigation_target
+        if (
+            has_active_stage
+            and navigation_target is not None
+            and navigation_target in _NAVIGATION_TARGETS
+        ):
+            return {
+                "intent": "appointment",
+                "active_flow": "appointment",
+                "active_node": str(stage),
+                "resume_node": None,
+                "interruption": "navigation",
+                "collected_data": {**collected_data, **carried},
+            }
 
         if result.confidence < _MIN_INTENT_CONFIDENCE:
-            return {"intent": "unknown"}
+            # Ambiguous chatter inside a workflow belongs to the current node;
+            # outside a workflow it remains a true fallback.
+            return {"intent": "appointment"} if has_active_stage else {"intent": "unknown"}
 
-        # Whatever the patient named in prose rides along in
-        # `collected_data`, so an operational flow can start from what they
-        # already said instead of asking it again. These are RAW mentions:
-        # the node that consumes them resolves each against the real
-        # Dentalink catalog, never trusting the model for an id.
-        carried = {
-            key: value
-            for key, value in (
-                ("pending_answer", result.answer),
-                ("specialty_mention", result.specialty_mention),
-                ("professional_mention", result.professional_mention),
-                ("operation_mention", result.operation_mention),
-            )
-            if value is not None
-        }
+        if result.intent == "handoff":
+            return {"intent": "handoff", "interruption": "terminate"}
+
+        if has_active_stage and result.intent in _INFORMATION_INTENTS:
+            return _temporary_result(result.intent, state, carried)
+
+        if has_active_stage:
+            if carried:
+                return {
+                    "intent": "appointment",
+                    "collected_data": {**collected_data, **carried},
+                }
+            return {"intent": "appointment"}
+
         if not carried:
             return {"intent": result.intent}
         return {
             "intent": result.intent,
-            "collected_data": {**state["collected_data"], **carried},
+            "collected_data": {**collected_data, **carried},
         }
 
     return node

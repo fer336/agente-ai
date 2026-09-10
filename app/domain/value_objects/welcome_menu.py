@@ -4,7 +4,7 @@ from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_LOCATION_PAYLOAD,
-    MENU_SPECIALTIES_PAYLOAD,
+    MENU_TREATMENT_CATALOG_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
@@ -25,7 +25,7 @@ WELCOME_LIST = ListMessage(
         ListRow(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
         ListRow(id=OPERATION_RESCHEDULE_PAYLOAD, title="🔄 Reprogramar mi cita"),
         ListRow(id=OPERATION_CANCEL_PAYLOAD, title="❌ Cancelar mi cita"),
-        ListRow(id=MENU_SPECIALTIES_PAYLOAD, title="🦷 Tratamientos y precios"),
+        ListRow(id=MENU_TREATMENT_CATALOG_PAYLOAD, title="🦷 Tratamientos y precios"),
         ListRow(id=MENU_LOCATION_PAYLOAD, title="📍 Cómo llegar"),
         ListRow(id=MENU_ADMIN_PAYLOAD, title="💬 Hablar con un asesor"),
         ListRow(id=OPERATION_VIEW_PAYLOAD, title="📋 Ver mi cita"),

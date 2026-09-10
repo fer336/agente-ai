@@ -16,21 +16,18 @@ _FALLBACK_MESSAGES = (
     "Mmm, no me quedó claro qué necesitás. Fijate si alguna de estas te sirve.",
 )
 _FALLBACK_MESSAGE_REPEATED = (
-    "Veo que venimos yendo y viniendo con esto. Querés que te pase directo con "
-    "administración?"
+    "Veo que venimos yendo y viniendo con esto. Querés que te pase directo con administración?"
 )
 
 #: `create_appointment_node`'s identification-stage retry prompts — same
 #: varied-wording spirit as the fallback messages above.
 _IDENTIFICATION_RETRY_MESSAGES = (
-    "No logré separar bien tu nombre del DNI ahí. Me lo escribís junto, tipo "
-    "Juan Pérez, 30123456?",
+    "No logré separar bien tu nombre del DNI ahí. Me lo escribís junto, tipo Juan Pérez, 30123456?",
     "Sigo sin poder leerlo bien. Probá escribiendo primero tu nombre completo y "
     "después tu DNI, todo en un mismo mensaje: Juan Pérez, 30123456.",
 )
 _DNI_INVALID_MESSAGES = (
-    "Ese DNI no me cierra el número. Pasame solo los dígitos, 7 u 8 en total, "
-    "ejemplo: 30123456.",
+    "Ese DNI no me cierra el número. Pasame solo los dígitos, 7 u 8 en total, ejemplo: 30123456.",
     "Todavía no es un DNI válido. Escribime nada más los números, sin puntos ni "
     "espacios, ejemplo: 30123456.",
 )
@@ -38,6 +35,19 @@ _DNI_INVALID_MESSAGES = (
 _APPOINTMENT_KEYWORDS = ("turno", "cita")
 _INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
+#: `treatment_catalog` (this session's own brief) — "qué tratamientos
+#: ofrecen / cuánto cuestan", never `_SPECIALTY_KEYWORDS`'s "qué
+#: especialidades atienden".
+_TREATMENT_CATALOG_KEYWORDS = (
+    "tratamiento",
+    "tratamientos",
+    "precio",
+    "precios",
+    "cuanto cuesta",
+    "cuánto cuesta",
+    "cuanto sale",
+    "cuánto sale",
+)
 #: PRD.md §22's automatic-handoff example phrases, lowercased substrings.
 _HANDOFF_KEYWORDS = (
     "llegar tarde",
@@ -71,6 +81,8 @@ class FakeLLMProvider:
             return IntentResult(intent="insurance", confidence=0.9)
         if any(keyword in lowered for keyword in _SPECIALTY_KEYWORDS):
             return IntentResult(intent="specialties", confidence=0.9)
+        if any(keyword in lowered for keyword in _TREATMENT_CATALOG_KEYWORDS):
+            return IntentResult(intent="treatment_catalog", confidence=0.9)
         if any(keyword in lowered for keyword in _APPOINTMENT_KEYWORDS):
             return IntentResult(intent="appointment", confidence=0.9)
         return IntentResult(intent="unknown", confidence=0.0)
