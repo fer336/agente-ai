@@ -109,7 +109,6 @@ async def test_find_patient_returns_none_when_name_does_not_match(
 
 
 @pytest.mark.asyncio
-<<<<<<< Updated upstream
 async def test_find_patient_matches_reversed_name_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -138,33 +137,6 @@ async def test_find_patient_matches_reversed_name_order(
 
     assert found is not None
     assert found.id == "28"
-=======
-async def test_get_patient_by_id_maps_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
-    response = httpx.Response(
-        200,
-        json={"id": 28, "rut": _VALID_DNI, "nombre": "Maria", "apellidos": "Soto",
-              "celular": "1122334455"},
-    )
-    client, captured = _client_with_responses(monkeypatch, [response])
-    gateway = DentalinkPatientGateway(client)
-
-    found = await gateway.get_patient_by_id("28")
-
-    assert found is not None
-    assert found.full_name == "Maria Soto"
-    assert captured[0].url.path == "/api/v1/pacientes/28"
-
-
-@pytest.mark.asyncio
-async def test_get_patient_by_id_returns_none_on_a_404(monkeypatch: pytest.MonkeyPatch) -> None:
-    response = httpx.Response(404, json={"error": {"message": "not found"}})
-    client, _ = _client_with_responses(monkeypatch, [response])
-    gateway = DentalinkPatientGateway(client)
-
-    found = await gateway.get_patient_by_id("does-not-exist")
-
-    assert found is None
->>>>>>> Stashed changes
 
 
 @pytest.mark.asyncio

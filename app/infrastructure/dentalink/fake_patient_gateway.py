@@ -22,19 +22,9 @@ class FakePatientGateway:
                 return patient
         return None
 
-<<<<<<< Updated upstream
     async def create_patient(
         self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
     ) -> Patient:
-=======
-    async def get_patient_by_id(self, patient_id: str) -> Patient | None:
-        for patient in self._patients:
-            if patient.id == patient_id:
-                return patient
-        return None
-
-    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
->>>>>>> Stashed changes
         validated_dni = Dni(dni)
         existing = self._find_by_rut(validated_dni)
         if existing is not None:
