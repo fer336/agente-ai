@@ -134,6 +134,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
         memory_recent_window_size=settings.memory_recent_window_size,
         redis_client=get_shared_redis_client(),
         confirmation_timeout_seconds=settings.appointment_confirmation_timeout_seconds,
+        follow_up_prompt_delay_seconds=settings.appointment_follow_up_prompt_delay_seconds,
         trace_repositories_provider=trace_repositories_provider,
         prompt_version=settings.prompt_version,
         model=settings.openai_model,

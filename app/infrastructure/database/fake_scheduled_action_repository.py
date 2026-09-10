@@ -24,6 +24,16 @@ class FakeScheduledActionRepository:
         due.sort(key=lambda scheduled_action: scheduled_action.scheduled_for)
         return due[:limit]
 
+    async def get_scheduled_by_conversation_id(
+        self, conversation_id: str
+    ) -> list[ScheduledAction]:
+        return [
+            scheduled_action
+            for scheduled_action in self._by_id.values()
+            if str(scheduled_action.conversation_id) == conversation_id
+            and scheduled_action.status == "scheduled"
+        ]
+
     async def get_by_pending_action_id(self, pending_action_id: str) -> ScheduledAction | None:
         for scheduled_action in self._by_id.values():
             if scheduled_action.pending_action_id == pending_action_id:

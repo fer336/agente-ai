@@ -91,6 +91,25 @@ class Settings(BaseSettings):
     #: would expire it (PRD.md §16.1).
     appointment_confirmation_timeout_seconds: int = 120
 
+    #: Inactivity follow-up for the appointment flow (no PRD.md section —
+    #: this session's own brief). If the agent was the last to speak and
+    #: the patient's trámite is stuck mid-flow, this many seconds of
+    #: silence trigger a "¿querés continuar?" message; a further
+    #: `_reset_delay_seconds` of silence after THAT resets the trámite
+    #: (with a message — never silently, per this session's brief).
+    #: Independent of `appointment_confirmation_timeout_seconds` above: that
+    #: one expires a specific proposed slot/appointment; this one covers
+    #: every other non-terminal stage (identification, specialty pick,
+    #: etc.) and layers on top even while a confirmation is outstanding.
+    appointment_follow_up_prompt_delay_seconds: int = 1200
+    appointment_follow_up_reset_delay_seconds: int = 1200
+    #: How often the follow-up worker's polling loop (`app.workers.
+    #: follow_up_worker`, started from `app.main`'s `lifespan`) checks
+    #: `ScheduledActionRepository.get_due` for work, and the max rows it
+    #: claims per tick.
+    follow_up_worker_interval_seconds: int = 60
+    follow_up_worker_batch_limit: int = 50
+
     #: PRD.md §68's documented name/default — stamped on every `AgentRun`
     #: (PRD.md §39) so a prompt/behavior change can be correlated with the
     #: runs it affected.

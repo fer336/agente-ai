@@ -334,7 +334,7 @@ def make_pending_action(
 def make_scheduled_action(
     id_: str = "sa-1",
     conversation_id: str = "conv-1",
-    pending_action_id: str = "pa-1",
+    pending_action_id: str | None = "pa-1",
     action_type: str = "appointment_confirmation_timeout",
     status: str = "scheduled",
     scheduled_for: datetime | None = None,

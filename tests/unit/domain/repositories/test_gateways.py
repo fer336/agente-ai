@@ -146,6 +146,9 @@ def test_conforming_class_satisfies_patient_gateway_protocol():
         async def find_patient(self, full_name, dni):
             return None
 
+        async def get_patient_by_id(self, patient_id):
+            return None
+
         async def create_patient(self, full_name, dni, phone):
             raise NotImplementedError
 
@@ -165,7 +168,21 @@ def test_class_missing_create_patient_does_not_satisfy_patient_gateway_protocol(
         async def find_patient(self, full_name, dni):
             return None
 
+        async def get_patient_by_id(self, patient_id):
+            return None
+
     assert not isinstance(MissingCreatePatientGateway(), PatientGateway)
+
+
+def test_class_missing_get_patient_by_id_does_not_satisfy_patient_gateway_protocol():
+    class MissingGetPatientByIdGateway:
+        async def find_patient(self, full_name, dni):
+            return None
+
+        async def create_patient(self, full_name, dni, phone):
+            raise NotImplementedError
+
+    assert not isinstance(MissingGetPatientByIdGateway(), PatientGateway)
 
 
 def test_interactive_button_holds_id_and_title():

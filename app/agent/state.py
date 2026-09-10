@@ -27,6 +27,13 @@ class AgentState(TypedDict):
     #: when the contact/conversation lookup fails — never blocks a turn.
     recent_messages: list[dict[str, str]]
     contact_memory_summary: str | None
+    #: The name to greet a RETURNING contact by (this session's own
+    #: brief), resolved once per turn by `LangGraphAgentInvoker.handle()`
+    #: from `Contact.patient_id` — `None` for a first-time or unlinked
+    #: contact. Text only: no node may use this to skip identification
+    #: before a sensitive operation (`PatientGateway.get_patient_by_id`'s
+    #: own docstring) — the phone number alone is never sufficient proof.
+    known_patient_name: str | None
     intent: str | None
     appointment_action: str | None
     collected_data: dict[str, object]

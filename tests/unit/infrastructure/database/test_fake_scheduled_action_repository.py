@@ -96,3 +96,33 @@ async def test_get_by_pending_action_id_returns_none_when_no_match():
 
 def test_fake_scheduled_action_repository_satisfies_protocol():
     assert isinstance(FakeScheduledActionRepository(), ScheduledActionRepository)
+
+
+@pytest.mark.asyncio
+async def test_get_scheduled_by_conversation_id_returns_only_scheduled_rows_for_that_conversation():
+    repository = make_scheduled_action_repository()
+    await repository.save(
+        make_scheduled_action(id_="sa-mine", conversation_id="conv-1", status="scheduled")
+    )
+    await repository.save(
+        make_scheduled_action(id_="sa-mine-done", conversation_id="conv-1", status="cancelled")
+    )
+    await repository.save(
+        make_scheduled_action(id_="sa-other", conversation_id="conv-2", status="scheduled")
+    )
+
+    found = await repository.get_scheduled_by_conversation_id("conv-1")
+
+    assert [action.id for action in found] == ["sa-mine"]
+
+
+@pytest.mark.asyncio
+async def test_save_accepts_no_pending_action_for_an_inactivity_follow_up():
+    repository = make_scheduled_action_repository()
+    scheduled_action = make_scheduled_action(id_="sa-follow-up", pending_action_id=None)
+
+    await repository.save(scheduled_action)
+
+    fetched = await repository.get_by_id("sa-follow-up")
+    assert fetched is not None
+    assert fetched.pending_action_id is None

@@ -73,6 +73,23 @@ def test_fake_patient_gateway_satisfies_patient_gateway_protocol():
 
 
 @pytest.mark.asyncio
+async def test_get_patient_by_id_finds_the_matching_record():
+    patient = make_patient(id_="pat-1", full_name="Juan Pérez", dni="30111222")
+    gateway = make_patient_gateway(patients=[patient])
+
+    found = await gateway.get_patient_by_id("pat-1")
+
+    assert found == patient
+
+
+@pytest.mark.asyncio
+async def test_get_patient_by_id_returns_none_when_unknown():
+    gateway = make_patient_gateway(patients=[make_patient(id_="pat-1")])
+
+    assert await gateway.get_patient_by_id("does-not-exist") is None
+
+
+@pytest.mark.asyncio
 async def test_create_patient_stores_and_returns_the_new_patient():
     gateway = make_patient_gateway()
 
