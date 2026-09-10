@@ -12,8 +12,11 @@ from app.agent.nodes.fallback import create_fallback_node
 from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, fresh_restart_node
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
+from app.agent.nodes.location import location_node
+from app.agent.nodes.question import question_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.agent.nodes.specialties import create_specialties_node
+from app.agent.nodes.treatment_catalog import create_treatment_catalog_node
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
@@ -54,7 +57,14 @@ FRESH_RESTART_NODE = "fresh_restart"
 APPOINTMENT_NODE = "appointment"
 AGREEMENT_NODE = "agreement"
 SPECIALTIES_NODE = "specialties"
+#: Static FAQ catalog of commonly-asked treatments (this session's own
+#: brief) — distinct from `SPECIALTIES_NODE`'s live Dentalink
+#: specialty/booking flow, see `app.agent.nodes.treatment_catalog`'s
+#: own docstring.
+TREATMENT_CATALOG_NODE = "treatment_catalog"
 HANDOFF_NODE = "handoff"
+QUESTION_NODE = "question"
+LOCATION_NODE = "location"
 FALLBACK_NODE = "fallback"
 HANDLE_ERROR_NODE = "handle_error"
 
@@ -95,10 +105,14 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return AGREEMENT_NODE
     if intent == "specialties":
         return SPECIALTIES_NODE
+    if intent == "treatment_catalog":
+        return TREATMENT_CATALOG_NODE
     if intent == "handoff":
         return HANDOFF_NODE
-    # "question" also lands here: the model already wrote the answer, and
-    # `fallback` is the node that delivers a message plus the main menu.
+    if intent == "question":
+        return QUESTION_NODE
+    if intent == "location":
+        return LOCATION_NODE
     return FALLBACK_NODE
 
 
@@ -131,7 +145,10 @@ def build_graph(
                                              |-- appointment
                                              |-- agreement
                                              |-- specialties
+                                             |-- treatment_catalog
                                              |-- handoff
+                                             |-- question
+                                             |-- location
                                              `-- fallback
     (any node's exception) -> handle_error -> END
     ```
@@ -236,10 +253,43 @@ def build_graph(
         ),
     )
     graph.add_node(
+        TREATMENT_CATALOG_NODE,
+        with_error_handling(
+            TREATMENT_CATALOG_NODE,
+            create_treatment_catalog_node(),
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
         HANDOFF_NODE,
         with_error_handling(
             HANDOFF_NODE,
             create_handoff_node(handoff_gateway, conversation_repository),
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
+        QUESTION_NODE,
+        with_error_handling(
+            QUESTION_NODE,
+            question_node,
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
+        LOCATION_NODE,
+        with_error_handling(
+            LOCATION_NODE,
+            location_node,
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,
@@ -279,7 +329,10 @@ def build_graph(
             APPOINTMENT_NODE: APPOINTMENT_NODE,
             AGREEMENT_NODE: AGREEMENT_NODE,
             SPECIALTIES_NODE: SPECIALTIES_NODE,
+            TREATMENT_CATALOG_NODE: TREATMENT_CATALOG_NODE,
             HANDOFF_NODE: HANDOFF_NODE,
+            QUESTION_NODE: QUESTION_NODE,
+            LOCATION_NODE: LOCATION_NODE,
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
@@ -287,7 +340,10 @@ def build_graph(
         APPOINTMENT_NODE,
         AGREEMENT_NODE,
         SPECIALTIES_NODE,
+        TREATMENT_CATALOG_NODE,
         HANDOFF_NODE,
+        QUESTION_NODE,
+        LOCATION_NODE,
         FALLBACK_NODE,
     ):
         graph.add_conditional_edges(
@@ -406,6 +462,8 @@ def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPoo
 #: plain, trusted dataclasses of ours belong on this list.
 _CHECKPOINT_MSGPACK_MODULES = (
     ("app.domain.value_objects.interactive_button", "InteractiveButton"),
+    ("app.domain.value_objects.list_message", "ListRow"),
+    ("app.domain.value_objects.list_message", "ListMessage"),
     ("app.domain.entities.specialty", "Specialty"),
     ("app.domain.entities.professional", "Professional"),
     ("app.domain.entities.appointment_slot", "AppointmentSlot"),

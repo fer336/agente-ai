@@ -528,7 +528,7 @@ async def test_handle_seeds_the_fresh_restart_flag_when_the_conversation_await_o
         "OPERATION_CREATE",
         "OPERATION_RESCHEDULE",
         "OPERATION_CANCEL",
-        "MENU_SPECIALTIES",
+        "MENU_TREATMENT_CATALOG",
         "MENU_LOCATION",
         "MENU_ADMIN",
         "OPERATION_VIEW",

@@ -13,7 +13,7 @@ from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, create_fresh_
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_LOCATION_PAYLOAD,
-    MENU_SPECIALTIES_PAYLOAD,
+    MENU_TREATMENT_CATALOG_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
@@ -53,7 +53,7 @@ async def test_fresh_restart_renders_a_list_message_with_the_main_menu_rows():
         OPERATION_CREATE_PAYLOAD,
         OPERATION_RESCHEDULE_PAYLOAD,
         OPERATION_CANCEL_PAYLOAD,
-        MENU_SPECIALTIES_PAYLOAD,
+        MENU_TREATMENT_CATALOG_PAYLOAD,
         MENU_LOCATION_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
         OPERATION_VIEW_PAYLOAD,

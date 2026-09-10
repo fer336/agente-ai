@@ -279,6 +279,12 @@ class LangGraphAgentInvoker:
                     conversation_for_memory is not None
                     and conversation_for_memory.awaiting_fresh_restart
                 )
+                previous_collected_data = previous_values.get("collected_data", {})
+                previous_stage = (
+                    previous_collected_data.get("stage")
+                    if isinstance(previous_collected_data, dict)
+                    else None
+                )
                 initial_state: AgentState = {
                     "conversation_id": str(conversation_id),
                     "message_ids": message_ids,
@@ -291,6 +297,10 @@ class LangGraphAgentInvoker:
                     "recent_messages": recent_messages,
                     "contact_memory_summary": contact_memory_summary,
                     "intent": None,
+                    "active_flow": "appointment" if previous_stage is not None else None,
+                    "active_node": str(previous_stage) if previous_stage is not None else None,
+                    "resume_node": None,
+                    "interruption": None,
                     "appointment_action": previous_values.get("appointment_action"),
                     "collected_data": {
                         **(previous_values.get("collected_data", {})),
@@ -336,7 +346,12 @@ class LangGraphAgentInvoker:
                 response_flow = result.get("response_flow")
                 response_location = result.get("response_location")
                 response_list = result.get("response_list")
-                if not response_text and response_flow is None and response_location is None:
+                if (
+                    not response_text
+                    and response_flow is None
+                    and response_location is None
+                    and response_list is None
+                ):
                     # Either the conversation is already in HUMAN mode (graph
                     # ends silently, PRD.md §21) or a node genuinely produced
                     # no reply — both are valid "say nothing" outcomes. A

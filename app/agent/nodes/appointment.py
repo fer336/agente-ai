@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
+from app.agent.workflow_state import invalidate_from
 from app.application.appointments.cancel_appointment import CancelAppointmentUseCase
 from app.application.appointments.get_patient_appointments import GetPatientAppointmentsUseCase
 from app.application.appointments.propose_appointment import (
@@ -65,6 +66,7 @@ from app.domain.value_objects.menu_payloads import (
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    MENU_TREATMENT_CATALOG_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
@@ -133,6 +135,21 @@ STAGE_AWAITING_NO_AVAILABILITY_CHOICE = "awaiting_no_availability_choice"
 #: specialty than the original appointment) — now the patient is asked
 #: first whether to keep the same professional or pick another.
 STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE = "awaiting_reschedule_professional_choice"
+
+#: Stages where changing an earlier, non-sensitive selection is safe. Confirmation
+#: stages are intentionally excluded: a durable PendingAction must be rejected or
+#: confirmed by its explicit buttons, never bypassed by free text.
+_NAVIGABLE_STAGES = frozenset(
+    {
+        STAGE_AWAITING_SPECIALTY_SELECTION,
+        STAGE_AWAITING_PROFESSIONAL_SELECTION,
+        STAGE_AWAITING_SLOT_SELECTION,
+        STAGE_AWAITING_IDENTIFICATION,
+        STAGE_AWAITING_NO_SLOTS_CHOICE,
+        STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
+        STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
+    }
+)
 
 #: `PendingAction.action_type` values (PRD.md §16's documented enum) — also
 #: doubles as `collected_data["operation"]` while a proposal doesn't exist
@@ -305,6 +322,8 @@ _MAIN_MENU_PAYLOADS = frozenset(
     {
         MENU_APPOINTMENT_PAYLOAD,
         MENU_SPECIALTIES_PAYLOAD,
+        MENU_TREATMENT_CATALOG_PAYLOAD,
+    MENU_TREATMENT_CATALOG_PAYLOAD,
         OPERATION_CREATE_PAYLOAD,
         OPERATION_RESCHEDULE_PAYLOAD,
         OPERATION_CANCEL_PAYLOAD,
@@ -1179,6 +1198,54 @@ def create_appointment_node(
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
 
+        # A navigation request comes from the global router. Move back only as
+        # far as requested and invalidate dependent selections, never patient
+        # identity or independent workflow data.
+        navigation_target = collected_data.get("navigation_target")
+        if stage in _NAVIGABLE_STAGES and isinstance(navigation_target, str):
+            navigation_data = {
+                key: value for key, value in collected_data.items() if key != "navigation_target"
+            }
+            if navigation_target == "main":
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                return {
+                    "response_text": WELCOME_TEXT,
+                    "response_buttons": None,
+                    "response_list": WELCOME_LIST,
+                    "requires_handoff": False,
+                    "pending_action_id": None,
+                    "collected_data": {},
+                }
+            if navigation_target in {"service", "specialty"}:
+                return await _offer_specialties(
+                    conversation_id, invalidate_from(navigation_data, "specialty")
+                )
+            if navigation_target == "professional":
+                repaired = invalidate_from(navigation_data, "professional")
+                specialty_id = cast(str | None, repaired.get("chosen_specialty_id"))
+                if specialty_id is not None:
+                    return await _offer_professionals(
+                        conversation_id,
+                        specialty_id,
+                        str(repaired.get("chosen_specialty_name", "esa especialidad")),
+                        repaired,
+                    )
+                return await _offer_specialties(conversation_id, repaired)
+            if navigation_target == "slot":
+                repaired = invalidate_from(navigation_data, "slot")
+                if repaired.get("chosen_professional_id") is not None:
+                    patient = cast(dict[str, object] | None, repaired.get("patient"))
+                    return await _offer_slots(conversation_id, patient, repaired)
+                specialty_id = cast(str | None, repaired.get("chosen_specialty_id"))
+                if specialty_id is not None:
+                    return await _offer_professionals(
+                        conversation_id,
+                        specialty_id,
+                        str(repaired.get("chosen_specialty_name", "esa especialidad")),
+                        repaired,
+                    )
+                return await _offer_specialties(conversation_id, repaired)
+
         if state["button_payload"] == MENU_MAIN_PAYLOAD:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {
@@ -1447,13 +1514,33 @@ def create_appointment_node(
             # RESCHEDULE flow requires one here.
             rescheduling = collected_data.get("rescheduling_appointment_id") is not None
 
-            if not available_slots or (rescheduling and patient is None):
-                return {
-                    "response_text": _SESSION_LOST_MESSAGE,
-                    "response_buttons": None,
-                    "requires_handoff": False,
-                    "collected_data": {},
-                }
+            if not available_slots:
+                # Repair a partial/stale checkpoint by walking back to the
+                # nearest node that can rebuild the missing dependency instead
+                # of erasing the whole workflow.
+                repaired = invalidate_from(collected_data, "slot")
+                if repaired.get("chosen_professional_id") is not None:
+                    return await _offer_slots(conversation_id, patient, repaired)
+                specialty_id = cast(str | None, repaired.get("chosen_specialty_id"))
+                if specialty_id is not None:
+                    return await _offer_professionals(
+                        conversation_id,
+                        specialty_id,
+                        str(repaired.get("chosen_specialty_name", "esa especialidad")),
+                        repaired,
+                    )
+                return await _offer_specialties(conversation_id, repaired)
+
+            if rescheduling and patient is None:
+                # Identity is a required dependency for changing an existing
+                # appointment. Re-identify without discarding the already
+                # collected operational context.
+                return await _begin_identification(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
 
             if button_payload is None or not button_payload.startswith(SELECT_SLOT_PAYLOAD_PREFIX):
                 message = (
@@ -1796,6 +1883,31 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_IDENTIFICATION:
+            # CREATE cannot identify/confirm a booking if the slot dependency
+            # disappeared from a partial checkpoint. Walk back and rebuild only
+            # that chain; any already captured name/DNI remains in the dict.
+            if (
+                collected_data.get("operation") == CREATE_APPOINTMENT_ACTION
+                and collected_data.get("pending_selected_slot") is None
+                and (
+                    collected_data.get("chosen_professional_id") is not None
+                    or collected_data.get("chosen_specialty_id") is not None
+                )
+            ):
+                if collected_data.get("chosen_professional_id") is not None:
+                    patient = cast(dict[str, object] | None, collected_data.get("patient"))
+                    return await _offer_slots(
+                        conversation_id, patient, invalidate_from(collected_data, "slot")
+                    )
+                specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+                if specialty_id is not None:
+                    return await _offer_professionals(
+                        conversation_id,
+                        specialty_id,
+                        str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                        invalidate_from(collected_data, "professional"),
+                    )
+
             remembered_full_name = cast(str | None, collected_data.get("identification_full_name"))
             remembered_dni = cast(str | None, collected_data.get("identification_dni"))
             merged_full_name, merged_dni = _merge_identification(
@@ -2132,7 +2244,9 @@ def create_appointment_node(
                     {**collected_data, "doctors_page": next_page},
                 )
             if state["button_payload"] == LIST_BACK_PAYLOAD:
-                return await _offer_specialties(conversation_id, collected_data)
+                return await _offer_specialties(
+                    conversation_id, invalidate_from(collected_data, "specialty")
+                )
 
             # A `PROFESSIONAL:{id}` row tap resolves deterministically;
             # anything else (stale payload, free text) still falls back to

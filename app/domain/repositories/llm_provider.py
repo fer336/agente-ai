@@ -38,6 +38,10 @@ class UnderstandingResult:
     #: One of "create" / "reschedule" / "cancel" when the patient said so
     #: outright ("quiero cancelar mi turno"), else `None`.
     operation_mention: str | None = None
+    #: Explicit request to revisit a previous operational choice. The LLM only
+    #: reports the semantic target; appointment.py decides whether that move is
+    #: valid and which dependent values must be invalidated.
+    navigation_target: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

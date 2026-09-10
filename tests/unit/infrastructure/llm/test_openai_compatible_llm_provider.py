@@ -108,6 +108,23 @@ async def test_understand_tolerates_a_response_with_only_the_required_fields() -
 
 
 @pytest.mark.asyncio
+async def test_understand_accepts_the_treatment_catalog_intent_label() -> None:
+    # This session's own brief: a new intent for "qué tratamientos ofrecen
+    # / cuánto cuestan", distinct from "specialties" — must be an accepted
+    # label, not rejected as unrecognized.
+    client = _StubClient(
+        '{"intent": "treatment_catalog", "confidence": 0.9, "answer": null,'
+        ' "specialty_mention": null, "professional_mention": null,'
+        ' "operation_mention": null}'
+    )
+    provider = _make_provider(client)
+
+    result = await provider.understand("¿qué tratamientos ofrecen?", context={})
+
+    assert result.intent == "treatment_catalog"
+
+
+@pytest.mark.asyncio
 async def test_understand_rejects_an_unknown_intent_label() -> None:
     client = _StubClient('{"intent": "comprar_pizza", "confidence": 0.9}')
     provider = _make_provider(client)
