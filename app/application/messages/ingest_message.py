@@ -238,6 +238,27 @@ class IngestMessageUseCase:
                     conversation.id, "agent"
                 )
                 conversation_mode = "agent"
+                # Same fresh-start contract as the `/bot` command: the old
+                # workflow generation dies (stage/collected_data reset) and
+                # the next graph turn renders the canonical welcome menu
+                # deterministically instead of LLM-continuing the stale
+                # thread. Durable messages/ContactMemory are untouched.
+                if await rotate_workflow.execute(
+                    conversation.id,
+                    expected_generation=conversation.workflow_session_generation,
+                ):
+                    # Re-read BEFORE stamping: SetConversationModeUseCase
+                    # saved a fresh object without the new generation, so
+                    # the local `conversation` copy is stale — saving it
+                    # as-is would revert `mode` to "human" (seen in tests).
+                    persisted = await repositories.conversations.get_by_id(conversation.id)
+                    if persisted is not None:
+                        # rotate_workflow_session already incremented the
+                        # persisted generation — mirror it locally, then
+                        # stamp the fresh-restart flag.
+                        persisted.input_state = "FREE_INPUT"
+                        persisted.awaiting_fresh_restart = True
+                        await repositories.conversations.save(persisted)
                 logger.info(
                     "ingest_message.human_mode_lazy_timeout_reactivated conversation=%s",
                     conversation_key,

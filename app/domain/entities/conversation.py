@@ -33,3 +33,11 @@ class Conversation:
     last_human_reply_at: datetime | None = None
     workflow_session_generation: int = 1
     workflow_last_activity_at: datetime | None = None
+    #: Set alongside a reactivation (`/bot` command or the lazy 1h timeout
+    #: in `IngestMessageUseCase`): the NEXT agent turn must start fresh —
+    #: render the canonical welcome menu deterministically instead of
+    #: LLM-continuing the old thread. Consumed (reset to False) by
+    #: `LangGraphAgentInvoker.handle()` after it seeds the flag into the
+    #: graph state. Durable messages/ContactMemory are never touched —
+    #: this only changes behavior, never history.
+    awaiting_fresh_restart: bool = False

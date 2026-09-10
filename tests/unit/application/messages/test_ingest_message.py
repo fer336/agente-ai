@@ -438,6 +438,44 @@ async def test_human_mode_past_timeout_reactivates_and_falls_through_to_debounce
 
 
 @pytest.mark.asyncio
+async def test_lazy_timeout_reactivation_rotates_workflow_session_and_marks_fresh_restart():
+    conversation_repository = make_conversation_repository()
+    stale_reply = datetime.now(UTC) - timedelta(hours=2)
+    await conversation_repository.save(
+        make_conversation(id_="ycloud-+54922224455", mode="human", last_human_reply_at=stale_reply)
+    )
+    redis_client = InMemoryFakeRedis()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository, redis_client=redis_client
+    )
+
+    await use_case.execute(_make_dto(from_phone="+54922224455"))
+
+    # The lazy timeout is a real reactivation: the workflow session rotates
+    # (generation +1) so the old stage/collected_data dies, and the fresh-
+    # restart flag makes the next graph turn render the welcome menu
+    # instead of LLM-continuing the pre-timeout thread.
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+54922224455"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
+    assert conversation.workflow_session_generation == 2
+    assert conversation.awaiting_fresh_restart is True
+    # The handoff to the agent runs on the generation this turn started on
+    # (the CAS rotation applies from the NEXT turn's key) — but the OLD
+    # session key carries the debounced turn, and the rotation already
+    # bumped the persisted generation so the next turn uses a new thread.
+    assert (
+        await redis_client.get("debounce:conversation:ycloud-+54922224455:session:1")
+        is not None
+    )
+    refreshed = await conversation_repository.get_by_id(
+        ConversationId("ycloud-+54922224455")
+    )
+    assert refreshed is not None
+    assert refreshed.workflow_session_generation == 2
+
+
+@pytest.mark.asyncio
 async def test_agent_mode_proceeds_to_debounce():
     conversation_repository = make_conversation_repository()
     await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))

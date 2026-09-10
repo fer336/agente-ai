@@ -492,4 +492,89 @@ async def test_handle_records_an_agent_run_with_failed_status_when_a_node_raises
     assert agent_runs[0].status == FAILED
     # The graph's own `handle_error` safe fallback still went out — a
     # failed `AgentRun` is an observability signal, not a user-facing one.
+
+
+@pytest.mark.asyncio
+async def test_handle_seeds_the_fresh_restart_flag_when_the_conversation_await_one():
+    # After a /bot reactivation the conversation row carries
+    # `awaiting_fresh_restart=True`. The invoker must seed the flag into
+    # the graph state AND consume it (write it back as False) so the
+    # welcome menu is rendered exactly once, on the next turn only.
+    checkpointer = MemorySaver()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+54922224455"))
+    reactivated = make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    reactivated.awaiting_fresh_restart = True
+    await conversation_repository.save(reactivated)
+
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        checkpointer=checkpointer,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+
+    # The reply the patient received is the canonical welcome text, not an
+    # LLM free-form continuation. A list reply carries its body text inside
+    # `send_list` (see `SendReplyUseCase`), so there is no separate
+    # `sent_messages` entry for this turn.
+    assert len(messaging_gateway.sent_lists) == 1
+    list_to, list_text, list_message = messaging_gateway.sent_lists[0]
+    assert list_to == PhoneNumber("+54922224455")
+    assert list_text.startswith("Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷")
+    assert [row.id for row in list_message.rows] == [
+        "OPERATION_CREATE",
+        "OPERATION_RESCHEDULE",
+        "OPERATION_CANCEL",
+        "MENU_SPECIALTIES",
+        "MENU_LOCATION",
+        "MENU_ADMIN",
+        "OPERATION_VIEW",
+    ]
+    # Consumed: the flag is back to False so the menu renders once.
+    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
+    assert conversation is not None
+    assert conversation.awaiting_fresh_restart is False
+
+    # And the checkpointed state carried the flag into the graph (the
+    # fresh_restart node consumed it within the run).
+    snapshot = await compile_graph(
+        appointment_gateway=make_dentalink_gateway(),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=make_patient_gateway(),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-verify",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    ).aget_state({"configurable": {"thread_id": "conv-1:session:1"}})
+    assert snapshot.values["collected_data"].get("fresh_restart") is None
+
+
+@pytest.mark.asyncio
+async def test_handle_does_not_seed_fresh_restart_when_the_flag_is_absent():
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+54922224455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    # Normal turn: no welcome list was forced.
+    assert messaging_gateway.sent_lists == []
     assert len(messaging_gateway.sent_messages) == 1

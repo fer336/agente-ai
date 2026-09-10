@@ -10,6 +10,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from redis.asyncio import Redis
 
 from app.agent.graph import compile_graph
+from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
@@ -35,6 +36,7 @@ from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.welcome_menu import WELCOME_TEXT
 
 
 @dataclass(frozen=True)
@@ -273,6 +275,10 @@ class LangGraphAgentInvoker:
                             conversation_id, contact_for_memory.id
                         )
 
+                fresh_restart = bool(
+                    conversation_for_memory is not None
+                    and conversation_for_memory.awaiting_fresh_restart
+                )
                 initial_state: AgentState = {
                     "conversation_id": str(conversation_id),
                     "message_ids": message_ids,
@@ -282,7 +288,14 @@ class LangGraphAgentInvoker:
                     "contact_memory_summary": contact_memory_summary,
                     "intent": None,
                     "appointment_action": previous_values.get("appointment_action"),
-                    "collected_data": previous_values.get("collected_data", {}),
+                    "collected_data": {
+                        **(previous_values.get("collected_data", {})),
+                        # Seed the fresh-restart flag into the graph state so
+                        # `_route_after_mode_check` routes this turn straight
+                        # to the `fresh_restart` node (canonical welcome menu
+                        # instead of an LLM continuation of the old thread).
+                        **({FRESH_RESTART_STATE_KEY: True} if fresh_restart else {}),
+                    },
                     "missing_fields": previous_values.get("missing_fields", []),
                     "pending_action_id": previous_values.get("pending_action_id"),
                     "response_text": None,
@@ -331,6 +344,23 @@ class LangGraphAgentInvoker:
                 conversation = await repositories.conversations.get_by_id(conversation_id)
                 if conversation is None:
                     return
+                if conversation.awaiting_fresh_restart and result.get(
+                    "collected_data", {}
+                ).get(FRESH_RESTART_STATE_KEY) is not True:
+                    # Consume the flag: the fresh-restart turn ran (or was
+                    # otherwise consumed) — the welcome menu must render
+                    # exactly once, not on every subsequent turn.
+                    conversation.awaiting_fresh_restart = False
+                    await repositories.conversations.save(conversation)
+                elif (
+                    conversation.awaiting_fresh_restart
+                    and result.get("response_text") == WELCOME_TEXT
+                ):
+                    # The fresh_restart node produced the deterministic
+                    # welcome this turn — consume the flag so the menu
+                    # renders once (first turn after reactivation only).
+                    conversation.awaiting_fresh_restart = False
+                    await repositories.conversations.save(conversation)
                 contact = await repositories.contacts.get_by_id(conversation.contact_id)
                 if contact is None:
                     return
