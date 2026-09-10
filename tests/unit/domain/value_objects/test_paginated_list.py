@@ -121,6 +121,24 @@ class TestPaginateRows:
         rendered = paginate_rows(items, page=0, include_back=True)
         assert [r.id for r in rendered] == ["r0", LIST_BACK_PAYLOAD]
 
+    def test_ten_items_with_back_reserves_navigation_slot(self):
+        from app.domain.value_objects.list_message import ListRow
+
+        items = [ListRow(id=f"r{i}", title=f"Row {i}") for i in range(10)]
+        page0 = paginate_rows(items, page=0, include_back=True)
+        page1 = paginate_rows(items, page=1, include_back=True)
+        assert [r.id for r in page0] == [f"r{i}" for i in range(9)] + [LIST_MORE_PAYLOAD]
+        assert [r.id for r in page1] == ["r9", LIST_BACK_PAYLOAD]
+
+    @pytest.mark.parametrize("include_back", [False, True])
+    @pytest.mark.parametrize("count", range(0, 22))
+    def test_paginated_lists_never_exceed_the_whatsapp_row_cap(self, count, include_back):
+        from app.domain.value_objects.list_message import ListRow
+
+        items = [ListRow(id=f"r{i}", title=f"Row {i}") for i in range(count)]
+        for page in range(0, 4):
+            assert len(paginate_rows(items, page=page, include_back=include_back)) <= MAX_ROWS
+
     def test_ver_mas_rows_carry_the_navigation_title(self):
         from app.domain.value_objects.list_message import ListRow
 

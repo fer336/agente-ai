@@ -107,9 +107,11 @@ def paginate_rows(
       a `LIST_BACK` row so the patient can pop back a screen.
     """
     start = page * PAGE_SIZE
-    if page == 0 and len(rows) <= MAX_ROWS:
+    fit_limit = PAGE_SIZE if include_back else MAX_ROWS
+    if page == 0 and len(rows) <= fit_limit:
         # The whole catalog fits in one list — no paging at all, not even
-        # a "Ver más" row (10 real rows is exactly Meta's cap).
+        # a "Ver más" row. When a back row is requested, reserve one slot
+        # for it so the WhatsApp list never exceeds Meta's 10-row cap.
         if include_back:
             return [*rows, ListRow(id=LIST_BACK_PAYLOAD, title=BACK_TITLE)]
         return list(rows)
