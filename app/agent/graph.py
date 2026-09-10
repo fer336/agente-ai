@@ -406,6 +406,8 @@ def create_postgres_checkpointer_pool(conninfo: str) -> "PostgresCheckpointerPoo
 #: plain, trusted dataclasses of ours belong on this list.
 _CHECKPOINT_MSGPACK_MODULES = (
     ("app.domain.value_objects.interactive_button", "InteractiveButton"),
+    ("app.domain.value_objects.list_message", "ListRow"),
+    ("app.domain.value_objects.list_message", "ListMessage"),
     ("app.domain.entities.specialty", "Specialty"),
     ("app.domain.entities.professional", "Professional"),
     ("app.domain.entities.appointment_slot", "AppointmentSlot"),
