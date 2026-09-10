@@ -266,7 +266,8 @@ async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
-    assert "Dra. Laura Pérez" in result["response_text"]
+    assert result["response_list"] is not None
+    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
 
 
 @pytest.mark.asyncio
@@ -291,7 +292,8 @@ async def test_a_named_professional_skips_the_specialty_question_too():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "implants"
-    assert "Carlos Adahenao" in result["response_text"]
+    assert result["response_list"] is not None
+    assert "Carlos Adahenao" in result["response_list"].rows[0].title
 
 
 @pytest.mark.asyncio
@@ -434,13 +436,12 @@ async def test_operation_menu_create_shows_the_numbered_specialty_list():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
-    # A single escape button fits under WhatsApp's 3-button cap even
-    # though selection itself is by number, not buttons.
-    assert [b.id for b in result["response_buttons"]] == [MENU_APPOINTMENT_PAYLOAD]
-    assert "1." in result["response_text"]
-    assert "Ortodoncia" in result["response_text"]
-    assert "2." in result["response_text"]
-    assert "Endodoncia" in result["response_text"]
+    # Selection itself is now a paginated interactive list, so the old
+    # "Volver al Menú" escape button is gone — LIST_BACK navigates back.
+    assert result["response_buttons"] is None
+    assert result["response_list"] is not None
+    assert "Ortodoncia" in result["response_list"].rows[0].title
+    assert "Endodoncia" in result["response_list"].rows[1].title
 
 
 @pytest.mark.asyncio
@@ -466,8 +467,9 @@ async def test_specialty_selection_by_number_lists_that_specialtys_professionals
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
-    assert "Dra. Laura Pérez" in result["response_text"]
-    assert "Dr. Otro" not in result["response_text"]
+    assert result["response_list"] is not None
+    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
+    assert "Dr. Otro" not in [r.title for r in result["response_list"].rows]
 
 
 @pytest.mark.asyncio

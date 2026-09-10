@@ -110,7 +110,9 @@ def paginate_rows(
     if page == 0 and len(rows) <= MAX_ROWS:
         # The whole catalog fits in one list — no paging at all, not even
         # a "Ver más" row (10 real rows is exactly Meta's cap).
-        return [*rows, ListRow(id=LIST_BACK_PAYLOAD, title=BACK_TITLE)] if include_back else list(rows)
+        if include_back:
+            return [*rows, ListRow(id=LIST_BACK_PAYLOAD, title=BACK_TITLE)]
+        return list(rows)
     page_rows = list(rows[start : start + PAGE_SIZE])
     has_more = start + PAGE_SIZE < len(rows)
     if has_more:

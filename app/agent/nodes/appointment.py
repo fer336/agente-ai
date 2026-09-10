@@ -73,8 +73,8 @@ from app.domain.value_objects.menu_payloads import (
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
-    specialties_list_message,
     professionals_list_message,
+    specialties_list_message,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
@@ -2278,10 +2278,12 @@ def create_appointment_node(
                     "esa especialidad",
                 )
                 await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                listing = _numbered_list([matched_professional.full_name])
                 return {
-                    "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
-                    "response_buttons": [_MAIN_MENU_BUTTON],
+                    "response_text": _CHOOSE_PROFESSIONAL_PROMPT,
+                    "response_buttons": None,
+                    "response_list": professionals_list_message(
+                        [matched_professional], include_back=True
+                    ),
                     "requires_handoff": False,
                     "collected_data": {
                         **collected_data,
@@ -2290,6 +2292,7 @@ def create_appointment_node(
                         "chosen_specialty_id": matched_professional.specialty_id,
                         "chosen_specialty_name": specialty_name,
                         "professional_options": [matched_professional],
+                        "doctors_page": 0,
                     },
                 }
 

@@ -2,6 +2,8 @@
 
 import pytest
 
+from app.domain.entities.professional import Professional
+from app.domain.entities.specialty import Specialty
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -14,14 +16,12 @@ from app.domain.value_objects.paginated_list import (
     paginate_rows,
     professional_emoji,
     professional_rows,
+    professionals_list_message,
     specialties_list_message,
     specialty_emoji,
     specialty_rows,
-    professionals_list_message,
     truncate_title,
 )
-from app.domain.entities.professional import Professional
-from app.domain.entities.specialty import Specialty
 
 
 def _specialty(i: int) -> Specialty:

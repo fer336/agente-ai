@@ -7,7 +7,6 @@ from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SPECIALTY_SELECTION,
-    create_appointment_node,
 )
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
@@ -15,9 +14,7 @@ from app.domain.value_objects.menu_payloads import (
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from tests.fixtures.agent_state import make_agent_state
-from tests.fixtures.gateways import make_conversation_repository
-from tests.fixtures.seed_objects import make_conversation, make_professional, make_specialty
-
+from tests.fixtures.seed_objects import make_professional, make_specialty
 from tests.unit.agent.nodes.test_appointment_node import _make_node_and_conversation
 
 
@@ -43,7 +40,7 @@ def _staffed(n: int) -> list:
 async def test_specialty_offering_sends_a_paginated_list_message():
     node, _, _ = await _make_node_and_conversation(
         specialties=_specialties(12),
-        professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
+        professionals=_staffed(12),
     )
     state = make_agent_state(
         conversation_id="conv-1",
@@ -67,7 +64,7 @@ async def test_specialty_offering_sends_a_paginated_list_message():
 async def test_list_more_tap_sends_the_next_page():
     node, _, _ = await _make_node_and_conversation(
         specialties=_specialties(20),
-        professionals=[make_professional(id_="prof-1", specialty_id="spec-0")],
+        professionals=_staffed(20),
     )
     state = make_agent_state(
         conversation_id="conv-1",
@@ -93,7 +90,7 @@ async def test_list_more_tap_sends_the_next_page():
 async def test_final_specialty_page_ends_with_volver_atras():
     node, _, _ = await _make_node_and_conversation(
         specialties=_specialties(20),
-        professionals=[make_professional(id_="prof-1", specialty_id="spec-0")],
+        professionals=_staffed(20),
     )
     state = make_agent_state(
         conversation_id="conv-1",
@@ -102,14 +99,18 @@ async def test_final_specialty_page_ends_with_volver_atras():
             "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
             "operation": CREATE_APPOINTMENT_ACTION,
             "specialty_options": _specialties(20),
-            "specialties_page": 2,
+            "specialties_page": 1,
         },
     )
 
     result = await node(state)
 
     ids = [r.id for r in result["response_list"].rows]
-    assert ids == [f"{SPECIALTY_PAYLOAD_PREFIX}spec-18", f"{SPECIALTY_PAYLOAD_PREFIX}spec-19", LIST_BACK_PAYLOAD]
+    assert ids == [
+        f"{SPECIALTY_PAYLOAD_PREFIX}spec-18",
+        f"{SPECIALTY_PAYLOAD_PREFIX}spec-19",
+        LIST_BACK_PAYLOAD,
+    ]
 
 
 @pytest.mark.asyncio
