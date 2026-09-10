@@ -150,7 +150,6 @@ async def test_first_turn_shows_the_operation_menu():
 
 
 @pytest.mark.asyncio
-<<<<<<< Updated upstream
 async def test_main_menu_button_mid_stage_resets_and_shows_a_distinct_message():
     # Regression: this used to be indistinguishable from the very first
     # message's generic "Qué querés hacer?" — the patient just abandoned a
@@ -244,23 +243,6 @@ async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the
 
     assert captured[0].recent_messages == recent
     assert captured[0].contact_memory == "Paciente frecuente."
-=======
-async def test_a_returning_contact_is_greeted_by_name_on_the_operation_menu():
-    # `known_patient_name` is resolved by `LangGraphAgentInvoker` from
-    # `Contact.patient_id` before this node ever runs — it only changes
-    # what the menu SAYS, never which stage/buttons it shows.
-    node, _, _ = await _make_node_and_conversation()
-
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1", collected_data={}, known_patient_name="Fernando Ariel"
-        )
-    )
-
-    assert "Fernando" in result["response_text"]
-    assert "¿Qué querés hacer?" in result["response_text"]
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
->>>>>>> Stashed changes
 
 
 @pytest.mark.asyncio
@@ -1469,11 +1451,7 @@ async def test_confirmation_stage_rejects_new_patient_creation_proposal():
 
     result = await node(state)
 
-    # A rejected proposal ends the trámite — the whole cursor drops, not
-    # just `stage`. Leaving stale keys (`patient`, `chosen_specialty_id`,
-    # a leftover `pending_selected_slot`) around used to let a later
-    # unrelated turn read state from an already-abandoned attempt.
-    assert result["collected_data"] == {}
+    assert result["collected_data"]["stage"] is None
     assert result["pending_action_id"] is None
     async with repositories_provider() as repositories:
         rejected = await repositories.pending_actions.get_by_id("pa-1")
@@ -1537,7 +1515,6 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
 
 
 @pytest.mark.asyncio
-<<<<<<< Updated upstream
 async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retry():
     # `create_patient` raised `PatientAlreadyExistsError` (the DNI is
     # already registered) but the recovery lookup by name+DNI found no
@@ -1553,48 +1530,6 @@ async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retr
     patient_gateway = make_patient_gateway(patients=[existing_patient])
     appointment_gateway = make_dentalink_gateway(available_slots=[slot])
     await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
-=======
-async def test_confirmation_stage_confirming_an_unknown_pending_action_ends_the_tramite():
-    # `pending_action_id` no longer exists (e.g. an old confirm button
-    # tapped after a reset) -> `ConfirmPendingActionUseCase` raises
-    # `InvalidConfirmationError`. This is a dead end, not a retry: the
-    # whole cursor must drop, not just leave a partial `stage: None` with
-    # a leftover `chosen_specialty_id`/`patient` from the abandoned flow.
-    node, _, _ = await _make_node_and_conversation()
-    state = make_agent_state(
-        conversation_id="conv-1",
-        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
-        pending_action_id="does-not-exist",
-        collected_data={
-            "stage": STAGE_AWAITING_CONFIRMATION,
-            "chosen_specialty_id": "cleaning",
-            "patient": _PATIENT_PRIMITIVES,
-        },
-    )
-
-    result = await node(state)
-
-    assert result["collected_data"] == {}
-    assert result["pending_action_id"] is None
-
-
-@pytest.mark.asyncio
-async def test_confirmation_stage_ends_the_tramite_when_a_create_patient_race_cannot_recover():
-    # Same DNI collision as the race-recovery test above, but this time
-    # the pre-existing record has a DIFFERENT name, so `find_patient`
-    # (exact name+DNI match) can't recover it either. Before this fix the
-    # dead end left `stage: None` while keeping every other stale key —
-    # ending the trámite means dropping all of it.
-    slot = _future_slot()
-    repositories_provider = make_proposal_repositories_provider()
-    conversation_repository = make_conversation_repository()
-    mismatched_patient = make_patient(id_="pat-other", full_name="Someone Else", dni="30111222")
-    patient_gateway = make_patient_gateway(patients=[mismatched_patient])
-    appointment_gateway = make_dentalink_gateway(available_slots=[slot])
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+5491122334455", mode="agent")
-    )
->>>>>>> Stashed changes
     node = create_appointment_node(
         appointment_gateway=appointment_gateway,
         patient_gateway=patient_gateway,
@@ -1606,14 +1541,9 @@ async def test_confirmation_stage_ends_the_tramite_when_a_create_patient_race_ca
         specialty_gateway=make_specialty_gateway(
             specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
         ),
-<<<<<<< Updated upstream
         agreement_gateway=make_agreement_gateway(),
     )
     payload = {"full_name": "cassera", "dni": "30313131", "phone": "+5491122334455"}
-=======
-    )
-    payload = {"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"}
->>>>>>> Stashed changes
     async with repositories_provider() as repositories:
         await repositories.pending_actions.save(
             make_pending_action(
@@ -1630,27 +1560,18 @@ async def test_confirmation_stage_ends_the_tramite_when_a_create_patient_race_ca
         pending_action_id="pa-1",
         collected_data={
             "stage": STAGE_AWAITING_CONFIRMATION,
-<<<<<<< Updated upstream
-=======
-            "chosen_specialty_id": "cleaning",
->>>>>>> Stashed changes
             "pending_selected_slot": slot,
         },
     )
 
     result = await node(state)
 
-<<<<<<< Updated upstream
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["collected_data"]["pending_selected_slot"] == slot
     # Neither the mismatched name nor the DNI it was matched against
     # should survive — the patient was asked to write both again, fresh.
     assert result["collected_data"]["identification_full_name"] is None
     assert result["collected_data"]["identification_dni"] is None
-=======
-    assert result["collected_data"] == {}
-    assert result["pending_action_id"] is None
->>>>>>> Stashed changes
 
 
 @pytest.mark.asyncio
@@ -1770,7 +1691,7 @@ async def test_confirmation_stage_rejects_the_pending_action():
 
     result = await node(state)
 
-    assert result["collected_data"] == {}
+    assert result["collected_data"]["stage"] is None
     assert result["pending_action_id"] is None
     assert "descartamos" in result["response_text"].lower()
     async with repositories_provider() as repositories:

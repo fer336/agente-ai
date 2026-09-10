@@ -70,26 +70,9 @@ class PatientGateway(Protocol):
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None: ...
 
-<<<<<<< Updated upstream
     async def create_patient(
         self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
     ) -> Patient:
-=======
-    async def get_patient_by_id(self, patient_id: str) -> Patient | None:
-        """Looks up a patient already known by id — never a substitute for
-        `find_patient`'s name+DNI check.
-
-        Exists ONLY to resolve a name for a returning-patient greeting
-        (`contact.patient_id`, this session's brief): the phone number that
-        led here is never sufficient proof for a sensitive operation
-        (`find_patient`'s own docstring), so nothing that reads this method
-        may skip identification before creating/rescheduling/cancelling an
-        appointment — it may only change what a message says.
-        """
-        ...
-
-    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
->>>>>>> Stashed changes
         """Creates a new patient, tied to the requesting contact's own `phone`.
 
         Guardrail (IDOR/contact-isolation): `phone` must always be the
