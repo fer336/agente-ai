@@ -104,33 +104,33 @@ uv run pytest tests/unit/agent/test_appointment_decision_subgraph.py tests/unit/
 
 ### RED
 
-- [ ] Add direct subgraph tests in `tests/unit/agent/test_appointment_decision_subgraph.py` for route entry from `awaiting_specialty_selection`, `awaiting_professional_selection`, `awaiting_slot_selection`, and no stage with create-booking context. <!-- sdd-owner: implementation -->
-- [ ] Add direct subgraph tests in `tests/unit/agent/test_appointment_decision_subgraph.py` for valid/invalid/stale `SPECIALTY:`, `PROFESSIONAL:`, and `SELECT_SLOT:` payload handling against current checkpointed options. <!-- sdd-owner: implementation -->
-- [ ] Add direct subgraph tests in `tests/unit/agent/test_appointment_decision_subgraph.py` for availability-with-slots, no-availability legacy exit, and pre-identification slot selection storing `pending_selected_slot` without pending-action creation. <!-- sdd-owner: implementation -->
-- [ ] Run `uv run pytest tests/unit/agent/test_appointment_decision_subgraph.py` and record RED failures for missing `app/agent/appointment_decision_subgraph.py` graph, state, and adapter symbols. <!-- sdd-owner: implementation -->
+- [x] Add direct subgraph tests in `tests/unit/agent/test_appointment_decision_subgraph.py` for route entry from `awaiting_specialty_selection`, `awaiting_professional_selection`, `awaiting_slot_selection`, and no stage with create-booking context. <!-- sdd-owner: implementation -->
+- [x] Add direct subgraph tests in `tests/unit/agent/test_appointment_decision_subgraph.py` for valid/invalid/stale `SPECIALTY:`, `PROFESSIONAL:`, and `SELECT_SLOT:` payload handling against current checkpointed options. <!-- sdd-owner: implementation -->
+- [x] Add direct subgraph tests in `tests/unit/agent/test_appointment_decision_subgraph.py` for availability-with-slots, no-availability legacy exit, and pre-identification slot selection storing `pending_selected_slot` without pending-action creation. <!-- sdd-owner: implementation -->
+- [x] Run `uv run pytest tests/unit/agent/test_appointment_decision_subgraph.py` and record RED failures for missing `app/agent/appointment_decision_subgraph.py` graph, state, and adapter symbols. <!-- sdd-owner: implementation -->
 
 ### GREEN
 
-- [ ] Create `app/agent/appointment_decision_subgraph.py` with `AppointmentDecisionState` as a narrow `TypedDict`, primitive result fields, graph construction using conditional edges, and no reducers or checkpointed custom state. <!-- sdd-owner: implementation -->
-- [ ] Implement `route_entry`, `choose_specialty`, `choose_professional`, `search_availability`, and `choose_slot` node functions in `app/agent/appointment_decision_subgraph.py`, returning partial state updates only and not mutating incoming state. <!-- sdd-owner: implementation -->
-- [ ] Ensure `search_availability` uses the existing 14-day window, option limit, `SearchAvailabilityUseCase`, and `professional_id`, while deliberately passing `specialty_id=None`. <!-- sdd-owner: implementation -->
-- [ ] Ensure `choose_slot` accepts only `SELECT_SLOT:<id>` for current `available_slots`, stores `pending_selected_slot` for create-before-identity, and never constructs/calls pending-action or Dentalink write use cases. <!-- sdd-owner: implementation -->
-- [ ] Add `should_use_appointment_decision_subgraph(...)` and adapter invocation inside `create_appointment_node(...)` in `app/agent/nodes/appointment.py` for only first-slice create stages and contexts. <!-- sdd-owner: implementation -->
-- [ ] Convert subgraph results into partial `AgentState` updates in `app/agent/nodes/appointment.py`, calling legacy `_begin_identification(...)` only when `exit_reason == "begin_identification"`. <!-- sdd-owner: implementation -->
-- [ ] Run the focused PR 2 pytest command and confirm the subgraph path passes while existing appointment-node tests remain green. <!-- sdd-owner: implementation -->
+- [x] Create `app/agent/appointment_decision_subgraph.py` with `AppointmentDecisionState` as a narrow `TypedDict`, primitive result fields, graph construction using conditional edges, and no reducers or checkpointed custom state. <!-- sdd-owner: implementation -->
+- [x] Implement `route_entry`, `choose_specialty`, `choose_professional`, `search_availability`, and `choose_slot` node functions in `app/agent/appointment_decision_subgraph.py`, returning partial state updates only and not mutating incoming state. <!-- sdd-owner: implementation -->
+- [x] Ensure `search_availability` uses the existing 14-day window, option limit, `SearchAvailabilityUseCase`, and `professional_id`, while deliberately passing `specialty_id=None`. <!-- sdd-owner: implementation -->
+- [x] Ensure `choose_slot` accepts only `SELECT_SLOT:<id>` for current `available_slots`, stores `pending_selected_slot` for create-before-identity, and never constructs/calls pending-action or Dentalink write use cases. <!-- sdd-owner: implementation -->
+- [x] Add `should_use_appointment_decision_subgraph(...)` and adapter invocation inside `create_appointment_node(...)` in `app/agent/nodes/appointment.py` for only first-slice create stages and contexts. <!-- sdd-owner: implementation -->
+- [x] Convert subgraph results into partial `AgentState` updates in `app/agent/nodes/appointment.py`, calling legacy `_begin_identification(...)` only when `exit_reason == "begin_identification"`. <!-- sdd-owner: implementation -->
+- [x] Run the focused PR 2 pytest command and confirm the subgraph path passes while existing appointment-node tests remain green. <!-- sdd-owner: implementation -->
 
 ### TRIANGULATE
 
-- [ ] Add integration-style unit cases in `tests/unit/agent/nodes/test_appointment_node.py` proving the top-level appointment node delegates migrated create-selection stages while no-availability/no-slot follow-up stages remain legacy-owned. <!-- sdd-owner: implementation -->
-- [ ] Add tests in `tests/unit/agent/test_appointment_decision_subgraph.py` proving internal `decision_node` attribution never replaces `collected_data["stage"]`. <!-- sdd-owner: implementation -->
-- [ ] Add tests in `tests/unit/agent/test_appointment_decision_subgraph.py` proving reschedule/cancel markers produce `exit_reason="not_migrated"` or equivalent legacy fallback rather than create-selection handling. <!-- sdd-owner: implementation -->
-- [ ] Run `uv run pytest tests/unit/agent/test_appointment_decision_subgraph.py tests/unit/agent/nodes/test_appointment_node.py tests/unit/agent/nodes/test_appointment_list_pagination.py` after triangulation. <!-- sdd-owner: implementation -->
+- [x] Add integration-style unit cases in `tests/unit/agent/nodes/test_appointment_node.py` proving the top-level appointment node delegates migrated create-selection stages while no-availability/no-slot follow-up stages remain legacy-owned. <!-- sdd-owner: implementation -->
+- [x] Add tests in `tests/unit/agent/test_appointment_decision_subgraph.py` proving internal `decision_node` attribution never replaces `collected_data["stage"]`. <!-- sdd-owner: implementation -->
+- [x] Add tests in `tests/unit/agent/test_appointment_decision_subgraph.py` proving reschedule/cancel markers produce `exit_reason="not_migrated"` or equivalent legacy fallback rather than create-selection handling. <!-- sdd-owner: implementation -->
+- [x] Run `uv run pytest tests/unit/agent/test_appointment_decision_subgraph.py tests/unit/agent/nodes/test_appointment_node.py tests/unit/agent/nodes/test_appointment_list_pagination.py` after triangulation. <!-- sdd-owner: implementation -->
 
 ### REFACTOR
 
-- [ ] Review `app/agent/appointment_decision_subgraph.py` for LangGraph correctness: compiled graph, no `Command(goto=...)`, no mixed static edges with dynamic goto, and valid conditional destinations. <!-- sdd-owner: implementation -->
-- [ ] Remove temporary duplication between `app/agent/nodes/appointment.py` and `app/agent/appointment_decision_subgraph.py` only when the helper module owns the shared behavior and tests still pass. <!-- sdd-owner: implementation -->
-- [ ] Run `uv run ruff check .`, `uv run mypy app/`, and the focused PR 2 pytest command before opening PR 2. <!-- sdd-owner: implementation -->
+- [x] Review `app/agent/appointment_decision_subgraph.py` for LangGraph correctness: compiled graph, no `Command(goto=...)`, no mixed static edges with dynamic goto, and valid conditional destinations. <!-- sdd-owner: implementation -->
+- [x] Remove temporary duplication between `app/agent/nodes/appointment.py` and `app/agent/appointment_decision_subgraph.py` only when the helper module owns the shared behavior and tests still pass. <!-- sdd-owner: implementation -->
+- [x] Run `uv run ruff check .`, `uv run mypy app/`, and the focused PR 2 pytest command before opening PR 2. <!-- sdd-owner: implementation -->
 
 ## PR 3 — Checkpoint/interruption/browse separation/observability hardening
 
