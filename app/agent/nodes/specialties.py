@@ -1,7 +1,7 @@
+from typing import cast
+
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
-    LIST_BACK_PAYLOAD,
-    LIST_MORE_PAYLOAD,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     match_named_professional,
     resolve_by_name,
@@ -11,7 +11,11 @@ from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.application.specialties.list_specialties import ListSpecialtiesUseCase
 from app.domain.repositories.gateways import AppointmentGateway, SpecialtyGateway
-from app.domain.value_objects.menu_payloads import SPECIALTY_PAYLOAD_PREFIX
+from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
+    SPECIALTY_PAYLOAD_PREFIX,
+)
 from app.domain.value_objects.paginated_list import (
     professionals_list_message,
     specialties_list_message,
@@ -76,7 +80,7 @@ def create_specialties_node(
             return {"response_text": _NO_SPECIALTIES_MESSAGE, "requires_handoff": False}
 
         # Pagination: the catalog path re-renders on LIST_MORE taps.
-        page = int(collected_data.get("specialties_page", 0) or 0)
+        page = cast(int, collected_data.get("specialties_page", 0) or 0)
         if button_payload == LIST_MORE_PAYLOAD:
             page += 1
 
@@ -131,7 +135,18 @@ def create_specialties_node(
                 },
             }
 
-        chosen = specialties[row_tap_index if row_tap_index is not None else index]
+        chosen_index = row_tap_index if row_tap_index is not None else index
+        if chosen_index is None:
+            return {
+                "response_text": None,
+                "response_buttons": None,
+                "response_list": specialties_list_message(
+                    specialties, page=page, include_back=True
+                ),
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "specialties_page": page},
+            }
+        chosen = specialties[int(chosen_index)]
         professionals = await appointment_gateway.list_professionals(specialty_id=chosen.id)
         if not professionals:
             # Nothing to hand the booking flow — fall back to the plain
