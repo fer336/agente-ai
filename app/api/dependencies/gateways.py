@@ -396,6 +396,7 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         memory_recent_window_size=get_settings().memory_recent_window_size,
         redis_client=get_shared_redis_client(),
         confirmation_timeout_seconds=get_settings().appointment_confirmation_timeout_seconds,
+        follow_up_prompt_delay_seconds=get_settings().appointment_follow_up_prompt_delay_seconds,
         trace_repositories_provider=open_sqlalchemy_trace_repositories,
         prompt_version=get_settings().prompt_version,
         model=get_settings().openai_model,

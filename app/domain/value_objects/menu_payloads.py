@@ -46,3 +46,15 @@ OPERATION_CANCEL_PAYLOAD = "OPERATION_CANCEL"
 #: must be unique) mapped to the same operation, not a new one, until the
 #: client decides what "just viewing" should actually do differently.
 OPERATION_VIEW_PAYLOAD = "OPERATION_VIEW"
+
+#: Interactive-list navigation payloads (this change). `LIST_MORE` pages a
+#: list forward (the pagination position lives in `collected_data`);
+#: `LIST_BACK` pops one screen off the per-conversation navigation stack.
+LIST_MORE_PAYLOAD = "LIST_MORE"
+LIST_BACK_PAYLOAD = "LIST_BACK"
+
+#: Row-id prefixes for the paginated specialty/professional lists — stable
+#: ids round-trip through WhatsApp's `list_reply.id` (parsed into
+#: `button_payload` by `webhook_parser.py`).
+SPECIALTY_PAYLOAD_PREFIX = "SPECIALTY:"
+PROFESSIONAL_PAYLOAD_PREFIX = "PROFESSIONAL:"

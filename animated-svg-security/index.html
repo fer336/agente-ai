@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <link rel="stylesheet" href="./theme.css" />
+    <script src="./vendor/gsap.min.js"></script>
+    <script src="./vendor/DrawSVGPlugin.min.js"></script>
+    <script src="./vendor/MotionPathPlugin.min.js"></script>
+    <style>
+      html, body { width: 1920px; height: 1080px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="18.6"
+      data-width="1920"
+      data-height="1080"
+    >
+      <svg id="scene" viewBox="0 0 1920 1080" width="1920" height="1080">
+        <defs>
+          <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="6" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+          <filter id="card-shadow" x="-30%" y="-30%" width="160%" height="160%">
+            <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.35" />
+          </filter>
+          <!-- icon <symbol>s are pasted here from assets/icons/*.svg as needed -->
+  <symbol id="icon-fa-arrows-rotate" viewBox="0 0 512 512"><path fill="currentColor" d="M105.1 202.6c7.7-21.8 20.2-42.3 37.8-59.8c62.5-62.5 163.8-62.5 226.3 0l17.1 17.2H352c-17.7 0-32 14.3-32 32s14.3 32 32 32h111.9c17.7 0 32-14.3 32-32V80c0-17.7-14.3-32-32-32s-32 14.3-32 32v35.2l-17.5-17.6c-87.5-87.5-229.3-87.5-316.8 0c-24.4 24.4-42 53.1-52.8 83.8c-5.9 16.7 2.9 34.9 19.5 40.8s34.9-2.9 40.8-19.5zM39 289.3c-5 1.5-9.8 4.2-13.7 8.2c-4 4-6.7 8.8-8.1 14c-.3 1.2-.6 2.5-.8 3.8c-.3 1.7-.4 3.4-.4 5.1V432c0 17.7 14.3 32 32 32s32-14.3 32-32v-35.1l17.6 17.5c87.5 87.4 229.3 87.4 316.7 0c24.4-24.4 42.1-53.1 52.9-83.8c5.9-16.7-2.9-34.9-19.5-40.8s-34.9 2.9-40.8 19.5c-7.7 21.8-20.2 42.3-37.8 59.8c-62.5 62.5-163.8 62.5-226.3 0l-.1-.1l-17.1-17H160c17.7 0 32-14.3 32-32s-14.3-32-32-32H48.4q-2.4 0-4.8.3c-2.4.3-3.1.5-4.6 1"/></symbol>
+  <symbol id="icon-fa-bell" viewBox="0 0 448 512"><path fill="currentColor" d="M224 0c-17.7 0-32 14.3-32 32v19.2C119 66 64 130.6 64 208v18.8c0 47-17.3 92.4-48.5 127.6l-7.4 8.3c-8.4 9.4-10.4 22.9-5.3 34.4S19.4 416 32 416h384c12.6 0 24-7.4 29.2-18.9s3.1-25-5.3-34.4l-7.4-8.3c-31.2-35.2-48.5-80.5-48.5-127.6V208c0-77.4-55-142-128-156.8V32c0-17.7-14.3-32-32-32m45.3 493.3c12-12 18.7-28.3 18.7-45.3H160c0 17 6.7 33.3 18.7 45.3S207 512 224 512s33.3-6.7 45.3-18.7"/></symbol>
+  <symbol id="icon-fa-bolt" viewBox="0 0 448 512"><path fill="currentColor" d="M349.4 44.6c5.9-13.7 1.5-29.7-10.6-38.5s-28.6-8-39.9 1.8l-256 224c-10 8.8-13.6 22.9-8.9 35.3S50.7 288 64 288h111.5L98.6 467.4c-5.9 13.7-1.5 29.7 10.6 38.5s28.6 8 39.9-1.8l256-224c10-8.8 13.6-22.9 8.9-35.3s-16.6-20.7-30-20.7H272.5z"/></symbol>
+  <symbol id="icon-fa-box-archive" viewBox="0 0 512 512"><path fill="currentColor" d="M32 32h448c17.7 0 32 14.3 32 32v32c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32V64c0-17.7 14.3-32 32-32m0 128h448v256c0 35.3-28.7 64-64 64H96c-35.3 0-64-28.7-64-64zm128 80c0 8.8 7.2 16 16 16h160c8.8 0 16-7.2 16-16s-7.2-16-16-16H176c-8.8 0-16 7.2-16 16"/></symbol>
+  <symbol id="icon-fa-chart-line" viewBox="0 0 512 512"><path fill="currentColor" d="M64 64c0-17.7-14.3-32-32-32S0 46.3 0 64v336c0 44.2 35.8 80 80 80h400c17.7 0 32-14.3 32-32s-14.3-32-32-32H80c-8.8 0-16-7.2-16-16zm406.6 86.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L320 210.7l-57.4-57.4c-12.5-12.5-32.8-12.5-45.3 0l-112 112c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l89.4-89.3l57.4 57.4c12.5 12.5 32.8 12.5 45.3 0l128-128z"/></symbol>
+  <symbol id="icon-fa-cloud" viewBox="0 0 640 512"><path fill="currentColor" d="M0 336c0 79.5 64.5 144 144 144h368c70.7 0 128-57.3 128-128c0-61.9-44-113.6-102.4-125.4c4.1-10.7 6.4-22.4 6.4-34.6c0-53-43-96-96-96c-19.7 0-38.1 6-53.3 16.2C367 64.2 315.3 32 256 32c-88.4 0-160 71.6-160 160c0 2.7.1 5.4.2 8.1C40.2 219.8 0 273.2 0 336"/></symbol>
+  <symbol id="icon-fa-code" viewBox="0 0 640 512"><path fill="currentColor" d="M392.8 1.2c-17-4.9-34.7 5-39.6 22l-128 448c-4.9 17 5 34.7 22 39.6s34.7-5 39.6-22l128-448c4.9-17-5-34.7-22-39.6m80.6 120.1c-12.5 12.5-12.5 32.8 0 45.3l89.3 89.4l-89.4 89.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l112-112c12.5-12.5 12.5-32.8 0-45.3l-112-112c-12.5-12.5-32.8-12.5-45.3 0zm-306.7 0c-12.5-12.5-32.8-12.5-45.3 0l-112 112c-12.5 12.5-12.5 32.8 0 45.3l112 112c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L77.3 256l89.4-89.4c12.5-12.5 12.5-32.8 0-45.3"/></symbol>
+  <symbol id="icon-fa-database" viewBox="0 0 448 512"><path fill="currentColor" d="M448 80v48c0 44.2-100.3 80-224 80S0 172.2 0 128V80C0 35.8 100.3 0 224 0s224 35.8 224 80m-54.8 134.7c20.8-7.4 39.9-16.9 54.8-28.6V288c0 44.2-100.3 80-224 80S0 332.2 0 288V186.1c14.9 11.8 34 21.2 54.8 28.6C99.7 230.7 159.5 240 224 240s124.3-9.3 169.2-25.3M0 346.1c14.9 11.8 34 21.2 54.8 28.6C99.7 390.7 159.5 400 224 400s124.3-9.3 169.2-25.3c20.8-7.4 39.9-16.9 54.8-28.6V432c0 44.2-100.3 80-224 80S0 476.2 0 432z"/></symbol>
+  <symbol id="icon-fa-desktop" viewBox="0 0 576 512"><path fill="currentColor" d="M64 0C28.7 0 0 28.7 0 64v288c0 35.3 28.7 64 64 64h176l-10.7 32H160c-17.7 0-32 14.3-32 32s14.3 32 32 32h256c17.7 0 32-14.3 32-32s-14.3-32-32-32h-69.3L336 416h176c35.3 0 64-28.7 64-64V64c0-35.3-28.7-64-64-64zm448 64v224H64V64z"/></symbol>
+  <symbol id="icon-fa-envelope" viewBox="0 0 512 512"><path fill="currentColor" d="M48 64C21.5 64 0 85.5 0 112c0 15.1 7.1 29.3 19.2 38.4l217.6 163.2c11.4 8.5 27 8.5 38.4 0l217.6-163.2c12.1-9.1 19.2-23.3 19.2-38.4c0-26.5-21.5-48-48-48zM0 176v208c0 35.3 28.7 64 64 64h384c35.3 0 64-28.7 64-64V176L294.4 339.2a63.9 63.9 0 0 1-76.8 0z"/></symbol>
+  <symbol id="icon-fa-file-lines" viewBox="0 0 384 512"><path fill="currentColor" d="M64 0C28.7 0 0 28.7 0 64v384c0 35.3 28.7 64 64 64h256c35.3 0 64-28.7 64-64V160H256c-17.7 0-32-14.3-32-32V0zm192 0v128h128zM112 256h160c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16m0 64h160c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16m0 64h160c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16"/></symbol>
+  <symbol id="icon-fa-gears" viewBox="0 0 640 512"><path fill="currentColor" d="M308.5 135.3c7.1-6.3 9.9-16.2 6.2-25c-2.3-5.3-4.8-10.5-7.6-15.5l-3.1-5.4c-3-5-6.3-9.9-9.8-14.6c-5.7-7.6-15.7-10.1-24.7-7.1L241.3 77c-10.7-8.8-23-16-36.2-20.9l-6.1-29c-1.9-9.3-9.1-16.7-18.5-17.8c-6.6-.9-13.3-1.3-20.1-1.3h-.7q-10.2 0-20.1 1.2c-9.4 1.1-16.6 8.6-18.5 17.8L115 56.1c-13.3 5-25.5 12.1-36.2 20.9l-28.3-9.2c-9-3-19-.5-24.7 7.1c-3.5 4.7-6.8 9.6-9.9 14.6l-3 5.3c-2.8 5-5.3 10.2-7.6 15.6c-3.7 8.7-.9 18.6 6.2 25l22.2 19.8c-1.1 6.7-1.7 13.7-1.7 20.8s.6 14.1 1.7 20.9l-22.2 19.8c-7.1 6.3-9.9 16.2-6.2 25c2.3 5.3 4.8 10.5 7.6 15.6l3 5.2c3 5.1 6.3 9.9 9.9 14.6c5.7 7.6 15.7 10.1 24.7 7.1l28.2-9.3c10.7 8.8 23 16 36.2 20.9l6.1 29.1c1.9 9.3 9.1 16.7 18.5 17.8q10.05 1.2 20.4 1.2c10.35 0 13.7-.4 20.4-1.2c9.4-1.1 16.6-8.6 18.5-17.8l6.1-29.1c13.3-5 25.5-12.1 36.2-20.9l28.2 9.3c9 3 19 .5 24.7-7.1c3.5-4.7 6.8-9.5 9.8-14.6l3.1-5.4c2.8-5 5.3-10.2 7.6-15.5c3.7-8.7.9-18.6-6.2-25l-22.2-19.8c1.1-6.8 1.7-13.8 1.7-20.9s-.6-14.1-1.7-20.9l22.2-19.8zM112 176a48 48 0 1 1 96 0a48 48 0 1 1-96 0m392.7 324.5c6.3 7.1 16.2 9.9 25 6.2c5.3-2.3 10.5-4.8 15.5-7.6l5.4-3.1c5-3 9.9-6.3 14.6-9.8c7.6-5.7 10.1-15.7 7.1-24.7l-9.3-28.2c8.8-10.7 16-23 20.9-36.2L613 391c9.3-1.9 16.7-9.1 17.8-18.5q1.2-10.05 1.2-20.4c0-10.35-.4-13.7-1.2-20.4c-1.1-9.4-8.6-16.6-17.8-18.5l-29.1-6.2c-5-13.3-12.1-25.5-20.9-36.2l9.3-28.2c3-9 .5-19-7.1-24.7c-4.7-3.5-9.6-6.8-14.6-9.9l-5.3-3c-5-2.8-10.2-5.3-15.6-7.6c-8.7-3.7-18.6-.9-25 6.2l-19.8 22.2c-6.8-1.1-13.8-1.7-20.9-1.7s-14.1.6-20.9 1.7l-19.8-22.2c-6.3-7.1-16.2-9.9-25-6.2c-5.3 2.3-10.5 4.8-15.6 7.6l-5.2 3c-5.1 3-9.9 6.3-14.6 9.9c-7.6 5.7-10.1 15.7-7.1 24.7l9.3 28.2c-8.8 10.7-16 23-20.9 36.2l-29.1 6c-9.3 1.9-16.7 9.1-17.8 18.5q-1.2 10.05-1.2 20.4c0 10.35.4 13.7 1.2 20.4c1.1 9.4 8.6 16.6 17.8 18.5l29.1 6.1c5 13.3 12.1 25.5 20.9 36.2l-9.3 28.2c-3 9-.5 19 7.1 24.7c4.7 3.5 9.5 6.8 14.6 9.8l5.4 3.1c5 2.8 10.2 5.3 15.5 7.6c8.7 3.7 18.6.9 25-6.2l19.8-22.2c6.8 1.1 13.8 1.7 20.9 1.7s14.1-.6 20.9-1.7l19.8 22.2zM464 304a48 48 0 1 1 0 96a48 48 0 1 1 0-96"/></symbol>
+  <symbol id="icon-fa-globe" viewBox="0 0 512 512"><path fill="currentColor" d="M352 256c0 22.2-1.2 43.6-3.3 64H163.4c-2.2-20.4-3.3-41.8-3.3-64s1.2-43.6 3.3-64h185.3c2.2 20.4 3.3 41.8 3.3 64m28.8-64h123.1c5.3 20.5 8.1 41.9 8.1 64s-2.8 43.5-8.1 64H380.8c2.1-20.6 3.2-42 3.2-64s-1.1-43.4-3.2-64m112.6-32H376.7c-10-63.9-29.8-117.4-55.3-151.6c78.3 20.7 142 77.5 171.9 151.6zm-149.1 0H167.7c6.1-36.4 15.5-68.6 27-94.7c10.5-23.6 22.2-40.7 33.5-51.5C239.4 3.2 248.7 0 256 0s16.6 3.2 27.8 13.8c11.3 10.8 23 27.9 33.5 51.5c11.6 26 20.9 58.2 27 94.7m-209 0H18.6c30-74.1 93.6-130.9 172-151.6c-25.5 34.2-45.3 87.7-55.3 151.6M8.1 192h123.1c-2.1 20.6-3.2 42-3.2 64s1.1 43.4 3.2 64H8.1C2.8 299.5 0 278.1 0 256s2.8-43.5 8.1-64m186.6 254.6c-11.6-26-20.9-58.2-27-94.6h176.6c-6.1 36.4-15.5 68.6-27 94.6c-10.5 23.6-22.2 40.7-33.5 51.5c-11.2 10.7-20.5 13.9-27.8 13.9s-16.6-3.2-27.8-13.8c-11.3-10.8-23-27.9-33.5-51.5zM135.3 352c10 63.9 29.8 117.4 55.3 151.6c-78.4-20.7-142-77.5-172-151.6zm358.1 0c-30 74.1-93.6 130.9-171.9 151.6c25.5-34.2 45.2-87.7 55.3-151.6h116.7z"/></symbol>
+  <symbol id="icon-fa-key" viewBox="0 0 512 512"><path fill="currentColor" d="M336 352c97.2 0 176-78.8 176-176S433.2 0 336 0S160 78.8 160 176c0 18.7 2.9 36.8 8.3 53.7L7 391c-4.5 4.5-7 10.6-7 17v80c0 13.3 10.7 24 24 24h80c13.3 0 24-10.7 24-24v-40h40c13.3 0 24-10.7 24-24v-40h40c6.4 0 12.5-2.5 17-7l33.3-33.3c16.9 5.4 35 8.3 53.7 8.3m40-256a40 40 0 1 1 0 80a40 40 0 1 1 0-80"/></symbol>
+  <symbol id="icon-fa-layer-group" viewBox="0 0 576 512"><path fill="currentColor" d="M264.5 5.2c14.9-6.9 32.1-6.9 47 0l218.6 101c8.5 3.9 13.9 12.4 13.9 21.8s-5.4 17.9-13.9 21.8l-218.6 101c-14.9 6.9-32.1 6.9-47 0l-218.6-101c-8.5-4-13.9-12.5-13.9-21.8s5.4-17.9 13.9-21.8zm212.4 204.4l53.2 24.6c8.5 3.9 13.9 12.4 13.9 21.8s-5.4 17.9-13.9 21.8l-218.6 101c-14.9 6.9-32.1 6.9-47 0l-218.6-101c-8.5-4-13.9-12.5-13.9-21.8s5.4-17.9 13.9-21.8l53.2-24.6l152 70.2a88.1 88.1 0 0 0 73.8 0zm-152 198.2l152-70.2l53.2 24.6c8.5 3.9 13.9 12.4 13.9 21.8s-5.4 17.9-13.9 21.8l-218.6 101c-14.9 6.9-32.1 6.9-47 0l-218.6-101c-8.5-4-13.9-12.5-13.9-21.8s5.4-17.9 13.9-21.8l53.2-24.6l152 70.2a88.1 88.1 0 0 0 73.8 0"/></symbol>
+  <symbol id="icon-fa-lock" viewBox="0 0 448 512"><path fill="currentColor" d="M144 144v48h160v-48c0-44.2-35.8-80-80-80s-80 35.8-80 80m-64 48v-48C80 64.5 144.5 0 224 0s144 64.5 144 144v48h16c35.3 0 64 28.7 64 64v192c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V256c0-35.3 28.7-64 64-64z"/></symbol>
+  <symbol id="icon-fa-magnifying-glass" viewBox="0 0 512 512"><path fill="currentColor" d="M416 208c0 45.9-14.9 88.3-40 122.7l126.6 126.7c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0s208 93.1 208 208M208 352a144 144 0 1 0 0-288a144 144 0 1 0 0 288"/></symbol>
+  <symbol id="icon-fa-mobile-screen" viewBox="0 0 384 512"><path fill="currentColor" d="M16 64C16 28.7 44.7 0 80 0h224c35.3 0 64 28.7 64 64v384c0 35.3-28.7 64-64 64H80c-35.3 0-64-28.7-64-64zm128 384c0 8.8 7.2 16 16 16h64c8.8 0 16-7.2 16-16s-7.2-16-16-16h-64c-8.8 0-16 7.2-16 16M304 64H80v320h224z"/></symbol>
+  <symbol id="icon-fa-network-wired" viewBox="0 0 640 512"><path fill="currentColor" d="M256 64h128v64H256zM240 0c-26.5 0-48 21.5-48 48v96c0 26.5 21.5 48 48 48h48v32H32c-17.7 0-32 14.3-32 32s14.3 32 32 32h96v32H80c-26.5 0-48 21.5-48 48v96c0 26.5 21.5 48 48 48h160c26.5 0 48-21.5 48-48v-96c0-26.5-21.5-48-48-48h-48v-32h256v32h-48c-26.5 0-48 21.5-48 48v96c0 26.5 21.5 48 48 48h160c26.5 0 48-21.5 48-48v-96c0-26.5-21.5-48-48-48h-48v-32h96c17.7 0 32-14.3 32-32s-14.3-32-32-32H352v-32h48c26.5 0 48-21.5 48-48V48c0-26.5-21.5-48-48-48zM96 448v-64h128v64zm320-64h128v64H416z"/></symbol>
+  <symbol id="icon-fa-robot" viewBox="0 0 640 512"><path fill="currentColor" d="M320 0c17.7 0 32 14.3 32 32v64h120c39.8 0 72 32.2 72 72v272c0 39.8-32.2 72-72 72H168c-39.8 0-72-32.2-72-72V168c0-39.8 32.2-72 72-72h120V32c0-17.7 14.3-32 32-32M208 384c-8.8 0-16 7.2-16 16s7.2 16 16 16h32c8.8 0 16-7.2 16-16s-7.2-16-16-16zm96 0c-8.8 0-16 7.2-16 16s7.2 16 16 16h32c8.8 0 16-7.2 16-16s-7.2-16-16-16zm96 0c-8.8 0-16 7.2-16 16s7.2 16 16 16h32c8.8 0 16-7.2 16-16s-7.2-16-16-16zM264 256a40 40 0 1 0-80 0a40 40 0 1 0 80 0m152 40a40 40 0 1 0 0-80a40 40 0 1 0 0 80M48 224h16v192H48c-26.5 0-48-21.5-48-48v-96c0-26.5 21.5-48 48-48m544 0c26.5 0 48 21.5 48 48v96c0 26.5-21.5 48-48 48h-16V224z"/></symbol>
+  <symbol id="icon-fa-scale-balanced" viewBox="0 0 640 512"><path fill="currentColor" d="M384 32h128c17.7 0 32 14.3 32 32s-14.3 32-32 32H398.4c-5.2 25.8-22.9 47.1-46.4 57.3V448h160c17.7 0 32 14.3 32 32s-14.3 32-32 32H128c-17.7 0-32-14.3-32-32s14.3-32 32-32h160V153.3c-23.5-10.3-41.2-31.6-46.4-57.3H128c-17.7 0-32-14.3-32-32s14.3-32 32-32h128c14.6-19.4 37.8-32 64-32s49.4 12.6 64 32m55.6 288h144.9L512 195.8zm72.4 96c-62.9 0-115.2-34-126-78.9c-2.6-11 1-22.3 6.7-32.1l95.2-163.2c5-8.6 14.2-13.8 24.1-13.8s19.1 5.3 24.1 13.8L631.3 305c5.7 9.8 9.3 21.1 6.7 32.1C627.2 382 574.9 416 512 416M126.8 195.8L54.4 320h144.9zM.9 337.1c-2.6-11 1-22.3 6.7-32.1l95.2-163.2c5-8.6 14.2-13.8 24.1-13.8s19.1 5.3 24.1 13.8L246.2 305c5.7 9.8 9.3 21.1 6.7 32.1C242 382 189.7 416 126.8 416S11.7 382 .9 337.1"/></symbol>
+  <symbol id="icon-fa-server" viewBox="0 0 512 512"><path fill="currentColor" d="M64 32C28.7 32 0 60.7 0 96v64c0 35.3 28.7 64 64 64h384c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64zm280 72a24 24 0 1 1 0 48a24 24 0 1 1 0-48m48 24a24 24 0 1 1 48 0a24 24 0 1 1-48 0M64 288c-35.3 0-64 28.7-64 64v64c0 35.3 28.7 64 64 64h384c35.3 0 64-28.7 64-64v-64c0-35.3-28.7-64-64-64zm280 72a24 24 0 1 1 0 48a24 24 0 1 1 0-48m56 24a24 24 0 1 1 48 0a24 24 0 1 1-48 0"/></symbol>
+  <symbol id="icon-fa-shield-halved" viewBox="0 0 512 512"><path fill="currentColor" d="M256 0c4.6 0 9.2 1 13.4 2.9l188.3 79.9c22 9.3 38.4 31 38.3 57.2c-.5 99.2-41.3 280.7-213.6 363.2c-16.7 8-36.1 8-52.8 0C57.3 420.7 16.5 239.2 16 140c-.1-26.2 16.3-47.9 38.3-57.2L242.7 2.9C246.8 1 251.4 0 256 0m0 66.8v378.1C394 378 431.1 230.1 432 141.4z"/></symbol>
+  <symbol id="icon-fa-sitemap" viewBox="0 0 576 512"><path fill="currentColor" d="M208 80c0-26.5 21.5-48 48-48h64c26.5 0 48 21.5 48 48v64c0 26.5-21.5 48-48 48h-8v40h152c30.9 0 56 25.1 56 56v32h8c26.5 0 48 21.5 48 48v64c0 26.5-21.5 48-48 48h-64c-26.5 0-48-21.5-48-48v-64c0-26.5 21.5-48 48-48h8v-32c0-4.4-3.6-8-8-8H312v40h8c26.5 0 48 21.5 48 48v64c0 26.5-21.5 48-48 48h-64c-26.5 0-48-21.5-48-48v-64c0-26.5 21.5-48 48-48h8v-40H112c-4.4 0-8 3.6-8 8v32h8c26.5 0 48 21.5 48 48v64c0 26.5-21.5 48-48 48H48c-26.5 0-48-21.5-48-48v-64c0-26.5 21.5-48 48-48h8v-32c0-30.9 25.1-56 56-56h152v-40h-8c-26.5 0-48-21.5-48-48z"/></symbol>
+  <symbol id="icon-fa-user" viewBox="0 0 448 512"><path fill="currentColor" d="M224 256a128 128 0 1 0 0-256a128 128 0 1 0 0 256m-45.7 48C79.8 304 0 383.8 0 482.3C0 498.7 13.3 512 29.7 512h388.6c16.4 0 29.7-13.3 29.7-29.7c0-98.5-79.8-178.3-178.3-178.3z"/></symbol>
+  <symbol id="icon-fa-users" viewBox="0 0 640 512"><path fill="currentColor" d="M144 0a80 80 0 1 1 0 160a80 80 0 1 1 0-160m368 0a80 80 0 1 1 0 160a80 80 0 1 1 0-160M0 298.7C0 239.8 47.8 192 106.7 192h42.7c15.9 0 31 3.5 44.6 9.7c-1.3 7.2-1.9 14.7-1.9 22.3c0 38.2 16.8 72.5 43.3 96H21.3C9.6 320 0 310.4 0 298.7M405.3 320h-.7c26.6-23.5 43.3-57.8 43.3-96c0-7.6-.7-15-1.9-22.3c13.6-6.3 28.7-9.7 44.6-9.7h42.7c58.9 0 106.7 47.8 106.7 106.7c0 11.8-9.6 21.3-21.3 21.3H405.4zM224 224a96 96 0 1 1 192 0a96 96 0 1 1-192 0m-96 261.3c0-73.6 59.7-133.3 133.3-133.3h117.3c73.7 0 133.4 59.7 133.4 133.3c0 14.7-11.9 26.7-26.7 26.7H154.6c-14.7 0-26.7-11.9-26.7-26.7z"/></symbol>
+
+          <symbol id="clip-logos-docker-icon" viewBox="0 0 256 185"><path fill="#2396ed" d="M250.716 70.497c-5.765-4-18.976-5.5-29.304-3.5c-1.2-10-6.725-18.749-16.333-26.499l-5.524-4l-3.844 5.75c-4.803 7.5-7.205 18-6.485 28c.24 3.499 1.441 9.749 5.044 15.249c-3.362 2-10.328 4.5-19.455 4.5H1.155l-.48 2c-1.682 9.999-1.682 41.248 18.014 65.247c14.892 18.249 36.99 27.499 66.053 27.499c62.93 0 109.528-30.25 131.386-84.997c8.647.25 27.142 0 36.51-18.75c.24-.5.72-1.5 2.401-5.249l.961-2zM139.986 0h-26.42v24.999h26.42zm0 29.999h-26.42v24.999h26.42zm-31.225 0h-26.42v24.999h26.42zm-31.225 0H51.115v24.999h26.421zM46.311 59.998H19.89v24.999h26.42zm31.225 0H51.115v24.999h26.421zm31.225 0h-26.42v24.999h26.42zm31.226 0h-26.422v24.999h26.422zm31.225 0H144.79v24.999h26.422z"/></symbol>
+          <symbol id="clip-logos-github-actions" viewBox="0 0 256 256"><path fill="#2088FF" d="M162.633 41.226a20.997 20.997 0 0 0-24.72 4.008l-4.532 4.532c-3.35 3.354-8.4 4.352-12.774 2.522a12.484 12.484 0 0 0-13.617 2.71l-9.933 9.935a12.483 12.483 0 0 0-2.71 13.616c1.83 4.375.832 9.424-2.522 12.774l-25.72 25.72c-3.35 3.354-8.4 4.352-12.774 2.522a12.484 12.484 0 0 0-13.616 2.71l-9.934 9.935a12.483 12.483 0 0 0-2.71 13.616c1.83 4.375.832 9.425-2.522 12.775l-4.532 4.533a20.998 20.998 0 0 0-4.008 24.72"/><path fill="#2088FF" d="M244 128c0 64-52 116-116 116S12 192 12 128S64 12 128 12s116 52 116 116"/></symbol>
+        </defs>
+
+        <g id="camera">
+          <rect id="cam-anchor" x="0" y="0" width="0.01" height="0.01" fill="none" stroke="none"/>
+
+          <g id="layer-regions"></g>
+
+          <g id="layer-edges">
+            <path id="edge-spine" class="edge" style="stroke:var(--c-cyan);stroke-width:3px" d="M140,230 L140,1638"/>
+          </g>
+
+          <g id="layer-nodes">
+            <!-- Guardrail 1 -->
+            <g id="node-g1" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="200" width="1700" height="150" style="stroke:var(--c-cyan)"/>
+              <circle id="badge-g1" cx="140" cy="230" r="30" fill="var(--c-cyan)"/>
+              <text x="140" y="240" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">1</text>
+              <use href="#icon-fa-lock" x="200" y="222" width="34" height="34" color="var(--c-cyan)"/>
+              <text x="252" y="248" font-size="24" font-weight="700">Webhook secret-in-path auth</text>
+              <text x="200" y="284" class="label mono" font-size="15">POST /webhooks/ycloud/&#123;secret&#125; &#8212; hmac.compare_digest (constant-time)</text>
+              <text x="200" y="308" class="label" font-size="15">any mismatch &#8594; plain 404, indistinguishable from an unregistered route</text>
+              <g id="check-g1" class="check" opacity="0" transform="translate(1770,275)"></g>
+            </g>
+
+            <!-- Guardrail 2 -->
+            <g id="node-g2" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="376" width="1700" height="150" style="stroke:var(--accent);stroke-width:2.5px"/>
+              <circle id="badge-g2" cx="140" cy="406" r="30" fill="var(--accent)"/>
+              <text x="140" y="416" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">2</text>
+              <use href="#icon-fa-robot" x="200" y="398" width="34" height="34" color="var(--accent)"/>
+              <text x="252" y="424" font-size="24" font-weight="700">Non-tool-calling LLM design</text>
+              <text x="200" y="460" class="label" font-size="15">resolve_interaction only classifies intent &#8212; never selects or invokes tools/gateways</text>
+              <text x="200" y="484" class="label" font-size="15" font-weight="700" fill="var(--accent)">the primary structural defense against prompt injection</text>
+              <g id="check-g2" class="check" opacity="0" transform="translate(1770,451)"></g>
+            </g>
+
+            <!-- Guardrail 3 -->
+            <g id="node-g3" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="552" width="1700" height="150" style="stroke:var(--c-amber)"/>
+              <circle id="badge-g3" cx="140" cy="582" r="30" fill="var(--c-amber)"/>
+              <text x="140" y="592" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">3</text>
+              <use href="#icon-fa-key" x="200" y="574" width="34" height="34" color="var(--c-amber)"/>
+              <text x="252" y="600" font-size="24" font-weight="700">Sensitive-action confirmation flow</text>
+              <text x="200" y="636" class="label" font-size="15">booking / cancelling / creating a patient &#8594; proposed as a PendingAction,</text>
+              <text x="200" y="660" class="label" font-size="15">shown for explicit confirm/reject, executed only after &#8212; with an idempotency key</text>
+              <g id="check-g3" class="check" opacity="0" transform="translate(1770,627)"></g>
+            </g>
+
+            <!-- Guardrail 4 -->
+            <g id="node-g4" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="728" width="1700" height="150" style="stroke:var(--c-violet)"/>
+              <circle id="badge-g4" cx="140" cy="758" r="30" fill="var(--c-violet)"/>
+              <text x="140" y="768" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">4</text>
+              <use href="#icon-fa-user" x="200" y="750" width="34" height="34" color="var(--c-violet)"/>
+              <text x="252" y="776" font-size="24" font-weight="700">Identity / IDOR guard</text>
+              <text x="200" y="812" class="label" font-size="15">the patient's phone number is always derived server-side from the</text>
+              <text x="200" y="836" class="label" font-size="15">WhatsApp conversation id &#8212; never parsed out of free-text user input</text>
+              <g id="check-g4" class="check" opacity="0" transform="translate(1770,803)"></g>
+            </g>
+
+            <!-- Guardrail 5 -->
+            <g id="node-g5" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="904" width="1700" height="150" style="stroke:var(--c-blue)"/>
+              <circle id="badge-g5" cx="140" cy="934" r="30" fill="var(--c-blue)"/>
+              <text x="140" y="944" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">5</text>
+              <use href="#icon-fa-magnifying-glass" x="200" y="926" width="34" height="34" color="var(--c-blue)"/>
+              <text x="252" y="952" font-size="24" font-weight="700">Input validation before any external call</text>
+              <text x="200" y="988" class="label" font-size="15">the Argentine DNI (national ID) is format/length-validated before it is</text>
+              <text x="200" y="1012" class="label" font-size="15">ever sent to Dentalink</text>
+              <g id="check-g5" class="check" opacity="0" transform="translate(1770,979)"></g>
+            </g>
+
+            <!-- Guardrail 6 -->
+            <g id="node-g6" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="1080" width="1700" height="150" style="stroke:var(--c-green)"/>
+              <circle id="badge-g6" cx="140" cy="1110" r="30" fill="var(--c-green)"/>
+              <text x="140" y="1120" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">6</text>
+              <use href="#icon-fa-code" x="200" y="1102" width="34" height="34" color="var(--c-green)"/>
+              <text x="252" y="1128" font-size="24" font-weight="700">Anti-injection query building</text>
+              <text x="200" y="1164" class="label mono" font-size="15">allow-listed fields/operators &#8594; serialized with json.dumps (never raw string</text>
+              <text x="200" y="1188" class="label" font-size="15">interpolation) &#8212; blocks filter/query injection into Dentalink's API</text>
+              <g id="check-g6" class="check" opacity="0" transform="translate(1770,1155)"></g>
+            </g>
+
+            <!-- Guardrail 7 -->
+            <g id="node-g7" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="1256" width="1700" height="150" style="stroke:var(--c-rose)"/>
+              <circle id="badge-g7" cx="140" cy="1286" r="30" fill="var(--c-rose)"/>
+              <text x="140" y="1296" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">7</text>
+              <use href="#icon-fa-bolt" x="200" y="1278" width="34" height="34" color="var(--c-rose)"/>
+              <text x="252" y="1304" font-size="24" font-weight="700">Fail-closed error handling</text>
+              <text x="200" y="1340" class="label" font-size="15">any Dentalink/YCloud API error raises a typed exception &#8212; the system</text>
+              <text x="200" y="1364" class="label" font-size="15">never reports a false "success" when an external call actually failed</text>
+              <g id="check-g7" class="check" opacity="0" transform="translate(1770,1331)"></g>
+            </g>
+
+            <!-- Guardrail 8 -->
+            <g id="node-g8" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="1432" width="1700" height="150" style="stroke:var(--c-cyan)"/>
+              <circle id="badge-g8" cx="140" cy="1462" r="30" fill="var(--c-cyan)"/>
+              <text x="140" y="1472" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">8</text>
+              <use href="#icon-fa-key" x="200" y="1454" width="34" height="34" color="var(--c-cyan)"/>
+              <text x="252" y="1480" font-size="24" font-weight="700">Secret hygiene</text>
+              <text x="200" y="1516" class="label" font-size="15">API tokens are never logged or included in exception messages / traces</text>
+              <g id="check-g8" class="check" opacity="0" transform="translate(1770,1487)"></g>
+            </g>
+
+            <!-- Guardrail 9 -->
+            <g id="node-g9" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="1608" width="1700" height="150" style="stroke:var(--c-orange)"/>
+              <circle id="badge-g9" cx="140" cy="1638" r="30" fill="var(--c-orange)"/>
+              <text x="140" y="1648" text-anchor="middle" font-size="26" font-weight="700" fill="#fff">9</text>
+              <use href="#icon-fa-arrows-rotate" x="200" y="1630" width="34" height="34" color="var(--c-orange)"/>
+              <text x="252" y="1656" font-size="24" font-weight="700">Bounded retries</text>
+              <text x="200" y="1692" class="label" font-size="15">HTTP calls to external APIs retry only transient failures with a timeout</text>
+              <text x="200" y="1714" class="label" font-size="14">4xx client errors are never retried</text>
+              <g id="check-g9" class="check" opacity="0" transform="translate(1770,1663)"></g>
+            </g>
+
+            <!-- Footnote: delivery pipeline -->
+            <text id="footnote-title" class="label" x="110" y="1770" font-size="20" font-weight="700" opacity="0.85">DELIVERY PIPELINE GUARDRAILS</text>
+
+            <g id="node-f1" class="node" filter="url(#card-shadow)">
+              <rect x="110" y="1800" width="540" height="140" style="stroke:var(--text-muted)"/>
+              <use href="#clip-logos-github-actions" x="134" y="1822" width="30" height="30"/>
+              <text x="176" y="1846" font-size="18" font-weight="700">Protected main branch</text>
+              <text x="134" y="1874" class="label" font-size="13">GitHub rulesets: no direct pushes,</text>
+              <text x="134" y="1894" class="label" font-size="13">PR + passing CI required</text>
+              <g id="check-f1" class="check" opacity="0" transform="translate(614,1822)"></g>
+            </g>
+
+            <g id="node-f2" class="node" filter="url(#card-shadow)">
+              <rect x="690" y="1800" width="540" height="140" style="stroke:var(--text-muted)"/>
+              <use href="#clip-logos-docker-icon" x="714" y="1826" width="32" height="23"/>
+              <text x="762" y="1846" font-size="18" font-weight="700">Immutable versioned images</text>
+              <text x="714" y="1874" class="label" font-size="13">Docker images are versioned,</text>
+              <text x="714" y="1894" class="label" font-size="13">never :latest</text>
+              <g id="check-f2" class="check" opacity="0" transform="translate(1194,1822)"></g>
+            </g>
+
+            <g id="node-f3" class="node" filter="url(#card-shadow)">
+              <rect x="1270" y="1800" width="540" height="140" style="stroke:var(--text-muted)"/>
+              <use href="#icon-fa-shield-halved" x="1294" y="1822" width="30" height="30" color="var(--text-muted)"/>
+              <text x="1336" y="1846" font-size="18" font-weight="700">Fail-closed deploy pipeline</text>
+              <text x="1294" y="1874" class="label" font-size="13">image pin / push / webhook / health-check</text>
+              <text x="1294" y="1894" class="label" font-size="13">failure fails the whole deploy &#8212; never false-green</text>
+              <g id="check-f3" class="check" opacity="0" transform="translate(1774,1822)"></g>
+            </g>
+          </g>
+        </g>
+
+        <g id="hud">
+          <text id="hud-title" class="title" x="960" y="70" text-anchor="middle" opacity="0">AgenteClinica &#8212; Security Guardrails</text>
+          <text id="hud-subtitle" class="subtitle" x="960" y="106" text-anchor="middle" opacity="0">defense in depth &#8212; verified against the actual implementation</text>
+        </g>
+      </svg>
+    </div>
+
+    <script>
+      gsap.registerPlugin(DrawSVGPlugin, MotionPathPlugin);
+
+      const __root = document.getElementById("root");
+      const __W = +__root.dataset.width, __H = +__root.dataset.height;
+      const CAM_EASE = "power3.inOut";
+
+      function camFit(tl, sel, { zoom, at = ">", dur = 1.2, pad = 1.25, ease = CAM_EASE } = {}) {
+        const b = document.querySelector(sel).getBBox();
+        const z = zoom ?? Math.min(__W / (b.width * pad), __H / (b.height * pad), 2.2);
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        return tl.to("#camera", { scale: z, x: __W / 2 - cx * z, y: __H / 2 - cy * z,
+          transformOrigin: "0 0", duration: dur, ease }, at);
+      }
+      function camFitAll(tl, opts = {}) { return camFit(tl, "#camera", { pad: 1.05, ...opts }); }
+      function camPanTo(tl, cx, cy, z, { at = ">", dur = 1.2, ease = CAM_EASE } = {}) {
+        return tl.to("#camera", { scale: z, x: __W / 2 - cx * z, y: __H / 2 - cy * z,
+          transformOrigin: "0 0", duration: dur, ease }, at);
+      }
+
+      // Build a small checkmark glyph inside a <g class="check"> anchor once per card.
+      function buildCheck(id) {
+        const g = document.getElementById(id);
+        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c.setAttribute("r", "22"); c.setAttribute("fill", "var(--c-green)");
+        const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        p.setAttribute("d", "M-11,0 L-3,9 L12,-10");
+        p.setAttribute("fill", "none"); p.setAttribute("stroke", "#fff");
+        p.setAttribute("stroke-width", "4.5"); p.setAttribute("stroke-linecap", "round");
+        p.setAttribute("stroke-linejoin", "round"); p.setAttribute("class", "check-mark");
+        g.appendChild(c); g.appendChild(p);
+      }
+      ["g1","g2","g3","g4","g5","g6","g7","g8","g9","f1","f2","f3"].forEach((n) => buildCheck(`check-${n}`));
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+
+      // Start zoomed out on the whole checklist (oversized scene).
+      camFitAll(tl, { at: 0, dur: 0.001 });
+
+      /* ── Act 1 · Establish ───────────────────────────────────────── */
+      tl.to("#hud-title", { opacity: 1, duration: 0.6 }, 0.1)
+        .to("#hud-subtitle", { opacity: 1, duration: 0.6 }, 0.3);
+
+      /* ── Act 2 · Build — the whole checklist skeleton appears ───── */
+      const cardOrder = [
+        "#node-g1", "#node-g2", "#node-g3", "#node-g4", "#node-g5",
+        "#node-g6", "#node-g7", "#node-g8", "#node-g9",
+        "#footnote-title", "#node-f1", "#node-f2", "#node-f3",
+      ];
+      tl.from(cardOrder, {
+        opacity: 0, y: 18, scale: 0.96, transformOrigin: "50% 50%",
+        stagger: 0.12, duration: 0.45, ease: "power2.out",
+      }, 1.0);
+
+      /* ── Act 3 · Connect — the defense-in-depth spine ────────────── */
+      tl.from("#edge-spine", { drawSVG: "0%", duration: 0.9, ease: "power1.inOut" }, 3.2);
+
+      /* ── Act 4 · Focus — scroll through and confirm each guardrail ─ */
+      const stops = [
+        { sel: null, cx: 960, cy: 275,  check: "check-g1" },
+        { sel: null, cx: 960, cy: 451,  check: "check-g2" },
+        { sel: null, cx: 960, cy: 627,  check: "check-g3" },
+        { sel: null, cx: 960, cy: 803,  check: "check-g4" },
+        { sel: null, cx: 960, cy: 979,  check: "check-g5" },
+        { sel: null, cx: 960, cy: 1155, check: "check-g6" },
+        { sel: null, cx: 960, cy: 1331, check: "check-g7" },
+        { sel: null, cx: 960, cy: 1507, check: "check-g8" },
+        { sel: null, cx: 960, cy: 1683, check: "check-g9" },
+      ];
+      let ft = 4.3;
+      stops.forEach((s) => {
+        camPanTo(tl, s.cx, s.cy, 1.08, { at: ft, dur: 0.7 });
+        tl.from(`#${s.check}`, { opacity: 0, scale: 0, transformOrigin: "50% 50%", duration: 0.3, ease: "back.out(2.4)" }, ft + 0.55)
+          .to(`#${s.check}`, { opacity: 1 }, ft + 0.55);
+        ft += 1.15;
+      });
+      // Footnote group stop
+      camPanTo(tl, 960, 1850, 1.0, { at: ft, dur: 0.7 });
+      tl.from(["#check-f1", "#check-f2", "#check-f3"], {
+        opacity: 0, scale: 0, transformOrigin: "50% 50%", stagger: 0.12, duration: 0.3, ease: "back.out(2.4)",
+      }, ft + 0.5)
+        .to(["#check-f1", "#check-f2", "#check-f3"], { opacity: 1 }, ft + 0.5);
+      ft += 1.5;
+
+      /* ── Act 5 · Resolve — full checklist overview, hold ─────────── */
+      camFitAll(tl, { at: ft, dur: 1.1 });
+      tl.to({}, { duration: 1.3 });
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+
+      if (!window.__hyperframes && !navigator.webdriver) {
+        document.fonts.ready.then(() => tl.play());
+      }
+    </script>
+  </body>
+</html>

@@ -11,6 +11,7 @@ from app.agent.graph import (
     RESOLVE_INTERACTION_NODE,
     SPECIALTIES_NODE,
     build_graph,
+    build_state_reset_graph,
     compile_graph,
 )
 from app.domain.value_objects.conversation_id import ConversationId
@@ -201,7 +202,11 @@ async def test_specialties_message_routes_through_the_specialties_node():
         make_agent_state(conversation_id="conv-1", user_message="¿Qué especialidades tienen?")
     )
 
-    assert "Ortodoncia" in result["response_text"]
+    # The catalog is now a paginated interactive list (emoji-prefixed rows),
+    # not a plain text reply — assert on the list rows.
+    list_message = result["response_list"]
+    assert list_message is not None
+    assert any("Ortodoncia" in row.title for row in list_message.rows)
 
 
 @pytest.mark.asyncio
@@ -315,3 +320,28 @@ async def test_compiled_graph_persists_state_via_checkpointer_by_thread_id():
     restored = await compiled.aget_state(config)
 
     assert restored.values["conversation_id"] == "conv-checkpoint-1"
+
+
+async def test_state_reset_graph_clears_collected_data_the_real_graph_wrote():
+    # This is the follow-up worker's own mechanism, exercised end to end:
+    # a completely separate, dependency-free graph resets `collected_data`
+    # for a `thread_id` the FULLY-WIRED graph already checkpointed.
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    checkpointer = MemorySaver()
+    compiled = _compile(
+        conversation_repository=conversation_repository,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
+        checkpointer=checkpointer,
+    )
+    config = {"configurable": {"thread_id": "conv-1"}}
+    result = await compiled.ainvoke(
+        make_agent_state(conversation_id="conv-1", user_message="Quiero un turno"), config=config
+    )
+    assert result["collected_data"].get("stage") is not None
+
+    reset_graph = build_state_reset_graph(checkpointer)
+    await reset_graph.aupdate_state(config, {"collected_data": {}})
+
+    snapshot = await compiled.aget_state(config)
+    assert snapshot.values["collected_data"] == {}

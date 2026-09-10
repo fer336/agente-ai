@@ -1,17 +1,76 @@
+<<<<<<< Updated upstream
+=======
+import asyncio
+>>>>>>> Stashed changes
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 
-from app.api.dependencies.checkpointer import close_agent_checkpointer
+from app.api.dependencies.checkpointer import close_agent_checkpointer, get_agent_checkpointer
+from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.repositories import (
+    open_sqlalchemy_agent_repositories,
+    open_sqlalchemy_proposal_repositories,
+)
 from app.api.routes.admin import router as admin_router
 from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
 from app.api.routes.health import router as health_router
 from app.api.routes.internal_eval import router as internal_eval_router
 from app.api.routes.webhook import router as webhook_router
+from app.application.messages.send_reply import SendReplyUseCase
 from app.config.settings import get_settings
+from app.workers.follow_up_worker import run_follow_up_tick
+
+logger = logging.getLogger(__name__)
+
+
+async def _run_follow_up_tick_once() -> None:
+    settings = get_settings()
+    checkpointer = await get_agent_checkpointer()
+    async with (
+        open_sqlalchemy_agent_repositories() as agent_repositories,
+        open_sqlalchemy_proposal_repositories() as proposal_repositories,
+    ):
+        await run_follow_up_tick(
+            scheduled_action_repository=proposal_repositories.scheduled_actions,
+            message_repository=agent_repositories.messages,
+            conversation_repository=agent_repositories.conversations,
+            contact_repository=agent_repositories.contacts,
+            send_reply=SendReplyUseCase(get_messaging_gateway()),
+            checkpointer=checkpointer,
+            now=datetime.now(UTC),
+            limit=settings.follow_up_worker_batch_limit,
+            reset_delay_seconds=settings.appointment_follow_up_reset_delay_seconds,
+        )
+
+
+async def _run_follow_up_loop() -> None:
+    """This session's own brief: turns `run_follow_up_tick` (a "one poll
+    tick" function, same convention as `app.workers.audio_tasks`/
+    `incident_tasks`/`memory_tasks`) into an actual periodic loop.
+
+    Same `asyncio.create_task` pattern `IngestMessageUseCase` already uses
+    for its own debounce timers — no new dependency (no APScheduler/ARQ/
+    cron) — but more robust than that debounce: the real state
+    (`ScheduledAction` rows) lives in Postgres, so a process restart only
+    restarts THIS loop, it never loses the work a tick was about to do.
+    A single tick raising never kills the loop — logged and retried on the
+    next interval, same "one bad row/turn never breaks the sweep" posture
+    `check_incident_recovery`/`process_pending_audio_jobs` already follow.
+    """
+    settings = get_settings()
+    while True:
+        try:
+            await _run_follow_up_tick_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("follow_up_worker.tick_failed")
+        await asyncio.sleep(settings.follow_up_worker_interval_seconds)
 
 #: The app's own `logger.info`/`logger.warning` calls (webhook handling,
 #: YCloud tag sync, error reporting, ...) are otherwise silently dropped in
@@ -32,15 +91,23 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Closes the LangGraph agent's Postgres checkpointer pool on shutdown.
+    """Starts the inactivity follow-up loop and closes the LangGraph
+    agent's Postgres checkpointer pool on shutdown.
 
-    The pool itself is opened lazily, on first use, by
+    The checkpointer pool itself is opened lazily, on first use, by
     `app.api.dependencies.checkpointer.get_agent_checkpointer` — not eagerly
     here at startup (same "no eager I/O" convention as the SQLAlchemy
     engine/session factory). A process that never runs a multi-turn flow
-    needing the checkpointer never opens the pool, so this is a no-op then.
+    needing the checkpointer never opens the pool on its own, but the
+    follow-up loop below calls it on its very first tick regardless.
     """
+    follow_up_task = asyncio.create_task(_run_follow_up_loop())
     yield
+    follow_up_task.cancel()
+    try:
+        await follow_up_task
+    except asyncio.CancelledError:
+        pass
     await close_agent_checkpointer()
 
 

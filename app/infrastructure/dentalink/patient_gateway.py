@@ -136,9 +136,42 @@ class DentalinkPatientGateway:
             error_type_of=_error_type_of,
         )
 
+<<<<<<< Updated upstream
     async def create_patient(
         self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
     ) -> Patient:
+=======
+    async def get_patient_by_id(self, patient_id: str) -> Patient | None:
+        """`GET /v1/pacientes/{id}` — UNVERIFIED against a live Dentalink
+        account, same caveat as the rest of this module. Exists only to
+        resolve a name for a returning-patient greeting; never a substitute
+        for `find_patient`'s name+DNI check before a sensitive operation
+        (see the port's own docstring)."""
+
+        async def _call() -> Patient | None:
+            try:
+                raw = await self._client.get(f"/v1/pacientes/{patient_id}")
+            except DentalinkAPIError as exc:
+                if exc.status_code == 404:
+                    return None
+                raise
+            return patient_from_paciente(as_dict(raw))
+
+        return await traced_call(
+            tool_name="GetPatientByIdTool",
+            provider=_PROVIDER,
+            operation="get_patient_by_id",
+            request_summary=f"patient_id={patient_id}",
+            call=_call,
+            response_summary=lambda patient: (
+                f"patient_id={patient.id}" if patient else "not_found"
+            ),
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def create_patient(self, full_name: str, dni: str, phone: PhoneNumber) -> Patient:
+>>>>>>> Stashed changes
         """Creates a patient, tied to the requesting contact's own `phone`.
 
         Guardrails, in order: (1) DNI shape is validated before any HTTP

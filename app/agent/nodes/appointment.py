@@ -59,6 +59,8 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
@@ -67,6 +69,12 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
+    PROFESSIONAL_PAYLOAD_PREFIX,
+    SPECIALTY_PAYLOAD_PREFIX,
+)
+from app.domain.value_objects.paginated_list import (
+    professionals_list_message,
+    specialties_list_message,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
@@ -340,6 +348,7 @@ _RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER = (
 )
 
 
+<<<<<<< Updated upstream
 #: Words that never appear in a real full name but commonly appear in
 #: ordinary chatter — used to keep a name-only, no-digit message from being
 #: misread as identification when it's actually just conversation ("hola
@@ -408,6 +417,27 @@ _NON_NAME_WORDS = frozenset(
         "puede",
     }
 )
+=======
+def _fresh_tramite() -> dict[str, object]:
+    """The ONE way to end a trámite and drop its cursor (PRD.md brief: "no
+    queden datos colgados anteriores").
+
+    Every terminal return in `node()` — success, an unrecoverable dead end,
+    a rejected/expired proposal, the main-menu escape hatch — MUST build
+    its `collected_data` from this, never a literal `{}`. A hand-written
+    `{}` anywhere else in this file is a bug waiting to happen: it was
+    exactly a `return` that forgot to touch `collected_data` at all (not
+    even `{}`) that once trapped a patient in `STAGE_AWAITING_IDENTIFICATION`
+    forever, since the previous stage-carrying state simply persisted.
+    A fresh `dict` per call, not a shared module-level literal, so nothing
+    downstream can ever mutate a "constant" shared across turns/patients.
+    """
+    return {}
+
+
+def _parse_identification(text: str) -> tuple[str, str] | None:
+    """Extracts (full_name, dni) from free text (PRD.md §32).
+>>>>>>> Stashed changes
 
 
 def _looks_like_a_name(text: str) -> bool:
@@ -659,6 +689,16 @@ def _reschedule_success_message(appointment: Appointment) -> str:
 
 def _cancel_success_message() -> str:
     return "✅ Cancelamos tu turno. Si querés coordinar otro, avisame."
+
+
+def _operation_menu_message(known_patient_name: str | None) -> str:
+    """Greets a returning contact by name (this session's brief: "hablarle
+    por el nombre"). Text only — `known_patient_name` never changes WHICH
+    stage this turn lands in, only what the menu says."""
+    if not known_patient_name:
+        return _OPERATION_MENU_MESSAGE
+    first_name = known_patient_name.strip().split(maxsplit=1)[0]
+    return f"¡Hola de nuevo, {first_name}! {_OPERATION_MENU_MESSAGE}"
 
 
 def _patient_to_primitives(patient: Patient) -> dict[str, object]:
@@ -966,19 +1006,23 @@ def create_appointment_node(
                 "response_text": _NO_SPECIALTIES_MESSAGE,
                 "response_buttons": None,
                 "requires_handoff": False,
-                "collected_data": {},
+                "collected_data": _fresh_tramite(),
             }
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        listing = _numbered_list([specialty.name for specialty in specialties])
+        page = cast(int, collected_data.get("specialties_page", 0) or 0)
         return {
-            "response_text": f"{_CHOOSE_SPECIALTY_PROMPT}\n\n{listing}",
-            "response_buttons": [_MAIN_MENU_BUTTON],
+            "response_text": _CHOOSE_SPECIALTY_PROMPT,
+            "response_buttons": None,
+            "response_list": specialties_list_message(
+                specialties, page=page, include_back=True
+            ),
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
                 "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
                 "specialty_options": specialties,
+                "specialties_page": page,
             },
         }
 
@@ -995,14 +1039,17 @@ def create_appointment_node(
                 "response_text": _NO_PROFESSIONALS_MESSAGE,
                 "response_buttons": None,
                 "requires_handoff": False,
-                "collected_data": {},
+                "collected_data": _fresh_tramite(),
             }
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        listing = _numbered_list([professional.full_name for professional in professionals])
+        page = cast(int, collected_data.get("doctors_page", 0) or 0)
         return {
-            "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
-            "response_buttons": [_MAIN_MENU_BUTTON],
+            "response_text": _CHOOSE_PROFESSIONAL_PROMPT,
+            "response_buttons": None,
+            "response_list": professionals_list_message(
+                professionals, page=page, include_back=True
+            ),
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
@@ -1010,6 +1057,7 @@ def create_appointment_node(
                 "chosen_specialty_id": specialty_id,
                 "chosen_specialty_name": specialty_name,
                 "professional_options": professionals,
+                "doctors_page": page,
             },
         }
 
@@ -1038,10 +1086,14 @@ def create_appointment_node(
                 "response_buttons": _NO_AVAILABILITY_BUTTONS,
                 "requires_handoff": False,
                 "pending_action_id": None,
+<<<<<<< Updated upstream
                 "collected_data": {
                     **collected_data,
                     "stage": STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
                 },
+=======
+                "collected_data": _fresh_tramite(),
+>>>>>>> Stashed changes
             }
 
         options = slots[:_MAX_OPTIONS_SHOWN]
@@ -1082,7 +1134,7 @@ def create_appointment_node(
                 "response_buttons": None,
                 "requires_handoff": False,
                 "pending_action_id": None,
-                "collected_data": {},
+                "collected_data": _fresh_tramite(),
             }
 
         chosen_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
@@ -1126,7 +1178,7 @@ def create_appointment_node(
                 "response_buttons": None,
                 "requires_handoff": False,
                 "pending_action_id": None,
-                "collected_data": {},
+                "collected_data": _fresh_tramite(),
             }
 
         professionals = await appointment_gateway.list_professionals()
@@ -1182,7 +1234,7 @@ def create_appointment_node(
             # and the agent went right on asking for their DNI. Every
             # per-stage counter is dropped with the stage, so an abandoned
             # flow's retry history never follows them into the next one.
-            collected_data = {}
+            collected_data = _fresh_tramite()
             stage = None
             returned_to_main_menu = True
 
@@ -1213,7 +1265,7 @@ def create_appointment_node(
                     "response_buttons": None,
                     "requires_handoff": False,
                     "pending_action_id": None,
-                    "collected_data": {**collected_data, "stage": None},
+                    "collected_data": _fresh_tramite(),
                 }
 
             if button_payload == CONFIRM_APPOINTMENT_PAYLOAD:
@@ -1238,7 +1290,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {**collected_data, "stage": None},
+                        "collected_data": _fresh_tramite(),
                     }
                 if isinstance(confirm_error, PendingActionExpiredError):
                     patient = cast(dict[str, object] | None, collected_data.get("patient"))
@@ -1248,7 +1300,7 @@ def create_appointment_node(
                             "response_buttons": None,
                             "requires_handoff": False,
                             "pending_action_id": None,
-                            "collected_data": {},
+                            "collected_data": _fresh_tramite(),
                         }
                     offer = await _offer_slots(conversation_id, patient, collected_data)
                     offer["response_text"] = (
@@ -1271,7 +1323,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {},
+                        "collected_data": _fresh_tramite(),
                     }
 
                 if confirmed_action_type == CREATE_APPOINTMENT_ACTION:
@@ -1299,7 +1351,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {},
+                        "collected_data": _fresh_tramite(),
                     }
 
                 if confirmed_action_type == CREATE_PATIENT_ACTION:
@@ -1347,12 +1399,16 @@ def create_appointment_node(
                                 "response_buttons": None,
                                 "requires_handoff": False,
                                 "pending_action_id": None,
+<<<<<<< Updated upstream
                                 "collected_data": {
                                     **collected_data,
                                     "stage": STAGE_AWAITING_IDENTIFICATION,
                                     "identification_full_name": None,
                                     "identification_dni": None,
                                 },
+=======
+                                "collected_data": _fresh_tramite(),
+>>>>>>> Stashed changes
                             }
                         new_patient = recovered
 
@@ -1392,7 +1448,7 @@ def create_appointment_node(
                                 "response_buttons": None,
                                 "requires_handoff": False,
                                 "pending_action_id": None,
-                                "collected_data": {},
+                                "collected_data": _fresh_tramite(),
                             }
                         offer = await _offer_slots(conversation_id, patient, collected_data)
                         offer["response_text"] = (
@@ -1408,7 +1464,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {},
+                        "collected_data": _fresh_tramite(),
                     }
 
                 raise AssertionError(  # pragma: no cover - impossible by construction
@@ -1436,7 +1492,7 @@ def create_appointment_node(
                     "response_text": _SESSION_LOST_MESSAGE,
                     "response_buttons": None,
                     "requires_handoff": False,
-                    "collected_data": {},
+                    "collected_data": _fresh_tramite(),
                 }
 
             if button_payload is None or not button_payload.startswith(SELECT_SLOT_PAYLOAD_PREFIX):
@@ -1517,7 +1573,7 @@ def create_appointment_node(
                     "response_text": _SESSION_LOST_MESSAGE,
                     "response_buttons": None,
                     "requires_handoff": False,
-                    "collected_data": {},
+                    "collected_data": _fresh_tramite(),
                 }
 
             if button_payload is None or not button_payload.startswith(
@@ -2015,12 +2071,49 @@ def create_appointment_node(
             if not options:
                 return await _offer_specialties(conversation_id, collected_data)
 
-            # These stages never send buttons, so any payload arriving
-            # here is a tap on an older message still on the phone.
+            # Navigation rows for the paginated specialty list: 'Ver más'
+            # re-renders the next page, 'Volver atrás' pops back to the
+            # main menu (this list is the flow's entry screen).
+            if state["button_payload"] == LIST_MORE_PAYLOAD:
+                next_page = cast(int, collected_data.get("specialties_page", 0) or 0) + 1
+                return await _offer_specialties(
+                    conversation_id, {**collected_data, "specialties_page": next_page}
+                )
+            if state["button_payload"] == LIST_BACK_PAYLOAD:
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                return {
+                    "response_text": WELCOME_TEXT,
+                    "response_buttons": None,
+                    "response_list": WELCOME_LIST,
+                    "requires_handoff": False,
+                    "pending_action_id": None,
+                    "collected_data": {},
+                }
+
+            # These stages now send list rows, so a `SPECIALTY:{id}` tap
+            # resolves deterministically; anything else (stale payload,
+            # free text) still falls back to number/name matching.
+            button_payload = state["button_payload"]
+            button_index = (
+                next(
+                    (
+                        index
+                        for index, option in enumerate(options)
+                        if button_payload == f"{SPECIALTY_PAYLOAD_PREFIX}{option.id}"
+                    ),
+                    None,
+                )
+                if button_payload is not None
+                else None
+            )
             index = (
-                None
-                if state["button_payload"] is not None
-                else _resolve_choice(state["user_message"], [option.name for option in options])
+                button_index
+                if button_index is not None
+                else (
+                    None
+                    if state["button_payload"] is not None
+                    else _resolve_choice(state["user_message"], [option.name for option in options])
+                )
             )
             if index is None:
                 retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
@@ -2067,11 +2160,45 @@ def create_appointment_node(
             if not professional_options or specialty_id is None:
                 return await _offer_specialties(conversation_id, collected_data)
 
+            # Navigation rows for the paginated professionals list:
+            # 'Ver más' advances the page, 'Volver atrás' pops back to the
+            # specialty list (the immediately previous screen).
+            if state["button_payload"] == LIST_MORE_PAYLOAD:
+                next_page = cast(int, collected_data.get("doctors_page", 0) or 0) + 1
+                return await _offer_professionals(
+                    conversation_id,
+                    specialty_id,
+                    str(collected_data.get("chosen_specialty_name", "")),
+                    {**collected_data, "doctors_page": next_page},
+                )
+            if state["button_payload"] == LIST_BACK_PAYLOAD:
+                return await _offer_specialties(conversation_id, collected_data)
+
+            # A `PROFESSIONAL:{id}` row tap resolves deterministically;
+            # anything else (stale payload, free text) still falls back to
+            # number/name matching.
+            button_payload = state["button_payload"]
+            button_index = (
+                next(
+                    (
+                        index
+                        for index, option in enumerate(professional_options)
+                        if button_payload == f"{PROFESSIONAL_PAYLOAD_PREFIX}{option.id}"
+                    ),
+                    None,
+                )
+                if button_payload is not None
+                else None
+            )
             index = (
-                None
-                if state["button_payload"] is not None
-                else _resolve_choice(
-                    state["user_message"], [option.full_name for option in professional_options]
+                button_index
+                if button_index is not None
+                else (
+                    None
+                    if state["button_payload"] is not None
+                    else _resolve_choice(
+                        state["user_message"], [option.full_name for option in professional_options]
+                    )
                 )
             )
             if index is None:
@@ -2191,10 +2318,12 @@ def create_appointment_node(
                     "esa especialidad",
                 )
                 await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                listing = _numbered_list([matched_professional.full_name])
                 return {
-                    "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
-                    "response_buttons": [_MAIN_MENU_BUTTON],
+                    "response_text": _CHOOSE_PROFESSIONAL_PROMPT,
+                    "response_buttons": None,
+                    "response_list": professionals_list_message(
+                        [matched_professional], include_back=True
+                    ),
                     "requires_handoff": False,
                     "collected_data": {
                         **collected_data,
@@ -2203,6 +2332,7 @@ def create_appointment_node(
                         "chosen_specialty_id": matched_professional.specialty_id,
                         "chosen_specialty_name": specialty_name,
                         "professional_options": [matched_professional],
+                        "doctors_page": 0,
                     },
                 }
 
@@ -2240,7 +2370,11 @@ def create_appointment_node(
             state["contact_memory_summary"],
         )
         return {
+<<<<<<< Updated upstream
             "response_text": text,
+=======
+            "response_text": _operation_menu_message(state.get("known_patient_name")),
+>>>>>>> Stashed changes
             "response_buttons": _OPERATION_BUTTONS,
             "requires_handoff": False,
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_OPERATION_SELECTION},

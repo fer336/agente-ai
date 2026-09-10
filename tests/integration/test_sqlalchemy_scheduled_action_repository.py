@@ -3,6 +3,8 @@ from datetime import UTC, datetime, timedelta
 from app.domain.entities.scheduled_action import ScheduledAction
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.idempotency_key import IdempotencyKey
+from app.infrastructure.database.models.contact import ContactModel
+from app.infrastructure.database.models.conversation import ConversationModel
 from app.infrastructure.database.repositories.scheduled_action_repository import (
     SqlAlchemyScheduledActionRepository,
 )
@@ -148,3 +150,58 @@ async def test_transition_status_fails_when_status_no_longer_matches_from_status
     fetched = await repository.get_by_id("sa-3")
     assert fetched is not None
     assert fetched.status == "processing"
+
+
+async def test_save_accepts_a_scheduled_action_with_no_pending_action_yet(
+    db_session, conversation_id
+):
+    # An inactivity follow-up for a patient stuck mid-flow (still typing
+    # their DNI, say) has no `PendingAction` to attach to — this is the
+    # migration 0011 change (`pending_action_id` now nullable) exercised
+    # for real against Postgres.
+    repository = SqlAlchemyScheduledActionRepository(db_session)
+    now = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
+    scheduled_action = ScheduledAction(
+        id="sa-no-pending",
+        conversation_id=ConversationId(value=conversation_id),
+        pending_action_id=None,
+        action_type="appointment_flow_follow_up_prompt",
+        status="scheduled",
+        scheduled_for=now,
+        idempotency_key=IdempotencyKey(value="idem-sa-no-pending"),
+        attempts=0,
+    )
+
+    await repository.save(scheduled_action)
+    fetched = await repository.get_by_id("sa-no-pending")
+
+    assert fetched is not None
+    assert fetched.pending_action_id is None
+
+
+async def test_get_scheduled_by_conversation_id_returns_only_this_conversations_scheduled_rows(
+    db_session, conversation_id, pending_action_id
+):
+    repository = SqlAlchemyScheduledActionRepository(db_session)
+    now = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
+    await repository.save(
+        _scheduled_action(conversation_id, pending_action_id, "sa-scheduled", "scheduled", now)
+    )
+    await repository.save(
+        _scheduled_action(conversation_id, pending_action_id, "sa-cancelled", "cancelled", now)
+    )
+    other_contact = ContactModel(id="contact-other", phone="+5491100000001")
+    db_session.add(other_contact)
+    await db_session.flush()
+    other_conversation = ConversationModel(
+        id="conv-other", contact_id="contact-other", mode="agent"
+    )
+    db_session.add(other_conversation)
+    await db_session.flush()
+    await repository.save(
+        _scheduled_action("conv-other", pending_action_id, "sa-other-conv", "scheduled", now)
+    )
+
+    found = await repository.get_scheduled_by_conversation_id(conversation_id)
+
+    assert [action.id for action in found] == ["sa-scheduled"]

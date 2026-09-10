@@ -16,6 +16,7 @@ def make_agent_state(**overrides: object) -> AgentState:
         "button_payload": None,
         "recent_messages": [],
         "contact_memory_summary": None,
+        "known_patient_name": None,
         "intent": None,
         "appointment_action": None,
         "collected_data": {},

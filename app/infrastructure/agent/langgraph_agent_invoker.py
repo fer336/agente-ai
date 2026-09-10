@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -13,6 +13,7 @@ from app.agent.graph import compile_graph
 from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
+from app.application.appointments.schedule_follow_up import ScheduleFollowUpUseCase
 from app.application.errors.error_service import ErrorService
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.memory.memory_service import MemoryService
@@ -125,6 +126,7 @@ class LangGraphAgentInvoker:
         memory_recent_window_size: int,
         redis_client: Redis,
         confirmation_timeout_seconds: int,
+        follow_up_prompt_delay_seconds: int,
         trace_repositories_provider: TraceRepositoriesProvider,
         prompt_version: str,
         model: str,
@@ -151,6 +153,7 @@ class LangGraphAgentInvoker:
         self._memory_recent_window_size = memory_recent_window_size
         self._redis_client = redis_client
         self._confirmation_timeout_seconds = confirmation_timeout_seconds
+        self._follow_up_prompt_delay_seconds = follow_up_prompt_delay_seconds
         self._trace_repositories_provider = trace_repositories_provider
         self._prompt_version = prompt_version
         self._model = model
@@ -215,6 +218,7 @@ class LangGraphAgentInvoker:
             )
 
             async with self._repositories_provider() as repositories:
+<<<<<<< Updated upstream
                 # Capture the generation exactly once. A terminal node may rotate
                 # persistence while this invocation is still finishing on the old thread.
                 workflow_conversation = await repositories.conversations.get_by_id(conversation_id)
@@ -226,6 +230,21 @@ class LangGraphAgentInvoker:
                 config: RunnableConfig = {
                     "configurable": {"thread_id": f"{conversation_id}:session:{generation}"}
                 }
+=======
+                # Resolved once, up front, and reused both to seed this
+                # turn's `known_patient_name`/memory context AND — after
+                # `ainvoke` below — to send the reply and persist
+                # `contact.patient_id`. Nothing a node runs this turn
+                # mutates `contact_id`/`phone`, so this single snapshot
+                # stays valid for the whole call.
+                conversation = await repositories.conversations.get_by_id(conversation_id)
+                contact = (
+                    await repositories.contacts.get_by_id(conversation.contact_id)
+                    if conversation is not None
+                    else None
+                )
+
+>>>>>>> Stashed changes
                 compiled_graph = compile_graph(
                     self._appointment_gateway,
                     self._agreement_gateway,
@@ -253,27 +272,30 @@ class LangGraphAgentInvoker:
 
                 recent_messages: list[dict[str, str]] = []
                 contact_memory_summary: str | None = None
-                conversation_for_memory = await repositories.conversations.get_by_id(
-                    conversation_id
-                )
-                if conversation_for_memory is not None:
-                    contact_for_memory = await repositories.contacts.get_by_id(
-                        conversation_for_memory.contact_id
+                if contact is not None:
+                    memory_service = MemoryService(
+                        contact_memory_repository=repositories.contact_memories,
+                        message_repository=repositories.messages,
+                        llm_provider=self._llm_provider,
+                        recent_window_size=self._memory_recent_window_size,
+                        redis_client=self._redis_client,
                     )
-                    if contact_for_memory is not None:
-                        memory_service = MemoryService(
-                            contact_memory_repository=repositories.contact_memories,
-                            message_repository=repositories.messages,
-                            llm_provider=self._llm_provider,
-                            recent_window_size=self._memory_recent_window_size,
-                            redis_client=self._redis_client,
-                        )
-                        (
-                            recent_messages,
-                            contact_memory_summary,
-                        ) = await memory_service.build_agent_context(
-                            conversation_id, contact_for_memory.id
-                        )
+                    (
+                        recent_messages,
+                        contact_memory_summary,
+                    ) = await memory_service.build_agent_context(conversation_id, contact.id)
+
+                # Text only — greeting a returning contact by name. Never a
+                # basis to skip identification before a sensitive
+                # operation (`PatientGateway.get_patient_by_id`'s own
+                # docstring): the phone number that led here is not proof.
+                known_patient_name: str | None = None
+                if contact is not None and contact.patient_id is not None:
+                    known_patient = await self._patient_gateway.get_patient_by_id(
+                        contact.patient_id
+                    )
+                    if known_patient is not None:
+                        known_patient_name = known_patient.full_name
 
                 fresh_restart = bool(
                     conversation_for_memory is not None
@@ -286,6 +308,7 @@ class LangGraphAgentInvoker:
                     "button_payload": button_payload,
                     "recent_messages": recent_messages,
                     "contact_memory_summary": contact_memory_summary,
+                    "known_patient_name": known_patient_name,
                     "intent": None,
                     "appointment_action": previous_values.get("appointment_action"),
                     "collected_data": {
@@ -341,9 +364,9 @@ class LangGraphAgentInvoker:
                     # send.
                     return
 
-                conversation = await repositories.conversations.get_by_id(conversation_id)
                 if conversation is None:
                     return
+<<<<<<< Updated upstream
                 if conversation.awaiting_fresh_restart and result.get(
                     "collected_data", {}
                 ).get(FRESH_RESTART_STATE_KEY) is not True:
@@ -362,10 +385,13 @@ class LangGraphAgentInvoker:
                     conversation.awaiting_fresh_restart = False
                     await repositories.conversations.save(conversation)
                 contact = await repositories.contacts.get_by_id(conversation.contact_id)
+=======
+>>>>>>> Stashed changes
                 if contact is None:
                     return
                 phone = contact.phone
 
+<<<<<<< Updated upstream
         try:
             await self._send_reply.execute(
                 phone,
@@ -396,6 +422,51 @@ class LangGraphAgentInvoker:
                 agent_run_id=agent_run_id,
                 technical_detail=repr(exc),
                 operation="send_reply",
+            )
+=======
+                # A returning contact is recognized on their NEXT trámite:
+                # persist whichever patient this turn ended up working
+                # with, so a future `known_patient_name` lookup finds them.
+                # Never gates any action THIS turn — only affects a future
+                # greeting's wording.
+                turn_patient = result.get("collected_data", {}).get("patient")
+                if isinstance(turn_patient, dict):
+                    turn_patient_id = turn_patient.get("id")
+                    if isinstance(turn_patient_id, str) and turn_patient_id != contact.patient_id:
+                        await repositories.contacts.save(
+                            replace(contact, patient_id=turn_patient_id)
+                        )
+
+                # This session's own brief: a patient stuck mid-flow (the
+                # appointment node's own `stage`, the only sub-flow that
+                # can leave anything "a medio camino") gets a 20-minute
+                # inactivity follow-up. A terminal/no-stage result cancels
+                # whatever follow-up a PRIOR turn may have left scheduled —
+                # the patient just spoke, so it's stale either way.
+                turn_stage = result.get("collected_data", {}).get("stage")
+                async with self._proposal_repositories_provider() as proposal_repositories:
+                    await ScheduleFollowUpUseCase(
+                        proposal_repositories.scheduled_actions,
+                        prompt_delay_seconds=self._follow_up_prompt_delay_seconds,
+                    ).reconcile(conversation_id, turn_stage)
+
+        await self._send_reply.execute(phone, response_text, response_buttons)
+>>>>>>> Stashed changes
+
+        # Recorded only once the send above raised no exception — a
+        # registered outbound message that never actually reached the
+        # patient would wrongly convince the follow-up worker "the agent
+        # already spoke," suppressing a follow-up that was still needed.
+        async with self._repositories_provider() as post_send_repositories:
+            memory_service = MemoryService(
+                contact_memory_repository=post_send_repositories.contact_memories,
+                message_repository=post_send_repositories.messages,
+                llm_provider=self._llm_provider,
+                recent_window_size=self._memory_recent_window_size,
+                redis_client=self._redis_client,
+            )
+            await memory_service.record_outbound_message(
+                conversation_id, response_text, datetime.now(UTC)
             )
 
 

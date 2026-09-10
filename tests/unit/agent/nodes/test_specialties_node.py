@@ -38,8 +38,9 @@ async def test_naming_a_specialty_lists_its_professionals_and_continues_the_book
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-2"
-    assert "Dra. Laura Pérez" in result["response_text"]
-    assert "Dr. Otro" not in result["response_text"]
+    assert result["response_list"] is not None
+    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
+    assert "Dr. Otro" not in [r.title for r in result["response_list"].rows]
 
 
 @pytest.mark.asyncio
@@ -63,8 +64,9 @@ async def test_naming_a_professional_directly_skips_the_specialty_question():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
-    assert "Carlos Adahenao" in result["response_text"]
-    assert "Camila Carasatorre" not in result["response_text"]
+    assert result["response_list"] is not None
+    assert "Carlos Adahenao" in result["response_list"].rows[0].title
+    assert "Camila Carasatorre" not in [r.title for r in result["response_list"].rows]
 
 
 @pytest.mark.asyncio
@@ -85,9 +87,10 @@ async def test_naming_an_unstaffed_specialty_falls_back_to_the_staffed_catalog()
 
     result = await node(make_agent_state(user_message="quiero general"))
 
-    assert "Ortodoncia" in result["response_text"]
-    assert "General" not in result["response_text"]
-    assert "collected_data" not in result
+    assert result["response_list"] is not None
+    assert "Ortodoncia" in result["response_list"].rows[0].title
+    assert "General" not in [r.title for r in result["response_list"].rows]
+    assert result["collected_data"] == {"specialties_page": 0}
 
 
 @pytest.mark.asyncio
@@ -105,8 +108,9 @@ async def test_lists_every_configured_specialty():
 
     result = await node(make_agent_state(user_message="¿Qué especialidades tienen?"))
 
-    assert "Ortodoncia" in result["response_text"]
-    assert "Endodoncia" in result["response_text"]
+    assert result["response_list"] is not None
+    assert "Ortodoncia" in result["response_list"].rows[0].title
+    assert "Endodoncia" in result["response_list"].rows[1].title
     assert result["requires_handoff"] is False
 
 

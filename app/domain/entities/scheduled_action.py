@@ -11,7 +11,11 @@ class ScheduledAction:
 
     id: str
     conversation_id: ConversationId
-    pending_action_id: str
+    #: `None` for a follow-up scheduled BEFORE any `PendingAction` exists —
+    #: a patient stuck mid-flow (e.g. still typing their DNI) has nothing
+    #: to confirm yet. Only the original `appointment_confirmation_timeout`
+    #: `action_type` requires one.
+    pending_action_id: str | None
     action_type: str
     status: str
     scheduled_for: datetime

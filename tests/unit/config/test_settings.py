@@ -125,6 +125,37 @@ def test_settings_reads_appointment_confirmation_timeout_from_env(monkeypatch):
     assert settings.appointment_confirmation_timeout_seconds == 90
 
 
+def test_settings_defaults_appointment_follow_up_fields_when_no_env_vars(monkeypatch):
+    for var in (
+        "APPOINTMENT_FOLLOW_UP_PROMPT_DELAY_SECONDS",
+        "APPOINTMENT_FOLLOW_UP_RESET_DELAY_SECONDS",
+        "FOLLOW_UP_WORKER_INTERVAL_SECONDS",
+        "FOLLOW_UP_WORKER_BATCH_LIMIT",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.appointment_follow_up_prompt_delay_seconds == 1200
+    assert settings.appointment_follow_up_reset_delay_seconds == 1200
+    assert settings.follow_up_worker_interval_seconds == 60
+    assert settings.follow_up_worker_batch_limit == 50
+
+
+def test_settings_reads_appointment_follow_up_fields_from_env(monkeypatch):
+    monkeypatch.setenv("APPOINTMENT_FOLLOW_UP_PROMPT_DELAY_SECONDS", "600")
+    monkeypatch.setenv("APPOINTMENT_FOLLOW_UP_RESET_DELAY_SECONDS", "300")
+    monkeypatch.setenv("FOLLOW_UP_WORKER_INTERVAL_SECONDS", "30")
+    monkeypatch.setenv("FOLLOW_UP_WORKER_BATCH_LIMIT", "25")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.appointment_follow_up_prompt_delay_seconds == 600
+    assert settings.appointment_follow_up_reset_delay_seconds == 300
+    assert settings.follow_up_worker_interval_seconds == 30
+    assert settings.follow_up_worker_batch_limit == 25
+
+
 def test_settings_defaults_dentalink_fields_when_no_env_vars(monkeypatch):
     for var in (
         "DENTALINK_API_URL",

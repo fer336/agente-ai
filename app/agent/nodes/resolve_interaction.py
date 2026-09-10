@@ -2,6 +2,8 @@ from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
@@ -11,6 +13,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
+    SPECIALTY_PAYLOAD_PREFIX,
 )
 
 #: Minimum classifier confidence to act on it — below this, PRD.md §8's
@@ -49,7 +52,28 @@ _MENU_BUTTON_INTENTS = {
     OPERATION_RESCHEDULE_PAYLOAD: "appointment",
     OPERATION_CANCEL_PAYLOAD: "appointment",
     OPERATION_VIEW_PAYLOAD: "appointment",
+    #: Paginated interactive-list navigation (this change). With no active
+    #: stage, a stray tap must still land somewhere sane: 'Ver más' on a
+    #: stale list re-opens the specialties catalog (the only paginated
+    #: screen reachable without a stage), a `SPECIALTY:{id}` row tap opens
+    #: that specialty's professionals, and 'Volver atrás' re-shows the
+    #: welcome menu (the appointment node owns the main-menu reset).
+    LIST_MORE_PAYLOAD: "specialties",
+    LIST_BACK_PAYLOAD: "appointment",
 }
+
+#: Prefix-matched payloads (checked before the exact-match table): any
+#: `SPECIALTY:{id}` row routes to the specialties node.
+_ROW_PAYLOAD_ROUTES: tuple[tuple[str, str], ...] = (
+    (SPECIALTY_PAYLOAD_PREFIX, "specialties"),
+)
+
+
+def _route_button_payload(payload: str) -> str | None:
+    for prefix, intent in _ROW_PAYLOAD_ROUTES:
+        if payload.startswith(prefix):
+            return intent
+    return _MENU_BUTTON_INTENTS.get(payload)
 
 
 def create_resolve_interaction_node(
@@ -92,7 +116,7 @@ def create_resolve_interaction_node(
                 return {"intent": "handoff"}
             if has_active_stage:
                 return {"intent": "appointment"}
-            intent = _MENU_BUTTON_INTENTS.get(state["button_payload"])
+            intent = _route_button_payload(state["button_payload"])
             return {"intent": intent if intent is not None else "unknown"}
 
         result = await llm_provider.understand(state["user_message"], context={})

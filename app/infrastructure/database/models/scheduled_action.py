@@ -16,8 +16,8 @@ class ScheduledActionModel(Base):
     conversation_id: Mapped[str] = mapped_column(
         String, ForeignKey("conversations.id"), nullable=False
     )
-    pending_action_id: Mapped[str] = mapped_column(
-        String, ForeignKey("pending_actions.id"), nullable=False
+    pending_action_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("pending_actions.id"), nullable=True
     )
     action_type: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)

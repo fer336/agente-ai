@@ -427,3 +427,26 @@ async def create_checkpointer(pool: "PostgresCheckpointerPool") -> "AsyncPostgre
     )
     await saver.setup()
     return saver
+
+
+def build_state_reset_graph(
+    checkpointer: "BaseCheckpointSaver[Any]",
+) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
+    """A dependency-free `AgentState` graph, compiled ONLY so
+    `aupdate_state` has something to call it on.
+
+    This session's own brief: the inactivity follow-up worker resets a
+    stuck trámite's `collected_data` from OUTSIDE any real turn — no
+    `appointment_gateway`/`agreement_gateway`/etc. involved, so building
+    the full `compile_graph(...)` just for this would drag in a dozen
+    unrelated dependencies the worker has no use for. Verified directly:
+    `aupdate_state` against this minimal graph correctly updates the SAME
+    `thread_id`'s checkpoint the fully-wired graph reads/writes, because
+    both share one checkpointer and the same `AgentState` schema — no node
+    here ever actually runs.
+    """
+    graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
+    graph.add_node("noop", lambda _state: {})
+    graph.add_edge(START, "noop")
+    graph.add_edge("noop", END)
+    return graph.compile(checkpointer=checkpointer)

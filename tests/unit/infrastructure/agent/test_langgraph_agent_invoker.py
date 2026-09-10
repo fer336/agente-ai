@@ -6,8 +6,12 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.graph import compile_graph
+<<<<<<< Updated upstream
 from app.agent.nodes.appointment import OPERATION_CREATE_PAYLOAD
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
+=======
+from app.agent.nodes.appointment import OPERATION_CREATE_PAYLOAD, SELECT_SLOT_PAYLOAD_PREFIX
+>>>>>>> Stashed changes
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact_memory import ContactMemory
@@ -35,6 +39,7 @@ from tests.fixtures.gateways import (
     make_node_execution_repository,
     make_patient_gateway,
     make_proposal_repositories_provider,
+    make_scheduled_action_repository,
     make_send_reply_use_case,
     make_specialty_gateway,
     make_telegram_notifier,
@@ -120,6 +125,7 @@ def _make_invoker(
         memory_recent_window_size=15,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        follow_up_prompt_delay_seconds=1200,
         trace_repositories_provider=(
             trace_repositories_provider or make_trace_repositories_provider()
         ),
@@ -260,6 +266,124 @@ async def test_handle_populates_agent_state_with_the_contacts_memory_context():
 
 
 @pytest.mark.asyncio
+async def test_handle_populates_known_patient_name_from_a_linked_contact():
+    checkpointer = MemorySaver()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(
+        make_contact(id_="contact-1", phone="+5491122334455", patient_id="pat-1")
+    )
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    patient_gateway = make_patient_gateway(
+        patients=[make_patient(id_="pat-1", full_name="Fernando Ariel", dni="30123456")]
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        patient_gateway=patient_gateway,
+        checkpointer=checkpointer,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+
+    compiled_graph = compile_graph(
+        appointment_gateway=make_dentalink_gateway(),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=patient_gateway,
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-verify",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    )
+    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1"}})
+
+    assert snapshot.values["known_patient_name"] == "Fernando Ariel"
+
+
+@pytest.mark.asyncio
+async def test_handle_never_breaks_when_the_linked_patient_no_longer_exists():
+    # `contact.patient_id` points at a record Dentalink no longer has
+    # (deleted/merged) — this must degrade to no greeting, never crash the
+    # turn or block the reply.
+    contact_repository = make_contact_repository()
+    conversation_repository = make_conversation_repository()
+    await contact_repository.save(
+        make_contact(id_="contact-1", phone="+5491122334455", patient_id="pat-gone")
+    )
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        patient_gateway=make_patient_gateway(),
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+
+    # "hola" with no stage yet lands on the operation menu, which always
+    # carries buttons — the point of this test is that a turn was answered
+    # at all, not which channel it went out on.
+    assert len(messaging_gateway.sent_messages) + len(messaging_gateway.sent_buttons) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_persists_contact_patient_id_after_a_successful_identification():
+    # A returning-contact greeting on the NEXT trámite depends on this:
+    # `contact.patient_id` must survive past the conversation that first
+    # identified them.
+    checkpointer = MemorySaver()
+    slot = _future_slot()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    patient_gateway = make_patient_gateway(
+        patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot], professionals=[make_professional(id_="prof-1")]
+        ),
+        patient_gateway=patient_gateway,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
+        checkpointer=checkpointer,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
+    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
+    await invoker.handle(
+        ConversationId("conv-1"),
+        ["msg-5"],
+        "",
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+
+    contact = await contact_repository.get_by_id("contact-1")
+    assert contact is not None
+    assert contact.patient_id == "pat-1"
+
+
+@pytest.mark.asyncio
 async def test_handle_works_without_a_checkpointer_provider():
     conversation_repository = make_conversation_repository()
     contact_repository = make_contact_repository()
@@ -291,6 +415,7 @@ async def test_handle_works_without_a_checkpointer_provider():
         memory_recent_window_size=15,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        follow_up_prompt_delay_seconds=1200,
         trace_repositories_provider=make_trace_repositories_provider(),
         prompt_version="agent-system-v0.1.0",
         model="gpt-4o-mini",
@@ -578,3 +703,83 @@ async def test_handle_does_not_seed_fresh_restart_when_the_flag_is_absent():
     # Normal turn: no welcome list was forced.
     assert messaging_gateway.sent_lists == []
     assert len(messaging_gateway.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_schedules_a_follow_up_when_the_tramite_is_left_mid_flow():
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    scheduled_action_repository = make_scheduled_action_repository()
+    proposal_repositories_provider = make_proposal_repositories_provider(
+        scheduled_actions=scheduled_action_repository
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        proposal_repositories_provider=proposal_repositories_provider,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
+    )
+
+    # "Quiero un turno" mentions "turno" — the fake LLM's `understand()`
+    # reads that as operation_mention="create" and skips straight to the
+    # numbered specialty list (awaiting_specialty_selection), a
+    # non-terminal stage since a specialty is seeded above.
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
+
+    scheduled = await scheduled_action_repository.get_scheduled_by_conversation_id("conv-1")
+    assert len(scheduled) == 1
+    assert scheduled[0].action_type == "appointment_flow_follow_up_prompt"
+
+
+@pytest.mark.asyncio
+async def test_handle_cancels_the_follow_up_once_the_tramite_ends():
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    scheduled_action_repository = make_scheduled_action_repository()
+    proposal_repositories_provider = make_proposal_repositories_provider(
+        scheduled_actions=scheduled_action_repository
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        proposal_repositories_provider=proposal_repositories_provider,
+    )
+
+    # "¿Trabajan con OSDE?" resolves in the agreement node in one turn —
+    # never leaves a `collected_data["stage"]` behind.
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    assert await scheduled_action_repository.get_scheduled_by_conversation_id("conv-1") == []
+
+
+@pytest.mark.asyncio
+async def test_handle_records_the_reply_as_an_outbound_message():
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    message_repository = make_message_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        message_repository=message_repository,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    outbound = [
+        message
+        for message in await message_repository.get_by_conversation_id(ConversationId("conv-1"))
+        if message.direction == "outbound"
+    ]
+    assert len(outbound) == 1
