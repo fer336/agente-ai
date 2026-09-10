@@ -5,6 +5,32 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+#: Re-exported for backward compatibility: `specialties.py`/tests import
+#: `SELECT_SLOT_PAYLOAD_PREFIX` from this module. The `as`-self-alias is
+#: the standard idiom for telling ruff/pyflakes this is an intentional
+#: re-export, not dead code.
+from app.agent.nodes.appointment_selection import (
+    SELECT_SLOT_PAYLOAD_PREFIX as SELECT_SLOT_PAYLOAD_PREFIX,
+)
+from app.agent.nodes.appointment_selection import (
+    current_page,
+    next_page,
+    resolve_list_choice,
+    slot_by_id,
+    slot_payload_id,
+)
+from app.agent.nodes.appointment_selection import (
+    format_slot_option as _format_slot_option,
+)
+from app.agent.nodes.appointment_selection import (
+    numbered_list as _numbered_list,
+)
+from app.agent.nodes.appointment_selection import (
+    resolve_by_name as _resolve_by_name,
+)
+from app.agent.nodes.appointment_selection import (
+    slot_button as _slot_button,
+)
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -190,7 +216,8 @@ _OPERATION_BY_PAYLOAD = {
     OPERATION_VIEW_PAYLOAD: RESCHEDULE_APPOINTMENT_ACTION,
 }
 SELECT_APPOINTMENT_PAYLOAD_PREFIX = "SELECT_APPOINTMENT:"
-SELECT_SLOT_PAYLOAD_PREFIX = "SELECT_SLOT:"
+#: `SELECT_SLOT_PAYLOAD_PREFIX` now lives in `appointment_selection.py`
+#: (imported above) alongside the payload-resolution helpers that use it.
 CONFIRM_APPOINTMENT_PAYLOAD = "CONFIRM_APPOINTMENT"
 REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
 RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD = "RESCHEDULE_KEEP_PROFESSIONAL"
@@ -465,43 +492,11 @@ def _extract_identification_pieces(text: str) -> tuple[str | None, str | None]:
     return stripped, None
 
 
-#: A patient answering a numbered list types "2", "2." or "opción 2" —
-#: never more than three digits, since no catalog here is that long.
-_NUMBERED_CHOICE_PATTERN = re.compile(r"\b(\d{1,3})\b")
-
-
-def _resolve_numbered_choice(text: str, option_count: int) -> int | None:
-    """Maps a patient's 1-based reply to a 0-based index into the list they
-    were just shown, or `None` when it isn't a number in range."""
-    match = _NUMBERED_CHOICE_PATTERN.search(text)
-    if match is None:
-        return None
-    index = int(match.group(1)) - 1
-    return index if 0 <= index < option_count else None
-
-
-def _resolve_by_name(text: str, names: list[str]) -> int | None:
-    """Falls back to matching a catalog name found inside the message —
-    same idiom `agreement.py` already uses for obra social names, so a
-    patient who types "quiero ortodoncia" instead of "1" still gets
-    through."""
-    lowered = text.casefold()
-    for index, name in enumerate(names):
-        if name.casefold() in lowered:
-            return index
-    return None
-
-
-def _resolve_choice(text: str, names: list[str]) -> int | None:
-    """Number first (what the list explicitly asked for), name second."""
-    by_number = _resolve_numbered_choice(text, len(names))
-    if by_number is not None:
-        return by_number
-    return _resolve_by_name(text, names)
-
-
-def _numbered_list(names: list[str]) -> str:
-    return "\n".join(f"{position}. {name}" for position, name in enumerate(names, start=1))
+#: Numbered-choice/name resolution, list-choice resolution (row tap vs.
+#: free-text number/name fallback), and `_numbered_list` rendering all now
+#: live in `appointment_selection.py` (imported above as `_resolve_by_name`,
+#: `resolve_list_choice`, and `_numbered_list`) — extracted with no
+#: behavior change so the create-selection subgraph (PR 2) can reuse them.
 
 
 def resolve_by_name(text: str, names: list[str]) -> int | None:
@@ -578,16 +573,9 @@ def _merge_identification(
     )
 
 
-def _format_slot_option(slot: AppointmentSlot, professional_names: dict[str, str]) -> str:
-    professional_name = professional_names.get(slot.professional_id, "Profesional")
-    return f"- {professional_name}: {slot.time_range.start.strftime('%A %d/%m %H:%M hs')}"
-
-
-def _slot_button(slot: AppointmentSlot) -> InteractiveButton:
-    return InteractiveButton(
-        id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-        title=slot.time_range.start.strftime("%d/%m %H:%M"),
-    )
+#: `_format_slot_option` and `_slot_button` now live in
+#: `appointment_selection.py` (imported above) — same no-behavior-change
+#: extraction as the payload/pagination helpers.
 
 
 def _format_appointment_option(appointment: Appointment, professional_names: dict[str, str]) -> str:
@@ -997,7 +985,7 @@ def create_appointment_node(
             }
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        page = cast(int, collected_data.get("specialties_page", 0) or 0)
+        page = current_page(collected_data, "specialties_page")
         return {
             "response_text": _CHOOSE_SPECIALTY_PROMPT,
             "response_buttons": None,
@@ -1030,7 +1018,7 @@ def create_appointment_node(
             }
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        page = cast(int, collected_data.get("doctors_page", 0) or 0)
+        page = current_page(collected_data, "doctors_page")
         return {
             "response_text": _CHOOSE_PROFESSIONAL_PROMPT,
             "response_buttons": None,
@@ -1542,7 +1530,8 @@ def create_appointment_node(
                     state["contact_memory_summary"],
                 )
 
-            if button_payload is None or not button_payload.startswith(SELECT_SLOT_PAYLOAD_PREFIX):
+            slot_id = slot_payload_id(button_payload)
+            if slot_id is None:
                 message = (
                     _SLOT_SELECTION_REMINDER
                     if button_payload is None
@@ -1560,8 +1549,7 @@ def create_appointment_node(
                     "requires_handoff": False,
                 }
 
-            slot_id = button_payload[len(SELECT_SLOT_PAYLOAD_PREFIX) :]
-            selected = next((slot for slot in available_slots if slot.id == slot_id), None)
+            selected = slot_by_id(available_slots, slot_id)
             if selected is None:
                 professional_names = cast(
                     dict[str, str], collected_data.get("professional_names", {})
@@ -2147,9 +2135,9 @@ def create_appointment_node(
             # re-renders the next page, 'Volver atrás' pops back to the
             # main menu (this list is the flow's entry screen).
             if state["button_payload"] == LIST_MORE_PAYLOAD:
-                next_page = cast(int, collected_data.get("specialties_page", 0) or 0) + 1
+                updated_page = next_page(collected_data, "specialties_page")
                 return await _offer_specialties(
-                    conversation_id, {**collected_data, "specialties_page": next_page}
+                    conversation_id, {**collected_data, "specialties_page": updated_page}
                 )
             if state["button_payload"] == LIST_BACK_PAYLOAD:
                 await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
@@ -2165,27 +2153,12 @@ def create_appointment_node(
             # These stages now send list rows, so a `SPECIALTY:{id}` tap
             # resolves deterministically; anything else (stale payload,
             # free text) still falls back to number/name matching.
-            button_payload = state["button_payload"]
-            button_index = (
-                next(
-                    (
-                        index
-                        for index, option in enumerate(options)
-                        if button_payload == f"{SPECIALTY_PAYLOAD_PREFIX}{option.id}"
-                    ),
-                    None,
-                )
-                if button_payload is not None
-                else None
-            )
-            index = (
-                button_index
-                if button_index is not None
-                else (
-                    None
-                    if state["button_payload"] is not None
-                    else _resolve_choice(state["user_message"], [option.name for option in options])
-                )
+            index = resolve_list_choice(
+                button_payload=state["button_payload"],
+                user_message=state["user_message"],
+                payload_prefix=SPECIALTY_PAYLOAD_PREFIX,
+                option_ids=[option.id for option in options],
+                option_names=[option.name for option in options],
             )
             if index is None:
                 retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
@@ -2236,12 +2209,12 @@ def create_appointment_node(
             # 'Ver más' advances the page, 'Volver atrás' pops back to the
             # specialty list (the immediately previous screen).
             if state["button_payload"] == LIST_MORE_PAYLOAD:
-                next_page = cast(int, collected_data.get("doctors_page", 0) or 0) + 1
+                updated_page = next_page(collected_data, "doctors_page")
                 return await _offer_professionals(
                     conversation_id,
                     specialty_id,
                     str(collected_data.get("chosen_specialty_name", "")),
-                    {**collected_data, "doctors_page": next_page},
+                    {**collected_data, "doctors_page": updated_page},
                 )
             if state["button_payload"] == LIST_BACK_PAYLOAD:
                 return await _offer_specialties(
@@ -2251,29 +2224,12 @@ def create_appointment_node(
             # A `PROFESSIONAL:{id}` row tap resolves deterministically;
             # anything else (stale payload, free text) still falls back to
             # number/name matching.
-            button_payload = state["button_payload"]
-            button_index = (
-                next(
-                    (
-                        index
-                        for index, option in enumerate(professional_options)
-                        if button_payload == f"{PROFESSIONAL_PAYLOAD_PREFIX}{option.id}"
-                    ),
-                    None,
-                )
-                if button_payload is not None
-                else None
-            )
-            index = (
-                button_index
-                if button_index is not None
-                else (
-                    None
-                    if state["button_payload"] is not None
-                    else _resolve_choice(
-                        state["user_message"], [option.full_name for option in professional_options]
-                    )
-                )
+            index = resolve_list_choice(
+                button_payload=state["button_payload"],
+                user_message=state["user_message"],
+                payload_prefix=PROFESSIONAL_PAYLOAD_PREFIX,
+                option_ids=[option.id for option in professional_options],
+                option_names=[option.full_name for option in professional_options],
             )
             if index is None:
                 retry_count = cast(int, collected_data.get("professional_retry_count", 0)) + 1

@@ -11,6 +11,7 @@ from app.agent.nodes.appointment import (
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from tests.fixtures.agent_state import make_agent_state
@@ -197,3 +198,61 @@ async def test_specialty_row_tap_advances_to_professionals():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
+
+
+@pytest.mark.asyncio
+async def test_professional_list_more_tap_sends_the_next_page():
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
+        professionals=_professionals(20),
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=LIST_MORE_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "spec-1",
+            "chosen_specialty_name": "Ortodoncia",
+            "professional_options": _professionals(20),
+            "doctors_page": 0,
+        },
+    )
+
+    result = await node(state)
+
+    message = result["response_list"]
+    ids = [r.id for r in message.rows]
+    assert ids[:9] == [f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-{i}" for i in range(9, 18)]
+    assert ids[-1] == LIST_MORE_PAYLOAD
+    assert result["collected_data"]["doctors_page"] == 1
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+
+
+@pytest.mark.asyncio
+async def test_professional_list_back_returns_to_the_specialty_list():
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=LIST_BACK_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "spec-1",
+            "chosen_specialty_name": "Ortodoncia",
+            "professional_options": [make_professional(id_="prof-1", specialty_id="spec-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    # Going back to the specialty list invalidates the specialty choice and
+    # everything that depends on it, so the operation the patient is in the
+    # middle of is the only thing carried over.
+    assert "chosen_specialty_id" not in result["collected_data"]
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["response_list"] is not None
