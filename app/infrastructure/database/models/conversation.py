@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.models.base import Base
@@ -33,3 +33,9 @@ class ConversationModel(Base):
         BigInteger, nullable=False, server_default="1"
     )
     workflow_last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Clean-restart flag: set on `/bot` reactivation or the lazy 1h
+    # timeout, consumed (reset to False) by the next agent turn — see the
+    # domain entity's docstring.
+    awaiting_fresh_restart: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )

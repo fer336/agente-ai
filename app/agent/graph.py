@@ -9,6 +9,7 @@ from app.agent.nodes.appointment import create_appointment_node
 from app.agent.nodes.check_conversation_mode import create_check_conversation_mode_node
 from app.agent.nodes.error_handling import with_error_handling
 from app.agent.nodes.fallback import create_fallback_node
+from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, fresh_restart_node
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
@@ -45,6 +46,11 @@ if TYPE_CHECKING:
 #: effectively at `check_conversation_mode`.
 CHECK_CONVERSATION_MODE_NODE = "check_conversation_mode"
 RESOLVE_INTERACTION_NODE = "resolve_interaction"
+#: Deterministic clean-restart node (see `app.agent.nodes.fresh_restart`):
+#: the first turn after a `/bot` reactivation or the lazy 1h timeout routes
+#: straight here — skipping intent classification — and renders the
+#: canonical welcome menu instead of LLM-continuing the old thread.
+FRESH_RESTART_NODE = "fresh_restart"
 APPOINTMENT_NODE = "appointment"
 AGREEMENT_NODE = "agreement"
 SPECIALTIES_NODE = "specialties"
@@ -66,7 +72,17 @@ def _route_after_mode_check(state: AgentState) -> str:
         # ran yet — produce no reply, end the run silently (PRD.md §21:
         # "LangGraph NO responde automáticamente" while in HUMAN mode).
         return END
+    if (state.get("collected_data") or {}).get(FRESH_RESTART_STATE_KEY):
+        # Fresh reactivation (`/bot` or lazy 1h timeout): render the
+        # canonical welcome menu deterministically — skip intent
+        # classification entirely (see `fresh_restart.py`).
+        return FRESH_RESTART_NODE
     return RESOLVE_INTERACTION_NODE
+
+
+def _route_after_fresh_restart(state: AgentState) -> str:
+    """The fresh-restart turn IS the answer (welcome + main menu): end."""
+    return END
 
 
 def _route_after_resolve_interaction(state: AgentState) -> str:
@@ -164,6 +180,17 @@ def build_graph(
         ),
     )
     graph.add_node(
+        FRESH_RESTART_NODE,
+        with_error_handling(
+            FRESH_RESTART_NODE,
+            fresh_restart_node,
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
         APPOINTMENT_NODE,
         with_error_handling(
             APPOINTMENT_NODE,
@@ -240,8 +267,10 @@ def build_graph(
             HANDLE_ERROR_NODE: HANDLE_ERROR_NODE,
             END: END,
             RESOLVE_INTERACTION_NODE: RESOLVE_INTERACTION_NODE,
+            FRESH_RESTART_NODE: FRESH_RESTART_NODE,
         },
     )
+    graph.add_edge(FRESH_RESTART_NODE, END)
     graph.add_conditional_edges(
         RESOLVE_INTERACTION_NODE,
         _route_after_resolve_interaction,

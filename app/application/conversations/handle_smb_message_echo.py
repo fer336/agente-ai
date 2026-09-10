@@ -36,7 +36,15 @@ class HandleSmbMessageEchoUseCase:
        trimmed — see `webhook_parser.extract_bot_reactivation_command`),
        `mode` flips back to `"agent"` immediately and `input_state` resets
        to `FREE_INPUT`, mirroring `SyncConversationModeFromTagUseCase`'s
-       own paired write for the same transition.
+       own paired write for the same transition. It ALSO atomically rotates
+       the workflow session (CAS on the generation — the old stage /
+       collected_data die with the previous generation) and, when the
+       rotation wins, stamps `awaiting_fresh_restart` so the NEXT agent
+       turn renders the canonical welcome menu deterministically instead
+       of LLM-continuing the old thread. Durable messages/ContactMemory
+       are never touched.
+       A rotation CAS failure (a concurrent turn already rotated) must NOT
+       stamp the flag — that turn already consumed the fresh start.
 
     Silently no-ops when no conversation exists yet for the patient phone
     — ack-and-drop, same convention as `SyncConversationModeFromTagUseCase`
@@ -64,6 +72,18 @@ class HandleSmbMessageEchoUseCase:
         if is_reactivation_command:
             await self._set_conversation_mode.execute(conversation_id, "agent")
             await self._set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            rotation_won = await self._conversation_repository.rotate_workflow_session(
+                conversation_id, conversation.workflow_session_generation
+            )
+            if rotation_won:
+                await self._stamp_fresh_restart(conversation_id)
+
+    async def _stamp_fresh_restart(self, conversation_id: ConversationId) -> None:
+        conversation = await self._conversation_repository.get_by_id(conversation_id)
+        if conversation is None:
+            return
+        conversation.awaiting_fresh_restart = True
+        await self._conversation_repository.save(conversation)
 
     async def _touch_last_human_reply(self, conversation: Conversation) -> None:
         updated = Conversation(

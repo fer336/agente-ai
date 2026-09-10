@@ -34,6 +34,7 @@ class SqlAlchemyConversationRepository:
         model.last_human_reply_at = conversation.last_human_reply_at
         model.workflow_session_generation = conversation.workflow_session_generation
         model.workflow_last_activity_at = conversation.workflow_last_activity_at
+        model.awaiting_fresh_restart = conversation.awaiting_fresh_restart
         await self._session.flush()
 
     async def rotate_workflow_session(
@@ -70,4 +71,5 @@ def _to_entity(model: ConversationModel) -> Conversation:
         last_human_reply_at=model.last_human_reply_at,
         workflow_session_generation=model.workflow_session_generation,
         workflow_last_activity_at=model.workflow_last_activity_at,
+        awaiting_fresh_restart=model.awaiting_fresh_restart,
     )
