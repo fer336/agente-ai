@@ -22,6 +22,14 @@ services:
     image: ghcr.io/fer336/agente-ai:v0.22.2
     networks:
       - network_public
+    # Services on the shared Swarm overlay must use service discovery instead
+    # of leaving through the node's public IP and hairpinning back through the
+    # routing mesh. Credentials and all other settings still come from the
+    # Swarm secret below; these non-secret endpoints only select the internal
+    # data-plane route.
+    environment:
+      POSTGRES_HOST: postgres_postgres-vector
+      REDIS_HOST: redis_redis
     secrets:
       - source: agente_ai_backend_env
         target: /run/secrets/backend.env
