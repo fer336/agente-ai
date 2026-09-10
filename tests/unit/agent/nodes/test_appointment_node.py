@@ -44,6 +44,7 @@ from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
+    PROFESSIONAL_PAYLOAD_PREFIX,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
@@ -608,6 +609,54 @@ async def test_professional_selection_invalid_reprompts_same_list():
     state = make_agent_state(
         conversation_id="conv-1",
         user_message="nada que ver",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["professional_retry_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_button_during_professional_selection_is_treated_as_unrecognized():
+    # A tap on an older message that isn't a `PROFESSIONAL:{id}` row for the
+    # options currently on screen, `LIST_MORE`/`LIST_BACK`, or one of the
+    # main-menu-equivalent reset payloads must fall through to unrecognized,
+    # never crash or silently accept an unrelated payload.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_professional_row_tap_with_a_stale_id_reprompts_same_list():
+    # A `PROFESSIONAL:{id}` tap whose id isn't in the currently-offered
+    # options (an older list message still on the patient's phone) must not
+    # fall back to number/name matching — it's rejected outright, same as
+    # the specialty list's stale-row-payload behavior.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-old",
         collected_data={
             "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
             "operation": CREATE_APPOINTMENT_ACTION,
