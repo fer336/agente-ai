@@ -59,6 +59,8 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
@@ -67,6 +69,12 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
+    PROFESSIONAL_PAYLOAD_PREFIX,
+    SPECIALTY_PAYLOAD_PREFIX,
+)
+from app.domain.value_objects.paginated_list import (
+    specialties_list_message,
+    professionals_list_message,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
@@ -970,15 +978,19 @@ def create_appointment_node(
             }
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        listing = _numbered_list([specialty.name for specialty in specialties])
+        page = cast(int, collected_data.get("specialties_page", 0) or 0)
         return {
-            "response_text": f"{_CHOOSE_SPECIALTY_PROMPT}\n\n{listing}",
-            "response_buttons": [_MAIN_MENU_BUTTON],
+            "response_text": _CHOOSE_SPECIALTY_PROMPT,
+            "response_buttons": None,
+            "response_list": specialties_list_message(
+                specialties, page=page, include_back=True
+            ),
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
                 "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
                 "specialty_options": specialties,
+                "specialties_page": page,
             },
         }
 
@@ -999,10 +1011,13 @@ def create_appointment_node(
             }
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        listing = _numbered_list([professional.full_name for professional in professionals])
+        page = cast(int, collected_data.get("doctors_page", 0) or 0)
         return {
-            "response_text": f"{_CHOOSE_PROFESSIONAL_PROMPT}\n\n{listing}",
-            "response_buttons": [_MAIN_MENU_BUTTON],
+            "response_text": _CHOOSE_PROFESSIONAL_PROMPT,
+            "response_buttons": None,
+            "response_list": professionals_list_message(
+                professionals, page=page, include_back=True
+            ),
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
@@ -1010,6 +1025,7 @@ def create_appointment_node(
                 "chosen_specialty_id": specialty_id,
                 "chosen_specialty_name": specialty_name,
                 "professional_options": professionals,
+                "doctors_page": page,
             },
         }
 
@@ -2015,12 +2031,49 @@ def create_appointment_node(
             if not options:
                 return await _offer_specialties(conversation_id, collected_data)
 
-            # These stages never send buttons, so any payload arriving
-            # here is a tap on an older message still on the phone.
+            # Navigation rows for the paginated specialty list: 'Ver más'
+            # re-renders the next page, 'Volver atrás' pops back to the
+            # main menu (this list is the flow's entry screen).
+            if state["button_payload"] == LIST_MORE_PAYLOAD:
+                next_page = cast(int, collected_data.get("specialties_page", 0) or 0) + 1
+                return await _offer_specialties(
+                    conversation_id, {**collected_data, "specialties_page": next_page}
+                )
+            if state["button_payload"] == LIST_BACK_PAYLOAD:
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                return {
+                    "response_text": WELCOME_TEXT,
+                    "response_buttons": None,
+                    "response_list": WELCOME_LIST,
+                    "requires_handoff": False,
+                    "pending_action_id": None,
+                    "collected_data": {},
+                }
+
+            # These stages now send list rows, so a `SPECIALTY:{id}` tap
+            # resolves deterministically; anything else (stale payload,
+            # free text) still falls back to number/name matching.
+            button_payload = state["button_payload"]
+            button_index = (
+                next(
+                    (
+                        index
+                        for index, option in enumerate(options)
+                        if button_payload == f"{SPECIALTY_PAYLOAD_PREFIX}{option.id}"
+                    ),
+                    None,
+                )
+                if button_payload is not None
+                else None
+            )
             index = (
-                None
-                if state["button_payload"] is not None
-                else _resolve_choice(state["user_message"], [option.name for option in options])
+                button_index
+                if button_index is not None
+                else (
+                    None
+                    if state["button_payload"] is not None
+                    else _resolve_choice(state["user_message"], [option.name for option in options])
+                )
             )
             if index is None:
                 retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
@@ -2067,11 +2120,45 @@ def create_appointment_node(
             if not professional_options or specialty_id is None:
                 return await _offer_specialties(conversation_id, collected_data)
 
+            # Navigation rows for the paginated professionals list:
+            # 'Ver más' advances the page, 'Volver atrás' pops back to the
+            # specialty list (the immediately previous screen).
+            if state["button_payload"] == LIST_MORE_PAYLOAD:
+                next_page = cast(int, collected_data.get("doctors_page", 0) or 0) + 1
+                return await _offer_professionals(
+                    conversation_id,
+                    specialty_id,
+                    str(collected_data.get("chosen_specialty_name", "")),
+                    {**collected_data, "doctors_page": next_page},
+                )
+            if state["button_payload"] == LIST_BACK_PAYLOAD:
+                return await _offer_specialties(conversation_id, collected_data)
+
+            # A `PROFESSIONAL:{id}` row tap resolves deterministically;
+            # anything else (stale payload, free text) still falls back to
+            # number/name matching.
+            button_payload = state["button_payload"]
+            button_index = (
+                next(
+                    (
+                        index
+                        for index, option in enumerate(professional_options)
+                        if button_payload == f"{PROFESSIONAL_PAYLOAD_PREFIX}{option.id}"
+                    ),
+                    None,
+                )
+                if button_payload is not None
+                else None
+            )
             index = (
-                None
-                if state["button_payload"] is not None
-                else _resolve_choice(
-                    state["user_message"], [option.full_name for option in professional_options]
+                button_index
+                if button_index is not None
+                else (
+                    None
+                    if state["button_payload"] is not None
+                    else _resolve_choice(
+                        state["user_message"], [option.full_name for option in professional_options]
+                    )
                 )
             )
             if index is None:
