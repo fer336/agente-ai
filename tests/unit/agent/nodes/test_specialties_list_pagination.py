@@ -91,7 +91,15 @@ async def test_list_back_on_the_catalog_returns_to_the_main_menu():
 
 
 @pytest.mark.asyncio
-async def test_specialty_row_tap_from_the_catalog_opens_its_professionals():
+async def test_specialty_row_tap_from_the_catalog_stays_read_only_without_booking_context():
+    # PR 3 (browse-vs-booking separation): an idle `SPECIALTY:<id>` row tap
+    # from a plain catalog browse (`intent="specialties"`, no booking
+    # intent/context) shows that specialty's professionals but must never
+    # silently start a booking on its own — see
+    # `app.agent.nodes.specialties._has_booking_context`'s own docstring
+    # and `tests/unit/agent/nodes/test_specialties_node.py`'s equivalent
+    # coverage for the other browse-only entry point (named-specialty
+    # free text).
     node = _node(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
@@ -105,12 +113,32 @@ async def test_specialty_row_tap_from_the_catalog_opens_its_professionals():
         )
     )
 
+    assert "stage" not in result["collected_data"]
+    assert "chosen_specialty_id" not in result["collected_data"]
+    assert result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_specialty_row_tap_with_booking_context_opens_its_professionals():
+    node = _node(
+        specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
+    )
+
+    result = await node(
+        make_agent_state(
+            user_message="",
+            button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}spec-1",
+            collected_data={"operation_mention": "create"},
+        )
+    )
+
     assert result["collected_data"]["stage"] == "awaiting_professional_selection"
     assert result["response_list"] is not None
 
 
 @pytest.mark.asyncio
-async def test_professional_listing_from_the_catalog_is_a_paginated_list():
+async def test_professional_listing_from_the_catalog_stays_read_only_without_booking_context():
     professionals = [
         make_professional(id_=f"prof-{i}", full_name=f"Profesional {i}", specialty_id="spec-1")
         for i in range(12)
@@ -121,6 +149,28 @@ async def test_professional_listing_from_the_catalog_is_a_paginated_list():
     )
 
     result = await node(make_agent_state(user_message="ortodoncia", collected_data={}))
+
+    ids = [r.id for r in result["response_list"].rows]
+    assert ids[-1] == LIST_MORE_PAYLOAD
+    assert "stage" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_professional_listing_from_the_catalog_with_booking_context_is_a_paginated_list():
+    professionals = [
+        make_professional(id_=f"prof-{i}", full_name=f"Profesional {i}", specialty_id="spec-1")
+        for i in range(12)
+    ]
+    node = _node(
+        specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
+        professionals=professionals,
+    )
+
+    result = await node(
+        make_agent_state(
+            user_message="ortodoncia", collected_data={"operation_mention": "create"}
+        )
+    )
 
     ids = [r.id for r in result["response_list"].rows]
     assert ids[-1] == LIST_MORE_PAYLOAD

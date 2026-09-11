@@ -25,8 +25,10 @@ before identity is only ever stored as `pending_selected_slot` for the
 adapter to hand off to legacy `_begin_identification(...)`.
 """
 
+import logging
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
-from typing import Literal, TypedDict, cast
+from typing import Literal, Protocol, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -78,6 +80,8 @@ from app.domain.value_objects.paginated_list import (
     specialties_list_message,
 )
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
+
+logger = logging.getLogger(__name__)
 
 #: Mirrors `app.agent.nodes.appointment.CREATE_APPOINTMENT_ACTION` — see
 #: the module docstring's one-way-dependency note.
@@ -180,6 +184,43 @@ async def _staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     the module docstring's one-way-dependency note."""
     professionals = await gateway.list_professionals()
     return {p.specialty_id for p in professionals if p.specialty_id}
+
+
+class _DecisionNode(Protocol):
+    """Callable shape LangGraph's `StateGraph.add_node` expects for this
+    graph's node functions — a `Protocol`, not a plain `Callable[...]`
+    alias, for the same mypy-strict-overload-resolution reason
+    `app.agent.nodes.node_protocol.AgentNode` documents on its own
+    docstring."""
+
+    def __call__(self, state: AppointmentDecisionState) -> Awaitable[dict[str, object]]: ...
+
+
+def _traced(node_name: str, fn: _DecisionNode) -> _DecisionNode:
+    """Wraps a decision node with structured internal observability.
+
+    Logs `conversation_id`, the legacy `collected_data["stage"]` this turn
+    entered with, and the node's own `decision_node`/`exit_reason` from its
+    result — internal-only attribution for diagnostics/tests, never written
+    into `collected_data["stage"]` (the public checkpoint cursor stays
+    whatever the node itself decided to return, untouched by this wrapper).
+    """
+
+    async def wrapped(state: AppointmentDecisionState) -> dict[str, object]:
+        result = await fn(state)
+        collected_data = state.get("collected_data", {})
+        logger.info(
+            "appointment_decision.node node=%s conversation=%s stage=%s "
+            "decision_node=%s exit_reason=%s",
+            node_name,
+            state.get("conversation_id"),
+            collected_data.get("stage"),
+            result.get("decision_node", node_name),
+            result.get("exit_reason"),
+        )
+        return result
+
+    return wrapped
 
 
 def build_appointment_decision_graph(
@@ -599,11 +640,13 @@ def build_appointment_decision_graph(
     graph: StateGraph[
         AppointmentDecisionState, None, AppointmentDecisionState, AppointmentDecisionState
     ] = StateGraph(AppointmentDecisionState)
-    graph.add_node("route_entry", route_entry)
-    graph.add_node("choose_specialty", choose_specialty)
-    graph.add_node("choose_professional", choose_professional)
-    graph.add_node("search_availability", search_availability_node)
-    graph.add_node("choose_slot", choose_slot)
+    graph.add_node("route_entry", _traced("route_entry", route_entry))
+    graph.add_node("choose_specialty", _traced("choose_specialty", choose_specialty))
+    graph.add_node("choose_professional", _traced("choose_professional", choose_professional))
+    graph.add_node(
+        "search_availability", _traced("search_availability", search_availability_node)
+    )
+    graph.add_node("choose_slot", _traced("choose_slot", choose_slot))
 
     graph.add_edge(START, "route_entry")
     graph.add_conditional_edges(

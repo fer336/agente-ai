@@ -105,6 +105,67 @@ async def test_understand_receives_real_conversation_and_workflow_context():
 
 
 @pytest.mark.asyncio
+async def test_location_interruption_from_professional_selection_resumes_the_same_cursor():
+    # PR 3 hardening regression: the migrated create-selection subgraph
+    # (PR 2) must never see internal node names leak into
+    # `active_node`/`resume_node` — a temporary detour from
+    # `awaiting_professional_selection` must resume that exact legacy stage
+    # string, never e.g. `choose_professional`.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="cómo llegar?",
+            collected_data={
+                "stage": "awaiting_professional_selection",
+                "chosen_specialty_id": "spec-1",
+            },
+        )
+    )
+
+    assert result["intent"] == "location"
+    assert result["interruption"] == "temporary"
+    assert result["active_node"] == "awaiting_professional_selection"
+    assert result["resume_node"] == "awaiting_professional_selection"
+    # No `collected_data` key at all means the caller's checkpoint stays
+    # exactly as it was — the professional-selection cursor is untouched.
+    assert "collected_data" not in result
+
+
+@pytest.mark.asyncio
+async def test_question_interruption_from_slot_selection_preserves_the_slot_cursor():
+    class QuestionLLM(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(
+                intent="question", confidence=0.9, answer="Sí, aceptamos OSDE."
+            )
+
+    node = create_resolve_interaction_node(QuestionLLM())
+
+    result = await node(
+        make_agent_state(
+            user_message="¿aceptan OSDE?",
+            collected_data={
+                "stage": "awaiting_slot_selection",
+                "available_slots": ["slot-placeholder"],
+                "professional_names": {"p1": "Dra. Laura Pérez"},
+            },
+        )
+    )
+
+    assert result["intent"] == "question"
+    assert result["interruption"] == "temporary"
+    assert result["active_node"] == "awaiting_slot_selection"
+    assert result["resume_node"] == "awaiting_slot_selection"
+    # The question is answered by carrying `pending_answer` alongside the
+    # untouched slot cursor — `available_slots` survives exactly as it was,
+    # so a subsequent valid `SELECT_SLOT:<id>` still resolves against the
+    # same checkpointed availability window.
+    assert result["collected_data"]["available_slots"] == ["slot-placeholder"]
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
+
+
+@pytest.mark.asyncio
 async def test_navigation_request_is_carried_to_appointment_without_resetting_identity():
     class NavigatingLLM(FakeLLMProvider):
         async def understand(self, message, context):
