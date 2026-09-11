@@ -417,3 +417,134 @@ async def test_reschedule_marker_exits_as_not_migrated():
     result = await graph.ainvoke(state)
 
     assert result["exit_reason"] == "not_migrated"
+
+
+# --- Internal decision-node observability (PR 3) --------------------------
+
+
+@pytest.mark.asyncio
+async def test_choose_specialty_decision_node_is_attributed_when_offering_specialties():
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+    state = _decision_state(collected_data={"operation": _CREATE_APPOINTMENT_ACTION})
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_specialty"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+
+
+@pytest.mark.asyncio
+async def test_choose_professional_decision_node_is_attributed_on_valid_specialty_selection():
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_professional"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+
+
+@pytest.mark.asyncio
+async def test_search_availability_decision_node_is_attributed():
+    slot = _future_slot()
+    graph, _, _ = await _make_graph(available_slots=[slot])
+    state = _decision_state(
+        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+
+
+@pytest.mark.asyncio
+async def test_choose_slot_decision_node_is_attributed():
+    slot = _future_slot()
+    graph, _, _ = await _make_graph(available_slots=[slot])
+    state = _decision_state(
+        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "available_slots": [slot],
+            "professional_names": {},
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_slot"
+    assert result["exit_reason"] == "begin_identification"
+
+
+# --- No-slot/no-availability boundary stays legacy-owned (PR 3) -----------
+
+
+@pytest.mark.asyncio
+async def test_route_entry_rejects_no_availability_choice_stage():
+    graph, _, _ = await _make_graph()
+    state = _decision_state(collected_data={"stage": "awaiting_no_availability_choice"})
+
+    result = await graph.ainvoke(state)
+
+    assert result["exit_reason"] == "not_migrated"
+
+
+@pytest.mark.asyncio
+async def test_route_entry_rejects_no_slots_choice_stage():
+    graph, _, _ = await _make_graph()
+    state = _decision_state(collected_data={"stage": "awaiting_no_slots_choice"})
+
+    result = await graph.ainvoke(state)
+
+    assert result["exit_reason"] == "not_migrated"
+
+
+@pytest.mark.asyncio
+async def test_route_entry_rejects_identification_verification_and_registration_stages():
+    graph, _, _ = await _make_graph()
+    for stage in (
+        "awaiting_identification",
+        "awaiting_verification_flow",
+        "awaiting_verification_confirmation",
+        "awaiting_registration_flow",
+        "awaiting_appointment_selection",
+        "awaiting_reschedule_professional_choice",
+    ):
+        result = await graph.ainvoke(_decision_state(collected_data={"stage": stage}))
+        assert result["exit_reason"] == "not_migrated", stage
+
+
+# --- No premature PendingAction or Dentalink writes (PR 3 safety) ---------
+
+
+def test_subgraph_module_never_imports_sensitive_write_use_cases():
+    import app.agent.appointment_decision_subgraph as subgraph_module
+
+    forbidden_symbols = {
+        "ProposeAppointmentUseCase",
+        "ConfirmPendingActionUseCase",
+        "RejectPendingActionUseCase",
+        "RevalidateAndCreateAppointmentUseCase",
+        "RevalidateAndRescheduleAppointmentUseCase",
+        "CancelAppointmentUseCase",
+    }
+
+    assert forbidden_symbols.isdisjoint(vars(subgraph_module))

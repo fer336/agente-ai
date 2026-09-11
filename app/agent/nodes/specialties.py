@@ -14,6 +14,8 @@ from app.domain.repositories.gateways import AppointmentGateway, SpecialtyGatewa
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    MENU_APPOINTMENT_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
@@ -29,6 +31,43 @@ _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tenemos especialidades cargadas. "
     "Querés que te comunique con administración para consultarlo?"
 )
+
+
+def _has_booking_context(button_payload: str | None, collected_data: dict[str, object]) -> bool:
+    """True when this turn already carries explicit create-booking intent
+    or context, per the browse-vs-booking separation spec requirement.
+
+    `SPECIALTIES_NODE` only ever runs on a `intent == "specialties"` turn
+    (read-only catalog browsing, `app/agent/graph.py`'s own routing) — a
+    named specialty or professional match found in that turn's free text
+    must not silently start (or continue) a booking on its own unless one
+    of these explicit signals is also present:
+
+    - `MENU_APPOINTMENT_PAYLOAD`/`OPERATION_CREATE_PAYLOAD`: the patient
+      tapped a booking row directly (defensive — resolve_interaction.py
+      already routes these to `intent="appointment"` before this node
+      would ever see them, but the check stays cheap and correct either
+      way).
+    - `collected_data["operation"] == CREATE_APPOINTMENT_ACTION`: an
+      already-resolved booking operation from a prior turn.
+    - `collected_data["operation_mention"] == "create"`: the LLM's own
+      understanding of THIS turn's free text already read it as booking
+      language (e.g. "quiero un turno con..."), carried in by
+      `resolve_interaction.py`'s `_carried_understanding(...)` even while
+      routing the turn's `intent` to "specialties" for display purposes.
+    - `collected_data["stage"] is not None`: an appointment flow is
+      already active (a temporary informational detour into this node,
+      PRD/design's "must not clear collected_data['stage']" rule) — the
+      booking cursor that's already there is real context, not a fresh
+      browse.
+    """
+    if button_payload in (MENU_APPOINTMENT_PAYLOAD, OPERATION_CREATE_PAYLOAD):
+        return True
+    if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+        return True
+    if collected_data.get("operation_mention") == "create":
+        return True
+    return collected_data.get("stage") is not None
 
 
 def create_specialties_node(
@@ -113,6 +152,19 @@ def create_specialties_node(
                     "requires_handoff": False,
                     "collected_data": {**collected_data, "specialties_page": page},
                 }
+            if not _has_booking_context(button_payload, collected_data):
+                # Browse-only: show who matches, but never start a booking
+                # on a plain catalog turn (spec's "Browse specialty without
+                # booking context" requirement).
+                return {
+                    "response_text": None,
+                    "response_buttons": None,
+                    "response_list": professionals_list_message(
+                        [matched_professional], include_back=True
+                    ),
+                    "requires_handoff": False,
+                    "collected_data": {**collected_data, "specialties_page": page},
+                }
             specialty_name = next(
                 (s.name for s in specialties if s.id == matched_professional.specialty_id),
                 "esa especialidad",
@@ -157,6 +209,19 @@ def create_specialties_node(
                 "response_list": specialties_list_message(
                     specialties, page=page, include_back=True
                 ),
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "specialties_page": page},
+            }
+
+        if not _has_booking_context(button_payload, collected_data):
+            # Browse-only: a row tap or a named specialty found in plain
+            # catalog free text just shows that specialty's professionals —
+            # it never enters `awaiting_professional_selection` on its own
+            # (spec's "Browse specialty without booking context" requirement).
+            return {
+                "response_text": None,
+                "response_buttons": None,
+                "response_list": professionals_list_message(professionals, include_back=True),
                 "requires_handoff": False,
                 "collected_data": {**collected_data, "specialties_page": page},
             }
