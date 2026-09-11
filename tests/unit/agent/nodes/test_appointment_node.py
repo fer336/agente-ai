@@ -35,6 +35,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_VERIFICATION_FLOW,
     _appointment_button,
     create_appointment_node,
+    should_use_appointment_decision_subgraph,
 )
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
@@ -2579,3 +2580,100 @@ async def test_registration_flow_reminds_when_the_reply_is_not_a_flow_response()
 
     assert result["response_text"]
     assert "collected_data" not in result
+
+
+# --- PR 2: create-selection subgraph delegation ---------------------------
+
+
+def test_should_use_appointment_decision_subgraph_covers_the_first_slice_create_stages():
+    for stage in (
+        STAGE_AWAITING_SPECIALTY_SELECTION,
+        STAGE_AWAITING_PROFESSIONAL_SELECTION,
+        STAGE_AWAITING_SLOT_SELECTION,
+    ):
+        assert should_use_appointment_decision_subgraph(stage, {}) is True
+
+
+def test_should_use_appointment_decision_subgraph_excludes_no_availability_and_no_slots_follow_up():
+    # First-slice migration only owns specialty/professional/slot selection —
+    # the no-availability/no-slot follow-up choice handlers stay legacy-owned.
+    assert (
+        should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_AVAILABILITY_CHOICE, {})
+        is False
+    )
+    assert should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_SLOTS_CHOICE, {}) is False
+
+
+def test_should_use_appointment_decision_subgraph_excludes_reschedule_markers():
+    # RESCHEDULE identifies the patient up front and proposes immediately on
+    # a valid slot — a different contract than this first slice's
+    # pre-identification `pending_selected_slot` handoff, so it never
+    # delegates even though it shares `STAGE_AWAITING_SLOT_SELECTION`.
+    assert (
+        should_use_appointment_decision_subgraph(
+            STAGE_AWAITING_SLOT_SELECTION, {"rescheduling_appointment_id": "appt-1"}
+        )
+        is False
+    )
+
+
+def test_should_use_appointment_decision_subgraph_requires_create_operation_with_no_stage():
+    assert (
+        should_use_appointment_decision_subgraph(None, {"operation": CREATE_APPOINTMENT_ACTION})
+        is True
+    )
+    for operation in (RESCHEDULE_APPOINTMENT_ACTION, CANCEL_APPOINTMENT_ACTION, None):
+        assert should_use_appointment_decision_subgraph(None, {"operation": operation}) is False
+
+
+@pytest.mark.asyncio
+async def test_decision_node_attribution_never_replaces_the_public_stage_cursor():
+    # Internal subgraph node names (`choose_specialty`, `choose_professional`,
+    # ...) are observability-only — the public checkpoint cursor must always
+    # stay one of the legacy stage strings.
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="1",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    for internal_name in ("choose_specialty", "choose_professional", "search_availability"):
+        assert result["collected_data"]["stage"] != internal_name
+
+
+@pytest.mark.asyncio
+async def test_reschedule_slot_selection_stays_legacy_owned_end_to_end():
+    # Regression for the delegation gate: a reschedule turn reaching
+    # `STAGE_AWAITING_SLOT_SELECTION` must still be handled by the legacy
+    # FSM branch (identity known already, proposes immediately) rather than
+    # the create-only subgraph's `begin_identification` handoff.
+    new_slot = _future_slot(id_="slot-new")
+    node, _, _ = await _make_node_and_conversation(available_slots=[new_slot])
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{new_slot.id}",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "patient": _PATIENT_PRIMITIVES,
+            "available_slots": [new_slot],
+            "professional_names": {},
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            "rescheduling_appointment_id": "appt-1",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["pending_action_id"] is not None
