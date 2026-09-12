@@ -25,6 +25,7 @@ before identity is only ever stored as `pending_selected_slot` for the
 adapter to hand off to legacy `_begin_identification(...)`.
 """
 
+import asyncio
 import logging
 from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
@@ -89,6 +90,11 @@ _CREATE_APPOINTMENT_ACTION = "create_appointment"
 #: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW`/`_MAX_OPTIONS_SHOWN`.
 _SEARCH_WINDOW = timedelta(days=14)
 _MAX_OPTIONS_SHOWN = 3
+
+#: Maximum time to wait for staffed-specialty filtering before degrading
+#: gracefully to showing all specialties. This prevents the first appointment
+#: response from disappearing indefinitely when Dentalink is slow.
+_STAFFED_SPECIALTY_TIMEOUT = timedelta(seconds=8)
 
 #: Mirrors the matching message constants in `app.agent.nodes.appointment` —
 #: only ever used by the specialty/professional/slot selection behavior
@@ -183,6 +189,26 @@ async def _staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     professionals = await gateway.list_professionals()
     return {p.specialty_id for p in professionals if p.specialty_id}
 
+
+
+async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] | None:
+    """Wrapper that applies a timeout to the staffed-specialty lookup.
+
+    If the lookup exceeds the timeout or raises an exception, we return
+    ``None`` instead of a set. The caller interprets ``None`` as "show all
+    specialties" rather than filtering, so the patient still gets a
+    response instead of a frozen UI.
+    """
+    try:
+        return await asyncio.wait_for(
+            _staffed_specialty_ids(gateway), timeout=_STAFFED_SPECIALTY_TIMEOUT.total_seconds()
+        )
+    except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+        logger.warning(
+            "staffed_specialty_ids lookup failed or timed out; showing all specialties",
+            exc_info=exc,
+        )
+        return None
 
 class _DecisionNode(Protocol):
     """Callable shape LangGraph's `StateGraph.add_node` expects for this
