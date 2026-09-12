@@ -5,6 +5,11 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+from app.agent.appointment_decision_subgraph import (
+    AppointmentDecisionState,
+    build_appointment_decision_graph,
+)
+
 #: Re-exported for backward compatibility: `specialties.py`/tests import
 #: `SELECT_SLOT_PAYLOAD_PREFIX` from this module. The `as`-self-alias is
 #: the standard idiom for telling ruff/pyflakes this is an intentional
@@ -14,8 +19,6 @@ from app.agent.nodes.appointment_selection import (
 )
 from app.agent.nodes.appointment_selection import (
     current_page,
-    next_page,
-    resolve_list_choice,
     slot_by_id,
     slot_payload_id,
 )
@@ -64,7 +67,6 @@ from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
-from app.domain.entities.specialty import Specialty
 from app.domain.exceptions.errors import (
     AppointmentSlotUnavailableError,
     InvalidConfirmationError,
@@ -86,8 +88,6 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
-    LIST_BACK_PAYLOAD,
-    LIST_MORE_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
@@ -96,8 +96,6 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
-    PROFESSIONAL_PAYLOAD_PREFIX,
-    SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
     professionals_list_message,
@@ -229,17 +227,11 @@ RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD = "RESCHEDULE_CHANGE_PROFESSIONAL"
 _DNI_PATTERN = re.compile(r"(\d{6,})")
 
 _CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Respondeme con el número:"
-_SPECIALTY_NOT_UNDERSTOOD_MESSAGE = (
-    "No pude identificar la especialidad. Respondeme con el número de la lista:"
-)
 _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
     "Querés que te comunique con administración?"
 )
 _CHOOSE_PROFESSIONAL_PROMPT = "Con qué profesional preferís atenderte? Respondeme con el número:"
-_PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE = (
-    "No pude identificar al profesional. Respondeme con el número de la lista:"
-)
 _NO_PROFESSIONALS_MESSAGE = (
     "No tengo profesionales cargados para esa especialidad. "
     "Querés que te comunique con administración?"
@@ -364,12 +356,6 @@ _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS = 2
 _IDENTIFICATION_ESCAPE_BUTTONS = [
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
 ]
-#: Product brief: the specialty/professional selection stages used numbered
-#: TEXT lists with no way out at all — a patient who changed their mind
-#: mid-list had no button to tap, only the admin-escalation phrase (PRD.md
-#: §24.2). One button is safe to add there (WhatsApp caps interactive
-#: replies at 3, and these stages send none of their own).
-_MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Volver al Menú")
 _VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
 _NO_SLOTS_CHOICE_BUTTONS = [
     InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
@@ -734,6 +720,41 @@ def _cancel_proposal_payload(appointment: Appointment) -> dict[str, object]:
     }
 
 
+def should_use_appointment_decision_subgraph(
+    stage: str | None, collected_data: dict[str, object]
+) -> bool:
+    """True when the migrated create-selection subgraph
+    (`app.agent.appointment_decision_subgraph`) should own this turn
+    instead of the legacy FSM branches in `node(...)` below.
+
+    First slice only: `STAGE_AWAITING_SPECIALTY_SELECTION`,
+    `STAGE_AWAITING_PROFESSIONAL_SELECTION`, and
+    `STAGE_AWAITING_SLOT_SELECTION` delegate unconditionally (they're
+    create-booking-only stages in this codebase already), except a
+    still-in-flight reschedule (`rescheduling_appointment_id` present)
+    always stays legacy-owned — RESCHEDULE identifies the patient up
+    front and proposes immediately, which this first slice never does.
+    With no stage yet, only an already-resolved create-booking operation
+    delegates; every other operation (reschedule/cancel/view) and the
+    specialty/professional free-text-mention shortcuts stay legacy-owned.
+
+    Rollback point (PR 2's own): disable/remove this predicate's call
+    sites in `node(...)` to fall back to the legacy FSM entirely — PR 1's
+    extracted helpers in `appointment_selection.py` stay in place either way.
+    """
+    if collected_data.get("rescheduling_appointment_id") is not None:
+        return False
+    if stage in (
+        STAGE_AWAITING_SPECIALTY_SELECTION,
+        STAGE_AWAITING_PROFESSIONAL_SELECTION,
+        STAGE_AWAITING_SLOT_SELECTION,
+    ):
+        return True
+    if stage is None:
+        return collected_data.get("operation") == CREATE_APPOINTMENT_ACTION
+    return False
+
+
 def create_appointment_node(
     appointment_gateway: AppointmentGateway,
     patient_gateway: PatientGateway,
@@ -833,6 +854,12 @@ def create_appointment_node(
     set_conversation_input_state = SetConversationInputStateUseCase(conversation_repository)
     rotate_workflow_session = RotateWorkflowSessionUseCase(conversation_repository)
     list_specialties = ListSpecialtiesUseCase(specialty_gateway)
+    appointment_decision_graph = build_appointment_decision_graph(
+        appointment_gateway=appointment_gateway,
+        specialty_gateway=specialty_gateway,
+        conversation_repository=conversation_repository,
+        llm_provider=llm_provider,
+    )
 
     async def _ask_identification_message(
         conversation_id: ConversationId,
@@ -952,6 +979,59 @@ def create_appointment_node(
             "requires_handoff": False,
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_REGISTRATION_FLOW},
         }
+
+    async def _delegate_to_decision_subgraph(
+        state: AgentState, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Projects `AgentState` into `AppointmentDecisionState`, invokes the
+        compiled create-selection subgraph, and converts its result back
+        into partial `AgentState` updates.
+
+        `collected_data` is the caller's already-decided projection (the
+        node-level `collected_data`, or that plus a freshly resolved
+        `operation` for the "no stage yet" fallback) — never re-derived
+        here, so the caller stays in control of exactly what data crosses
+        the boundary (design's "narrow state projection" requirement).
+        """
+        conversation_id = ConversationId(state["conversation_id"])
+        decision_state: AppointmentDecisionState = {
+            "conversation_id": state["conversation_id"],
+            "user_message": state["user_message"],
+            "button_payload": state["button_payload"],
+            "recent_messages": state["recent_messages"],
+            "contact_memory_summary": state["contact_memory_summary"],
+            "pending_action_id": state.get("pending_action_id"),
+            "collected_data": collected_data,
+        }
+        result = await appointment_decision_graph.ainvoke(decision_state)
+
+        if result.get("exit_reason") == "begin_identification":
+            return await _begin_identification(
+                conversation_id,
+                cast(dict[str, object], result["collected_data"]),
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+
+        # A migrated node that didn't touch `collected_data`/`pending_action_id`
+        # this turn (a reminder/stale-payload response) must not report them
+        # as changed either — same "collected_data"/"pending_action_id" key
+        # omission the legacy FSM branches rely on (LangGraph merges a
+        # partial update onto the prior turn's value either way).
+        updates: dict[str, object] = {
+            "response_text": result.get("response_text"),
+            "response_buttons": result.get("response_buttons"),
+            "requires_handoff": result.get("requires_handoff", False),
+        }
+        if result.get("response_list") is not None:
+            updates["response_list"] = result["response_list"]
+        if result.get("response_flow") is not None:
+            updates["response_flow"] = result["response_flow"]
+        if result.get("collected_data") != collected_data:
+            updates["collected_data"] = result.get("collected_data")
+        if result.get("pending_action_id") != state.get("pending_action_id"):
+            updates["pending_action_id"] = result.get("pending_action_id")
+        return updates
 
     async def _cancel_follow_up(repositories: ProposalRepositories, pending_action_id: str) -> None:
         scheduled_actions = repositories.scheduled_actions
@@ -1486,6 +1566,8 @@ def create_appointment_node(
             }
 
         if stage == STAGE_AWAITING_SLOT_SELECTION:
+            if should_use_appointment_decision_subgraph(stage, collected_data):
+                return await _delegate_to_decision_subgraph(state, collected_data)
             button_payload = state["button_payload"]
             available_slots = cast(list[AppointmentSlot], collected_data.get("available_slots", []))
             patient = cast(dict[str, object] | None, collected_data.get("patient"))
@@ -2119,152 +2201,17 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_SPECIALTY_SELECTION:
-            options = cast(list[Specialty], collected_data.get("specialty_options", []))
-            if not options:
-                return await _offer_specialties(conversation_id, collected_data)
-
-            # Navigation rows for the paginated specialty list: 'Ver más'
-            # re-renders the next page, 'Volver atrás' pops back to the
-            # main menu (this list is the flow's entry screen).
-            if state["button_payload"] == LIST_MORE_PAYLOAD:
-                updated_page = next_page(collected_data, "specialties_page")
-                return await _offer_specialties(
-                    conversation_id, {**collected_data, "specialties_page": updated_page}
-                )
-            if state["button_payload"] == LIST_BACK_PAYLOAD:
-                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                return {
-                    "response_text": WELCOME_TEXT,
-                    "response_buttons": None,
-                    "response_list": WELCOME_LIST,
-                    "requires_handoff": False,
-                    "pending_action_id": None,
-                    "collected_data": {},
-                }
-
-            # These stages now send list rows, so a `SPECIALTY:{id}` tap
-            # resolves deterministically; anything else (stale payload,
-            # free text) still falls back to number/name matching.
-            index = resolve_list_choice(
-                button_payload=state["button_payload"],
-                user_message=state["user_message"],
-                payload_prefix=SPECIALTY_PAYLOAD_PREFIX,
-                option_ids=[option.id for option in options],
-                option_names=[option.name for option in options],
-            )
-            if index is None:
-                retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
-                listing = _numbered_list([option.name for option in options])
-                text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "specialty_retry",
-                    {
-                        "situacion": (
-                            "El paciente no eligió una especialidad válida de la lista "
-                            "numerada que le mostramos."
-                        ),
-                        "instruccion": (
-                            "Pedile que responda con el número de la especialidad. NO "
-                            "repitas la lista, se la agregamos nosotros abajo."
-                        ),
-                        "intentos_seguidos": retry_count,
-                    },
-                    _SPECIALTY_NOT_UNDERSTOOD_MESSAGE,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-                return {
-                    "response_text": f"{text}\n\n{listing}",
-                    "response_buttons": [_MAIN_MENU_BUTTON],
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **collected_data,
-                        "specialty_retry_count": retry_count,
-                    },
-                }
-
-            chosen = options[index]
-            return await _offer_professionals(
-                conversation_id, chosen.id, chosen.name, collected_data
-            )
+            # Fully owned by `app.agent.appointment_decision_subgraph` (PR 2)
+            # — offering, pagination (`LIST_MORE`/`LIST_BACK`), valid/invalid/
+            # stale `SPECIALTY:` resolution, and the professional-list handoff
+            # on a valid choice. See `should_use_appointment_decision_subgraph`'s
+            # own docstring for the rollback point.
+            return await _delegate_to_decision_subgraph(state, collected_data)
 
         if stage == STAGE_AWAITING_PROFESSIONAL_SELECTION:
-            professional_options = cast(
-                list[Professional], collected_data.get("professional_options", [])
-            )
-            specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
-            if not professional_options or specialty_id is None:
-                return await _offer_specialties(conversation_id, collected_data)
-
-            # Navigation rows for the paginated professionals list:
-            # 'Ver más' advances the page, 'Volver atrás' pops back to the
-            # specialty list (the immediately previous screen).
-            if state["button_payload"] == LIST_MORE_PAYLOAD:
-                updated_page = next_page(collected_data, "doctors_page")
-                return await _offer_professionals(
-                    conversation_id,
-                    specialty_id,
-                    str(collected_data.get("chosen_specialty_name", "")),
-                    {**collected_data, "doctors_page": updated_page},
-                )
-            if state["button_payload"] == LIST_BACK_PAYLOAD:
-                return await _offer_specialties(
-                    conversation_id, invalidate_from(collected_data, "specialty")
-                )
-
-            # A `PROFESSIONAL:{id}` row tap resolves deterministically;
-            # anything else (stale payload, free text) still falls back to
-            # number/name matching.
-            index = resolve_list_choice(
-                button_payload=state["button_payload"],
-                user_message=state["user_message"],
-                payload_prefix=PROFESSIONAL_PAYLOAD_PREFIX,
-                option_ids=[option.id for option in professional_options],
-                option_names=[option.full_name for option in professional_options],
-            )
-            if index is None:
-                retry_count = cast(int, collected_data.get("professional_retry_count", 0)) + 1
-                listing = _numbered_list([option.full_name for option in professional_options])
-                text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "professional_retry",
-                    {
-                        "situacion": (
-                            "El paciente no eligió un profesional válido de la lista "
-                            "numerada que le mostramos."
-                        ),
-                        "instruccion": (
-                            "Pedile que responda con el número del profesional. NO "
-                            "repitas la lista, se la agregamos nosotros abajo."
-                        ),
-                        "intentos_seguidos": retry_count,
-                    },
-                    _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-                return {
-                    "response_text": f"{text}\n\n{listing}",
-                    "response_buttons": [_MAIN_MENU_BUTTON],
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **collected_data,
-                        "professional_retry_count": retry_count,
-                    },
-                }
-
-            chosen_professional = professional_options[index]
-            return await _offer_slots(
-                conversation_id,
-                None,
-                {
-                    **collected_data,
-                    "chosen_professional_id": chosen_professional.id,
-                    "chosen_professional_name": chosen_professional.full_name,
-                },
-            )
+            # Fully owned by `app.agent.appointment_decision_subgraph` (PR 2)
+            # — same reasoning as `STAGE_AWAITING_SPECIALTY_SELECTION` above.
+            return await _delegate_to_decision_subgraph(state, collected_data)
 
         if stage == STAGE_AWAITING_OPERATION_SELECTION:
             button_payload = state["button_payload"]
@@ -2359,9 +2306,10 @@ def create_appointment_node(
                 }
 
         if operation == CREATE_APPOINTMENT_ACTION:
-            return await _offer_specialties(
-                conversation_id, {**collected_data, "operation": operation}
-            )
+            create_context = {**collected_data, "operation": operation}
+            if should_use_appointment_decision_subgraph(None, create_context):
+                return await _delegate_to_decision_subgraph(state, create_context)
+            return await _offer_specialties(conversation_id, create_context)
         if operation is not None:
             return await _begin_identification(
                 conversation_id,

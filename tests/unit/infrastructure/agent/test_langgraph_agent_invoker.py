@@ -423,6 +423,125 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
 
 
 @pytest.mark.asyncio
+async def test_handle_carries_pending_selected_slot_and_pending_action_across_turns():
+    # PR 3 hardening: continues the migrated create-selection path (subgraph
+    # owns specialty/professional/slot selection) all the way through slot
+    # selection and identification, proving `pending_selected_slot` (set by
+    # the subgraph's `choose_slot`) and the legacy-owned `pending_action_id`
+    # (set once identity is known, after `_begin_identification`/
+    # `_propose_selected_slot`) both survive their own checkpointer
+    # round-trips, exactly like `collected_data["available_slots"]` already
+    # does for the specialty/professional leg above.
+    checkpointer = MemorySaver()
+    slot = _future_slot()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    patient_gateway = make_patient_gateway(
+        patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot], professionals=[make_professional(id_="prof-1")]
+        ),
+        patient_gateway=patient_gateway,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
+        checkpointer=checkpointer,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
+    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
+    # Turn 5: pick the offered slot — the subgraph's `choose_slot` stores
+    # `pending_selected_slot` and exits to legacy `_begin_identification`.
+    await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
+    # Turn 6: identify — legacy `_propose_selected_slot` proposes the
+    # already-picked slot without re-searching availability.
+    await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+
+    compiled_graph = compile_graph(
+        appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=patient_gateway,
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-verify",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    )
+    snapshot = await compiled_graph.aget_state({"configurable": {"thread_id": "conv-1:session:1"}})
+
+    assert snapshot.values["collected_data"]["stage"] == "awaiting_confirmation"
+    assert snapshot.values["collected_data"]["pending_selected_slot"] == slot
+    assert snapshot.values["missing_fields"] == []
+    assert snapshot.values["pending_action_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_carries_appointment_action_across_turns_via_the_checkpointer():
+    # `appointment_action` is a dedicated `AgentState` field (distinct from
+    # `collected_data["operation"]`) that `handle()` explicitly re-seeds
+    # from the prior checkpoint every turn (see the invoker's own
+    # docstring's "Multi-turn carry-over is explicit" paragraph) — no node
+    # currently writes it, so the only way to prove it survives is to seed
+    # it directly on the checkpointer thread the invoker reuses, then
+    # confirm an ordinary later turn does not silently drop it.
+    checkpointer = MemorySaver()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, _, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        checkpointer=checkpointer,
+    )
+    seeding_graph = compile_graph(
+        appointment_gateway=make_dentalink_gateway(),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=make_patient_gateway(),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-seed",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    )
+    thread_config = {"configurable": {"thread_id": "conv-1:session:1"}}
+    await seeding_graph.aupdate_state(
+        thread_config, {"appointment_action": "reschedule_appointment"}
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    snapshot = await seeding_graph.aget_state(thread_config)
+    assert snapshot.values["appointment_action"] == "reschedule_appointment"
+
+
+@pytest.mark.asyncio
 async def test_handle_records_an_agent_run_with_a_terminal_status():
     agent_run_repository = make_agent_run_repository()
     trace_repositories_provider = make_trace_repositories_provider(agent_runs=agent_run_repository)
