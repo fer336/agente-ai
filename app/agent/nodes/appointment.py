@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -108,6 +110,9 @@ from app.infrastructure.ycloud.flows import (
     VERIFICATION_FLOW_SCREEN_ID,
 )
 
+logger = logging.getLogger(__name__)
+
+
 #: Each day in the window is one sequential Dentalink request (the API only
 #: filters `fecha` by exact day, never by range — see the gateway's own
 #: docstring). A 30-day window meant walking up to 30 requests before ever
@@ -118,6 +123,12 @@ _SEARCH_WINDOW = timedelta(days=14)
 #: buttons. Nothing downstream (`SendReplyUseCase`, `YCloudMessagingGateway`,
 #: `YCloudClient`) enforces it, so every button list is capped here.
 _MAX_OPTIONS_SHOWN = 3
+
+#: Maximum time to wait for staffed-specialty filtering before degrading
+#: gracefully to showing all specialties. This prevents the first appointment
+#: response from disappearing indefinitely when Dentalink is slow.
+_STAFFED_SPECIALTY_TIMEOUT = timedelta(seconds=8)
+
 
 #: `collected_data["stage"]` values — this node's own multi-turn cursor
 #: (PRD.md §9-14's flows). `resolve_interaction` only checks whether a
@@ -502,6 +513,26 @@ async def staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     professionals = await gateway.list_professionals()
     return {p.specialty_id for p in professionals if p.specialty_id}
 
+
+
+async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] | None:
+    """Wrapper that applies a timeout to the staffed-specialty lookup.
+
+    If the lookup exceeds the timeout or raises an exception, we return
+    ``None`` instead of a set. The caller interprets ``None`` as "show all
+    specialties" rather than filtering, so the patient still gets a
+    response instead of a frozen UI.
+    """
+    try:
+        return await asyncio.wait_for(
+            staffed_specialty_ids(gateway), timeout=_STAFFED_SPECIALTY_TIMEOUT.total_seconds()
+        )
+    except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+        logger.warning(
+            "staffed_specialty_ids lookup failed or timed out; showing all specialties",
+            exc_info=exc,
+        )
+        return None
 
 async def match_named_professional(gateway: AppointmentGateway, text: str) -> Professional | None:
     """Finds a professional named directly in free text (e.g. "quiero un
