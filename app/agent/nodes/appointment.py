@@ -88,7 +88,6 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
-    MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
@@ -363,7 +362,6 @@ _MAIN_MENU_PAYLOADS = frozenset(
 #: patient rewrote their DNI forever.
 _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS = 2
 _IDENTIFICATION_ESCAPE_BUTTONS = [
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
 ]
 #: Product brief: the specialty/professional selection stages used numbered
@@ -372,17 +370,11 @@ _IDENTIFICATION_ESCAPE_BUTTONS = [
 #: §24.2). One button is safe to add there (WhatsApp caps interactive
 #: replies at 3, and these stages send none of their own).
 _MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Volver al Menú")
-#: `MENU_ADMIN_PAYLOAD` here is never handled inside this stage: any button
-#: with that payload is intercepted upstream by `resolve_interaction.py`,
-#: which routes it straight to `intent="handoff"` regardless of the active
-#: stage — the same mechanism `_IDENTIFICATION_ESCAPE_BUTTONS` relies on.
 _VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
 _NO_SLOTS_CHOICE_BUTTONS = [
     InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
 ]
 _NO_AVAILABILITY_BUTTONS = [
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS = [
