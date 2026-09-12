@@ -19,7 +19,7 @@ version: "3.8"
 
 services:
   backend:
-    image: ghcr.io/fer336/agente-ai:v0.22.6
+    image: ghcr.io/fer336/agente-ai:v0.22.7
     networks:
       - network_public
     # Services on the shared Swarm overlay must use service discovery instead
