@@ -88,7 +88,6 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
-    MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
@@ -355,20 +354,13 @@ _MAIN_MENU_PAYLOADS = frozenset(
 #: patient rewrote their DNI forever.
 _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS = 2
 _IDENTIFICATION_ESCAPE_BUTTONS = [
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
 ]
-#: `MENU_ADMIN_PAYLOAD` here is never handled inside this stage: any button
-#: with that payload is intercepted upstream by `resolve_interaction.py`,
-#: which routes it straight to `intent="handoff"` regardless of the active
-#: stage — the same mechanism `_IDENTIFICATION_ESCAPE_BUTTONS` relies on.
 _VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
 _NO_SLOTS_CHOICE_BUTTONS = [
     InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="👤 Administración"),
 ]
 _NO_AVAILABILITY_BUTTONS = [
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS = [

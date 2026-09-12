@@ -69,7 +69,6 @@ from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
-    MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
@@ -126,7 +125,6 @@ _SESSION_LOST_MESSAGE = (
 
 _MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Volver al Menú")
 _NO_AVAILABILITY_BUTTONS = [
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 

@@ -965,7 +965,9 @@ async def test_a_main_menu_button_escapes_a_flow_the_patient_is_stuck_in():
 async def test_identification_escalates_to_administration_after_repeated_misses():
     # Without a ceiling, `identification_retry_count` just counted upward
     # while the patient rewrote their DNI forever. The fallback node has
-    # escalated after two misses all along; identification never did.
+    # escalated after two misses all along; identification never did. The
+    # escalation offers a restart, not an administration escape hatch —
+    # that button was removed from all appointment-flow messages.
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(
         conversation_id="conv-1",
@@ -979,7 +981,8 @@ async def test_identification_escalates_to_administration_after_repeated_misses(
     result = await node(state)
 
     assert result["response_buttons"] is not None
-    assert MENU_ADMIN_PAYLOAD in [b.id for b in result["response_buttons"]]
+    assert MENU_ADMIN_PAYLOAD not in [b.id for b in result["response_buttons"]]
+    assert MENU_APPOINTMENT_PAYLOAD in [b.id for b in result["response_buttons"]]
 
 
 @pytest.mark.asyncio
@@ -1029,7 +1032,6 @@ async def test_professional_selection_offers_administracion_when_no_slots_availa
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_AVAILABILITY_CHOICE
     assert [(button.id, button.title) for button in result["response_buttons"]] == [
-        (MENU_ADMIN_PAYLOAD, "Administración"),
         (MENU_MAIN_PAYLOAD, "Menú principal"),
     ]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
@@ -1040,7 +1042,8 @@ async def test_professional_selection_offers_administracion_when_no_slots_availa
 @pytest.mark.asyncio
 async def test_professional_selection_offers_main_menu_even_when_other_professionals_exist():
     # The requested terminal no-availability UX is stable regardless of
-    # whether another professional exists: administration or principal menu.
+    # whether another professional exists: only the principal menu button,
+    # no administration escape hatch.
     node, conversation_repository, _ = await _make_node_and_conversation(
         available_slots=[],
         professionals=[
@@ -1064,7 +1067,6 @@ async def test_professional_selection_offers_main_menu_even_when_other_professio
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_AVAILABILITY_CHOICE
     assert [(button.id, button.title) for button in result["response_buttons"]] == [
-        (MENU_ADMIN_PAYLOAD, "Administración"),
         (MENU_MAIN_PAYLOAD, "Menú principal"),
     ]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
@@ -1121,8 +1123,7 @@ async def test_no_slots_choice_stage_reminds_on_unrecognized_input():
 
     assert "collected_data" not in result
     button_ids = [b.id for b in result["response_buttons"]]
-    assert _VIEW_OTHER_PROFESSIONALS_PAYLOAD in button_ids
-    assert MENU_ADMIN_PAYLOAD in button_ids
+    assert button_ids == [_VIEW_OTHER_PROFESSIONALS_PAYLOAD]
 
 
 @pytest.mark.asyncio
