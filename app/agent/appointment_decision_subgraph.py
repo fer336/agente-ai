@@ -41,7 +41,6 @@ from app.agent.nodes.appointment_selection import (
     decision_entry_node_for_stage,
     format_slot_option,
     next_page,
-    numbered_list,
     resolve_list_choice,
     slot_button,
     slot_by_id,
@@ -70,7 +69,6 @@ from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
-    MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
@@ -99,17 +97,19 @@ _STAFFED_SPECIALTY_TIMEOUT = timedelta(seconds=8)
 #: Mirrors the matching message constants in `app.agent.nodes.appointment` —
 #: only ever used by the specialty/professional/slot selection behavior
 #: this module now owns.
-_CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Respondeme con el número:"
+_CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Elegí una opción de la lista:"
 _SPECIALTY_NOT_UNDERSTOOD_MESSAGE = (
-    "No pude identificar la especialidad. Respondeme con el número de la lista:"
+    "No pude identificar la especialidad. Elegí una opción de la lista:"
 )
 _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
     "Querés que te comunique con administración?"
 )
-_CHOOSE_PROFESSIONAL_PROMPT = "Con qué profesional preferís atenderte? Respondeme con el número:"
+_CHOOSE_PROFESSIONAL_PROMPT = (
+    "Con qué profesional preferís atenderte? Elegí una opción de la lista:"
+)
 _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE = (
-    "No pude identificar al profesional. Respondeme con el número de la lista:"
+    "No pude identificar al profesional. Elegí una opción de la lista:"
 )
 _NO_PROFESSIONALS_MESSAGE = (
     "No tengo profesionales cargados para esa especialidad. "
@@ -129,7 +129,6 @@ _SESSION_LOST_MESSAGE = (
     "Se perdió el contexto de la conversación. Escribime de nuevo qué necesitás."
 )
 
-_MAIN_MENU_BUTTON = InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Volver al Menú")
 _NO_AVAILABILITY_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
@@ -272,8 +271,9 @@ def build_appointment_decision_graph(
         conversation_id: ConversationId, collected_data: dict[str, object]
     ) -> dict[str, object]:
         specialties = await list_specialties.execute()
-        staffed = await _staffed_specialty_ids(appointment_gateway)
-        specialties = [s for s in specialties if s.id in staffed]
+        staffed = await _staffed_specialty_ids_safe(appointment_gateway)
+        if staffed is not None:
+            specialties = [s for s in specialties if s.id in staffed]
         if not specialties:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {
@@ -403,7 +403,6 @@ def build_appointment_decision_graph(
         )
         if index is None:
             retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
-            listing = numbered_list([option.name for option in options])
             text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),
@@ -411,11 +410,11 @@ def build_appointment_decision_graph(
                 {
                     "situacion": (
                         "El paciente no eligió una especialidad válida de la lista "
-                        "numerada que le mostramos."
+                        "interactiva que le mostramos."
                     ),
                     "instruccion": (
-                        "Pedile que responda con el número de la especialidad. NO "
-                        "repitas la lista, se la agregamos nosotros abajo."
+                        "Pedile que elija una especialidad de la lista interactiva. "
+                        "No menciones números ni repitas la lista en el texto."
                     ),
                     "intentos_seguidos": retry_count,
                 },
@@ -423,9 +422,11 @@ def build_appointment_decision_graph(
                 state.get("recent_messages", []),
                 state.get("contact_memory_summary"),
             )
+            page = current_page(collected_data, "specialties_page")
             return {
-                "response_text": f"{text}\n\n{listing}",
-                "response_buttons": [_MAIN_MENU_BUTTON],
+                "response_text": text,
+                "response_buttons": None,
+                "response_list": specialties_list_message(options, page=page, include_back=True),
                 "requires_handoff": False,
                 "collected_data": {**collected_data, "specialty_retry_count": retry_count},
                 "next_node": "end",
@@ -484,7 +485,6 @@ def build_appointment_decision_graph(
         )
         if index is None:
             retry_count = cast(int, collected_data.get("professional_retry_count", 0)) + 1
-            listing = numbered_list([option.full_name for option in professional_options])
             text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),
@@ -492,11 +492,11 @@ def build_appointment_decision_graph(
                 {
                     "situacion": (
                         "El paciente no eligió un profesional válido de la lista "
-                        "numerada que le mostramos."
+                        "interactiva que le mostramos."
                     ),
                     "instruccion": (
-                        "Pedile que responda con el número del profesional. NO "
-                        "repitas la lista, se la agregamos nosotros abajo."
+                        "Pedile que elija un profesional de la lista interactiva. "
+                        "No menciones números ni repitas la lista en el texto."
                     ),
                     "intentos_seguidos": retry_count,
                 },
@@ -504,9 +504,13 @@ def build_appointment_decision_graph(
                 state.get("recent_messages", []),
                 state.get("contact_memory_summary"),
             )
+            page = current_page(collected_data, "doctors_page")
             return {
-                "response_text": f"{text}\n\n{listing}",
-                "response_buttons": [_MAIN_MENU_BUTTON],
+                "response_text": text,
+                "response_buttons": None,
+                "response_list": professionals_list_message(
+                    professional_options, page=page, include_back=True
+                ),
                 "requires_handoff": False,
                 "collected_data": {**collected_data, "professional_retry_count": retry_count},
                 "next_node": "end",
