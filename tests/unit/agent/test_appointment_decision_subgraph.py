@@ -8,10 +8,13 @@ before the adapter wiring (added separately in `appointment.py`) ever
 delegates to it.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
+import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
 from app.agent.appointment_decision_subgraph import build_appointment_decision_graph
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX,
@@ -168,6 +171,150 @@ async def test_route_entry_from_no_stage_with_create_booking_context_offers_spec
 
 
 @pytest.mark.asyncio
+async def test_staffed_specialty_lookup_wrapper_returns_none_and_warns_on_error(
+    monkeypatch, caplog
+):
+    gateway = AsyncMock()
+    gateway.list_professionals.side_effect = RuntimeError("lookup failed")
+
+    result = await appointment_decision_subgraph._staffed_specialty_ids_safe(gateway)
+
+    assert result is None
+    gateway.list_professionals.assert_awaited_once_with()
+    assert any("failed or timed out" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_staffed_specialty_lookup_wrapper_times_out_and_completes_cancellation(monkeypatch):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def blocking_lookup(_gateway):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(appointment_decision_subgraph, "_staffed_specialty_ids", blocking_lookup)
+    monkeypatch.setattr(
+        appointment_decision_subgraph,
+        "_STAFFED_SPECIALTY_TIMEOUT",
+        timedelta(milliseconds=1),
+    )
+
+    result = await appointment_decision_subgraph._staffed_specialty_ids_safe(object())
+
+    assert result is None
+    assert started.is_set()
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_create_path_shows_all_specialties_when_staffed_lookup_fails(monkeypatch):
+    safe_lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
+    )
+    specialties = [
+        make_specialty(id_="cleaning", name="Ortodoncia"),
+        make_specialty(id_="whitening", name="Endodoncia"),
+    ]
+    graph, _, appointment_gateway = await _make_graph(specialties=specialties, professionals=[])
+
+    result = await graph.ainvoke(
+        _decision_state(collected_data={"operation": _CREATE_APPOINTMENT_ACTION})
+    )
+
+    safe_lookup.assert_awaited_once_with(appointment_gateway)
+    assert result["collected_data"]["specialty_options"] == specialties
+    assert result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_create_path_keeps_no_specialties_result_for_successful_empty_staffed_set(
+    monkeypatch,
+):
+    safe_lookup = AsyncMock(return_value=set())
+    monkeypatch.setattr(
+        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
+    )
+    graph, _, appointment_gateway = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+
+    result = await graph.ainvoke(
+        _decision_state(collected_data={"operation": _CREATE_APPOINTMENT_ACTION})
+    )
+
+    safe_lookup.assert_awaited_once_with(appointment_gateway)
+    assert result["response_text"].startswith("En este momento no tengo")
+    assert result.get("response_list") is None
+
+
+@pytest.mark.asyncio
+async def test_visible_specialty_and_professional_prompts_do_not_require_numbers():
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+
+    specialty_result = await graph.ainvoke(
+        _decision_state(collected_data={"operation": _CREATE_APPOINTMENT_ACTION})
+    )
+    professional_result = await graph.ainvoke(
+        _decision_state(
+            button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+            collected_data={
+                "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+                "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+            },
+        )
+    )
+
+    assert "número" not in specialty_result["response_text"].casefold()
+    assert "Ortodoncia" in specialty_result["response_list"].rows[0].title
+    assert "número" not in professional_result["response_text"].casefold()
+    assert professional_result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_visible_specialty_and_professional_retries_resend_lists_without_numbers():
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    graph, _, _ = await _make_graph(llm_provider=_ExplodingLLMProvider())
+    specialty_result = await graph.ainvoke(
+        _decision_state(
+            user_message="invalid",
+            collected_data={
+                "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+                "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+            },
+        )
+    )
+    professional_result = await graph.ainvoke(
+        _decision_state(
+            user_message="invalid",
+            collected_data={
+                "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+                "chosen_specialty_id": "cleaning",
+                "professional_options": [make_professional(id_="prof-1")],
+            },
+        )
+    )
+
+    assert "número" not in specialty_result["response_text"].casefold()
+    assert "Ortodoncia" in specialty_result["response_list"].rows[0].title
+    assert "número" not in professional_result["response_text"].casefold()
+    assert professional_result["response_list"] is not None
+
+
+@pytest.mark.asyncio
 async def test_route_entry_rejects_a_stage_outside_the_first_slice():
     graph, _, _ = await _make_graph()
     state = _decision_state(collected_data={"stage": "awaiting_confirmation"})
@@ -213,7 +360,7 @@ async def test_invalid_specialty_choice_reprompts_the_same_list():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["specialty_retry_count"] == 1
-    assert "Ortodoncia" in result["response_text"]
+    assert "Ortodoncia" in result["response_list"].rows[0].title
 
 
 @pytest.mark.asyncio
@@ -270,6 +417,7 @@ async def test_invalid_professional_choice_reprompts_the_same_list():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["professional_retry_count"] == 1
+    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
 
 
 @pytest.mark.asyncio

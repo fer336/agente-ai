@@ -237,12 +237,14 @@ RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD = "RESCHEDULE_CHANGE_PROFESSIONAL"
 #: name instead of the whole thing failing `Dni`'s length check cleanly.
 _DNI_PATTERN = re.compile(r"(\d{6,})")
 
-_CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Respondeme con el número:"
+_CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Elegí una opción de la lista:"
 _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
     "Querés que te comunique con administración?"
 )
-_CHOOSE_PROFESSIONAL_PROMPT = "Con qué profesional preferís atenderte? Respondeme con el número:"
+_CHOOSE_PROFESSIONAL_PROMPT = (
+    "Con qué profesional preferís atenderte? Elegí una opción de la lista:"
+)
 _NO_PROFESSIONALS_MESSAGE = (
     "No tengo profesionales cargados para esa especialidad. "
     "Querés que te comunique con administración?"
@@ -1076,8 +1078,9 @@ def create_appointment_node(
         conversation_id: ConversationId, collected_data: dict[str, object]
     ) -> dict[str, object]:
         specialties = await list_specialties.execute()
-        staffed = await staffed_specialty_ids(appointment_gateway)
-        specialties = [s for s in specialties if s.id in staffed]
+        staffed = await _staffed_specialty_ids_safe(appointment_gateway)
+        if staffed is not None:
+            specialties = [s for s in specialties if s.id in staffed]
         if not specialties:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             return {

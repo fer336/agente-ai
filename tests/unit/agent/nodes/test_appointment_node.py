@@ -1,7 +1,11 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
+import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
+import app.agent.nodes.appointment as appointment
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
     _MAIN_MENU_RESET_MESSAGE,
@@ -447,6 +451,103 @@ async def test_operation_menu_create_shows_the_numbered_specialty_list():
 
 
 @pytest.mark.asyncio
+async def test_legacy_staffed_specialty_lookup_wrapper_returns_none_and_warns_on_error(
+    monkeypatch, caplog
+):
+    gateway = AsyncMock()
+    gateway.list_professionals.side_effect = RuntimeError("lookup failed")
+
+    result = await appointment._staffed_specialty_ids_safe(gateway)
+
+    assert result is None
+    gateway.list_professionals.assert_awaited_once_with()
+    assert any("failed or timed out" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_legacy_staffed_specialty_lookup_wrapper_times_out_and_completes_cancellation(
+    monkeypatch,
+):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def blocking_lookup(_gateway):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(appointment, "staffed_specialty_ids", blocking_lookup)
+    monkeypatch.setattr(
+        appointment,
+        "_STAFFED_SPECIALTY_TIMEOUT",
+        timedelta(milliseconds=1),
+    )
+
+    result = await appointment._staffed_specialty_ids_safe(object())
+
+    assert result is None
+    assert started.is_set()
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_actual_create_route_shows_all_specialties_when_staffed_lookup_fails(monkeypatch):
+    safe_lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
+    )
+    specialties = [
+        make_specialty(id_="cleaning", name="Ortodoncia"),
+        make_specialty(id_="whitening", name="Endodoncia"),
+    ]
+    node, _, appointment_gateway = await _make_node_and_conversation(
+        specialties=specialties, professionals=[]
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+
+    safe_lookup.assert_awaited_once_with(appointment_gateway)
+    assert result["collected_data"]["specialty_options"] == specialties
+    assert result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_legacy_specialty_and_professional_list_prompts_do_not_require_numbers():
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="cleaning")
+        ],
+    )
+
+    specialty_result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+    professional_result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="quiero un turno de ortodoncia",
+            collected_data={"specialty_mention": "ortodoncia"},
+        )
+    )
+
+    assert "número" not in specialty_result["response_text"].casefold()
+    assert "número" not in professional_result["response_text"].casefold()
+
+
+@pytest.mark.asyncio
 async def test_specialty_selection_by_number_lists_that_specialtys_professionals():
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
@@ -515,7 +616,7 @@ async def test_specialty_selection_out_of_range_number_reprompts_same_list():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["specialty_retry_count"] == 1
-    assert "Ortodoncia" in result["response_text"]
+    assert "Ortodoncia" in result["response_list"].rows[0].title
 
 
 @pytest.mark.asyncio
@@ -622,6 +723,7 @@ async def test_professional_selection_invalid_reprompts_same_list():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["professional_retry_count"] == 1
+    assert result["response_list"] is not None
 
 
 @pytest.mark.asyncio
