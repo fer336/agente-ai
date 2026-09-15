@@ -17,6 +17,21 @@ class LLMInvalidResponseError(LLMProviderError):
     """
 
 
+class LLMQuotaExceededError(LLMProviderError):
+    """The LLM gateway returned 429 — the account/plan's quota or rate
+    limit was hit (`llm_quota_exceeded`). Distinct from `LLMAPIError`:
+    unlike a one-off 5xx blip, a quota exhaustion means every subsequent
+    turn fails too until it resets or is topped up, so it is classified
+    and alerted on immediately rather than only after repeating (see
+    `app.application.errors.error_service`'s `_ALWAYS_CRITICAL`).
+    """
+
+    def __init__(self, body: str) -> None:
+        self.status_code = 429
+        self.body = body
+        super().__init__(f"LLM gateway quota/rate limit exceeded (429): {body}")
+
+
 class LLMAPIError(LLMProviderError):
     """The LLM gateway returned a non-2xx response not covered above."""
 

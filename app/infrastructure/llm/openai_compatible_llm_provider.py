@@ -5,6 +5,7 @@ from app.application.errors.error_types import (
     INVALID_LLM_OUTPUT,
     LLM_AUTH_ERROR,
     LLM_ERROR,
+    LLM_QUOTA_EXCEEDED,
     OPENAI_TIMEOUT,
 )
 from app.domain.entities.message import Message
@@ -19,6 +20,7 @@ from app.infrastructure.llm.exceptions import (
     LLMAuthError,
     LLMInvalidResponseError,
     LLMProviderError,
+    LLMQuotaExceededError,
     LLMTimeoutError,
 )
 from app.infrastructure.observability.tool_tracing import traced_call
@@ -160,6 +162,8 @@ def _http_status_of(exc: Exception) -> str | None:
 def _error_type_of(exc: Exception) -> str:
     if isinstance(exc, LLMAuthError):
         return LLM_AUTH_ERROR
+    if isinstance(exc, LLMQuotaExceededError):
+        return LLM_QUOTA_EXCEEDED
     if isinstance(exc, LLMTimeoutError):
         return OPENAI_TIMEOUT
     if isinstance(exc, LLMInvalidResponseError):

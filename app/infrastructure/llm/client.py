@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import httpx
 
@@ -7,8 +8,11 @@ from app.infrastructure.llm.exceptions import (
     LLMAuthError,
     LLMInvalidResponseError,
     LLMProviderError,
+    LLMQuotaExceededError,
     LLMTimeoutError,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Same bounded-retry rationale as `DentalinkClient`: only a transient
 #: network timeout is retried, never a 4xx/5xx application response — a
@@ -79,6 +83,20 @@ class OpenAICompatibleLLMClient:
 
         if response.status_code in (401, 403):
             raise LLMAuthError(f"LLM gateway rejected credentials ({response.status_code})")
+        if response.status_code == 429:
+            # A plain grep for "llm.quota_exceeded" (or the ErrorRecord
+            # this also produces via `_error_type_of`/`traced_call`) is
+            # the whole point here — this used to be indistinguishable
+            # from any other non-timeout/non-auth LLM failure, with no
+            # alert ever firing for it, so nobody could tell "se quedó sin
+            # cuota" apart from any other transient blip.
+            logger.error(
+                "llm.quota_exceeded model=%s status=%s body=%s",
+                model,
+                response.status_code,
+                response.text,
+            )
+            raise LLMQuotaExceededError(response.text)
         if response.is_error:
             raise LLMAPIError(response.status_code, response.text)
 

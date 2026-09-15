@@ -1,12 +1,26 @@
 import pytest
 
+from app.application.errors.error_types import (
+    INVALID_LLM_OUTPUT,
+    LLM_AUTH_ERROR,
+    LLM_ERROR,
+    LLM_QUOTA_EXCEEDED,
+    OPENAI_TIMEOUT,
+)
 from app.domain.repositories.llm_provider import ResponseContext
-from app.infrastructure.llm.exceptions import LLMInvalidResponseError
+from app.infrastructure.llm.exceptions import (
+    LLMAuthError,
+    LLMInvalidResponseError,
+    LLMProviderError,
+    LLMQuotaExceededError,
+    LLMTimeoutError,
+)
 from app.infrastructure.llm.openai_compatible_llm_provider import (
     DEFAULT_CLASSIFY_INTENT_PROMPT,
     DEFAULT_EXTRACT_INFORMATION_PROMPT,
     DEFAULT_GENERATE_RESPONSE_PROMPT,
     OpenAICompatibleLLMProvider,
+    _error_type_of,
 )
 from tests.fixtures.gateways import make_runtime_config_service
 
@@ -350,3 +364,17 @@ async def test_generate_response_omits_contact_memory_line_when_absent() -> None
 
     _, messages, _ = client.calls[0]
     assert "sabíamos de este paciente" not in messages[0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (LLMAuthError("nope"), LLM_AUTH_ERROR),
+        (LLMQuotaExceededError("rate limited"), LLM_QUOTA_EXCEEDED),
+        (LLMTimeoutError("timed out"), OPENAI_TIMEOUT),
+        (LLMInvalidResponseError("bad json"), INVALID_LLM_OUTPUT),
+        (LLMProviderError("something else"), LLM_ERROR),
+    ],
+)
+def test_error_type_of_maps_each_llm_exception(exc: Exception, expected: str) -> None:
+    assert _error_type_of(exc) == expected

@@ -13,6 +13,9 @@ from app.application.errors.error_types import (
     GRAPH_STATE_ERROR,
     INVALID_LLM_OUTPUT,
     INVALID_TOOL_ARGUMENTS,
+    LLM_AUTH_ERROR,
+    LLM_ERROR,
+    LLM_QUOTA_EXCEEDED,
     OPENAI_TIMEOUT,
     PATIENT_NOT_FOUND,
     REDIS_ERROR,
@@ -62,6 +65,13 @@ _ALWAYS_CRITICAL = frozenset(
         YCLOUD_WEBHOOK_FAILURE,
         DATABASE_ERROR,
         UNEXPECTED_EXCEPTION,
+        #: Same "needs a human NOW" reasoning as DENTALINK_AUTH_ERROR/
+        #: YCLOUD_AUTH_ERROR above — the bot cannot serve a single turn
+        #: while either holds, so neither should wait for repetition
+        #: before alerting (this session's own brief: previously classified
+        #: as WARNING-forever, same gap LLM_ERROR had below).
+        LLM_AUTH_ERROR,
+        LLM_QUOTA_EXCEEDED,
     }
 )
 
@@ -78,6 +88,7 @@ _ESCALATES_ON_REPETITION = frozenset(
         YCLOUD_SEND_FAILURE,
         OPENAI_TIMEOUT,
         INVALID_LLM_OUTPUT,
+        LLM_ERROR,
     }
 )
 
