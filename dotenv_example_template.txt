@@ -44,3 +44,11 @@ DENTALINK_TIMEOUT_SECONDS=15
 DENTALINK_DEFAULT_BRANCH_ID=
 DENTALINK_DEFAULT_CHAIR_ID=
 DENTALINK_DEFAULT_DURATION_MINUTES=30
+
+# Telegram — error/incident alert channel (PRD.md §47-51). Leave both
+# empty to stay on the in-memory Fake notifier (no alerts sent). Create a
+# bot via @BotFather for TELEGRAM_BOT_TOKEN; TELEGRAM_CHAT_ID is the
+# numeric chat/group id the bot should post to (send it any message, then
+# GET https://api.telegram.org/bot<token>/getUpdates and read "chat":{"id"}).
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=

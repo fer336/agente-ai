@@ -46,6 +46,7 @@ from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearInc
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
+from app.infrastructure.telegram.telegram_alert_notifier import TelegramAlertNotifier
 from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
 from app.infrastructure.transcription.groq_transcription_gateway import GroqTranscriptionGateway
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
@@ -352,18 +353,39 @@ def test_get_media_downloader_returns_the_same_cached_instance_across_calls():
     assert first is second
 
 
-def test_get_telegram_notifier_returns_a_fake_telegram_alert_notifier():
+def test_get_telegram_notifier_returns_a_fake_telegram_alert_notifier_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
     notifier = get_telegram_notifier()
 
     assert isinstance(notifier, FakeTelegramAlertNotifier)
     assert isinstance(notifier, AlertNotifier)
 
 
-def test_get_telegram_notifier_returns_the_same_cached_instance_across_calls():
+def test_get_telegram_notifier_returns_the_same_cached_instance_across_calls(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
     first = get_telegram_notifier()
     second = get_telegram_notifier()
 
     assert first is second
+
+
+def test_get_telegram_notifier_returns_a_real_notifier_when_bot_token_is_configured(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(
+            _env_file=None, telegram_bot_token="bot-token", telegram_chat_id="12345"
+        ),
+    )
+
+    notifier = get_telegram_notifier()
+
+    assert isinstance(notifier, TelegramAlertNotifier)
 
 
 def test_get_linear_gateway_returns_a_fake_linear_incident_gateway():
