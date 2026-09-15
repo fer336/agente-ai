@@ -48,7 +48,6 @@ from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
-    MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -1115,9 +1114,11 @@ async def test_identification_stage_proposes_the_already_chosen_slot():
 
 
 @pytest.mark.asyncio
-async def test_professional_selection_offers_administracion_when_no_slots_available():
+async def test_professional_selection_offers_other_professionals_when_no_slots_available():
     # Availability is searched right after the doctor is chosen now, so
-    # this is where an empty agenda surfaces.
+    # this is where an empty agenda surfaces. This session's own brief: a
+    # known specialty must offer "ver otros profesionales" instead of
+    # discarding it and sending the patient back to the main menu.
     node, conversation_repository, _ = await _make_node_and_conversation(available_slots=[])
     state = make_agent_state(
         conversation_id="conv-1",
@@ -1132,44 +1133,9 @@ async def test_professional_selection_offers_administracion_when_no_slots_availa
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_AVAILABILITY_CHOICE
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
     assert [(button.id, button.title) for button in result["response_buttons"]] == [
-        (MENU_MAIN_PAYLOAD, "Menú principal"),
-    ]
-    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
-    assert conversation is not None
-    assert conversation.input_state == "INTERACTIVE_SELECTION"
-
-
-@pytest.mark.asyncio
-async def test_professional_selection_offers_main_menu_even_when_other_professionals_exist():
-    # The requested terminal no-availability UX is stable regardless of
-    # whether another professional exists: only the principal menu button,
-    # no administration escape hatch.
-    node, conversation_repository, _ = await _make_node_and_conversation(
-        available_slots=[],
-        professionals=[
-            make_professional(id_="prof-1", specialty_id="cleaning"),
-            make_professional(id_="prof-2", specialty_id="cleaning"),
-        ],
-    )
-    state = make_agent_state(
-        conversation_id="conv-1",
-        user_message="1",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            "operation": CREATE_APPOINTMENT_ACTION,
-            "chosen_specialty_id": "cleaning",
-            "chosen_specialty_name": "Ortodoncia",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await node(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_AVAILABILITY_CHOICE
-    assert [(button.id, button.title) for button in result["response_buttons"]] == [
-        (MENU_MAIN_PAYLOAD, "Menú principal"),
+        (_VIEW_OTHER_PROFESSIONALS_PAYLOAD, "🔎 Ver otros profesionales"),
     ]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None

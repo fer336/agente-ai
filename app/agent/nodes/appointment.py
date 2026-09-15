@@ -1157,6 +1157,23 @@ def create_appointment_node(
             # another Dentalink request — see the port's own docstring.
             limit=_MAX_OPTIONS_SHOWN,
         )
+        if not slots and collected_data.get("chosen_specialty_id") is not None:
+            # A specialty is already known — offer another professional in
+            # it before falling back to "start over from scratch" (this
+            # session's own brief: a professional with zero availability
+            # used to only offer "Menú principal", discarding the
+            # specialty the patient already picked).
+            await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+            return {
+                "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+                "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
+                "requires_handoff": False,
+                "pending_action_id": None,
+                "collected_data": {
+                    **collected_data,
+                    "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
+                },
+            }
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
             return {
