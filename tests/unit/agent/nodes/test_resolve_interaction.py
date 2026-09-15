@@ -5,7 +5,6 @@ from app.agent.nodes.resolve_interaction import (
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
-    MENU_TREATMENT_CATALOG_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
     create_resolve_interaction_node,
@@ -185,38 +184,6 @@ async def test_classifies_specialties_intent():
     result = await node(make_agent_state(user_message="¿Qué especialidades tienen?"))
 
     assert result["intent"] == "specialties"
-
-
-@pytest.mark.asyncio
-async def test_treatment_catalog_menu_button_payload_routes_to_treatment_catalog():
-    # The welcome list's "Tratamientos y precios" row (this session's own
-    # brief) — must route to the new static FAQ catalog, never to
-    # `specialties`'s live Dentalink booking flow.
-    class _ExplodingLLMProvider(FakeLLMProvider):
-        async def classify_intent(self, message, context):
-            raise AssertionError("must not classify when a button payload is present")
-
-    node = create_resolve_interaction_node(_ExplodingLLMProvider())
-
-    result = await node(
-        make_agent_state(
-            user_message="🦷 Tratamientos y precios",
-            button_payload=MENU_TREATMENT_CATALOG_PAYLOAD,
-        )
-    )
-
-    assert result == {"intent": "treatment_catalog"}
-
-
-@pytest.mark.asyncio
-async def test_classifies_treatment_catalog_intent():
-    node = create_resolve_interaction_node(FakeLLMProvider())
-
-    result = await node(
-        make_agent_state(user_message="¿Qué tratamientos ofrecen y cuánto cuestan?")
-    )
-
-    assert result["intent"] == "treatment_catalog"
 
 
 @pytest.mark.asyncio

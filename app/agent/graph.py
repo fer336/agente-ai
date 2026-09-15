@@ -16,7 +16,6 @@ from app.agent.nodes.location import location_node
 from app.agent.nodes.question import question_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.agent.nodes.specialties import create_specialties_node
-from app.agent.nodes.treatment_catalog import create_treatment_catalog_node
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
@@ -57,11 +56,6 @@ FRESH_RESTART_NODE = "fresh_restart"
 APPOINTMENT_NODE = "appointment"
 AGREEMENT_NODE = "agreement"
 SPECIALTIES_NODE = "specialties"
-#: Static FAQ catalog of commonly-asked treatments (this session's own
-#: brief) — distinct from `SPECIALTIES_NODE`'s live Dentalink
-#: specialty/booking flow, see `app.agent.nodes.treatment_catalog`'s
-#: own docstring.
-TREATMENT_CATALOG_NODE = "treatment_catalog"
 HANDOFF_NODE = "handoff"
 QUESTION_NODE = "question"
 LOCATION_NODE = "location"
@@ -105,8 +99,6 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return AGREEMENT_NODE
     if intent == "specialties":
         return SPECIALTIES_NODE
-    if intent == "treatment_catalog":
-        return TREATMENT_CATALOG_NODE
     if intent == "handoff":
         return HANDOFF_NODE
     if intent == "question":
@@ -145,7 +137,6 @@ def build_graph(
                                              |-- appointment
                                              |-- agreement
                                              |-- specialties
-                                             |-- treatment_catalog
                                              |-- handoff
                                              |-- question
                                              |-- location
@@ -253,17 +244,6 @@ def build_graph(
         ),
     )
     graph.add_node(
-        TREATMENT_CATALOG_NODE,
-        with_error_handling(
-            TREATMENT_CATALOG_NODE,
-            create_treatment_catalog_node(),
-            node_execution_repository,
-            agent_run_id,
-            tool_execution_repository,
-            error_service,
-        ),
-    )
-    graph.add_node(
         HANDOFF_NODE,
         with_error_handling(
             HANDOFF_NODE,
@@ -329,7 +309,6 @@ def build_graph(
             APPOINTMENT_NODE: APPOINTMENT_NODE,
             AGREEMENT_NODE: AGREEMENT_NODE,
             SPECIALTIES_NODE: SPECIALTIES_NODE,
-            TREATMENT_CATALOG_NODE: TREATMENT_CATALOG_NODE,
             HANDOFF_NODE: HANDOFF_NODE,
             QUESTION_NODE: QUESTION_NODE,
             LOCATION_NODE: LOCATION_NODE,
@@ -340,7 +319,6 @@ def build_graph(
         APPOINTMENT_NODE,
         AGREEMENT_NODE,
         SPECIALTIES_NODE,
-        TREATMENT_CATALOG_NODE,
         HANDOFF_NODE,
         QUESTION_NODE,
         LOCATION_NODE,
