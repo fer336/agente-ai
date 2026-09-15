@@ -1,9 +1,11 @@
+from app.application.messages.delivery_failure_dto import DeliveryFailureDTO
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
+    YCloudMessageUpdatedEventPayload,
     YCloudSmbMessageEchoEventPayload,
 )
 
@@ -43,6 +45,9 @@ _SMB_MESSAGE_ECHO_EVENT_TYPE = "whatsapp.smb.message.echoes"
 #: bot-sent messages (it does not appear to — see this PR's report).
 _BOT_REACTIVATION_COMMAND = "/bot"
 _SMB_ECHO_TEXT_MESSAGE_TYPE = "text"
+
+_MESSAGE_UPDATED_EVENT_TYPE = "whatsapp.message.updated"
+_FAILED_MESSAGE_STATUS = "failed"
 
 
 def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: str) -> bool:
@@ -221,3 +226,40 @@ def extract_bot_reactivation_command(payload: YCloudSmbMessageEchoEventPayload) 
     if message.text.body.strip().casefold() != _BOT_REACTIVATION_COMMAND:
         return None
     return extract_smb_echo_patient_phone(payload)
+
+
+def is_message_status_event(event_type: str) -> bool:
+    return event_type == _MESSAGE_UPDATED_EVENT_TYPE
+
+
+def extract_delivery_failure(
+    payload: YCloudMessageUpdatedEventPayload,
+) -> DeliveryFailureDTO | None:
+    """Returns a `DeliveryFailureDTO` for a `status="failed"` outbound
+    message, else `None` (`accepted`/`sent`/`delivered`/`read` need no
+    action — nothing to alert on).
+
+    `message.id` (not `wamid`) is the correlation key: it's the same
+    external message id `SendReplyUseCase`/`MessagingGateway.send_*`
+    returned and persisted via `SentMessageRepository` at send time. A
+    `failed` status with no `id` is a plausible-but-incomplete payload —
+    same "ack-and-drop rather than crash" stance as
+    `to_inbound_message_dto`'s own guards — so it returns `None` too,
+    since there is nothing to look up the conversation by.
+    """
+    message = payload.whatsappMessage
+    if message.status != _FAILED_MESSAGE_STATUS:
+        return None
+    if not message.id.strip():
+        return None
+    technical_detail = (
+        f"whatsappApiError={message.whatsappApiError.model_dump()}"
+        if message.whatsappApiError is not None
+        else ""
+    )
+    return DeliveryFailureDTO(
+        message_id=message.id,
+        error_code=message.errorCode,
+        error_message=message.errorMessage,
+        technical_detail=technical_detail,
+    )

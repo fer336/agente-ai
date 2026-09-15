@@ -31,6 +31,7 @@ from app.infrastructure.database.fake_pending_action_repository import (
 from app.infrastructure.database.fake_scheduled_action_repository import (
     FakeScheduledActionRepository,
 )
+from app.infrastructure.database.fake_sent_message_repository import FakeSentMessageRepository
 from app.infrastructure.database.fake_tool_execution_repository import (
     FakeToolExecutionRepository,
 )
@@ -89,6 +90,11 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
     scheduled_actions = FakeScheduledActionRepository()
     outbox = FakeOutboxRepository()
     messaging_gateway = FakeYCloudMessagingGateway()
+    sent_messages = FakeSentMessageRepository()
+
+    @asynccontextmanager
+    async def sent_message_repository_provider() -> AsyncIterator[FakeSentMessageRepository]:
+        yield sent_messages
 
     @asynccontextmanager
     async def agent_repositories_provider() -> AsyncIterator[AgentRepositories]:
@@ -128,7 +134,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=FakeLLMProvider(),
         repositories_provider=agent_repositories_provider,
-        send_reply=SendReplyUseCase(messaging_gateway),
+        send_reply=SendReplyUseCase(messaging_gateway, sent_message_repository_provider),
         patient_gateway=FakePatientGateway(),
         proposal_repositories_provider=proposal_repositories_provider,
         memory_recent_window_size=settings.memory_recent_window_size,

@@ -48,6 +48,7 @@ from app.infrastructure.database.fake_runtime_config_repository import (
 from app.infrastructure.database.fake_scheduled_action_repository import (
     FakeScheduledActionRepository,
 )
+from app.infrastructure.database.fake_sent_message_repository import FakeSentMessageRepository
 from app.infrastructure.database.fake_tool_execution_repository import (
     FakeToolExecutionRepository,
 )
@@ -271,13 +272,27 @@ def make_agent_invoker() -> FakeAgentInvoker:
     return FakeAgentInvoker()
 
 
+def make_sent_message_repository() -> FakeSentMessageRepository:
+    return FakeSentMessageRepository()
+
+
 def make_send_reply_use_case(
     messaging_gateway: FakeYCloudMessagingGateway | None = None,
+    sent_message_repository: FakeSentMessageRepository | None = None,
 ) -> SendReplyUseCase:
     messaging_gateway = (
         messaging_gateway if messaging_gateway is not None else make_ycloud_messaging_gateway()
     )
-    return SendReplyUseCase(messaging_gateway)
+    sent_messages = (
+        sent_message_repository if sent_message_repository is not None
+        else make_sent_message_repository()
+    )
+
+    @asynccontextmanager
+    async def sent_message_repositories_provider() -> AsyncIterator[FakeSentMessageRepository]:
+        yield sent_messages
+
+    return SendReplyUseCase(messaging_gateway, sent_message_repositories_provider)
 
 
 def make_runtime_config_service(

@@ -184,3 +184,52 @@ class YCloudSmbMessageEchoEventPayload(BaseModel):
 
     type: str = ""
     whatsappMessage: YCloudSmbEchoMessage = YCloudSmbEchoMessage()
+
+
+class YCloudWhatsappApiErrorData(BaseModel):
+    messaging_product: str = ""
+    details: str = ""
+
+
+class YCloudWhatsappApiError(BaseModel):
+    message: str = ""
+    type: str = ""
+    code: str = ""
+    fbtrace_id: str = ""
+    error_data: YCloudWhatsappApiErrorData | None = None
+
+
+class YCloudUpdatedMessage(BaseModel):
+    """The `whatsappMessage` object of a `whatsapp.message.updated` event.
+
+    Confirmed (fetched live) at
+    https://docs.ycloud.com/reference/whatsapp-message-updated-webhook-examples
+    — `status` is one of `accepted`/`sent`/`delivered`/`read`/`failed`;
+    `errorCode`/`errorMessage`/`whatsappApiError` are only populated for
+    `status="failed"`. Only the fields this codebase actually needs are
+    modeled (pricing/customerProfile/etc. are dropped).
+
+    `id` is the SAME external message id `MessagingGateway.send_*` returns
+    at send time (see `app.domain.entities.sent_message.SentMessage`'s own
+    docstring) — `recipientUserId` is NOT a phone number (an opaque YCloud
+    user id, e.g. `"US.13491208655302741918"`), so this `id` is the only
+    reliable key back to a conversation.
+    """
+
+    id: str = ""
+    status: str = ""
+    errorCode: str = ""
+    errorMessage: str = ""
+    whatsappApiError: YCloudWhatsappApiError | None = None
+
+
+class YCloudMessageUpdatedEventPayload(BaseModel):
+    """Raw shape of a YCloud `whatsapp.message.updated` webhook event —
+    async delivery-status callbacks for an outbound message. Previously
+    entirely unhandled: this event type fell through to
+    `YCloudInboundEventPayload.model_validate` and was silently dropped as
+    "ignored" by `is_processable_message` — a `status="failed"` delivery
+    left no trace anywhere (this session's own brief)."""
+
+    type: str = ""
+    whatsappMessage: YCloudUpdatedMessage = YCloudUpdatedMessage()

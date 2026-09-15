@@ -387,6 +387,7 @@ class LangGraphAgentInvoker:
 
         try:
             await self._send_reply.execute(
+                conversation_id,
                 phone,
                 response_text or "",
                 response_buttons,

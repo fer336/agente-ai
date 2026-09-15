@@ -5,6 +5,10 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app.api.dependencies.errors import (
+    get_committing_error_service,
+    get_committing_sent_message_repository,
+)
 from app.api.dependencies.gateways import get_messaging_gateway
 from app.api.dependencies.repositories import get_committing_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
@@ -12,19 +16,26 @@ from app.application.conversations.handle_smb_message_echo import HandleSmbMessa
 from app.application.conversations.sync_conversation_mode_from_tag import (
     SyncConversationModeFromTagUseCase,
 )
+from app.application.errors.error_service import ErrorService
+from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.messages.ingest_message import IngestMessageUseCase
 from app.config.settings import Settings, get_settings
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import MessagingGateway
+from app.domain.repositories.sent_message_repository import SentMessageRepository
+from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
+    YCloudMessageUpdatedEventPayload,
     YCloudSmbMessageEchoEventPayload,
 )
 from app.infrastructure.ycloud.webhook_parser import (
     extract_bot_reactivation_command,
+    extract_delivery_failure,
     extract_smb_echo_patient_phone,
     extract_tag_mode_change,
+    is_message_status_event,
     is_processable_message,
     is_smb_message_echo_event,
     is_tag_mode_change_event,
@@ -55,8 +66,10 @@ class WebhookAckResponse(BaseModel):
     summary=(
         "Receive a YCloud webhook event: `whatsapp.inbound_message.received`, "
         "`whatsapp.smb.message.echoes` (staff `/bot` command + human-reply "
-        "timeout reset), or `contact.attributes_changed` (legacy tag-driven "
-        "bot/human toggle, kept for now but no longer the primary path)"
+        "timeout reset), `whatsapp.message.updated` (async outbound "
+        "delivery-status callback), or `contact.attributes_changed` "
+        "(legacy tag-driven bot/human toggle, kept for now but no longer "
+        "the primary path)"
     ),
     response_model=WebhookAckResponse,
 )
@@ -69,6 +82,10 @@ async def receive_ycloud_webhook(
     conversation_repository: ConversationRepository = Depends(
         get_committing_conversation_repository
     ),
+    sent_message_repository: SentMessageRepository = Depends(
+        get_committing_sent_message_repository
+    ),
+    error_service: ErrorService = Depends(get_committing_error_service),
 ) -> WebhookAckResponse:
     """YCloud is the sole webhook counterparty (WhatsApp -> YCloud -> us).
 
@@ -161,6 +178,40 @@ async def receive_ycloud_webhook(
                 patient_phone,
                 is_reactivation_command,
             )
+        return WebhookAckResponse(status="accepted")
+
+    if is_message_status_event(event_type):
+        status_payload = YCloudMessageUpdatedEventPayload.model_validate(payload)
+        failure = extract_delivery_failure(status_payload)
+        if failure is None:
+            # `accepted`/`sent`/`delivered`/`read`, or a plausible-but-
+            # incomplete `failed` payload with no message id to look up —
+            # nothing actionable either way.
+            return WebhookAckResponse(status="ignored")
+
+        sent_message = await sent_message_repository.get_by_id(failure.message_id)
+        if sent_message is None:
+            # We never recorded this message id (sent before this change
+            # shipped, or the async status webhook simply outran our own
+            # commit) — still worth recording SOMETHING rather than
+            # dropping a known WhatsApp delivery failure entirely.
+            logger.warning(
+                "webhook.delivery_failure_unattributed message_id=%s error_code=%s",
+                failure.message_id,
+                failure.error_code,
+            )
+        conversation_id = (
+            ConversationId(sent_message.conversation_id) if sent_message is not None else None
+        )
+        await error_service.report(
+            source="ycloud",
+            error_type=YCLOUD_SEND_FAILURE,
+            message=f"WhatsApp delivery failed: {failure.error_message or failure.error_code}",
+            conversation_id=conversation_id,
+            error_code=failure.error_code,
+            technical_detail=failure.technical_detail,
+            operation="delivery_status_webhook",
+        )
         return WebhookAckResponse(status="accepted")
 
     message_payload = YCloudInboundEventPayload.model_validate(payload)

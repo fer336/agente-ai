@@ -109,7 +109,7 @@ async def run_follow_up_tick(
             continue
 
         if scheduled_action.action_type == APPOINTMENT_FLOW_FOLLOW_UP_PROMPT:
-            await send_reply.execute(contact.phone, _FOLLOW_UP_PROMPT_MESSAGE)
+            await send_reply.execute(conversation_id, contact.phone, _FOLLOW_UP_PROMPT_MESSAGE)
             await _record_outbound(
                 message_repository, conversation_id, _FOLLOW_UP_PROMPT_MESSAGE, now
             )
@@ -121,7 +121,7 @@ async def run_follow_up_tick(
             await reset_graph.aupdate_state(
                 {"configurable": {"thread_id": str(conversation_id)}}, {"collected_data": {}}
             )
-            await send_reply.execute(contact.phone, _FOLLOW_UP_RESET_MESSAGE)
+            await send_reply.execute(conversation_id, contact.phone, _FOLLOW_UP_RESET_MESSAGE)
             await _record_outbound(
                 message_repository, conversation_id, _FOLLOW_UP_RESET_MESSAGE, now
             )

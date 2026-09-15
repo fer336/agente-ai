@@ -24,6 +24,7 @@ _EXPECTED_TABLES = {
     "incidents",
     "runtime_agent_config",
     "contact_memories",
+    "sent_messages",
 }
 
 
