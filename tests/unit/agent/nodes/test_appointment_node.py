@@ -9,6 +9,7 @@ import app.agent.nodes.appointment as appointment
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
     _MAIN_MENU_RESET_MESSAGE,
+    _STALE_TAP_MESSAGE,
     _VIEW_OTHER_PROFESSIONALS_PAYLOAD,
     CANCEL_APPOINTMENT_ACTION,
     CONFIRM_APPOINTMENT_PAYLOAD,
@@ -1174,6 +1175,35 @@ async def test_professional_selection_offers_main_menu_even_when_other_professio
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
+
+
+@pytest.mark.asyncio
+async def test_no_availability_choice_stage_re_offers_main_menu_on_a_stale_tap():
+    # Live bug: WhatsApp never disables a past interactive message, so a
+    # patient can tap an OLD, already-superseded professional list after
+    # landing here. This stage previously had no handler at all — the tap
+    # fell through the entire dispatch chain to the generic "no stage yet"
+    # fallback and produced the confusing top-level operation menu ("Sacar
+    # turno / Reagendar / Cancelar") out of nowhere. Must instead tell the
+    # patient the tap is stale and re-offer the one valid option.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-stale",
+        collected_data={"stage": STAGE_AWAITING_NO_AVAILABILITY_CHOICE},
+    )
+
+    result = await node(state)
+
+    # `collected_data` is omitted from the return entirely — the stage
+    # stays STAGE_AWAITING_NO_AVAILABILITY_CHOICE, so the patient gets
+    # another chance at the one valid option instead of the stage being
+    # silently discarded.
+    assert "collected_data" not in result
+    assert [(button.id, button.title) for button in result["response_buttons"]] == [
+        (MENU_MAIN_PAYLOAD, "Menú principal"),
+    ]
+    assert result["response_text"] == _STALE_TAP_MESSAGE
 
 
 @pytest.mark.asyncio
