@@ -159,7 +159,7 @@ def specialties_list_message(
 ) -> ListMessage:
     """The paginated specialty-catalog list message."""
     return ListMessage(
-        button_label="Elegí una especialidad",
+        button_label="Elegí especialidad",
         rows=specialty_rows(specialties, page, include_back),
         section_title="Especialidades",
     )
@@ -170,7 +170,7 @@ def professionals_list_message(
 ) -> ListMessage:
     """The paginated professionals-of-a-specialty list message."""
     return ListMessage(
-        button_label="Elegí un profesional",
+        button_label="Elegí profesional",
         rows=professional_rows(professionals, page, include_back),
         section_title="Profesionales",
     )
