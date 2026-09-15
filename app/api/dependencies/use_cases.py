@@ -11,6 +11,7 @@ from app.api.dependencies.gateways import (
 from app.api.dependencies.redis import get_debounce_tracker, get_shared_redis_client
 from app.api.dependencies.repositories import (
     open_sqlalchemy_message_repositories,
+    open_sqlalchemy_sent_message_repository,
     open_sqlalchemy_transcription_repositories,
     open_sqlalchemy_workflow_session_repositories,
 )
@@ -37,7 +38,9 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         redis_client=get_shared_redis_client(),
         agent_invoker=get_agent_invoker(),
         runtime_config_service=get_runtime_config_service(),
-        send_reply=SendReplyUseCase(get_messaging_gateway()),
+        send_reply=SendReplyUseCase(
+            get_messaging_gateway(), open_sqlalchemy_sent_message_repository
+        ),
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
         welcome_image_url=settings.welcome_image_url or None,
         workflow_session_repositories_provider=open_sqlalchemy_workflow_session_repositories,

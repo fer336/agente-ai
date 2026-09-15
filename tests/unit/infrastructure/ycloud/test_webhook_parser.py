@@ -4,13 +4,16 @@ from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
+    YCloudMessageUpdatedEventPayload,
     YCloudSmbMessageEchoEventPayload,
 )
 from app.infrastructure.ycloud.webhook_parser import (
     FLOW_RESPONSE_PAYLOAD_PREFIX,
     extract_bot_reactivation_command,
+    extract_delivery_failure,
     extract_smb_echo_patient_phone,
     extract_tag_mode_change,
+    is_message_status_event,
     is_processable_message,
     is_smb_message_echo_event,
     is_tag_mode_change_event,
@@ -408,3 +411,65 @@ def test_extract_bot_reactivation_command_returns_none_for_non_text_message():
     )
 
     assert extract_bot_reactivation_command(payload) is None
+
+
+def test_is_message_status_event_matches_whatsapp_message_updated():
+    assert is_message_status_event("whatsapp.message.updated") is True
+
+
+def test_is_message_status_event_rejects_other_types():
+    assert is_message_status_event("whatsapp.inbound_message.received") is False
+
+
+def test_extract_delivery_failure_returns_none_for_a_non_failed_status():
+    payload = YCloudMessageUpdatedEventPayload.model_validate(
+        {
+            "type": "whatsapp.message.updated",
+            "whatsappMessage": {"id": "msg-1", "status": "delivered"},
+        }
+    )
+
+    assert extract_delivery_failure(payload) is None
+
+
+def test_extract_delivery_failure_returns_none_when_id_is_missing():
+    payload = YCloudMessageUpdatedEventPayload.model_validate(
+        {
+            "type": "whatsapp.message.updated",
+            "whatsappMessage": {"status": "failed", "errorCode": "100"},
+        }
+    )
+
+    assert extract_delivery_failure(payload) is None
+
+
+def test_extract_delivery_failure_returns_a_dto_for_a_failed_status():
+    payload = YCloudMessageUpdatedEventPayload.model_validate(
+        {
+            "type": "whatsapp.message.updated",
+            "whatsappMessage": {
+                "id": "63f5d602367ea403f8175a6c",
+                "status": "failed",
+                "errorCode": "100",
+                "errorMessage": "Parameter Invalid",
+                "whatsappApiError": {
+                    "message": "(#100) Invalid parameter",
+                    "type": "OAuthException",
+                    "code": "100",
+                    "fbtrace_id": "AwmiSOCojlAkqvjCTjGt37r",
+                    "error_data": {
+                        "messaging_product": "whatsapp",
+                        "details": "Parameter Invalid",
+                    },
+                },
+            },
+        }
+    )
+
+    failure = extract_delivery_failure(payload)
+
+    assert failure is not None
+    assert failure.message_id == "63f5d602367ea403f8175a6c"
+    assert failure.error_code == "100"
+    assert failure.error_message == "Parameter Invalid"
+    assert "Parameter Invalid" in failure.technical_detail

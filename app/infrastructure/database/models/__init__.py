@@ -19,6 +19,7 @@ from app.infrastructure.database.models.patient import PatientModel
 from app.infrastructure.database.models.pending_action import PendingActionModel
 from app.infrastructure.database.models.runtime_agent_config import RuntimeAgentConfigModel
 from app.infrastructure.database.models.scheduled_action import ScheduledActionModel
+from app.infrastructure.database.models.sent_message import SentMessageModel
 from app.infrastructure.database.models.tool_execution import ToolExecutionModel
 
 __all__ = [
@@ -43,5 +44,6 @@ __all__ = [
     "PendingActionModel",
     "RuntimeAgentConfigModel",
     "ScheduledActionModel",
+    "SentMessageModel",
     "ToolExecutionModel",
 ]

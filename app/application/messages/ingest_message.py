@@ -196,6 +196,7 @@ class IngestMessageUseCase:
                 # header, never an image — the clinic logo has nowhere to
                 # attach on this message type.
                 await self._send_reply.execute(
+                    conversation.id,
                     dto.from_phone,
                     WELCOME_TEXT,
                     list_message=WELCOME_LIST,

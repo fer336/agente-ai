@@ -4,26 +4,35 @@ from datetime import UTC, datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.dependencies.errors import (
+    get_committing_error_service,
+    get_committing_sent_message_repository,
+)
 from app.api.dependencies.gateways import get_messaging_gateway
 from app.api.dependencies.repositories import (
     get_committing_conversation_repository,
     get_conversation_repository,
 )
 from app.api.dependencies.use_cases import get_ingest_message_use_case
+from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL
+from app.domain.entities.sent_message import SentMessage
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.auth.session_tokens import create_session_token
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
+from app.infrastructure.database.fake_error_repository import FakeErrorRepository
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
+from app.infrastructure.database.fake_sent_message_repository import FakeSentMessageRepository
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from app.main import app
-from tests.fixtures.gateways import make_ingest_message_use_case
+from tests.fixtures.gateways import make_error_service, make_ingest_message_use_case
 from tests.fixtures.seed_objects import (
     make_conversation,
+    make_ycloud_message_updated_payload,
     make_ycloud_payload,
     make_ycloud_smb_echo_payload,
     make_ycloud_tag_change_payload,
@@ -473,3 +482,85 @@ async def test_public_docs_are_disabled_admin_docs_require_a_session():
     assert admin_docs.status_code == 200
     assert admin_openapi.status_code == 200
     assert "/webhooks/ycloud/{secret}" in admin_openapi.json()["paths"]
+
+
+@dataclass
+class _DeliveryStatusFakes:
+    error_repository: FakeErrorRepository
+    sent_message_repository: FakeSentMessageRepository
+
+
+@pytest.fixture
+def _delivery_status_fakes():
+    error_repository = FakeErrorRepository()
+    sent_message_repository = FakeSentMessageRepository()
+    error_service = make_error_service(error_repository=error_repository)
+    app.dependency_overrides[get_committing_error_service] = lambda: error_service
+    app.dependency_overrides[get_committing_sent_message_repository] = (
+        lambda: sent_message_repository
+    )
+
+    yield _DeliveryStatusFakes(
+        error_repository=error_repository, sent_message_repository=sent_message_repository
+    )
+
+    del app.dependency_overrides[get_committing_error_service]
+    del app.dependency_overrides[get_committing_sent_message_repository]
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_is_recorded_against_the_right_conversation(
+    _delivery_status_fakes,
+):
+    fakes = _delivery_status_fakes
+    await fakes.sent_message_repository.save(
+        SentMessage(
+            id="63f5d602367ea403f8175a6c",
+            conversation_id="ycloud-+5491122334455",
+            sent_at=datetime.now(UTC),
+        )
+    )
+
+    response = await _post_webhook(
+        make_ycloud_message_updated_payload(message_id="63f5d602367ea403f8175a6c")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    recorded = await fakes.error_repository.list_recent()
+    assert len(recorded) == 1
+    assert recorded[0].source == "ycloud"
+    assert recorded[0].error_type == YCLOUD_SEND_FAILURE
+    assert recorded[0].conversation_id == ConversationId("ycloud-+5491122334455")
+    assert recorded[0].error_code == "100"
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_with_no_known_sender_is_still_recorded_unattributed(
+    _delivery_status_fakes,
+):
+    # We never saw this message id at send time (sent before this change
+    # shipped, or the status webhook simply outran our own commit) — still
+    # worth recording rather than dropping a known WhatsApp failure.
+    fakes = _delivery_status_fakes
+
+    response = await _post_webhook(
+        make_ycloud_message_updated_payload(message_id="unknown-message-id")
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    recorded = await fakes.error_repository.list_recent()
+    assert len(recorded) == 1
+    assert recorded[0].conversation_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_delivered_status_update_is_ignored(_delivery_status_fakes):
+    fakes = _delivery_status_fakes
+
+    response = await _post_webhook(make_ycloud_message_updated_payload(status="delivered"))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
+    assert await fakes.error_repository.list_recent() == []

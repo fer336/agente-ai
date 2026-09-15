@@ -307,6 +307,41 @@ def make_ycloud_smb_echo_payload(
     }
 
 
+def make_ycloud_message_updated_payload(
+    message_id: str = "63f5d602367ea403f8175a6c",
+    status: str = "failed",
+    error_code: str = "100",
+    error_message: str = "Parameter Invalid",
+) -> dict[str, object]:
+    """Raw YCloud `whatsapp.message.updated` webhook JSON body,
+    valid-by-default (a failed delivery) — field names verified against
+    YCloud's own published example payloads at
+    https://docs.ycloud.com/reference/whatsapp-message-updated-webhook-examples.
+    """
+    whatsapp_message: dict[str, object] = {
+        "id": message_id,
+        "wamid": "wamid.BgNODYxN...",
+        "status": status,
+    }
+    if status == "failed":
+        whatsapp_message["errorCode"] = error_code
+        whatsapp_message["errorMessage"] = error_message
+        whatsapp_message["whatsappApiError"] = {
+            "message": f"(#{error_code}) Invalid parameter",
+            "type": "OAuthException",
+            "code": error_code,
+            "fbtrace_id": "AwmiSOCojlAkqvjCTjGt37r",
+            "error_data": {"messaging_product": "whatsapp", "details": error_message},
+        }
+    return {
+        "id": "evt_eEVCy8eNqD9EvcFI",
+        "type": "whatsapp.message.updated",
+        "apiVersion": "v2",
+        "createTime": "2026-09-15T12:00:00.000Z",
+        "whatsappMessage": whatsapp_message,
+    }
+
+
 def make_pending_action(
     id_: str = "pa-1",
     conversation_id: str = "conv-1",

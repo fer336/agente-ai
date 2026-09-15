@@ -19,6 +19,7 @@ from app.domain.repositories.conversation_repository import ConversationReposito
 from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.runtime_config_repository import RuntimeConfigRepository
+from app.domain.repositories.sent_message_repository import SentMessageRepository
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
@@ -50,6 +51,9 @@ from app.infrastructure.database.repositories.runtime_config_repository import (
 )
 from app.infrastructure.database.repositories.scheduled_action_repository import (
     SqlAlchemyScheduledActionRepository,
+)
+from app.infrastructure.database.repositories.sent_message_repository import (
+    SqlAlchemySentMessageRepository,
 )
 from app.infrastructure.database.repositories.tool_execution_repository import (
     SqlAlchemyToolExecutionRepository,
@@ -264,4 +268,21 @@ async def open_sqlalchemy_runtime_config_repository() -> AsyncIterator[RuntimeCo
     session_factory = _get_session_factory()
     async with session_factory() as session:
         yield SqlAlchemyRuntimeConfigRepository(session)
+        await session.commit()
+
+
+@asynccontextmanager
+async def open_sqlalchemy_sent_message_repository() -> AsyncIterator[SentMessageRepository]:
+    """`SendReplyUseCase`'s `sent_message_repositories_provider` for production DI.
+
+    Same rationale as `open_sqlalchemy_runtime_config_repository` above:
+    `SendReplyUseCase` is a process-level singleton (built once by
+    `get_agent_invoker`/`get_ingest_message_use_case`), so it cannot hold
+    one long-lived session — a fresh one is opened per `execute()` call.
+    Commits explicitly so the id->conversation correlation actually
+    persists past the call, same as every other provider in this module.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield SqlAlchemySentMessageRepository(session)
         await session.commit()

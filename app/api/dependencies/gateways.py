@@ -7,6 +7,7 @@ from app.api.dependencies.redis import get_shared_redis_client
 from app.api.dependencies.repositories import (
     open_sqlalchemy_agent_repositories,
     open_sqlalchemy_proposal_repositories,
+    open_sqlalchemy_sent_message_repository,
     open_sqlalchemy_trace_repositories,
 )
 from app.application.messages.send_reply import SendReplyUseCase
@@ -390,7 +391,9 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         handoff_gateway=get_human_handoff_gateway(),
         llm_provider=get_llm_provider(),
         repositories_provider=open_sqlalchemy_agent_repositories,
-        send_reply=SendReplyUseCase(get_messaging_gateway()),
+        send_reply=SendReplyUseCase(
+            get_messaging_gateway(), open_sqlalchemy_sent_message_repository
+        ),
         patient_gateway=get_patient_gateway(),
         proposal_repositories_provider=open_sqlalchemy_proposal_repositories,
         memory_recent_window_size=get_settings().memory_recent_window_size,
