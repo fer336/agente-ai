@@ -153,6 +153,10 @@ class TestListMessages:
             [_specialty(1), _specialty(2)], page=0, include_back=True
         )
         assert message.button_label
+        # Live incident: WhatsApp silently rejected a 22-char button_label
+        # ("Elegí una especialidad") — YCloud still answered 200 OK, so
+        # nothing in our own logs showed it. Meta's real cap is 20.
+        assert len(message.button_label) <= 20
         assert [r.id for r in message.rows] == [
             f"{SPECIALTY_PAYLOAD_PREFIX}spec-1",
             f"{SPECIALTY_PAYLOAD_PREFIX}spec-2",
@@ -164,6 +168,7 @@ class TestListMessages:
         message = professionals_list_message(
             [_professional(1)], page=0, include_back=True
         )
+        assert len(message.button_label) <= 20
         assert message.rows[0].id == "PROFESSIONAL:prof-1"
         assert message.rows[0].title.startswith(("👨‍⚕️ ", "👩‍⚕️ "))
         assert message.rows[-1].id == LIST_BACK_PAYLOAD
