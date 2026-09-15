@@ -34,6 +34,11 @@ OPENAI_TIMEOUT = "openai_timeout"
 #: catch-all/auth split as `YCLOUD_ERROR`/`YCLOUD_AUTH_ERROR`.
 LLM_ERROR = "llm_error"
 LLM_AUTH_ERROR = "llm_auth_error"
+#: HTTP 429 from the LLM gateway — the account/plan's quota or rate limit
+#: was hit. Kept distinct from `LLM_ERROR` (this session's own brief: a
+#: quota exhaustion previously classified as the generic catch-all, which
+#: never escalates to an alert — see `ErrorService`'s `_ALWAYS_CRITICAL`).
+LLM_QUOTA_EXCEEDED = "llm_quota_exceeded"
 TRANSCRIPTION_TIMEOUT = "transcription_timeout"
 TRANSCRIPTION_AUTH_ERROR = "transcription_auth_error"
 TRANSCRIPTION_INVALID_RESPONSE = "transcription_invalid_response"

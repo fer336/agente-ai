@@ -12,6 +12,9 @@ from app.application.errors.error_types import (
     DENTALINK_TIMEOUT,
     GRAPH_STATE_ERROR,
     INVALID_TOOL_ARGUMENTS,
+    LLM_AUTH_ERROR,
+    LLM_ERROR,
+    LLM_QUOTA_EXCEEDED,
     PATIENT_NOT_FOUND,
     REDIS_ERROR,
     UNEXPECTED_EXCEPTION,
@@ -89,6 +92,8 @@ async def test_classify_appointment_slot_taken_as_warning():
         YCLOUD_WEBHOOK_FAILURE,
         DATABASE_ERROR,
         UNEXPECTED_EXCEPTION,
+        LLM_AUTH_ERROR,
+        LLM_QUOTA_EXCEEDED,
     ],
 )
 async def test_classify_always_critical_errors(error_type):
@@ -152,6 +157,38 @@ async def test_classify_dentalink_timeout_ignores_occurrences_outside_the_window
     )
 
     assert severity == SEVERITY_WARNING
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_as_warning_when_isolated():
+    severity = await _service().classify(source="llm", error_type=LLM_ERROR)
+
+    assert severity == SEVERITY_WARNING
+
+
+@pytest.mark.asyncio
+async def test_classify_llm_error_as_error_when_repeated_past_threshold():
+    # Previously LLM_ERROR (the generic catch-all a 429/quota-exhaustion
+    # historically fell into) sat in neither escalation set nor
+    # _ALWAYS_CRITICAL — it stayed WARNING forever, so a sustained LLM
+    # outage never triggered a Telegram alert no matter how long it lasted.
+    repository = make_error_repository()
+    now = datetime.now(UTC)
+    for i in range(4):
+        await repository.save(
+            make_error_record(
+                id_=f"err-{i}",
+                source="llm",
+                error_type=LLM_ERROR,
+                created_at=now - timedelta(seconds=10),
+            )
+        )
+
+    severity = await _service(repository, threshold_count=5).classify(
+        source="llm", error_type=LLM_ERROR
+    )
+
+    assert severity == SEVERITY_ERROR
 
 
 @pytest.mark.asyncio

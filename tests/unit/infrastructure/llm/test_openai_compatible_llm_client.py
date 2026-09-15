@@ -10,6 +10,7 @@ from app.infrastructure.llm.exceptions import (
     LLMAuthError,
     LLMInvalidResponseError,
     LLMProviderError,
+    LLMQuotaExceededError,
     LLMTimeoutError,
 )
 
@@ -103,6 +104,45 @@ async def test_raises_auth_error_on_401(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(LLMAuthError):
         await client.chat_completion("model", [{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_raises_quota_exceeded_error_on_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    _capture_requests(monkeypatch, httpx.Response(429, text="rate limit exceeded"))
+    client = OpenAICompatibleLLMClient(
+        base_url="http://100.109.17.87:20128/v1", api_key="sk-secret", timeout_seconds=20
+    )
+
+    with pytest.raises(LLMQuotaExceededError) as exc_info:
+        await client.chat_completion("model", [{"role": "user", "content": "hi"}])
+
+    assert exc_info.value.status_code == 429
+    assert "rate limit exceeded" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_logs_a_distinct_quota_exceeded_error_on_429(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # This is the whole point of the fix: a plain grep for
+    # "llm.quota_exceeded" in the logs must show a quota/rate-limit
+    # failure directly, without needing to cross-reference the errors
+    # table first.
+    _capture_requests(monkeypatch, httpx.Response(429, text="rate limit exceeded"))
+    client = OpenAICompatibleLLMClient(
+        base_url="http://100.109.17.87:20128/v1", api_key="sk-secret", timeout_seconds=20
+    )
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(LLMQuotaExceededError):
+            await client.chat_completion(
+                "gemini/gemini-3.7-flash", [{"role": "user", "content": "hi"}]
+            )
+
+    assert any(
+        "llm.quota_exceeded" in record.message and "gemini/gemini-3.7-flash" in record.message
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
