@@ -11,7 +11,6 @@ from app.domain.value_objects.menu_payloads import (
     MENU_LOCATION_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
-    MENU_TREATMENT_CATALOG_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
@@ -27,7 +26,6 @@ __all__ = [
     "MENU_INSURANCE_PAYLOAD",
     "MENU_LOCATION_PAYLOAD",
     "MENU_SPECIALTIES_PAYLOAD",
-    "MENU_TREATMENT_CATALOG_PAYLOAD",
     "create_resolve_interaction_node",
 ]
 
@@ -39,7 +37,6 @@ _GLOBAL_BUTTON_INTENTS = {
     MENU_INSURANCE_PAYLOAD: "insurance",
     MENU_ADMIN_PAYLOAD: "handoff",
     MENU_SPECIALTIES_PAYLOAD: "specialties",
-    MENU_TREATMENT_CATALOG_PAYLOAD: "treatment_catalog",
     MENU_LOCATION_PAYLOAD: "location",
     MENU_MAIN_PAYLOAD: "appointment",
     OPERATION_CREATE_PAYLOAD: "appointment",
@@ -58,9 +55,7 @@ _OPERATION_PAYLOADS = frozenset(
     }
 )
 
-_INFORMATION_INTENTS = frozenset(
-    {"insurance", "specialties", "treatment_catalog", "question", "location"}
-)
+_INFORMATION_INTENTS = frozenset({"insurance", "specialties", "question", "location"})
 _NAVIGATION_TARGETS = frozenset({"specialty", "service", "professional", "slot", "main"})
 
 # Only used when there is no active workflow. During a workflow these are

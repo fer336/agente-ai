@@ -222,7 +222,6 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
         "📅 Agendar una cita",
         "🔄 Reprogramar mi cita",
         "❌ Cancelar mi cita",
-        "🦷 Tratamientos y precios",
         "📍 Cómo llegar",
         "💬 Hablar con un asesor",
         "📋 Ver mi cita",

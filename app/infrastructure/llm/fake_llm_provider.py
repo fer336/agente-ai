@@ -35,19 +35,6 @@ _DNI_INVALID_MESSAGES = (
 _APPOINTMENT_KEYWORDS = ("turno", "cita")
 _INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
-#: `treatment_catalog` (this session's own brief) — "qué tratamientos
-#: ofrecen / cuánto cuestan", never `_SPECIALTY_KEYWORDS`'s "qué
-#: especialidades atienden".
-_TREATMENT_CATALOG_KEYWORDS = (
-    "tratamiento",
-    "tratamientos",
-    "precio",
-    "precios",
-    "cuanto cuesta",
-    "cuánto cuesta",
-    "cuanto sale",
-    "cuánto sale",
-)
 #: PRD.md §22's automatic-handoff example phrases, lowercased substrings.
 _HANDOFF_KEYWORDS = (
     "llegar tarde",
@@ -81,8 +68,6 @@ class FakeLLMProvider:
             return IntentResult(intent="insurance", confidence=0.9)
         if any(keyword in lowered for keyword in _SPECIALTY_KEYWORDS):
             return IntentResult(intent="specialties", confidence=0.9)
-        if any(keyword in lowered for keyword in _TREATMENT_CATALOG_KEYWORDS):
-            return IntentResult(intent="treatment_catalog", confidence=0.9)
         if any(keyword in lowered for keyword in _APPOINTMENT_KEYWORDS):
             return IntentResult(intent="appointment", confidence=0.9)
         return IntentResult(intent="unknown", confidence=0.0)

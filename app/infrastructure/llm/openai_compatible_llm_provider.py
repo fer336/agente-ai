@@ -28,15 +28,17 @@ _PROVIDER = "llm"
 #: Kept in sync with the welcome menu's payload->intent contract
 #: (`app.agent.nodes.resolve_interaction._MENU_BUTTON_INTENTS`) and
 #: `graph.py`'s routing — a label outside this set would route nowhere.
-#: `treatment_catalog` (this session's own brief) answers "qué tratamientos
-#: ofrecen / cuánto cuestan" with the static FAQ catalog
-#: (`app.domain.value_objects.treatment_catalog`) — distinct from
-#: `specialties`, which is the live Dentalink specialty/booking flow.
+#: No dedicated "treatment_catalog" intent: a fixed, hardcoded treatment/
+#: price list was tried and explicitly rejected by the clinic owner as
+#: misleading ("menú ficticio que no lleva a ningún lado" — no real
+#: Dentalink data behind it). "Qué tratamientos ofrecen"/"cuánto cuesta
+#: un blanqueamiento"-type questions fall to `question` below instead,
+#: which already answers honestly ("no tengo el dato, te paso con
+#: administración") rather than reciting a fake list.
 _INTENT_LABELS = (
     "appointment",
     "insurance",
     "specialties",
-    "treatment_catalog",
     "handoff",
     "unknown",
 )
@@ -56,8 +58,6 @@ esta forma exacta, sin texto adicional:
 - appointment: pedir, cambiar o cancelar un turno.
 - insurance: preguntar por obra social, prepaga o convenios.
 - specialties: preguntar qué especialidades atiende la clínica.
-- treatment_catalog: preguntar qué tratamientos ofrece la clínica o cuánto cuestan (ej.: \
-blanqueamiento, limpieza, consulta, extracciones, alineadores), sin pedir turno.
 - handoff: pedir hablar con una persona, urgencias, reclamos, quejas, o cualquier cosa que \
 un bot no debería resolver solo.
 - unknown: cualquier otra cosa, saludos, o si no estás seguro.
@@ -87,11 +87,10 @@ Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin 
 médicos de una especialidad.
 - insurance: pregunta por obra social, prepaga o convenios.
 - specialties: pregunta qué especialidades atiende la clínica, sin pedir turno.
-- treatment_catalog: pregunta qué tratamientos ofrece la clínica o cuánto cuestan (ej.: \
-blanqueamiento, limpieza, consulta, extracciones, alineadores), sin pedir turno.
 - handoff: pide hablar con una persona, urgencias, reclamos o quejas.
 - question: cualquier otra consulta genuina que puedas responder vos (horarios de atención, \
-dirección, formas de pago, cómo llegar, qué incluye un tratamiento puntual).
+dirección, formas de pago, cómo llegar, qué tratamientos ofrecen o cuánto cuesta un \
+tratamiento puntual — ej.: blanqueamiento, limpieza, extracciones, alineadores).
 - unknown: saludos sueltos, mensajes vacíos o algo que no se entiende.
 
 Campos:

@@ -108,10 +108,12 @@ async def test_understand_tolerates_a_response_with_only_the_required_fields() -
 
 
 @pytest.mark.asyncio
-async def test_understand_accepts_the_treatment_catalog_intent_label() -> None:
-    # This session's own brief: a new intent for "qué tratamientos ofrecen
-    # / cuánto cuestan", distinct from "specialties" — must be an accepted
-    # label, not rejected as unrecognized.
+async def test_understand_rejects_the_removed_treatment_catalog_intent_label() -> None:
+    # The dedicated "treatment_catalog" intent (a fixed, hardcoded
+    # treatment/price list) was removed — the clinic owner rejected it as
+    # misleading, no real Dentalink data behind it. A model still trained
+    # on the old label must not silently route anywhere; "qué tratamientos
+    # ofrecen"-type questions now fall under "question" instead.
     client = _StubClient(
         '{"intent": "treatment_catalog", "confidence": 0.9, "answer": null,'
         ' "specialty_mention": null, "professional_mention": null,'
@@ -119,9 +121,8 @@ async def test_understand_accepts_the_treatment_catalog_intent_label() -> None:
     )
     provider = _make_provider(client)
 
-    result = await provider.understand("¿qué tratamientos ofrecen?", context={})
-
-    assert result.intent == "treatment_catalog"
+    with pytest.raises(LLMInvalidResponseError):
+        await provider.understand("¿qué tratamientos ofrecen?", context={})
 
 
 @pytest.mark.asyncio
