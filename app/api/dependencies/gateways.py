@@ -46,6 +46,7 @@ from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.llm.openai_compatible_llm_provider import OpenAICompatibleLLMProvider
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
+from app.infrastructure.telegram.telegram_alert_notifier import TelegramAlertNotifier
 from app.infrastructure.transcription.fake_transcription_gateway import FakeTranscriptionGateway
 from app.infrastructure.transcription.groq_transcription_gateway import GroqTranscriptionGateway
 from app.infrastructure.ycloud.client import YCloudClient
@@ -351,16 +352,42 @@ def _get_fake_telegram_notifier() -> FakeTelegramAlertNotifier:
     return FakeTelegramAlertNotifier()
 
 
+#: Telegram's own fixed Bot API base URL — not a `Settings` field, unlike
+#: Dentalink/YCloud/LLM's base URLs, since there is no alternate/self-hosted
+#: gateway to point this at (contrast `OpenAICompatibleLLMClient`'s 9Router
+#: indirection).
+_TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+#: A plain alert POST, not a patient-facing call on the critical path —
+#: shorter than Dentalink/YCloud/LLM's own configured timeouts is fine, and
+#: `TelegramAlertNotifier.notify`'s caller (`ErrorService.notify_telegram`)
+#: already swallows any failure rather than letting a slow Telegram outage
+#: block error reporting.
+_TELEGRAM_TIMEOUT_SECONDS = 10.0
+
+
+@lru_cache
+def _get_real_telegram_notifier() -> TelegramAlertNotifier:
+    settings = get_settings()
+    return TelegramAlertNotifier(
+        base_url=_TELEGRAM_API_BASE_URL,
+        bot_token=settings.telegram_bot_token,
+        chat_id=settings.telegram_chat_id,
+        timeout_seconds=_TELEGRAM_TIMEOUT_SECONDS,
+    )
+
+
 def get_telegram_notifier() -> AlertNotifier:
     """FastAPI dependency providing the `AlertNotifier` port.
 
-    Returns the in-memory `FakeTelegramAlertNotifier` for now. This is the
-    swap point for the real, `httpx`-based
-    `app.infrastructure.telegram.telegram_alert_notifier.TelegramAlertNotifier`
-    adapter (already implemented, not yet wired here — no live Telegram bot
-    credentials in dev this change) — callers only depend on the
-    `AlertNotifier` Protocol.
+    Returns the real, `httpx`-based `TelegramAlertNotifier` whenever
+    `settings.telegram_bot_token` is configured, else the in-memory
+    `FakeTelegramAlertNotifier` — callers only depend on the `AlertNotifier`
+    Protocol. Same conditional pattern as `get_specialty_gateway`/
+    `get_appointment_gateway`/`get_agreement_gateway`/`get_patient_gateway`
+    above.
     """
+    if get_settings().telegram_bot_token:
+        return _get_real_telegram_notifier()
     return _get_fake_telegram_notifier()
 
 
