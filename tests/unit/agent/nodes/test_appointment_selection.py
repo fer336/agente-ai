@@ -38,6 +38,8 @@ from app.agent.nodes.appointment_selection import (
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
     decision_entry_node_for_stage,
+    format_confirmation_datetime,
+    format_slot_datetime,
     format_slot_option,
     next_page,
     numbered_list,
@@ -48,6 +50,7 @@ from app.agent.nodes.appointment_selection import (
     slot_button,
     slot_by_id,
     slot_payload_id,
+    spanish_weekday,
 )
 from app.agent.workflow_state import invalidate_from
 from app.domain.entities.appointment_slot import AppointmentSlot
@@ -266,6 +269,39 @@ def test_slot_button_keeps_the_payload_and_title_format():
     assert isinstance(button, InteractiveButton)
     assert button.id == "SELECT_SLOT:slot-42"
     assert button.title == slot.time_range.start.strftime("%d/%m %H:%M")
+
+
+# --- Spanish, locale-independent date/time formatting ---
+# Regression: `strftime('%A')` is locale-dependent and rendered the weekday
+# in English in production (e.g. "Friday 25/09/2026") because the deployed
+# process locale isn't Spanish.
+
+
+def test_spanish_weekday_never_falls_back_to_the_locale():
+    friday = datetime(2026, 9, 25, 13, 30, tzinfo=UTC)
+
+    assert spanish_weekday(friday) == "Viernes"
+
+
+def test_format_slot_datetime_is_spanish_and_carries_a_clock_emoji():
+    friday = datetime(2026, 9, 25, 13, 30, tzinfo=UTC)
+    slot = AppointmentSlot(
+        id="slot-1",
+        professional_id="prof-1",
+        specialty_id="cleaning",
+        time_range=DateTimeRange(friday, friday + timedelta(hours=1)),
+    )
+
+    line = format_slot_option(slot, {"prof-1": "Dra. Laura Pérez"})
+
+    assert line == "- Dra. Laura Pérez: Viernes 25/09 13:30 hs 🕐"
+    assert format_slot_datetime(friday) == "Viernes 25/09 13:30 hs 🕐"
+
+
+def test_format_confirmation_datetime_spells_out_the_year():
+    friday = datetime(2026, 9, 25, 13, 30, tzinfo=UTC)
+
+    assert format_confirmation_datetime(friday) == "Viernes 25/09/2026\n13:30 hs 🕐"
 
 
 # --- Selection dependency invalidation (triangulation) ---

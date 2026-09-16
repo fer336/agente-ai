@@ -1882,6 +1882,11 @@ async def test_confirmation_stage_confirms_and_creates_the_appointment():
     assert result["collected_data"] == {}
     assert result["pending_action_id"] is None
     assert "confirmado" in result["response_text"].lower()
+    # Regression: the date used to render in English (`strftime('%A')` is
+    # locale-dependent) — the clock emoji is only present via the new
+    # `format_confirmation_datetime` helper, so its presence here proves
+    # that path is in use.
+    assert "🕐" in result["response_text"]
     assert appointment_gateway.get_appointment("1") is not None
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
