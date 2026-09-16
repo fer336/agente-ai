@@ -11,10 +11,40 @@ PR 2 can share this same behavior-pinned implementation.
 """
 
 import re
+from datetime import datetime
 from typing import cast
 
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.interactive_button import InteractiveButton
+
+#: `datetime.strftime('%A')` is locale-dependent, and this codebase never
+#: sets a Spanish process locale (deliberately — `locale.setlocale` is
+#: process-global and would affect every other thread/request). Seen live:
+#: slot listings and confirmations rendered the weekday in English (e.g.
+#: "Friday 25/09/2026") because the deployed process locale isn't Spanish.
+#: `datetime.weekday()` (0=Monday) is locale-independent, so it indexes this
+#: fixed table instead.
+_SPANISH_WEEKDAYS = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+
+
+def spanish_weekday(moment: datetime) -> str:
+    return _SPANISH_WEEKDAYS[moment.weekday()]
+
+
+def format_slot_datetime(moment: datetime) -> str:
+    """One-line 'Viernes 25/09 13:30 hs 🕐' for slot/appointment option
+    listings, which never need the year (always within the current search
+    window)."""
+    return f"{spanish_weekday(moment)} {moment.strftime('%d/%m')} {moment.strftime('%H:%M')} hs 🕐"
+
+
+def format_confirmation_datetime(moment: datetime) -> str:
+    """Two-line 'Viernes 25/09/2026\\n13:30 hs 🕐' for confirmation/success
+    messages, which spell out the year since they're read standalone,
+    without an accompanying list of other options."""
+    date_part = f"{spanish_weekday(moment)} {moment.strftime('%d/%m/%Y')}"
+    time_part = f"{moment.strftime('%H:%M')} hs 🕐"
+    return f"{date_part}\n{time_part}"
 
 #: Mirrors `app.agent.nodes.appointment.SELECT_SLOT_PAYLOAD_PREFIX`. Owned
 #: here now — `appointment.py` imports this constant instead of redefining
@@ -146,7 +176,7 @@ def next_page(collected_data: dict[str, object], key: str) -> int:
 
 def format_slot_option(slot: AppointmentSlot, professional_names: dict[str, str]) -> str:
     professional_name = professional_names.get(slot.professional_id, "Profesional")
-    return f"- {professional_name}: {slot.time_range.start.strftime('%A %d/%m %H:%M hs')}"
+    return f"- {professional_name}: {format_slot_datetime(slot.time_range.start)}"
 
 
 def slot_button(slot: AppointmentSlot) -> InteractiveButton:

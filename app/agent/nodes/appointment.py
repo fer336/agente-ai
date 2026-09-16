@@ -25,6 +25,12 @@ from app.agent.nodes.appointment_selection import (
     slot_payload_id,
 )
 from app.agent.nodes.appointment_selection import (
+    format_confirmation_datetime as _format_confirmation_datetime,
+)
+from app.agent.nodes.appointment_selection import (
+    format_slot_datetime as _format_slot_datetime,
+)
+from app.agent.nodes.appointment_selection import (
     format_slot_option as _format_slot_option,
 )
 from app.agent.nodes.appointment_selection import (
@@ -560,7 +566,7 @@ async def _merge_identification(
 def _format_appointment_option(appointment: Appointment, professional_names: dict[str, str]) -> str:
     professional_name = professional_names.get(appointment.slot.professional_id, "Profesional")
     start = appointment.slot.time_range.start
-    return f"- {professional_name}: {start.strftime('%A %d/%m %H:%M hs')}"
+    return f"- {professional_name}: {_format_slot_datetime(start)}"
 
 
 def _appointment_button(appointment: Appointment) -> InteractiveButton:
@@ -575,8 +581,7 @@ def _confirmation_message(slot: AppointmentSlot, professional_names: dict[str, s
     return (
         "Tengo disponible:\n\n"
         f"{professional_name}\n"
-        f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
-        f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
+        f"{_format_confirmation_datetime(slot.time_range.start)}\n\n"
         "Confirmás que querés reservar este turno?"
     )
 
@@ -589,8 +594,7 @@ def _cancel_confirmation_message(
     return (
         "Vas a cancelar este turno:\n\n"
         f"{professional_name}\n"
-        f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
-        f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
+        f"{_format_confirmation_datetime(slot.time_range.start)}\n\n"
         "Confirmás que querés cancelarlo?"
     )
 
@@ -602,8 +606,7 @@ def _reschedule_confirmation_message(
     return (
         "Vas a reagendar tu turno a:\n\n"
         f"{professional_name}\n"
-        f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
-        f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
+        f"{_format_confirmation_datetime(slot.time_range.start)}\n\n"
         "Confirmás el cambio?"
     )
 
@@ -635,8 +638,7 @@ def _success_message(appointment: Appointment) -> str:
     slot = appointment.slot
     return (
         "✅ Tu turno quedó confirmado.\n\n"
-        f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
-        f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
+        f"{_format_confirmation_datetime(slot.time_range.start)}\n\n"
         "Te esperamos en la clínica."
     )
 
@@ -645,8 +647,7 @@ def _reschedule_success_message(appointment: Appointment) -> str:
     slot = appointment.slot
     return (
         "✅ Reagendamos tu turno.\n\n"
-        f"{slot.time_range.start.strftime('%A %d/%m/%Y')}\n"
-        f"{slot.time_range.start.strftime('%H:%M')} hs\n\n"
+        f"{_format_confirmation_datetime(slot.time_range.start)}\n\n"
         "Te esperamos en la clínica."
     )
 
