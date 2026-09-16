@@ -307,6 +307,42 @@ async def test_a_named_professional_skips_the_specialty_question_too():
 
 
 @pytest.mark.asyncio
+async def test_offering_professionals_tells_the_llm_not_to_repeat_the_names():
+    # Regression, seen live: the model listed the actual professional
+    # names in its own free-text reply, redundant with the interactive
+    # list rendered right below it — an explicit suppression instruction
+    # (the same one `_offer_appointments` already carries) must reach the
+    # prompt.
+    from app.domain.repositories.llm_provider import ResponseContext
+
+    captured: list[ResponseContext] = []
+
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            captured.append(context)
+            return await super().generate_response(context)
+
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="implants", name="Implantología")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Carlos Adahenao", specialty_id="implants")
+        ],
+        llm_provider=_CapturingLLMProvider(),
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero un turno con el doctor Carlos adahenao",
+        collected_data={"professional_mention": "Carlos Adahenao"},
+    )
+
+    await node(state)
+
+    assert any(context.intent == "choose_professional" for context in captured)
+    choose_professional_context = next(c for c in captured if c.intent == "choose_professional")
+    assert "instruccion" in choose_professional_context.collected_data
+
+
+@pytest.mark.asyncio
 async def test_a_stated_operation_skips_the_operation_menu():
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(

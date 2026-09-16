@@ -1243,6 +1243,15 @@ def create_appointment_node(
                     "Hay que preguntarle para qué especialidad quiere el turno; le vamos a "
                     "mostrar una lista de especialidades para elegir."
                 ),
+                # Seen live: without this, the model would list the actual
+                # specialty names in its own free-text reply, which is
+                # redundant with the interactive list rendered right below
+                # it — the same suppression `_offer_appointments` already
+                # applies to its own list.
+                "instruccion": (
+                    "Le vamos a mostrar la lista de especialidades debajo de tu mensaje — NO "
+                    "las menciones ni las repitas, solo invitá a elegir una."
+                ),
             },
             _CHOOSE_SPECIALTY_PROMPT,
             recent_messages,
@@ -1304,6 +1313,10 @@ def create_appointment_node(
                 "situacion": (
                     "Hay que preguntarle con qué profesional prefiere atenderse; le vamos a "
                     "mostrar una lista para elegir."
+                ),
+                "instruccion": (
+                    "Le vamos a mostrar la lista de profesionales debajo de tu mensaje — NO "
+                    "los menciones ni los repitas, solo invitá a elegir uno."
                 ),
             },
             _CHOOSE_PROFESSIONAL_PROMPT,
@@ -3102,6 +3115,10 @@ def create_appointment_node(
                         "situacion": (
                             "Hay que preguntarle con qué profesional prefiere atenderse; le "
                             "vamos a mostrar una lista para elegir."
+                        ),
+                        "instruccion": (
+                            "Le vamos a mostrar la lista de profesionales debajo de tu mensaje "
+                            "— NO los menciones ni los repitas, solo invitá a elegir uno."
                         ),
                     },
                     _CHOOSE_PROFESSIONAL_PROMPT,
