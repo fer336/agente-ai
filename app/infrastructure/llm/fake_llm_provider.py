@@ -34,6 +34,17 @@ _DNI_INVALID_MESSAGES = (
     "espacios, ejemplo: 30123456.",
 )
 
+#: `resolve_interaction.py`'s `POST_ACTION_CLOSE_INTENT` — faked per
+#: `accion_completada` (the same key that node passes in `collected_data`),
+#: same "usable placeholder" spirit as this class's other keyword-based
+#: replies.
+_POST_ACTION_CLOSE_MESSAGES = {
+    "create_appointment": "De nada! Ahí quedó anotado tu turno, te esperamos.",
+    "reschedule_appointment": "De nada! Ya quedó reagendado, nos vemos pronto.",
+    "cancel_appointment": "Listo, quedó cancelado. Cualquier cosa, escribime.",
+}
+_POST_ACTION_CLOSE_DEFAULT_MESSAGE = "De nada! Cualquier otra cosa, decime."
+
 #: `extract_information`'s "nombre_completo" field, faked heuristically
 #: (real word here, not a full classifier): words that never appear in a
 #: real full name but commonly appear in ordinary chatter, so a message
@@ -218,6 +229,9 @@ class FakeLLMProvider:
                 else _DNI_INVALID_MESSAGES
             )
             return messages[(attempts - 1) % len(messages)]
+        if context.intent == "post_action_close":
+            action = context.collected_data.get("accion_completada")
+            return _POST_ACTION_CLOSE_MESSAGES.get(str(action), _POST_ACTION_CLOSE_DEFAULT_MESSAGE)
         return f"[fake-response for intent={context.intent}]"
 
     async def summarize(self, previous_summary: str, new_messages: list[Message]) -> str:

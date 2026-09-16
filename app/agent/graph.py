@@ -14,7 +14,10 @@ from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.location import location_node
 from app.agent.nodes.question import question_node
-from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
+from app.agent.nodes.resolve_interaction import (
+    POST_ACTION_CLOSE_INTENT,
+    create_resolve_interaction_node,
+)
 from app.agent.nodes.specialties import create_specialties_node
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
@@ -93,6 +96,12 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
     if state.get("error"):
         return HANDLE_ERROR_NODE
     intent = state.get("intent")
+    if intent == POST_ACTION_CLOSE_INTENT:
+        # `resolve_interaction` already produced the full reply itself
+        # (see `POST_ACTION_CLOSE_INTENT`'s own docstring) — no business
+        # node needed, same "the router IS the answer" shape as
+        # `_route_after_mode_check`'s silent-END case.
+        return END
     if intent == "appointment":
         return APPOINTMENT_NODE
     if intent == "insurance":
@@ -306,6 +315,7 @@ def build_graph(
         _route_after_resolve_interaction,
         {
             HANDLE_ERROR_NODE: HANDLE_ERROR_NODE,
+            END: END,
             APPOINTMENT_NODE: APPOINTMENT_NODE,
             AGREEMENT_NODE: AGREEMENT_NODE,
             SPECIALTIES_NODE: SPECIALTIES_NODE,
