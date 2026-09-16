@@ -26,10 +26,24 @@ def _postgres_reachable() -> bool:
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    # This fixture runs `Base.metadata.drop_all` at teardown — destructive
+    # by design, meant for a disposable test database only. Whatever
+    # `database_url` resolves to (including a `.env` that happens to point
+    # at a real/shared/production database) gets its ENTIRE schema wiped
+    # otherwise. Seen live: exactly that happened, twice, because nothing
+    # here distinguished "safe to drop" from "someone's real data" — this
+    # explicit opt-in is the fix, never remove it without a stronger
+    # guarantee in its place.
+    settings = get_settings()
+    if not settings.integration_db_tests_enabled:
+        pytest.skip(
+            "integration_db_tests_enabled is not set — this fixture drops the entire "
+            "schema at teardown, so it refuses to run unless explicitly opted into "
+            "(set INTEGRATION_DB_TESTS_ENABLED=true, never in a persistent .env that "
+            "also holds real credentials)."
+        )
     if not _postgres_reachable():
         pytest.skip("Postgres not reachable for repository integration test")
-
-    settings = get_settings()
     engine = create_engine(settings.database_url)
 
     async with engine.begin() as connection:
