@@ -598,6 +598,35 @@ async def test_choose_specialty_decision_node_is_attributed_when_offering_specia
 
 
 @pytest.mark.asyncio
+async def test_offering_specialties_tells_the_llm_not_to_repeat_the_names():
+    # Regression, seen live: the model listed the actual specialty names in
+    # its own free-text reply, redundant with the interactive list
+    # rendered right below it — an explicit suppression instruction must
+    # reach the prompt, mirroring `appointment.py`'s own `_offer_appointments`.
+    from app.domain.repositories.llm_provider import ResponseContext
+    from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
+
+    captured: list[ResponseContext] = []
+
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            captured.append(context)
+            return await super().generate_response(context)
+
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        llm_provider=_CapturingLLMProvider(),
+    )
+    state = _decision_state(collected_data={"operation": _CREATE_APPOINTMENT_ACTION})
+
+    await graph.ainvoke(state)
+
+    choose_specialty_context = next(c for c in captured if c.intent == "choose_specialty")
+    assert "instruccion" in choose_specialty_context.collected_data
+
+
+@pytest.mark.asyncio
 async def test_choose_professional_decision_node_is_attributed_on_valid_specialty_selection():
     graph, _, _ = await _make_graph(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
