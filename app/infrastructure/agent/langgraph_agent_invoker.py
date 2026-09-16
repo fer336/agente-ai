@@ -13,6 +13,7 @@ from app.agent.graph import compile_graph
 from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
+from app.application.appointments.schedule_follow_up import ScheduleFollowUpUseCase
 from app.application.errors.error_service import ErrorService
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.memory.memory_service import MemoryService
@@ -35,6 +36,7 @@ from app.domain.repositories.gateways import (
 from app.domain.repositories.incident_gateway import IncidentGateway
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.repositories.message_repository import MessageRepository
+from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.welcome_menu import WELCOME_TEXT
 
@@ -52,6 +54,17 @@ class AgentRepositories:
     #: above (see this class's own docstring in `open_sqlalchemy_agent_repositories`).
     messages: MessageRepository
     contact_memories: ContactMemoryRepository
+    #: `ScheduleFollowUpUseCase`'s own repository — reconciled at the end of
+    #: every `handle()` call (see the call site below) so the inactivity
+    #: follow-up/reset mechanism (`app.workers.follow_up_worker`) actually
+    #: has something to poll for. Previously nothing ever called
+    #: `reconcile()` in the live pipeline, so a stuck trámite (e.g. mid
+    #: specialty/professional selection) never got a "¿seguís ahí?" nudge
+    #: or a silent-free auto-reset — `collected_data`/`stage` stayed
+    #: checkpointed indefinitely until the patient happened to send another
+    #: message more than an hour later (the unrelated, coarser lazy
+    #: rotation in `RotateWorkflowSessionUseCase`).
+    scheduled_actions: ScheduledActionRepository
 
 
 RepositoriesProvider = Callable[[], AbstractAsyncContextManager[AgentRepositories]]
@@ -125,6 +138,7 @@ class LangGraphAgentInvoker:
         memory_recent_window_size: int,
         redis_client: Redis,
         confirmation_timeout_seconds: int,
+        follow_up_prompt_delay_seconds: int,
         trace_repositories_provider: TraceRepositoriesProvider,
         prompt_version: str,
         model: str,
@@ -151,6 +165,7 @@ class LangGraphAgentInvoker:
         self._memory_recent_window_size = memory_recent_window_size
         self._redis_client = redis_client
         self._confirmation_timeout_seconds = confirmation_timeout_seconds
+        self._follow_up_prompt_delay_seconds = follow_up_prompt_delay_seconds
         self._trace_repositories_provider = trace_repositories_provider
         self._prompt_version = prompt_version
         self._model = model
@@ -321,6 +336,16 @@ class LangGraphAgentInvoker:
                     "error": None,
                 }
                 result = await compiled_graph.ainvoke(initial_state, config=config)
+
+                final_collected_data = result.get("collected_data")
+                final_stage = (
+                    final_collected_data.get("stage")
+                    if isinstance(final_collected_data, dict)
+                    else None
+                )
+                await ScheduleFollowUpUseCase(
+                    repositories.scheduled_actions, self._follow_up_prompt_delay_seconds
+                ).reconcile(conversation_id, final_stage)
 
                 node_executions = await trace_repositories.node_executions.get_by_agent_run_id(
                     agent_run_id
