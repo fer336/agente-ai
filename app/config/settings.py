@@ -192,6 +192,18 @@ class Settings(BaseSettings):
     #: this flag cannot enforce by itself.
     internal_eval_enabled: bool = False
 
+    #: Explicit opt-in guard for `tests/integration/conftest.py`'s
+    #: `db_session` fixture, which runs `Base.metadata.create_all` then
+    #: `Base.metadata.drop_all` against whatever `database_url` resolves
+    #: to. Off by default so a `.env`/secret that happens to point at a
+    #: real (production or otherwise shared) database can never be wiped
+    #: by an ordinary `pytest` run — seen live: a `.env` pointed at
+    #: production Postgres, and every `tests/integration` run silently
+    #: dropped its entire schema at teardown, twice in one night. Must be
+    #: set to `true` deliberately (never baked into a persistent `.env`
+    #: alongside real credentials) to run these tests at all.
+    integration_db_tests_enabled: bool = False
+
     #: Incident deduplication + Telegram + Linear (PRD.md §47-51, Etapa 9's
     #: remaining scope). Empty by default, same convention as every other
     #: still-unconfigured secret in this file — `TelegramAlertNotifier`/
