@@ -82,7 +82,7 @@ Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin 
 {{"intent": "<una de: {", ".join(_UNDERSTANDING_LABELS)}>", "confidence": <0.0 a 1.0>, \
 "answer": <string o null>, "specialty_mention": <string o null>, \
 "professional_mention": <string o null>, \
-"operation_mention": <"create"|"reschedule"|"cancel"|null>, \
+"operation_mention": <"create"|"reschedule"|"cancel"|"view"|null>, \
 "navigation_target": <"specialty"|"professional"|"slot"|"main"|null>}}
 
 - appointment: quiere sacar, cambiar o cancelar un turno, o pregunta por horarios o por los \
@@ -103,8 +103,10 @@ nunca inventes precios, horarios ni disponibilidad. Para cualquier otro intent v
 traducir ni corregir. null si no nombró ninguna.
 - "professional_mention": el profesional tal cual lo nombró ("la doctora Pérez"). null si no.
 - "operation_mention": "create" si quiere sacar un turno, "reschedule" si quiere cambiar un \
-turno EXISTENTE, "cancel" si quiere cancelarlo. Cambiar profesional/especialidad/horario dentro \
-del turno que está armando NO es reschedule. null si no lo dijo.
+turno EXISTENTE, "cancel" si quiere cancelarlo, "view" si pregunta qué turnos tiene o quiere ver \
+sus turnos SIN pedir cambiarlos ni cancelarlos (ej.: "qué turnos tengo", "cuándo es mi turno"). \
+Cambiar profesional/especialidad/horario dentro del turno que está armando NO es reschedule. \
+null si no lo dijo.
 - "navigation_target": si está dentro de un flujo y pide volver/cambiar una decisión anterior, \
 devolvé "specialty", "professional", "slot" o "main" según corresponda. Esto solo describe lo \
 que pidió; nunca confirma ni ejecuta una acción. null si no pidió navegar.

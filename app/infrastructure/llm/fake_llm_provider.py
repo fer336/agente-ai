@@ -128,6 +128,17 @@ def _looks_like_a_name(text: str) -> bool:
 
 
 _APPOINTMENT_KEYWORDS = ("turno", "cita")
+#: Checked BEFORE the generic `_APPOINTMENT_KEYWORDS` fallback below — seen
+#: live: "Qué turnos tengo?" contains "turno" too, so without this it was
+#: read as a CREATE mention instead of a query about existing appointments.
+_VIEW_APPOINTMENT_KEYWORDS = (
+    "que turno",
+    "qué turno",
+    "mis turnos",
+    "mi turno",
+    "tengo turno",
+    "turnos tengo",
+)
 _INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
 #: PRD.md §22's automatic-handoff example phrases, lowercased substrings.
@@ -179,6 +190,8 @@ class FakeLLMProvider:
             operation = "cancel"
         elif any(word in lowered for word in ("reagendar", "cambiar", "reprogramar")):
             operation = "reschedule"
+        elif any(word in lowered for word in _VIEW_APPOINTMENT_KEYWORDS):
+            operation = "view"
         elif any(word in lowered for word in _APPOINTMENT_KEYWORDS):
             operation = "create"
 

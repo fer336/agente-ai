@@ -125,3 +125,24 @@ async def test_generate_response_includes_the_intent_from_context():
 
 def test_fake_llm_provider_satisfies_llm_provider_protocol():
     assert isinstance(FakeLLMProvider(), LLMProvider)
+
+
+@pytest.mark.asyncio
+async def test_understand_reads_a_view_question_as_view_not_create():
+    # Regression, seen live: "Qué turnos tengo?" contains "turno" too, so
+    # without a dedicated check this was read as operation_mention="create"
+    # (the generic appointment-keyword fallback) instead of "view".
+    provider = make_llm_provider()
+
+    result = await provider.understand("Que turnos tengo?", context={})
+
+    assert result.operation_mention == "view"
+
+
+@pytest.mark.asyncio
+async def test_understand_still_reads_a_plain_booking_request_as_create():
+    provider = make_llm_provider()
+
+    result = await provider.understand("Quiero sacar un turno", context={})
+
+    assert result.operation_mention == "create"
