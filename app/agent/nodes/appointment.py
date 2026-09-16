@@ -153,6 +153,15 @@ STAGE_AWAITING_OPERATION_SELECTION = "awaiting_operation_selection"
 STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
+#: Reached from `STAGE_AWAITING_IDENTIFICATION` only when `identify_patient`
+#: finds no match — a patient not yet in Dentalink must give obra social and
+#: mail too (this session's own brief) before creating their ficha, on top
+#: of the full name + DNI already collected during identification. Free-
+#: text only: `verification_flow_id`/`registration_flow_id`'s WhatsApp Flow
+#: already asks for these same fields on its own form (see
+#: `STAGE_AWAITING_REGISTRATION_FLOW`), so this stage is this flow's exact
+#: free-text equivalent.
+STAGE_AWAITING_NEW_PATIENT_DETAILS = "awaiting_new_patient_details"
 #: Flow-based identification (this session's own brief, no PRD.md
 #: section): sent instead of `STAGE_AWAITING_IDENTIFICATION`'s free-text
 #: ask whenever `verification_flow_id` is configured — see
@@ -187,6 +196,7 @@ _NAVIGABLE_STAGES = frozenset(
         STAGE_AWAITING_PROFESSIONAL_SELECTION,
         STAGE_AWAITING_SLOT_SELECTION,
         STAGE_AWAITING_IDENTIFICATION,
+        STAGE_AWAITING_NEW_PATIENT_DETAILS,
         STAGE_AWAITING_NO_SLOTS_CHOICE,
         STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
         STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
@@ -250,6 +260,10 @@ RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD = "RESCHEDULE_CHANGE_PROFESSIONAL"
 #: run (e.g. a 10-digit typo) and leak the leftover digit into the parsed
 #: name instead of the whole thing failing `Dni`'s length check cleanly.
 _DNI_PATTERN = re.compile(r"(\d{6,})")
+#: Deliberately permissive (no full RFC 5322 validation) — same "good
+#: enough to disambiguate free text, not a strict format gate" posture
+#: `_DNI_PATTERN` already takes for DNI.
+_EMAIL_PATTERN = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 
 _CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Elegí una opción de la lista:"
 _NO_SPECIALTIES_MESSAGE = (
@@ -287,6 +301,20 @@ _ASK_NAME_ONLY_MESSAGE = "Gracias! Ahora decime tu *nombre completo*, por ejempl
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
+)
+_ASK_NEW_PATIENT_DETAILS_MESSAGE = (
+    "No encontramos tu ficha en el sistema. Para crearla necesito también tu *obra "
+    "social* y tu *mail* (por ejemplo: OSDE, rosa@gmail.com)."
+)
+_NEW_PATIENT_DETAILS_NOT_UNDERSTOOD_MESSAGE = (
+    "No pude leer bien esos datos. Escribime tu obra social y tu mail juntos, "
+    "por ejemplo: OSDE, rosa@gmail.com."
+)
+_ASK_NEW_PATIENT_EMAIL_ONLY_MESSAGE = (
+    "Gracias! Ahora decime tu *mail*, por ejemplo: rosa@gmail.com."
+)
+_ASK_NEW_PATIENT_OBRA_SOCIAL_ONLY_MESSAGE = (
+    "Gracias! Ahora decime tu *obra social*, por ejemplo: OSDE."
 )
 _SEND_VERIFICATION_FLOW_MESSAGE = (
     "Te mando un formulario cortito para verificar tus datos — tocá el botón de abajo."
@@ -459,6 +487,37 @@ async def _extract_identification_pieces(
     if not stripped:
         return None, None
     return await _extract_full_name(llm_provider, stripped), None
+
+
+def _extract_new_patient_details(
+    text: str,
+    remembered_obra_social: str | None,
+    remembered_email: str | None,
+) -> tuple[str | None, str | None]:
+    """Splits free text into whichever (obra_social, email) pieces it
+    actually contains — mirrors `_extract_identification_pieces`'s own
+    "either can be missing, answer may span two messages" contract, using
+    `_EMAIL_PATTERN` the same way that function uses `_DNI_PATTERN`: an
+    email is distinctive enough to find directly, and whatever remains is
+    the obra social name. Unlike the name/DNI pair, obra social has no
+    fixed shape to validate — accepted as free text, same as the
+    registration Flow's own `obra_social` field does (only ever matched
+    best-effort against `AgreementGateway.find_agreement_by_name`, never
+    rejected if unmatched).
+
+    A piece the patient addresses this turn always overrides what was
+    remembered, same convention as `_merge_identification`.
+    """
+    match = _EMAIL_PATTERN.search(text)
+    if match is not None:
+        email = match.group(0)
+        remainder = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
+        obra_social = remainder if remainder else remembered_obra_social
+        return obra_social, email
+    stripped = text.strip()
+    if not stripped:
+        return remembered_obra_social, remembered_email
+    return stripped, remembered_email
 
 
 #: Numbered-choice/name resolution, list-choice resolution (row tap vs.
@@ -697,10 +756,12 @@ async def _new_patient_confirmation_message(
     conversation_id: ConversationId,
     full_name: str,
     dni: str,
+    obra_social: str,
+    email: str,
     recent_messages: list[dict[str, str]],
     contact_memory: str | None,
 ) -> str:
-    data_block = f"Nombre: {full_name}\nDNI: {dni}"
+    data_block = f"Nombre: {full_name}\nDNI: {dni}\nObra social: {obra_social}\nMail: {email}"
     text = await generate_or_fallback(
         llm_provider,
         str(conversation_id),
@@ -712,8 +773,8 @@ async def _new_patient_confirmation_message(
             ),
             "instruccion": (
                 "Decí que no encontramos a nadie registrado con esos datos y preguntá si "
-                "confirma crear su ficha. NO reescribas el nombre ni el DNI — esos datos "
-                "se agregan aparte, después de tu mensaje, tal cual vienen."
+                "confirma crear su ficha. NO reescribas ninguno de sus datos — se agregan "
+                "aparte, después de tu mensaje, tal cual vienen."
             ),
         },
         "No encontramos ningún paciente registrado con esos datos. "
@@ -725,9 +786,15 @@ async def _new_patient_confirmation_message(
 
 
 def _new_patient_proposal_payload(
-    full_name: str, dni: str, phone: PhoneNumber
+    full_name: str, dni: str, phone: PhoneNumber, obra_social: str, email: str
 ) -> dict[str, object]:
-    return {"full_name": full_name, "dni": dni, "phone": str(phone)}
+    return {
+        "full_name": full_name,
+        "dni": dni,
+        "phone": str(phone),
+        "obra_social": obra_social,
+        "email": email,
+    }
 
 
 async def _verification_confirmation_message(
@@ -1082,6 +1149,34 @@ def create_appointment_node(
                 ),
             },
             _ASK_IDENTIFICATION_MESSAGE,
+            recent_messages,
+            contact_memory,
+        )
+
+    async def _ask_new_patient_details_message(
+        conversation_id: ConversationId,
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> str:
+        """Free-text equivalent of the registration Flow's own form — asks
+        for obra social and mail once `identify_patient` found no match
+        (this session's own brief: creating a ficha needs both, on top of
+        the full name + DNI already collected during identification)."""
+        return await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "ask_new_patient_details",
+            {
+                "situacion": (
+                    "No encontramos al paciente registrado — para crear su ficha todavía "
+                    "hacen falta su obra social y su mail."
+                ),
+                "formato_requerido": (
+                    "Obra social y mail, en un mismo mensaje o en dos, ejemplo: OSDE, "
+                    "rosa@gmail.com. Incluí ese ejemplo en tu respuesta."
+                ),
+            },
+            _ASK_NEW_PATIENT_DETAILS_MESSAGE,
             recent_messages,
             contact_memory,
         )
@@ -1966,8 +2061,12 @@ def create_appointment_node(
                     full_name = str(confirmed_payload["full_name"])
                     dni = str(confirmed_payload["dni"])
                     phone = PhoneNumber(str(confirmed_payload["phone"]))
+                    email = str(confirmed_payload.get("email") or "") or None
+                    obra_social_name = str(confirmed_payload.get("obra_social") or "")
                     try:
-                        new_patient = await patient_gateway.create_patient(full_name, dni, phone)
+                        new_patient = await patient_gateway.create_patient(
+                            full_name, dni, phone, email=email
+                        )
                     except PatientAlreadyExistsError:
                         # Race: someone else created a matching-DNI record
                         # between propose and confirm. Re-look-up by the
@@ -2015,6 +2114,15 @@ def create_appointment_node(
                                 },
                             }
                         new_patient = recovered
+
+                    if obra_social_name:
+                        agreement = await agreement_gateway.find_agreement_by_name(
+                            obra_social_name
+                        )
+                        if agreement is not None:
+                            await agreement_gateway.link_patient_agreement(
+                                new_patient.id, agreement.id
+                            )
 
                     if collected_data.get("pending_selected_slot") is None:
                         # Registration reached from reschedule/cancel: there
@@ -3016,34 +3124,29 @@ def create_appointment_node(
                 # only move that leads anywhere from here.
                 #
                 # DNI is well-formed but Dentalink has no matching record —
-                # propose creating a new patient rather than dead-ending.
-                # `phone` comes from this WhatsApp contact's own identity
-                # (`conversation_id` is `ycloud-{phone}` by construction,
-                # see `IngestMessageUseCase`), never from parsed free text —
-                # the created record is always provably tied to whoever is
+                # ask for obra social and mail before proposing to create a
+                # new patient (this session's own brief), rather than
+                # dead-ending. `phone` is never asked — it comes from this
+                # WhatsApp contact's own identity (`conversation_id` is
+                # `ycloud-{phone}` by construction, see
+                # `IngestMessageUseCase`), never from parsed free text — the
+                # created record is always provably tied to whoever is
                 # actually messaging.
-                contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
-                new_patient_payload = _new_patient_proposal_payload(
-                    full_name.strip(), validated_dni.value, contact_phone
-                )
-                pending_action = await propose_appointment.execute(
-                    conversation_id, CREATE_PATIENT_ACTION, new_patient_payload
-                )
-                await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-                new_patient_text = await _new_patient_confirmation_message(
-                    llm_provider,
+                new_patient_details_text = await _ask_new_patient_details_message(
                     conversation_id,
-                    full_name.strip(),
-                    validated_dni.value,
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
                 return {
-                    "response_text": new_patient_text,
-                    "response_buttons": _CONFIRM_BUTTONS,
+                    "response_text": new_patient_details_text,
+                    "response_buttons": None,
                     "requires_handoff": False,
-                    "pending_action_id": pending_action.id,
-                    "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
+                    "collected_data": {
+                        **collected_data,
+                        "stage": STAGE_AWAITING_NEW_PATIENT_DETAILS,
+                        "new_patient_full_name": full_name.strip(),
+                        "new_patient_dni": validated_dni.value,
+                    },
                 }
             patient_primitives = _patient_to_primitives(identified_patient)
             if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
@@ -3062,6 +3165,109 @@ def create_appointment_node(
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
+
+        if stage == STAGE_AWAITING_NEW_PATIENT_DETAILS:
+            remembered_obra_social = cast(
+                str | None, collected_data.get("new_patient_obra_social")
+            )
+            remembered_email = cast(str | None, collected_data.get("new_patient_email"))
+            obra_social, email = _extract_new_patient_details(
+                state["user_message"], remembered_obra_social, remembered_email
+            )
+            if obra_social is None and email is None:
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "new_patient_details_retry",
+                    {
+                        "situacion": (
+                            "Todavía faltan la obra social y el mail para crear la ficha "
+                            "del paciente."
+                        ),
+                        "formato_requerido": (
+                            "Obra social y mail, ejemplo: OSDE, rosa@gmail.com. Incluí ese "
+                            "ejemplo en tu respuesta."
+                        ),
+                    },
+                    _NEW_PATIENT_DETAILS_NOT_UNDERSTOOD_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": collected_data,
+                }
+            if obra_social is None:
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "new_patient_details_missing_obra_social",
+                    {
+                        "situacion": (
+                            "El paciente ya dio su mail, todavía falta su obra social."
+                        ),
+                        "formato_requerido": "Nombre de la obra social, ejemplo: OSDE.",
+                    },
+                    _ASK_NEW_PATIENT_OBRA_SOCIAL_ONLY_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {**collected_data, "new_patient_email": email},
+                }
+            if email is None:
+                text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "new_patient_details_missing_email",
+                    {
+                        "situacion": (
+                            "El paciente ya dio su obra social, todavía falta su mail."
+                        ),
+                        "formato_requerido": "Mail, ejemplo: rosa@gmail.com.",
+                    },
+                    _ASK_NEW_PATIENT_EMAIL_ONLY_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {**collected_data, "new_patient_obra_social": obra_social},
+                }
+            new_patient_full_name = str(collected_data.get("new_patient_full_name"))
+            new_patient_dni = str(collected_data.get("new_patient_dni"))
+            contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
+            new_patient_payload = _new_patient_proposal_payload(
+                new_patient_full_name, new_patient_dni, contact_phone, obra_social, email
+            )
+            pending_action = await propose_appointment.execute(
+                conversation_id, CREATE_PATIENT_ACTION, new_patient_payload
+            )
+            await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+            new_patient_text = await _new_patient_confirmation_message(
+                llm_provider,
+                conversation_id,
+                new_patient_full_name,
+                new_patient_dni,
+                obra_social,
+                email,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+            return {
+                "response_text": new_patient_text,
+                "response_buttons": _CONFIRM_BUTTONS,
+                "requires_handoff": False,
+                "pending_action_id": pending_action.id,
+                "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
+            }
 
         if stage == STAGE_AWAITING_SPECIALTY_SELECTION:
             # Fully owned by `app.agent.appointment_decision_subgraph` (PR 2)

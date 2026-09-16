@@ -27,6 +27,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_APPOINTMENT_SELECTION,
     STAGE_AWAITING_CONFIRMATION,
     STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_NEW_PATIENT_DETAILS,
     STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
     STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_OPERATION_SELECTION,
@@ -1055,15 +1056,73 @@ async def test_an_unknown_patient_is_offered_registration_whatever_they_came_to_
 
     result = await node(state)
 
+    # Not found -> obra social/mail are asked before proposing to create
+    # the ficha (this session's own brief), not offered to confirm yet.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert result["collected_data"]["new_patient_full_name"] == "Fernando Ariel"
+    assert result["collected_data"]["new_patient_dni"] == "35946257"
+    assert result["response_buttons"] is None
+
+
+@pytest.mark.asyncio
+async def test_new_patient_details_stage_asks_for_whichever_piece_is_missing():
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], conversation_id="ycloud-+5491122334455"
+    )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="OSDE",
+        collected_data={
+            "stage": STAGE_AWAITING_NEW_PATIENT_DETAILS,
+            "new_patient_full_name": "Fernando Ariel",
+            "new_patient_dni": "35946257",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert result["collected_data"]["new_patient_obra_social"] == "OSDE"
+    assert "mail" in result["response_text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_new_patient_details_stage_proposes_creation_once_both_fields_arrive():
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        conversation_id="ycloud-+5491122334455",
+        proposal_repositories_provider=repositories_provider,
+    )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="OSDE, fernando@gmail.com",
+        collected_data={
+            "stage": STAGE_AWAITING_NEW_PATIENT_DETAILS,
+            "new_patient_full_name": "Fernando Ariel",
+            "new_patient_dni": "35946257",
+        },
+    )
+
+    result = await node(state)
+
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
     assert [b.id for b in result["response_buttons"]] == [
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     ]
-    # The data they gave is echoed back, so they can spot their own typo.
+    # The data they gave (across both stages) is echoed back, so they can
+    # spot their own typo before it's created.
     assert "Fernando Ariel" in result["response_text"]
     assert "35946257" in result["response_text"]
+    assert "OSDE" in result["response_text"]
+    assert "fernando@gmail.com" in result["response_text"]
+    async with repositories_provider() as repositories:
+        pending_action = await repositories.pending_actions.get_by_id(result["pending_action_id"])
+        assert pending_action is not None
+        assert pending_action.payload["obra_social"] == "OSDE"
+        assert pending_action.payload["email"] == "fernando@gmail.com"
 
 
 @pytest.mark.asyncio
@@ -1561,19 +1620,13 @@ async def test_cancelling_an_unknown_patient_also_offers_registration():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
-    assert result["pending_action_id"] is not None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
 
 
 @pytest.mark.asyncio
-async def test_identification_stage_proposes_creating_a_new_patient_when_not_found():
-    repositories_provider = make_proposal_repositories_provider()
-    conversation_repository = make_conversation_repository()
-    node, conversation_repository, _ = await _make_node_and_conversation(
-        patients=[],
-        conversation_repository=conversation_repository,
-        proposal_repositories_provider=repositories_provider,
-        conversation_id="ycloud-+5491122334455",
+async def test_identification_stage_asks_for_obra_social_and_mail_when_not_found():
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], conversation_id="ycloud-+5491122334455"
     )
     state = make_agent_state(
         conversation_id="ycloud-+5491122334455",
@@ -1586,29 +1639,10 @@ async def test_identification_stage_proposes_creating_a_new_patient_when_not_fou
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
-    assert result["pending_action_id"] is not None
-    assert {b.id for b in result["response_buttons"]} == {
-        CONFIRM_APPOINTMENT_PAYLOAD,
-        REJECT_APPOINTMENT_PAYLOAD,
-    }
-    assert "Maria Soto" in result["response_text"]
-    assert "30111222" in result["response_text"]
-    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
-    assert conversation is not None
-    assert conversation.input_state == "SENSITIVE_CONFIRMATION"
-
-    async with repositories_provider() as repositories:
-        pending_action = await repositories.pending_actions.get_by_id(result["pending_action_id"])
-        assert pending_action is not None
-        assert pending_action.action_type == CREATE_PATIENT_ACTION
-        # `phone` is derived from the WhatsApp contact's own identity
-        # (`ConversationId` == "ycloud-{phone}"), never from parsed text.
-        assert pending_action.payload == {
-            "full_name": "Maria Soto",
-            "dni": "30111222",
-            "phone": "+5491122334455",
-        }
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert result["collected_data"]["new_patient_full_name"] == "Maria Soto"
+    assert result["collected_data"]["new_patient_dni"] == "30111222"
+    assert result["response_buttons"] is None
 
 
 @pytest.mark.asyncio
@@ -1664,6 +1698,60 @@ async def test_confirmation_stage_confirms_new_patient_creation_and_offers_slots
     created = await patient_gateway.find_patient("Maria Soto", "30111222")
     assert created is not None
     assert str(created.phone) == "+5491122334455"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_links_obra_social_and_saves_email_on_new_patient():
+    repositories_provider = make_proposal_repositories_provider()
+    conversation_repository = make_conversation_repository()
+    patient_gateway = make_patient_gateway(patients=[])
+    appointment_gateway = make_dentalink_gateway()
+    agreement_gateway = make_agreement_gateway(agreements=[make_agreement(name="OSDE")])
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    node = create_appointment_node(
+        appointment_gateway=appointment_gateway,
+        patient_gateway=patient_gateway,
+        proposal_repositories_provider=repositories_provider,
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        agreement_gateway=agreement_gateway,
+    )
+    payload = {
+        "full_name": "Maria Soto",
+        "dni": "30111222",
+        "phone": "+5491122334455",
+        "obra_social": "OSDE",
+        "email": "maria@gmail.com",
+    }
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1",
+                conversation_id="ycloud-+5491122334455",
+                action_type=CREATE_PATIENT_ACTION,
+                status="pending",
+                payload=payload,
+            )
+        )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        pending_action_id="pa-1",
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    await node(state)
+
+    created = await patient_gateway.find_patient("Maria Soto", "30111222")
+    assert created is not None
+    assert created.email == "maria@gmail.com"
+    linked = await agreement_gateway.get_patient_agreements(created.id)
+    assert [agreement.name for agreement in linked] == ["OSDE"]
 
 
 @pytest.mark.asyncio
