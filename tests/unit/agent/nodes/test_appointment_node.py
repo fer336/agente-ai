@@ -49,6 +49,7 @@ from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
