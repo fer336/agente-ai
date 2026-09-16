@@ -1,4 +1,9 @@
-from datetime import datetime, timedelta
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +22,8 @@ from app.domain.repositories.scheduled_action_repository import ScheduledActionR
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.idempotency_key import IdempotencyKey
+
+logger = logging.getLogger(__name__)
 
 #: This session's own brief: reworded, cordial follow-up copy — never
 #: apologetic (same tone rule `appointment.py`'s identification retry
@@ -189,3 +196,76 @@ async def _schedule_reset(
             attempts=0,
         )
     )
+
+
+@dataclass(frozen=True)
+class FollowUpWorkerRepositories:
+    """Bundles the repositories one `run_follow_up_loop` tick needs, all
+    sharing the one short-lived session `repositories_provider` opens for
+    it — same "no eager I/O, session per call" convention as every other
+    process-lifetime provider in `app.api.dependencies.repositories`."""
+
+    scheduled_actions: ScheduledActionRepository
+    messages: MessageRepository
+    conversations: ConversationRepository
+    contacts: ContactRepository
+
+
+FollowUpWorkerRepositoriesProvider = Callable[
+    [], AbstractAsyncContextManager[FollowUpWorkerRepositories]
+]
+CheckpointerProvider = Callable[[], Awaitable[Any]]
+
+
+async def run_follow_up_loop(
+    repositories_provider: FollowUpWorkerRepositoriesProvider,
+    checkpointer_provider: CheckpointerProvider,
+    send_reply: SendReplyUseCase,
+    *,
+    interval_seconds: int,
+    batch_limit: int,
+    reset_delay_seconds: int,
+    max_iterations: int | None = None,
+) -> None:
+    """Turns `run_follow_up_tick` into an actual running process — this
+    module's own docstrings always claimed "`app.main`'s `lifespan` is what
+    turns this into an actual periodic loop", but nothing ever did: neither
+    `ScheduleFollowUpUseCase.reconcile()` nor this tick function had a
+    caller outside their own tests, so a stuck trámite never got the
+    "¿seguís ahí?" nudge or the silent-free auto-reset this whole module
+    exists for. `app.main`'s `lifespan` starts this as one background task
+    and cancels it on shutdown.
+
+    One tick's failure (a transient DB error, a `send_reply` timeout the
+    tick itself didn't already turn into a cancelled action) must never
+    kill the whole loop — nothing else would ever restart it for the
+    lifetime of the process — so it is caught and logged, not re-raised.
+
+    `max_iterations` is test-only: `None` (the default, always used in
+    production) loops forever; a finite count lets a test await this
+    coroutine directly instead of racing a background task against real
+    `asyncio.sleep` calls.
+    """
+    iterations = 0
+    while max_iterations is None or iterations < max_iterations:
+        try:
+            checkpointer = await checkpointer_provider()
+            async with repositories_provider() as repositories:
+                await run_follow_up_tick(
+                    repositories.scheduled_actions,
+                    repositories.messages,
+                    repositories.conversations,
+                    repositories.contacts,
+                    send_reply,
+                    checkpointer,
+                    now=datetime.now(UTC),
+                    limit=batch_limit,
+                    reset_delay_seconds=reset_delay_seconds,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("follow_up_worker.tick_failed")
+        iterations += 1
+        if max_iterations is None or iterations < max_iterations:
+            await asyncio.sleep(interval_seconds)

@@ -64,6 +64,47 @@ async def test_mentions_are_carried_into_collected_data():
 
 
 @pytest.mark.asyncio
+async def test_a_low_confidence_operation_mention_still_starts_the_flow_with_no_active_stage():
+    # Regression, seen live: "Quiero cancelar" with no active stage scored
+    # low OVERALL confidence (a short utterance gives the classifier little
+    # else to anchor on) and fell straight to the generic "no entendí"
+    # fallback instead of starting the cancel flow — even though the
+    # classifier correctly named the operation. `appointment.py`'s own
+    # "no stage yet" entry point already reads `operation_mention` from
+    # `collected_data`; the bug was this node discarding it before it ever
+    # got there.
+    class _LowConfidenceCancelLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(
+                intent="appointment",
+                confidence=0.2,
+                operation_mention="cancel",
+            )
+
+    node = create_resolve_interaction_node(_LowConfidenceCancelLLMProvider())
+
+    result = await node(make_agent_state(user_message="Quiero cancelar"))
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"]["operation_mention"] == "cancel"
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_chatter_with_no_operation_mention_still_falls_back():
+    # The fix above must not swallow genuinely ambiguous chatter — only a
+    # concretely named operation earns the override.
+    class _LowConfidenceLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="appointment", confidence=0.1)
+
+    node = create_resolve_interaction_node(_LowConfidenceLLMProvider())
+
+    result = await node(make_agent_state(user_message="mmm no sé"))
+
+    assert result["intent"] == "unknown"
+
+
+@pytest.mark.asyncio
 async def test_a_question_mid_flow_temporarily_interrupts_and_preserves_the_stage():
     class _AnsweringLLMProvider(FakeLLMProvider):
         async def understand(self, message, context):
@@ -183,7 +224,13 @@ async def test_treats_low_confidence_classification_as_unknown():
 
     node = create_resolve_interaction_node(_LowConfidenceLLMProvider())
 
-    result = await node(make_agent_state(user_message="turno tal vez"))
+    # No mention of "turno"/"cancelar"/etc: `FakeLLMProvider.understand()`'s
+    # own keyword heuristic must not populate `operation_mention` here, or
+    # this would exercise the (deliberately separate) low-confidence
+    # `operation_mention` carve-out instead of the bare low-confidence path
+    # this test targets — see
+    # test_low_confidence_chatter_with_no_operation_mention_still_falls_back.
+    result = await node(make_agent_state(user_message="mmm, no sé"))
 
     assert result["intent"] == "unknown"
 

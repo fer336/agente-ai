@@ -265,9 +265,26 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
             }
 
         if result.confidence < _MIN_INTENT_CONFIDENCE:
-            # Ambiguous chatter inside a workflow belongs to the current node;
-            # outside a workflow it remains a true fallback.
-            return {"intent": "appointment"} if has_active_stage else {"intent": "unknown"}
+            if has_active_stage:
+                # Ambiguous chatter inside a workflow belongs to the
+                # current node.
+                return {"intent": "appointment"}
+            if result.operation_mention is not None:
+                # A short, unambiguous "quiero cancelar" can score low
+                # OVERALL confidence (little else in the utterance to
+                # anchor on) while still cleanly naming an operation — that
+                # specific signal must not be discarded just because the
+                # rest of the classification was uncertain. Seen live: a
+                # fresh "Quiero cancelar" with no active stage fell
+                # straight to the generic "no entendí" fallback instead of
+                # starting the cancel flow, which `appointment.py`'s own
+                # "no stage yet" entry point already knows how to read
+                # `collected_data["operation_mention"]` for.
+                return {
+                    "intent": "appointment",
+                    "collected_data": {**collected_data, **carried},
+                }
+            return {"intent": "unknown"}
 
         if result.intent == "handoff":
             if forward_stripped_collected_data:

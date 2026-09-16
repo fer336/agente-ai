@@ -1,17 +1,26 @@
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.dependencies.checkpointer import close_agent_checkpointer
+from app.api.dependencies.checkpointer import close_agent_checkpointer, get_agent_checkpointer
+from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.repositories import (
+    open_sqlalchemy_follow_up_worker_repositories,
+    open_sqlalchemy_sent_message_repository,
+)
 from app.api.routes.admin import router as admin_router
 from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
 from app.api.routes.health import router as health_router
 from app.api.routes.internal_eval import router as internal_eval_router
 from app.api.routes.webhook import router as webhook_router
+from app.application.messages.send_reply import SendReplyUseCase
 from app.config.settings import get_settings
+from app.workers.follow_up_worker import run_follow_up_loop
 
 #: The app's own `logger.info`/`logger.warning` calls (webhook handling,
 #: YCloud tag sync, error reporting, ...) are otherwise silently dropped in
@@ -32,15 +41,39 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Closes the LangGraph agent's Postgres checkpointer pool on shutdown.
+    """Starts the inactivity follow-up poll loop as a background task, and
+    closes the LangGraph agent's Postgres checkpointer pool on shutdown.
 
-    The pool itself is opened lazily, on first use, by
+    The checkpointer pool itself is opened lazily, on first use, by
     `app.api.dependencies.checkpointer.get_agent_checkpointer` — not eagerly
     here at startup (same "no eager I/O" convention as the SQLAlchemy
     engine/session factory). A process that never runs a multi-turn flow
-    needing the checkpointer never opens the pool, so this is a no-op then.
+    needing the checkpointer never opens the pool, so closing it is a no-op
+    then.
+
+    The follow-up loop (`app.workers.follow_up_worker.run_follow_up_loop`)
+    was previously never started anywhere — its own docstrings claimed this
+    function was what turned it into a real periodic process, but nothing
+    here actually did, so a stuck trámite never got its "¿seguís ahí?"
+    nudge or silent-free auto-reset. Cancelled (not merely abandoned) on
+    shutdown so its current tick's `asyncio.sleep` doesn't outlive the
+    process.
     """
+    settings = get_settings()
+    follow_up_task = asyncio.create_task(
+        run_follow_up_loop(
+            open_sqlalchemy_follow_up_worker_repositories,
+            get_agent_checkpointer,
+            SendReplyUseCase(get_messaging_gateway(), open_sqlalchemy_sent_message_repository),
+            interval_seconds=settings.follow_up_worker_interval_seconds,
+            batch_limit=settings.follow_up_worker_batch_limit,
+            reset_delay_seconds=settings.appointment_follow_up_reset_delay_seconds,
+        )
+    )
     yield
+    follow_up_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await follow_up_task
     await close_agent_checkpointer()
 
 

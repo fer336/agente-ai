@@ -58,6 +58,7 @@ from app.infrastructure.database.repositories.sent_message_repository import (
 from app.infrastructure.database.repositories.tool_execution_repository import (
     SqlAlchemyToolExecutionRepository,
 )
+from app.workers.follow_up_worker import FollowUpWorkerRepositories
 
 
 def get_contact_repository(session: AsyncSession = Depends(get_db_session)) -> ContactRepository:
@@ -188,6 +189,7 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
             contacts=SqlAlchemyContactRepository(session),
             messages=SqlAlchemyMessageRepository(session),
             contact_memories=SqlAlchemyContactMemoryRepository(session),
+            scheduled_actions=SqlAlchemyScheduledActionRepository(session),
         )
         await session.commit()
 
@@ -238,6 +240,26 @@ async def open_sqlalchemy_trace_repositories() -> AsyncIterator[TraceRepositorie
             tool_executions=SqlAlchemyToolExecutionRepository(session),
             errors=SqlAlchemyErrorRepository(session),
             incidents=SqlAlchemyIncidentRepository(session),
+        )
+        await session.commit()
+
+
+@asynccontextmanager
+async def open_sqlalchemy_follow_up_worker_repositories() -> AsyncIterator[
+    FollowUpWorkerRepositories
+]:
+    """`run_follow_up_loop`'s `repositories_provider` for production DI —
+    opens a FRESH session per poll tick (same rationale as every other
+    provider in this module: the background loop is a process-lifetime
+    task, never a per-request one).
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield FollowUpWorkerRepositories(
+            scheduled_actions=SqlAlchemyScheduledActionRepository(session),
+            messages=SqlAlchemyMessageRepository(session),
+            conversations=SqlAlchemyConversationRepository(session),
+            contacts=SqlAlchemyContactRepository(session),
         )
         await session.commit()
 

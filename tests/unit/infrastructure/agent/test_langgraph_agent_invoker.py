@@ -18,6 +18,9 @@ from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
     LangGraphAgentInvoker,
 )
+from app.infrastructure.database.fake_scheduled_action_repository import (
+    FakeScheduledActionRepository,
+)
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
@@ -77,6 +80,7 @@ def _make_invoker(
     contact_repository=None,
     message_repository=None,
     contact_memory_repository=None,
+    scheduled_action_repository=None,
     messaging_gateway=None,
     handoff_gateway=None,
     agreement_gateway=None,
@@ -92,6 +96,7 @@ def _make_invoker(
     contact_repository = contact_repository or make_contact_repository()
     message_repository = message_repository or make_message_repository()
     contact_memory_repository = contact_memory_repository or make_contact_memory_repository()
+    scheduled_action_repository = scheduled_action_repository or FakeScheduledActionRepository()
     messaging_gateway = messaging_gateway or make_ycloud_messaging_gateway()
     appointment_gateway = appointment_gateway or make_dentalink_gateway()
     checkpointer = MemorySaver() if checkpointer is None else checkpointer
@@ -103,6 +108,7 @@ def _make_invoker(
             contacts=contact_repository,
             messages=message_repository,
             contact_memories=contact_memory_repository,
+            scheduled_actions=scheduled_action_repository,
         )
 
     invoker = LangGraphAgentInvoker(
@@ -120,6 +126,7 @@ def _make_invoker(
         memory_recent_window_size=15,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        follow_up_prompt_delay_seconds=1200,
         trace_repositories_provider=(
             trace_repositories_provider or make_trace_repositories_provider()
         ),
@@ -276,6 +283,7 @@ async def test_handle_works_without_a_checkpointer_provider():
             contacts=contact_repository,
             messages=make_message_repository(),
             contact_memories=make_contact_memory_repository(),
+            scheduled_actions=FakeScheduledActionRepository(),
         )
 
     invoker = LangGraphAgentInvoker(
@@ -291,6 +299,7 @@ async def test_handle_works_without_a_checkpointer_provider():
         memory_recent_window_size=15,
         redis_client=InMemoryFakeRedis(),
         confirmation_timeout_seconds=120,
+        follow_up_prompt_delay_seconds=1200,
         trace_repositories_provider=make_trace_repositories_provider(),
         prompt_version="agent-system-v0.1.0",
         model="gpt-4o-mini",
@@ -306,6 +315,35 @@ async def test_handle_works_without_a_checkpointer_provider():
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
 
     assert len(messaging_gateway.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_schedules_a_follow_up_when_a_stage_stays_active():
+    # Regression: `ScheduleFollowUpUseCase.reconcile()` existed, fully
+    # tested in isolation, but nothing in the live pipeline ever called it
+    # — a trámite left mid-flow (e.g. choosing a specialty) never got a
+    # "¿seguís ahí?" nudge or a silent-free auto-reset, since nothing was
+    # ever scheduled for the poll loop to find in the first place.
+    scheduled_action_repository = FakeScheduledActionRepository()
+    invoker, conversation_repository, contact_repository, _, _ = _make_invoker(
+        scheduled_action_repository=scheduled_action_repository,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="spec-1")]),
+        appointment_gateway=make_dentalink_gateway(
+            professionals=[make_professional(specialty_id="spec-1")]
+        ),
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD
+    )
+
+    scheduled = await scheduled_action_repository.get_scheduled_by_conversation_id("conv-1")
+    assert len(scheduled) == 1
+    assert scheduled[0].action_type == "appointment_flow_follow_up_prompt"
 
 
 @pytest.mark.asyncio
