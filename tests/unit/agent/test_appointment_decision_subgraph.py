@@ -399,7 +399,10 @@ async def test_valid_professional_row_tap_advances_to_availability_search():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_professional_id"] == "prof-1"
-    assert [b.id for b in result["response_buttons"]] == [f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}"]
+    assert result["response_buttons"] is None
+    assert [row.id for row in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}"
+    ]
 
 
 @pytest.mark.asyncio
@@ -458,7 +461,8 @@ async def test_missing_slot_payload_reminds_with_the_current_options():
     result = await graph.ainvoke(state)
 
     assert "elegí uno de los horarios" in result["response_text"].lower()
-    assert len(result["response_buttons"]) == 1
+    assert result["response_buttons"] is None
+    assert len(result["response_list"].rows) == 1
 
 
 @pytest.mark.asyncio
@@ -483,7 +487,9 @@ async def test_stale_slot_payload_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_availability_with_slots_offers_up_to_three_buttons():
+async def test_availability_with_slots_renders_as_a_list_with_more_than_three():
+    # Regression: slots used to render as reply buttons, capped at 3 by
+    # WhatsApp — any 4th+ available slot simply never showed.
     slots = [_future_slot(id_=f"slot-{i}") for i in range(5)]
     graph, conversation_repository, _ = await _make_graph(available_slots=slots)
     state = _decision_state(
@@ -498,7 +504,8 @@ async def test_availability_with_slots_offers_up_to_three_buttons():
     result = await graph.ainvoke(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-    assert len(result["response_buttons"]) == 3
+    assert result["response_buttons"] is None
+    assert len(result["response_list"].rows) == 5
     assert result["exit_reason"] == "none"
 
 
