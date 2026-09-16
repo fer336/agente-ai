@@ -70,6 +70,7 @@ from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
@@ -151,6 +152,18 @@ _NO_AVAILABILITY_BUTTONS = [
 ]
 _NO_SLOTS_CHOICE_BUTTONS = [
     InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
+]
+
+#: After this many consecutive invalid picks from the specialty/professional
+#: list, the patient is "medio desorientado" (this session's own brief) —
+#: stop re-showing the same list and offer a real way out instead, mirroring
+#: `app.agent.nodes.fallback`'s own escalation threshold/pattern for the
+#: same reason: a retry loop with no escape hatch is worse than admitting
+#: the bot isn't getting through.
+_ESCALATE_AFTER_ATTEMPTS = 2
+_ESCALATION_BUTTONS = [
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 
 
@@ -497,6 +510,39 @@ def build_appointment_decision_graph(
         )
         if index is None:
             retry_count = cast(int, collected_data.get("specialty_retry_count", 0)) + 1
+            if retry_count >= _ESCALATE_AFTER_ATTEMPTS:
+                # Re-showing the same list a patient already failed twice
+                # only loops them — offer a real way out instead (this
+                # session's own brief: "cuando el agente esté medio
+                # desorientado, debe pedir hablar con administración").
+                escalation_text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "specialty_retry_escalation",
+                    {
+                        "situacion": (
+                            "El paciente ya intentó elegir una especialidad un par de "
+                            "veces sin éxito."
+                        ),
+                        "instruccion": (
+                            "Notá con calidez que no se está entendiendo y ofrecele pasarlo "
+                            "con administración, o volver al menú principal. Van a aparecer "
+                            "esos 2 botones debajo de tu mensaje — no los repitas en el texto."
+                        ),
+                    },
+                    _SPECIALTY_NOT_UNDERSTOOD_MESSAGE,
+                    state.get("recent_messages", []),
+                    state.get("contact_memory_summary"),
+                )
+                return {
+                    "response_text": escalation_text,
+                    "response_buttons": _ESCALATION_BUTTONS,
+                    "requires_handoff": False,
+                    "collected_data": {},
+                    "next_node": "end",
+                    "decision_node": "choose_specialty",
+                    "exit_reason": "none",
+                }
             text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),
@@ -592,6 +638,35 @@ def build_appointment_decision_graph(
         )
         if index is None:
             retry_count = cast(int, collected_data.get("professional_retry_count", 0)) + 1
+            if retry_count >= _ESCALATE_AFTER_ATTEMPTS:
+                escalation_text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "professional_retry_escalation",
+                    {
+                        "situacion": (
+                            "El paciente ya intentó elegir un profesional un par de veces "
+                            "sin éxito."
+                        ),
+                        "instruccion": (
+                            "Notá con calidez que no se está entendiendo y ofrecele pasarlo "
+                            "con administración, o volver al menú principal. Van a aparecer "
+                            "esos 2 botones debajo de tu mensaje — no los repitas en el texto."
+                        ),
+                    },
+                    _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE,
+                    state.get("recent_messages", []),
+                    state.get("contact_memory_summary"),
+                )
+                return {
+                    "response_text": escalation_text,
+                    "response_buttons": _ESCALATION_BUTTONS,
+                    "requires_handoff": False,
+                    "collected_data": {},
+                    "next_node": "end",
+                    "decision_node": "choose_professional",
+                    "exit_reason": "none",
+                }
             text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),

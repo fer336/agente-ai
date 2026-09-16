@@ -27,6 +27,8 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
 )
@@ -365,6 +367,29 @@ async def test_invalid_specialty_choice_reprompts_the_same_list():
 
 
 @pytest.mark.asyncio
+async def test_a_second_invalid_specialty_choice_escalates_to_administracion():
+    # Regression: "cuando el agente esté medio desorientado, debe pedir
+    # hablar con administración y agregar el botón de administración" —
+    # re-showing the same list forever left the patient with no way out.
+    graph, _, _ = await _make_graph()
+    options = [make_specialty(id_="cleaning", name="Ortodoncia")]
+    state = _decision_state(
+        user_message="99",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": options,
+            "specialty_retry_count": 1,
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["collected_data"] == {}
+    assert result.get("response_list") is None
+    assert {b.id for b in result["response_buttons"]} == {MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD}
+
+
+@pytest.mark.asyncio
 async def test_stale_specialty_row_tap_is_rejected():
     graph, _, _ = await _make_graph()
     options = [make_specialty(id_="cleaning", name="Ortodoncia")]
@@ -422,6 +447,26 @@ async def test_invalid_professional_choice_reprompts_the_same_list():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["professional_retry_count"] == 1
     assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
+
+
+@pytest.mark.asyncio
+async def test_a_second_invalid_professional_choice_escalates_to_administracion():
+    graph, _, _ = await _make_graph()
+    state = _decision_state(
+        user_message="nada que ver",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "professional_options": [make_professional(id_="prof-1")],
+            "professional_retry_count": 1,
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["collected_data"] == {}
+    assert result.get("response_list") is None
+    assert {b.id for b in result["response_buttons"]} == {MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD}
 
 
 @pytest.mark.asyncio
