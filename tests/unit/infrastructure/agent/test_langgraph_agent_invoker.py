@@ -493,6 +493,55 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
 
 
 @pytest.mark.asyncio
+async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_booking():
+    # Regression for a live bug: `rotate_workflow_session` starts the turn
+    # right after a confirmed booking on a brand-new, never-checkpointed
+    # thread, so a plain "Gracias" gets classified from a clean slate. Left
+    # to the generic classifier alone, this misfired live (a bare "Gracias"
+    # with the just-confirmed booking still in `recent_messages` came back
+    # `intent=appointment`), bouncing the patient into specialty selection
+    # with nothing chosen. `post_action_context` — the one key the create
+    # success branch leaves instead of a bare `{}` — is what
+    # `resolve_interaction.py` actually uses to answer warmly instead.
+    checkpointer = MemorySaver()
+    slot = _future_slot()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    patient_gateway = make_patient_gateway(
+        patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot], professionals=[make_professional(id_="prof-1")]
+        ),
+        patient_gateway=patient_gateway,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
+        checkpointer=checkpointer,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
+    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
+    await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-7"], "", "CONFIRM_APPOINTMENT")
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-8"], "Gracias", None)
+
+    last_reply = messaging_gateway.sent_messages[-1][1]
+    assert "especialidad" not in last_reply.lower()
+
+
+@pytest.mark.asyncio
 async def test_handle_carries_appointment_action_across_turns_via_the_checkpointer():
     # `appointment_action` is a dedicated `AgentState` field (distinct from
     # `collected_data["operation"]`) that `handle()` explicitly re-seeds

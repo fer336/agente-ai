@@ -1879,7 +1879,10 @@ async def test_confirmation_stage_confirms_and_creates_the_appointment():
 
     result = await node(state)
 
-    assert result["collected_data"] == {}
+    # `post_action_context` opens `resolve_interaction.py`'s post-booking
+    # closing window (see that module's `POST_ACTION_CLOSE_INTENT`) — the
+    # only key left once a create/reschedule/cancel confirmation succeeds.
+    assert result["collected_data"] == {"post_action_context": CREATE_APPOINTMENT_ACTION}
     assert result["pending_action_id"] is None
     assert "confirmado" in result["response_text"].lower()
     assert appointment_gateway.get_appointment("1") is not None
@@ -2148,7 +2151,7 @@ async def test_confirmation_stage_confirms_and_cancels_the_appointment():
 
     result = await node(state)
 
-    assert result["collected_data"] == {}
+    assert result["collected_data"] == {"post_action_context": CANCEL_APPOINTMENT_ACTION}
     assert result["pending_action_id"] is None
     assert "cancelamos" in result["response_text"].lower()
     cancelled = appointment_gateway.get_appointment(str(appointment.id))
@@ -2355,7 +2358,7 @@ async def test_confirmation_stage_confirms_and_reschedules_the_appointment():
 
     result = await node(state)
 
-    assert result["collected_data"] == {}
+    assert result["collected_data"] == {"post_action_context": RESCHEDULE_APPOINTMENT_ACTION}
     assert result["pending_action_id"] is None
     assert "reagendamos" in result["response_text"].lower()
     rescheduled = appointment_gateway.get_appointment(str(appointment.id))

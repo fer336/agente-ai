@@ -1,3 +1,4 @@
+from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -20,12 +21,64 @@ from app.domain.value_objects.menu_payloads import (
 
 _MIN_INTENT_CONFIDENCE = 0.5
 
+#: Set by `appointment.py`'s three success branches (create/reschedule/
+#: cancel) instead of fully clearing `collected_data`, and consumed ONLY
+#: here, on the very next turn. Exists because the generic classifier's own
+#: confidence signal is exactly what misfires right after a booking — seen
+#: live: the real LLM read a bare "Gracias" (with the just-confirmed
+#: booking still in `recent_messages`) as `intent=appointment`, sending the
+#: patient back into specialty selection with nothing chosen. A deterministic
+#: post-action window sidesteps that: the LLM still judges the message (never
+#: a hardcoded keyword list), but only decides "new request or closing
+#: reply", not intent classification from scratch.
+POST_ACTION_CLOSE_INTENT = "post_action_close"
+
+#: Every intent `_route_after_resolve_interaction` (graph.py) sends to a real
+#: business node EXCEPT "appointment" — that one gets its own, stricter
+#: check right below (`_is_genuine_new_request`): a bare `intent=appointment`
+#: with nothing else is exactly the shape the live misclassification took
+#: (see `POST_ACTION_CLOSE_INTENT`'s own docstring), so it alone is not
+#: enough evidence of a genuinely new request during a post-action window.
+_ROUTABLE_INTENTS = frozenset({"insurance", "specialties", "handoff", "question", "location"})
+
+
+def _is_genuine_new_request(result: UnderstandingResult) -> bool:
+    """Whether `result` is strong enough evidence of a new request to close
+    an open post-action window early (see `POST_ACTION_CLOSE_INTENT`).
+
+    `intent=appointment` needs a carried mention/operation/navigation on top
+    of confidence — the live bug was the model reading a bare "Gracias"
+    (nothing else) as `appointment` with the just-confirmed booking still in
+    `recent_messages`. Every other routable intent stays confidence-only:
+    "insurance"/"specialties"/"handoff"/"question"/"location" are distinctive
+    enough labels that a closing "Gracias" essentially never lands on one.
+    """
+    if result.confidence < _MIN_INTENT_CONFIDENCE:
+        return False
+    if result.intent == "appointment":
+        return bool(
+            result.operation_mention
+            or result.specialty_mention
+            or result.professional_mention
+            or result.navigation_target
+        )
+    return result.intent in _ROUTABLE_INTENTS
+
+
+_POST_ACTION_CLOSE_STATIC_MESSAGES = {
+    "create_appointment": "De nada! Ahí quedó anotado tu turno, te esperamos.",
+    "reschedule_appointment": "De nada! Ya quedó reagendado, nos vemos pronto.",
+    "cancel_appointment": "Listo, quedó cancelado. Cualquier cosa, escribime.",
+}
+_POST_ACTION_CLOSE_DEFAULT_MESSAGE = "De nada! Cualquier otra cosa, decime."
+
 __all__ = [
     "MENU_ADMIN_PAYLOAD",
     "MENU_APPOINTMENT_PAYLOAD",
     "MENU_INSURANCE_PAYLOAD",
     "MENU_LOCATION_PAYLOAD",
     "MENU_SPECIALTIES_PAYLOAD",
+    "POST_ACTION_CLOSE_INTENT",
     "create_resolve_interaction_node",
 ]
 
@@ -116,6 +169,7 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
         has_active_stage = stage is not None
+        post_action_context = collected_data.get("post_action_context")
         payload = state["button_payload"]
 
         if payload is not None:
@@ -164,6 +218,37 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
         result = await llm_provider.understand(state["user_message"], context=context)
         carried = _carried_understanding(result)
 
+        if post_action_context is not None and not _is_genuine_new_request(result):
+            text = await generate_or_fallback(
+                llm_provider,
+                state["conversation_id"],
+                POST_ACTION_CLOSE_INTENT,
+                {"accion_completada": post_action_context},
+                _POST_ACTION_CLOSE_STATIC_MESSAGES.get(
+                    str(post_action_context), _POST_ACTION_CLOSE_DEFAULT_MESSAGE
+                ),
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+            return {
+                "intent": POST_ACTION_CLOSE_INTENT,
+                "response_text": text,
+                "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": {},
+            }
+
+        # A genuine new request always drops the now-consumed window,
+        # forwarded explicitly below even on the branches that would
+        # otherwise omit `collected_data` entirely (`has_active_stage` is
+        # always False whenever `post_action_context` was set, since it is
+        # only ever written alongside a full `collected_data` reset).
+        forward_stripped_collected_data = post_action_context is not None
+        if forward_stripped_collected_data:
+            collected_data = {
+                key: value for key, value in collected_data.items() if key != "post_action_context"
+            }
+
         navigation_target = result.navigation_target
         if (
             has_active_stage
@@ -185,6 +270,12 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
             return {"intent": "appointment"} if has_active_stage else {"intent": "unknown"}
 
         if result.intent == "handoff":
+            if forward_stripped_collected_data:
+                return {
+                    "intent": "handoff",
+                    "interruption": "terminate",
+                    "collected_data": collected_data,
+                }
             return {"intent": "handoff", "interruption": "terminate"}
 
         if has_active_stage and result.intent in _INFORMATION_INTENTS:
@@ -199,6 +290,8 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
             return {"intent": "appointment"}
 
         if not carried:
+            if forward_stripped_collected_data:
+                return {"intent": result.intent, "collected_data": collected_data}
             return {"intent": result.intent}
         return {
             "intent": result.intent,

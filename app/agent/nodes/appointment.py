@@ -1423,7 +1423,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {},
+                        "collected_data": {"post_action_context": CANCEL_APPOINTMENT_ACTION},
                     }
 
                 if confirmed_action_type == CREATE_APPOINTMENT_ACTION:
@@ -1451,7 +1451,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {},
+                        "collected_data": {"post_action_context": CREATE_APPOINTMENT_ACTION},
                     }
 
                 if confirmed_action_type == CREATE_PATIENT_ACTION:
@@ -1560,7 +1560,7 @@ def create_appointment_node(
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
-                        "collected_data": {},
+                        "collected_data": {"post_action_context": RESCHEDULE_APPOINTMENT_ACTION},
                     }
 
                 raise AssertionError(  # pragma: no cover - impossible by construction

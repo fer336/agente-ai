@@ -7,6 +7,7 @@ from app.agent.nodes.resolve_interaction import (
     MENU_SPECIALTIES_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
+    POST_ACTION_CLOSE_INTENT,
     create_resolve_interaction_node,
 )
 from app.domain.repositories.llm_provider import UnderstandingResult
@@ -78,6 +79,71 @@ async def test_a_question_mid_flow_temporarily_interrupts_and_preserves_the_stag
     assert result["interruption"] == "temporary"
     assert result["resume_node"] == "awaiting_x"
     assert result["collected_data"]["stage"] == "awaiting_x"
+
+
+@pytest.mark.asyncio
+async def test_a_thank_you_right_after_a_booking_gets_a_warm_close_not_appointment_intent():
+    # Regression for the live bug: right after `appointment.py`'s
+    # create/reschedule/cancel success branches leave `post_action_context`
+    # (the only key left once `collected_data` is otherwise fully reset), a
+    # low-confidence/non-actionable read (a bare "Gracias" always classifies
+    # this way against `FakeLLMProvider`'s own keyword heuristics — no
+    # appointment/insurance/specialty/handoff keyword present) must close
+    # warmly instead of falling through to `intent="unknown"`->fallback,
+    # which is what let the patient get bounced back into specialty
+    # selection with nothing chosen.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="Gracias",
+            collected_data={"post_action_context": "create_appointment"},
+        )
+    )
+
+    assert result["intent"] == POST_ACTION_CLOSE_INTENT
+    assert result["response_text"]
+    assert result["collected_data"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_confident_but_bare_appointment_misclassification_still_closes_warmly():
+    # The exact shape the live bug took: the real LLM read a bare "Gracias"
+    # (with the just-confirmed booking still in `recent_messages`) as
+    # `intent=appointment` with HIGH confidence and no carried mention/
+    # operation/navigation whatsoever. A bare `intent=appointment` alone is
+    # not enough evidence of a new request during a post-action window
+    # (see `resolve_interaction._is_genuine_new_request`'s own docstring).
+    class _OverconfidentLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="appointment", confidence=0.95)
+
+    node = create_resolve_interaction_node(_OverconfidentLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="Gracias",
+            collected_data={"post_action_context": "create_appointment"},
+        )
+    )
+
+    assert result["intent"] == POST_ACTION_CLOSE_INTENT
+    assert result["collected_data"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_new_request_right_after_a_booking_drops_the_closing_window():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="Quiero pedir un turno",
+            collected_data={"post_action_context": "create_appointment"},
+        )
+    )
+
+    assert result["intent"] == "appointment"
+    assert "post_action_context" not in result.get("collected_data", {})
 
 
 @pytest.mark.asyncio
