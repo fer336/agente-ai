@@ -297,6 +297,16 @@ _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE = (
     "No encontramos horarios disponibles con ese profesional en los próximos días. "
     "¿Querés ver otros profesionales de la misma especialidad?"
 )
+#: `STAGE_AWAITING_NO_AVAILABILITY_CHOICE` used to have no dedicated
+#: handler at all — ANY button tap that wasn't literally `MENU_MAIN_
+#: PAYLOAD` (already intercepted earlier in `node()`) fell through the
+#: entire dispatch chain to the bottom "no stage yet" fallback,
+#: indistinguishable from a fresh conversation. Live bug: a stale tap on
+#: an old, already-superseded professional/specialty list (WhatsApp never
+#: disables a past interactive message — there is no API for that) landed
+#: here and silently reset into the generic operation menu instead of
+#: telling the patient their tap was out of date.
+_STALE_TAP_MESSAGE = "Esa opción ya no está disponible. Tocá el botón de abajo para seguir."
 _NO_APPOINTMENTS_MESSAGE = (
     "No encontramos turnos próximos a tu nombre. Querés que te comunique con administración?"
 )
@@ -1824,6 +1834,18 @@ def create_appointment_node(
             return {
                 "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
                 "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
+                "requires_handoff": False,
+            }
+
+        if stage == STAGE_AWAITING_NO_AVAILABILITY_CHOICE:
+            # `MENU_MAIN_PAYLOAD` is already intercepted unconditionally
+            # earlier in `node()` — reaching here means the tap was
+            # something else (see `_STALE_TAP_MESSAGE`'s own comment).
+            # Re-offer the same single valid option rather than silently
+            # falling through to the generic operation-menu fallback.
+            return {
+                "response_text": _STALE_TAP_MESSAGE,
+                "response_buttons": _NO_AVAILABILITY_BUTTONS,
                 "requires_handoff": False,
             }
 
