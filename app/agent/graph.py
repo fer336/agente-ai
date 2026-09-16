@@ -13,7 +13,7 @@ from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, fresh_restart
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.location import location_node
-from app.agent.nodes.question import question_node
+from app.agent.nodes.question import create_question_node
 from app.agent.nodes.resolve_interaction import (
     POST_ACTION_CLOSE_INTENT,
     create_resolve_interaction_node,
@@ -267,7 +267,7 @@ def build_graph(
         QUESTION_NODE,
         with_error_handling(
             QUESTION_NODE,
-            question_node,
+            create_question_node(llm_provider),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,
