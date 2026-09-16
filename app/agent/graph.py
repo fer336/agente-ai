@@ -234,7 +234,7 @@ def build_graph(
         AGREEMENT_NODE,
         with_error_handling(
             AGREEMENT_NODE,
-            create_agreement_node(agreement_gateway),
+            create_agreement_node(agreement_gateway, llm_provider),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,

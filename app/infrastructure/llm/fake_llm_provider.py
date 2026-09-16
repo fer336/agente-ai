@@ -240,6 +240,11 @@ class FakeLLMProvider:
         profesional = context.collected_data.get("profesional")
         if profesional is not None:
             return f"[fake-response for intent={context.intent}] con {profesional}"
+        # `agreement.py`'s agreement_found call passes the matched
+        # convenio's name along the same way.
+        convenio = context.collected_data.get("convenio")
+        if convenio is not None:
+            return f"[fake-response for intent={context.intent}] con {convenio}"
         return f"[fake-response for intent={context.intent}]"
 
     async def summarize(self, previous_summary: str, new_messages: list[Message]) -> str:
