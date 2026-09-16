@@ -679,7 +679,7 @@ async def test_specialty_with_no_professionals_dead_ends_gracefully():
     result = await node(state)
 
     assert result["collected_data"] == {}
-    assert "administración" in result["response_text"]
+    assert result["response_text"] == "[fake-response for intent=no_professionals]"
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "FREE_INPUT"
@@ -1776,7 +1776,7 @@ async def test_slot_selection_stage_reminds_instead_of_advancing_on_free_text():
 
     result = await node(state)
 
-    assert "elegí uno de los horarios" in result["response_text"].lower()
+    assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
     assert "collected_data" not in result
     assert result["response_buttons"] is None
     assert len(result["response_list"].rows) == 1
@@ -1799,7 +1799,7 @@ async def test_slot_selection_stage_reoffers_on_a_stale_button():
 
     result = await node(state)
 
-    assert "ya no está disponible" in result["response_text"]
+    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
     assert "collected_data" not in result
 
 
