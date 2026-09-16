@@ -70,6 +70,25 @@ async def test_fallback_node_forwards_recent_messages_and_contact_memory_to_the_
 
 
 @pytest.mark.asyncio
+async def test_fallback_node_tells_the_llm_to_invite_tapping_a_menu_button():
+    # Regression: the LLM-worded fallback reply used to leave the 3 main-
+    # menu buttons with no inviting text at all — an explicit instruction
+    # to do so must reach the prompt.
+    captured: list[ResponseContext] = []
+
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            captured.append(context)
+            return "ok"
+
+    node = create_fallback_node(_CapturingLLMProvider())
+
+    await node(make_agent_state(user_message="asdkjaslkdj"))
+
+    assert "instruccion" in captured[0].collected_data
+
+
+@pytest.mark.asyncio
 async def test_fallback_node_falls_back_to_a_static_message_when_the_llm_provider_fails():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def generate_response(self, context: ResponseContext) -> str:

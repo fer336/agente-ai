@@ -250,6 +250,10 @@ async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the
 
     assert captured[0].recent_messages == recent
     assert captured[0].contact_memory == "Paciente frecuente."
+    # Regression: the LLM-worded reply used to leave the 3 operation
+    # buttons (Sacar turno/Reagendar/Cancelar) with no inviting text at
+    # all — an explicit instruction to do so must reach the prompt.
+    assert "instruccion" in captured[0].collected_data
 
 
 @pytest.mark.asyncio
