@@ -2371,6 +2371,11 @@ def create_appointment_node(
             {
                 "situacion": situacion,
                 "tono": "Cordial y breve, como alguien de la clínica atendiendo por WhatsApp.",
+                "instruccion": (
+                    "Van a aparecer 3 botones debajo de tu mensaje (Sacar turno, Reagendar, "
+                    "Cancelar) — cerrá el mensaje invitando a tocar uno de ellos, sin "
+                    "listarlos ni repetir sus nombres."
+                ),
             },
             _MAIN_MENU_RESET_MESSAGE if returned_to_main_menu else _OPERATION_MENU_MESSAGE,
             state["recent_messages"],

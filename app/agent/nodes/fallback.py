@@ -132,6 +132,11 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
                 "del menú principal de la clínica."
             ),
             "opciones_del_menu": ["Turnos", "Especialidades", "Administración"],
+            "instruccion": (
+                "Van a aparecer 3 botones debajo de tu mensaje con esas opciones — cerrá "
+                "el mensaje invitando a tocar uno de ellos, sin listarlos ni repetir sus "
+                "nombres."
+            ),
             "intentos_seguidos_sin_resolver": fallback_count,
         }
         if fallback_count >= _ESCALATE_AFTER_ATTEMPTS:
