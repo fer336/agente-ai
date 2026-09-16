@@ -9,7 +9,6 @@ import app.agent.nodes.appointment as appointment
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
     _MAIN_MENU_RESET_MESSAGE,
-    _STALE_TAP_MESSAGE,
     _VIEW_OTHER_PROFESSIONALS_PAYLOAD,
     CANCEL_APPOINTMENT_ACTION,
     CONFIRM_APPOINTMENT_PAYLOAD,
@@ -1180,7 +1179,7 @@ async def test_no_availability_choice_stage_re_offers_main_menu_on_a_stale_tap()
     assert [(button.id, button.title) for button in result["response_buttons"]] == [
         (MENU_MAIN_PAYLOAD, "Menú principal"),
     ]
-    assert result["response_text"] == _STALE_TAP_MESSAGE
+    assert result["response_text"] == "[fake-response for intent=stale_tap]"
 
 
 @pytest.mark.asyncio
@@ -1833,7 +1832,7 @@ async def test_slot_selection_stage_proposes_immediately_when_rescheduling():
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     }
-    assert "Confirmás" in result["response_text"]
+    assert "[fake-response for intent=propose_reschedule_confirmation]" in result["response_text"]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "SENSITIVE_CONFIRMATION"
@@ -1879,7 +1878,7 @@ async def test_confirmation_stage_rejects_the_pending_action():
 
     assert result["collected_data"]["stage"] is None
     assert result["pending_action_id"] is None
-    assert "descartamos" in result["response_text"].lower()
+    assert result["response_text"] == "[fake-response for intent=proposal_rejected]"
     async with repositories_provider() as repositories:
         rejected = await repositories.pending_actions.get_by_id("pa-1")
         assert rejected is not None
@@ -1926,7 +1925,7 @@ async def test_confirmation_stage_confirms_and_creates_the_appointment():
     # only key left once a create/reschedule/cancel confirmation succeeds.
     assert result["collected_data"] == {"post_action_context": CREATE_APPOINTMENT_ACTION}
     assert result["pending_action_id"] is None
-    assert "confirmado" in result["response_text"].lower()
+    assert "[fake-response for intent=create_success]" in result["response_text"]
     # Regression: the date used to render in English (`strftime('%A')` is
     # locale-dependent) — the clock emoji is only present via the new
     # `format_confirmation_datetime` helper, so its presence here proves
@@ -1975,7 +1974,7 @@ async def test_confirmation_stage_reoffers_slots_when_the_slot_was_taken():
 
     result = await node(state)
 
-    assert "acaba de ocuparse" in result["response_text"]
+    assert "[fake-response for intent=slot_taken]" in result["response_text"]
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
@@ -2004,7 +2003,7 @@ async def test_confirmation_stage_offers_new_search_when_the_proposal_expired():
 
     result = await node(state)
 
-    assert "ya no está vigente" in result["response_text"]
+    assert "[fake-response for intent=proposal_expired]" in result["response_text"]
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
 
 
@@ -2066,7 +2065,7 @@ async def test_identification_stage_reports_no_appointments_for_cancel():
     result = await node(state)
 
     assert result["collected_data"] == {}
-    assert "No encontramos turnos" in result["response_text"]
+    assert result["response_text"] == "[fake-response for intent=no_appointments]"
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "FREE_INPUT"
@@ -2094,7 +2093,7 @@ async def test_appointment_selection_stage_reminds_instead_of_advancing_on_free_
 
     result = await node(state)
 
-    assert "elegí uno de tus turnos" in result["response_text"].lower()
+    assert "[fake-response for intent=appointment_selection_reminder]" in result["response_text"]
     assert "collected_data" not in result
     assert len(result["response_buttons"]) == 1
 
@@ -2120,7 +2119,7 @@ async def test_appointment_selection_stage_reoffers_on_a_stale_button():
 
     result = await node(state)
 
-    assert "ya no está disponible" in result["response_text"]
+    assert "[fake-response for intent=stale_appointment_selection]" in result["response_text"]
     assert "collected_data" not in result
 
 
@@ -2150,7 +2149,7 @@ async def test_appointment_selection_stage_proposes_cancellation_on_a_valid_sele
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
-    assert "cancelarlo" in result["response_text"].lower()
+    assert "[fake-response for intent=propose_cancel_confirmation]" in result["response_text"]
     assert {b.id for b in result["response_buttons"]} == {
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
@@ -2200,7 +2199,7 @@ async def test_confirmation_stage_confirms_and_cancels_the_appointment():
 
     assert result["collected_data"] == {"post_action_context": CANCEL_APPOINTMENT_ACTION}
     assert result["pending_action_id"] is None
-    assert "cancelamos" in result["response_text"].lower()
+    assert result["response_text"] == "[fake-response for intent=cancel_success]"
     cancelled = appointment_gateway.get_appointment(str(appointment.id))
     assert cancelled is not None
     assert cancelled.status == "cancelled"
@@ -2331,7 +2330,7 @@ async def test_slot_selection_stage_proposes_reschedule_when_rescheduling():
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
-    assert "reagendar" in result["response_text"].lower()
+    assert "[fake-response for intent=propose_reschedule_confirmation]" in result["response_text"]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "SENSITIVE_CONFIRMATION"
@@ -2407,7 +2406,7 @@ async def test_confirmation_stage_confirms_and_reschedules_the_appointment():
 
     assert result["collected_data"] == {"post_action_context": RESCHEDULE_APPOINTMENT_ACTION}
     assert result["pending_action_id"] is None
-    assert "reagendamos" in result["response_text"].lower()
+    assert "[fake-response for intent=reschedule_success]" in result["response_text"]
     rescheduled = appointment_gateway.get_appointment(str(appointment.id))
     assert rescheduled is not None
     assert rescheduled.slot == new_slot
@@ -2458,7 +2457,7 @@ async def test_confirmation_stage_reoffers_slots_when_the_new_slot_was_taken_for
 
     result = await node(state)
 
-    assert "acaba de ocuparse" in result["response_text"]
+    assert "[fake-response for intent=slot_taken]" in result["response_text"]
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     unchanged = appointment_gateway.get_appointment(str(appointment.id))
     assert unchanged is not None
