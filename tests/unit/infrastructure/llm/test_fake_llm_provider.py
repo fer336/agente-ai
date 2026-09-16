@@ -80,6 +80,40 @@ async def test_extract_information_reports_all_requested_fields_as_missing():
 
 
 @pytest.mark.asyncio
+async def test_extract_information_accepts_a_plausible_full_name():
+    provider = make_llm_provider()
+
+    result = await provider.extract_information(
+        "Pedro Cassera", required_fields=["nombre_completo"]
+    )
+
+    assert result == ExtractionResult(
+        fields={"nombre_completo": "Pedro Cassera"}, missing_fields=[]
+    )
+
+
+@pytest.mark.asyncio
+async def test_extract_information_rejects_casual_chatter_as_a_full_name():
+    # Live bug this fake must reproduce for tests: "Bien vos?" is not a name.
+    provider = make_llm_provider()
+
+    result = await provider.extract_information("Bien vos?", required_fields=["nombre_completo"])
+
+    assert result == ExtractionResult(fields={}, missing_fields=["nombre_completo"])
+
+
+@pytest.mark.asyncio
+async def test_extract_information_finds_a_dni_digit_run():
+    provider = make_llm_provider()
+
+    result = await provider.extract_information(
+        "mi dni es 30123456", required_fields=["dni"]
+    )
+
+    assert result == ExtractionResult(fields={"dni": "30123456"}, missing_fields=[])
+
+
+@pytest.mark.asyncio
 async def test_generate_response_includes_the_intent_from_context():
     provider = make_llm_provider()
     context = ResponseContext(conversation_id="conv-1", intent="appointment", collected_data={})

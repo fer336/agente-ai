@@ -1,3 +1,5 @@
+import re
+
 from app.domain.entities.message import Message
 from app.domain.repositories.llm_provider import (
     ExtractionResult,
@@ -31,6 +33,88 @@ _DNI_INVALID_MESSAGES = (
     "Todavía no es un DNI válido. Escribime nada más los números, sin puntos ni "
     "espacios, ejemplo: 30123456.",
 )
+
+#: `extract_information`'s "nombre_completo" field, faked heuristically
+#: (real word here, not a full classifier): words that never appear in a
+#: real full name but commonly appear in ordinary chatter, so a message
+#: like "hola quiero un turno" isn't mistaken for a name. Deliberately
+#: small and Spanish-specific — same "usable placeholder" spirit as this
+#: class's other keyword-based methods; the real provider judges this with
+#: an actual LLM call instead (see `app.agent.nodes.appointment.
+#: _extract_full_name`, which this fake's behavior must satisfy the same
+#: two live-found cases for: accept a real name-first answer like "Pedro
+#: Cassera", reject ordinary chatter like "Bien vos?").
+_NON_NAME_WORDS = frozenset(
+    {
+        "hola",
+        "buenas",
+        "buenos",
+        "dias",
+        "días",
+        "tardes",
+        "noches",
+        "bien",
+        "vos",
+        "todo",
+        "quiero",
+        "queria",
+        "quería",
+        "querria",
+        "querría",
+        "quisiera",
+        "necesito",
+        "turno",
+        "turnos",
+        "cita",
+        "consulta",
+        "gracias",
+        "porfavor",
+        "porfa",
+        "ayuda",
+        "informacion",
+        "información",
+        "saber",
+        "como",
+        "cómo",
+        "cuando",
+        "cuándo",
+        "donde",
+        "dónde",
+        "que",
+        "qué",
+        "hacer",
+        "sacar",
+        "reservar",
+        "cancelar",
+        "reagendar",
+        "administracion",
+        "administración",
+        "hablar",
+        "persona",
+        "humano",
+        "no",
+        "si",
+        "sé",
+        "se",
+        "estoy",
+        "soy",
+        "registrado",
+        "registrada",
+        "creo",
+        "puedo",
+        "podes",
+        "podés",
+        "puede",
+    }
+)
+
+_DNI_EXTRACT_PATTERN = re.compile(r"\d{7,8}")
+
+
+def _looks_like_a_name(text: str) -> bool:
+    words = text.casefold().split()
+    return bool(words) and not any(word.strip(".,!?¡¿") in _NON_NAME_WORDS for word in words)
+
 
 _APPOINTMENT_KEYWORDS = ("turno", "cita")
 _INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
@@ -99,7 +183,24 @@ class FakeLLMProvider:
     async def extract_information(
         self, message: str, required_fields: list[str]
     ) -> ExtractionResult:
-        return ExtractionResult(fields={}, missing_fields=list(required_fields))
+        fields: dict[str, object] = {}
+        missing: list[str] = []
+        for field in required_fields:
+            if field == "nombre_completo":
+                stripped = message.strip()
+                if stripped and _looks_like_a_name(stripped):
+                    fields[field] = stripped
+                else:
+                    missing.append(field)
+            elif field == "dni":
+                match = _DNI_EXTRACT_PATTERN.search(message)
+                if match is not None:
+                    fields[field] = match.group(0)
+                else:
+                    missing.append(field)
+            else:
+                missing.append(field)
+        return ExtractionResult(fields=fields, missing_fields=missing)
 
     async def generate_response(self, context: ResponseContext) -> str:
         if context.intent == "fallback":

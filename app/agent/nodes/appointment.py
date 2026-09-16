@@ -104,6 +104,7 @@ from app.domain.value_objects.paginated_list import (
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
+from app.infrastructure.llm.exceptions import LLMProviderError
 from app.infrastructure.ycloud.flows import (
     REGISTRATION_FLOW_SCREEN_ID,
     VERIFICATION_FLOW_SCREEN_ID,
@@ -382,102 +383,59 @@ _RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER = (
 )
 
 
-#: Words that never appear in a real full name but commonly appear in
-#: ordinary chatter — used to keep a name-only, no-digit message from being
-#: misread as identification when it's actually just conversation ("hola
-#: quiero un turno"). Deliberately small and Spanish-specific (PRD.md's own
-#: language): a false negative here just means one extra retry prompt, a
-#: false positive means silently losing a real name to `_merge_identification`
-#: discarding it as noise — the worse failure mode, per the bug this list
-#: guards against (see `_merge_identification`'s docstring).
-_NON_NAME_WORDS = frozenset(
-    {
-        "hola",
-        "buenas",
-        "buenos",
-        "dias",
-        "días",
-        "tardes",
-        "noches",
-        "quiero",
-        "queria",
-        "quería",
-        "querria",
-        "querría",
-        "quisiera",
-        "necesito",
-        "turno",
-        "turnos",
-        "cita",
-        "consulta",
-        "gracias",
-        "porfavor",
-        "porfa",
-        "ayuda",
-        "informacion",
-        "información",
-        "saber",
-        "como",
-        "cómo",
-        "cuando",
-        "cuándo",
-        "donde",
-        "dónde",
-        "que",
-        "qué",
-        "hacer",
-        "sacar",
-        "reservar",
-        "cancelar",
-        "reagendar",
-        "administracion",
-        "administración",
-        "hablar",
-        "persona",
-        "humano",
-        "no",
-        "si",
-        "sé",
-        "se",
-        "estoy",
-        "soy",
-        "registrado",
-        "registrada",
-        "creo",
-        "puedo",
-        "podes",
-        "podés",
-        "puede",
-    }
-)
+#: The field name asked of `LLMProvider.extract_information` to judge
+#: whether a piece of text plausibly reads as a patient's full name.
+_FULL_NAME_FIELD = "nombre_completo"
 
 
-def _looks_like_a_name(text: str) -> bool:
-    """True when a no-digit message reads as a plausible full name rather
-    than ordinary chatter — see `_NON_NAME_WORDS`."""
-    words = text.casefold().split()
-    return bool(words) and not any(word.strip(".,!?¡¿") in _NON_NAME_WORDS for word in words)
+async def _extract_full_name(llm_provider: LLMProvider, text: str) -> str | None:
+    """Uses the LLM to judge whether `text` plausibly reads as a person's
+    full name rather than ordinary chatter, instead of a fixed keyword
+    blocklist.
+
+    A hardcoded word list (the old `_NON_NAME_WORDS`/`_looks_like_a_name`
+    approach) can never cover every casual phrase a patient might send
+    mid-identification — seen live: "Bien vos?" (replying to the bot's own
+    "Cómo estás?") got registered as the patient's name, because neither
+    "bien" nor "vos" happened to be on the list. Whack-a-mole word lists
+    don't scale; judging plausibility is exactly what an LLM is for
+    (this session's own brief).
+
+    Fails safe on any LLM failure: treats unclear text as NOT a name
+    (prompting a retry) rather than risking that same false-positive
+    silently again.
+    """
+    try:
+        result = await llm_provider.extract_information(text, [_FULL_NAME_FIELD])
+    except LLMProviderError:
+        return None
+    if _FULL_NAME_FIELD in result.missing_fields:
+        return None
+    value = result.fields.get(_FULL_NAME_FIELD)
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _extract_identification_pieces(text: str) -> tuple[str | None, str | None]:
+async def _extract_identification_pieces(
+    llm_provider: LLMProvider, text: str
+) -> tuple[str | None, str | None]:
     """Splits free text into whichever (full_name, dni) pieces it actually
     contains — either can be missing, since the patient may answer across
     two messages instead of PRD.md §32's suggested one-shot format
-    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI and
-    whatever surrounds it is the name; with no digit run at all, the
-    message is a name-only answer UNLESS it reads as ordinary chatter (see
-    `_looks_like_a_name`) — that check only matters here, since a DNI's
-    presence is already unambiguous proof of an identification attempt.
+    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI; whatever
+    surrounds it is checked against `_extract_full_name` before being
+    accepted as the name (rather than accepted unconditionally) — with no
+    digit run at all, the whole message is checked the same way.
     """
     match = _DNI_PATTERN.search(text)
     if match is not None:
         dni = match.group(1)
-        full_name = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
-        return full_name or None, dni
+        remainder = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
+        full_name = await _extract_full_name(llm_provider, remainder) if remainder else None
+        return full_name, dni
     stripped = text.strip()
-    if not stripped or not _looks_like_a_name(stripped):
+    if not stripped:
         return None, None
-    return stripped, None
+    return await _extract_full_name(llm_provider, stripped), None
 
 
 #: Numbered-choice/name resolution, list-choice resolution (row tap vs.
@@ -551,7 +509,8 @@ def choose_professional_prompt() -> str:
     return _CHOOSE_PROFESSIONAL_PROMPT
 
 
-def _merge_identification(
+async def _merge_identification(
+    llm_provider: LLMProvider,
     text: str,
     remembered_full_name: str | None,
     remembered_dni: str | None,
@@ -563,18 +522,20 @@ def _merge_identification(
     left untouched this turn falls back to what was already remembered, so
     the patient never has to repeat something they already got right.
 
-    This is only ever called from `STAGE_AWAITING_IDENTIFICATION` (see this
-    node's `node()` dispatch) — the bot already asked specifically for
-    name+DNI, so any free text arriving here IS an identification attempt
-    by construction; there is no ordinary-chatter ambiguity left to guard
-    against. A message with no digit run is always read as a bare name
-    (bug found live: the old guard discarded a name-first answer entirely
-    whenever no DNI was on record yet — e.g. "Pedro Cassera" then
-    "30131313" — so by the time the DNI arrived, the name had never been
-    remembered and got asked for AGAIN even though the patient already
-    typed it).
+    Only ever called from `STAGE_AWAITING_IDENTIFICATION` (see this node's
+    `node()` dispatch). A message with no digit run is checked against
+    `_extract_full_name` (LLM-judged, not a keyword blocklist) rather than
+    assumed to always be a bare name — bug found live: a name-first answer
+    with no chitchat guard at all discarded a real name whenever no DNI
+    was on record yet (e.g. "Pedro Cassera" then "30131313" — by the time
+    the DNI arrived, the name had never been remembered and got asked for
+    AGAIN even though the patient already typed it); a fixed keyword
+    blocklist instead let unrelated chatter ("Bien vos?") through as if it
+    were a name. The LLM check needs to accept a real name-first answer
+    AND reject ordinary chatter — a blocklist can only ever do one of those
+    reliably.
     """
-    full_name, dni = _extract_identification_pieces(text)
+    full_name, dni = await _extract_identification_pieces(llm_provider, text)
     return (
         full_name if full_name is not None else remembered_full_name,
         dni if dni is not None else remembered_dni,
@@ -2003,8 +1964,8 @@ def create_appointment_node(
 
             remembered_full_name = cast(str | None, collected_data.get("identification_full_name"))
             remembered_dni = cast(str | None, collected_data.get("identification_dni"))
-            merged_full_name, merged_dni = _merge_identification(
-                state["user_message"], remembered_full_name, remembered_dni
+            merged_full_name, merged_dni = await _merge_identification(
+                llm_provider, state["user_message"], remembered_full_name, remembered_dni
             )
             if merged_full_name is None and merged_dni is None:
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1

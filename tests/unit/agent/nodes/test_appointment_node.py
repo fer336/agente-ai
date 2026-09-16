@@ -1347,6 +1347,31 @@ async def test_identification_completes_across_two_messages_name_then_dni():
 
 
 @pytest.mark.asyncio
+async def test_identification_stage_rejects_casual_chatter_as_a_name():
+    # Live bug: replying to the bot's own small talk ("Cómo estás?") with
+    # "Bien vos?" got registered as the patient's full name — neither
+    # "bien" nor "vos" happened to be on the old hardcoded blocklist this
+    # stage used to judge a name-only answer with. Name detection is now
+    # LLM-judged (see `_extract_full_name`) instead of a fixed word list,
+    # so it must reject this and re-prompt rather than accept it.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Bien vos?",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert "identification_full_name" not in result["collected_data"]
+    assert result["collected_data"]["identification_retry_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_dni_invalid_reprompt_remembers_the_already_parsed_full_name():
     node, _, _ = await _make_node_and_conversation(patients=[])
     state = make_agent_state(
