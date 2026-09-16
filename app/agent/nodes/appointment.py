@@ -321,6 +321,9 @@ _SLOT_SELECTION_REMINDER = (
 )
 _STALE_SLOT_SELECTION_MESSAGE = "Esa opción ya no está disponible. Elegí una de estas:"
 _CHOOSE_APPOINTMENT_PROMPT = "Elegí el turno tocando uno de los botones:"
+_CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT = (
+    "Elegí cuál turno querés cancelar tocando uno de los botones:"
+)
 _APPOINTMENT_SELECTION_REMINDER = (
     "Por favor, elegí uno de tus turnos tocando un botón — todavía no puedo "
     "tomar la selección por texto."
@@ -614,27 +617,35 @@ async def _cancel_confirmation_message(
     conversation_id: ConversationId,
     appointment: Appointment,
     professional_names: dict[str, str],
+    patient_name: str | None,
     recent_messages: list[dict[str, str]],
     contact_memory: str | None,
 ) -> str:
     slot = appointment.slot
     professional_name = professional_names.get(slot.professional_id, "Profesional")
     datetime_block = _format_confirmation_datetime(slot.time_range.start)
+    context: dict[str, object] = {
+        "situacion": (
+            "El paciente pidió cancelar un turno y hay que pedirle que confirme antes de "
+            "hacerlo, para que el horario quede liberado."
+        ),
+        "profesional": professional_name,
+        "instruccion": (
+            "Pedile que confirme que quiere cancelar ese turno con ese profesional, así el "
+            "horario queda liberado. NO menciones fecha ni hora — esos datos se agregan "
+            "aparte, después de tu mensaje, tal cual vienen."
+        ),
+    }
+    if patient_name:
+        context["nombre_paciente"] = patient_name
+        context["instruccion"] = (
+            f"{context['instruccion']} Podés dirigirte a {patient_name} por su nombre."
+        )
     text = await generate_or_fallback(
         llm_provider,
         str(conversation_id),
         "propose_cancel_confirmation",
-        {
-            "situacion": (
-                "El paciente pidió cancelar un turno y hay que confirmarlo antes de hacerlo."
-            ),
-            "profesional": professional_name,
-            "instruccion": (
-                "Decí que va a cancelar ese turno con ese profesional y terminá preguntando "
-                "si confirma la cancelación. NO menciones fecha ni hora — esos datos se "
-                "agregan aparte, después de tu mensaje, tal cual vienen."
-            ),
-        },
+        context,
         f"Vas a cancelar tu turno con {professional_name}.\n\nConfirmás que querés cancelarlo?",
         recent_messages,
         contact_memory,
@@ -803,15 +814,31 @@ async def _reschedule_success_message(
 async def _cancel_success_message(
     llm_provider: LLMProvider,
     conversation_id: ConversationId,
+    patient_name: str | None,
     recent_messages: list[dict[str, str]],
     contact_memory: str | None,
 ) -> str:
+    context: dict[str, object] = {
+        "situacion": "El turno se canceló con éxito en Dentalink — hay que avisarle al paciente.",
+        "instruccion": (
+            "Agradecele por avisar y comentale que, si tiene cualquier duda, puede hablar "
+            "con administración."
+        ),
+    }
+    fallback = "✅ Cancelamos tu turno. Si tenés cualquier duda, podés hablar con administración."
+    if patient_name:
+        context["nombre_paciente"] = patient_name
+        context["instruccion"] = f"{context['instruccion']} Podés agradecerle por su nombre."
+        fallback = (
+            f"✅ Cancelamos tu turno, {patient_name}. Si tenés cualquier duda, podés hablar "
+            "con administración."
+        )
     return await generate_or_fallback(
         llm_provider,
         str(conversation_id),
         "cancel_success",
-        {"situacion": "El turno se canceló con éxito en Dentalink — hay que avisarle al paciente."},
-        "✅ Cancelamos tu turno. Si querés coordinar otro, avisame.",
+        context,
+        fallback,
         recent_messages,
         contact_memory,
     )
@@ -1545,18 +1572,38 @@ def create_appointment_node(
             for appointment in appointments
         )
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        # Operation-specific framing — CANCEL, RESCHEDULE and VIEW all reach
+        # this same "pick which appointment" screen, but the tone must not
+        # be interchangeable: seen live, a generic "invitá a elegir uno"
+        # situacion left the model free to default to upbeat booking
+        # phrasing ("te lo reservo y listo") even while the patient was
+        # canceling. A single shared `intent="choose_appointment"` also let
+        # the very next confirmation turn pick up that booking TONE via
+        # `recent_messages`, even though that turn's own instruction
+        # already forbids repeating the date/time itself.
+        if collected_data.get("operation") == CANCEL_APPOINTMENT_ACTION:
+            intent = "choose_appointment_to_cancel"
+            situacion = "El paciente quiere cancelar un turno — hay que pedirle que elija cuál."
+            fallback = _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT
+        else:
+            intent = "choose_appointment_to_reschedule"
+            situacion = (
+                "El paciente quiere ver o reprogramar un turno — hay que pedirle que elija cuál."
+            )
+            fallback = _CHOOSE_APPOINTMENT_PROMPT
         text = await generate_or_fallback(
             llm_provider,
             str(conversation_id),
-            "choose_appointment",
+            intent,
             {
-                "situacion": "Hay que invitar al paciente a elegir uno de sus turnos.",
+                "situacion": situacion,
                 "instruccion": (
                     "Le vamos a mostrar una lista de sus turnos debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno."
+                    "los menciones ni los repitas, solo invitá a elegir uno. No uses tono de "
+                    "reserva ni digas que se lo vas a agendar."
                 ),
             },
-            _CHOOSE_APPOINTMENT_PROMPT,
+            fallback,
             recent_messages,
             contact_memory,
         )
@@ -1822,9 +1869,17 @@ def create_appointment_node(
                     await rotate_workflow_session.execute(
                         conversation_id, expected_generation=workflow_generation
                     )
+                    cancel_success_patient = cast(
+                        dict[str, object] | None, collected_data.get("patient")
+                    )
                     cancel_success_text = await _cancel_success_message(
                         llm_provider,
                         conversation_id,
+                        (
+                            str(cancel_success_patient["full_name"])
+                            if cancel_success_patient
+                            else None
+                        ),
                         state["recent_messages"],
                         state["contact_memory_summary"],
                     )
@@ -2353,11 +2408,13 @@ def create_appointment_node(
                     _cancel_proposal_payload(selected_appointment),
                 )
                 await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+                cancel_patient = cast(dict[str, object] | None, collected_data.get("patient"))
                 cancel_confirmation_text = await _cancel_confirmation_message(
                     llm_provider,
                     conversation_id,
                     selected_appointment,
                     professional_names,
+                    str(cancel_patient["full_name"]) if cancel_patient else None,
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )

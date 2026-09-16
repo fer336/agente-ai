@@ -2048,6 +2048,32 @@ async def test_identification_stage_offers_appointments_for_cancel():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_APPOINTMENT_SELECTION
     assert result["collected_data"]["patient_appointments"] == [appointment]
     assert result["response_buttons"] == [_appointment_button(appointment)]
+    # Regression, seen live: a cancel-selection screen used to reuse the
+    # same generic "choose_appointment" intent as reschedule/view, which
+    # let the model default to booking-toned phrasing ("te lo reservo y
+    # listo") while the patient was cancelling.
+    assert "[fake-response for intent=choose_appointment_to_cancel]" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_identification_stage_offers_appointments_for_reschedule_with_distinct_framing():
+    slot = _future_slot()
+    node, _, appointment_gateway = await _make_node_and_conversation(available_slots=[slot])
+    await appointment_gateway.create_appointment(
+        patient=make_patient(id_="pat-1"), slot=slot, idempotency_key="seed-1"
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Juan Perez, 30123456",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert "[fake-response for intent=choose_appointment_to_reschedule]" in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -2150,6 +2176,10 @@ async def test_appointment_selection_stage_proposes_cancellation_on_a_valid_sele
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
     assert "[fake-response for intent=propose_cancel_confirmation]" in result["response_text"]
+    # The patient's name (already known from identification) reaches the
+    # LLM call so it can ask for confirmation by name, per this session's
+    # brief ("Bárbaro, {nombre} confirmá el turno a cancelar...").
+    assert "Juan Perez" in result["response_text"]
     assert {b.id for b in result["response_buttons"]} == {
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
@@ -2206,6 +2236,47 @@ async def test_confirmation_stage_confirms_and_cancels_the_appointment():
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_thanks_the_patient_by_name_on_cancel_success():
+    # Per this session's brief: after a confirmed cancellation, the patient
+    # should be thanked by name and told they can reach administración with
+    # any doubts — the LLM writes the actual wording, but the name and the
+    # administración mention must reach its context.
+    slot = _future_slot()
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, appointment_gateway = await _make_node_and_conversation(
+        available_slots=[slot], proposal_repositories_provider=repositories_provider
+    )
+    appointment = await appointment_gateway.create_appointment(
+        patient=make_patient(id_="pat-1"), slot=slot, idempotency_key="seed-1"
+    )
+    payload = {
+        "appointment_id": str(appointment.id),
+        "patient_id": "pat-1",
+        "professional_id": slot.professional_id,
+        "slot_start": slot.time_range.start.isoformat(),
+        "slot_end": slot.time_range.end.isoformat(),
+    }
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1", status="pending", action_type=CANCEL_APPOINTMENT_ACTION, payload=payload
+            )
+        )
+
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        pending_action_id="pa-1",
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "patient": _PATIENT_PRIMITIVES},
+    )
+
+    result = await node(state)
+
+    assert "[fake-response for intent=cancel_success]" in result["response_text"]
+    assert "Juan Perez" in result["response_text"]
 
 
 @pytest.mark.asyncio

@@ -232,19 +232,21 @@ class FakeLLMProvider:
         if context.intent == "post_action_close":
             action = context.collected_data.get("accion_completada")
             return _POST_ACTION_CLOSE_MESSAGES.get(str(action), _POST_ACTION_CLOSE_DEFAULT_MESSAGE)
-        # `appointment.py`'s propose_*_confirmation/no_professionals/etc.
-        # calls pass the professional's name along in `collected_data` for
-        # the model to weave into the sentence — echo it here too, so a
-        # test asserting the name actually reached the LLM call doesn't
-        # need its own bespoke Fake branch.
-        profesional = context.collected_data.get("profesional")
-        if profesional is not None:
-            return f"[fake-response for intent={context.intent}] con {profesional}"
-        # `agreement.py`'s agreement_found call passes the matched
-        # convenio's name along the same way.
-        convenio = context.collected_data.get("convenio")
-        if convenio is not None:
-            return f"[fake-response for intent={context.intent}] con {convenio}"
+        # Several call sites (`appointment.py`'s propose_*_confirmation/
+        # cancel_success/no_professionals, `agreement.py`'s agreement_found,
+        # ...) pass a real name along in `collected_data` for the model to
+        # weave into the sentence, and more than one can be present on the
+        # same call (e.g. both `profesional` and `nombre_paciente`) — echo
+        # every one that's set, rather than only the first match, so a test
+        # asserting any of them reached the LLM call doesn't need its own
+        # bespoke Fake branch.
+        echoed = [
+            str(context.collected_data[key])
+            for key in ("profesional", "convenio", "nombre_paciente")
+            if context.collected_data.get(key) is not None
+        ]
+        if echoed:
+            return f"[fake-response for intent={context.intent}] con {' y '.join(echoed)}"
         return f"[fake-response for intent={context.intent}]"
 
     async def summarize(self, previous_summary: str, new_messages: list[Message]) -> str:
