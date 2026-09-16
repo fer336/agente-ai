@@ -40,9 +40,21 @@ async def ready(
     session: AsyncSession = Depends(get_db_session),
     redis_client: Any = Depends(get_redis_client),
 ) -> dict[str, str]:
-    """Readiness probe — checks Postgres and Redis connectivity."""
+    """Readiness probe — checks Postgres/Redis connectivity AND that the
+    real schema is actually in place.
+
+    `SELECT 1` alone only proves the DB is reachable — it stays healthy
+    even when `alembic_version` claims migrations are at head but the
+    tables they were supposed to create don't actually exist (seen live:
+    every inbound WhatsApp message failed with `relation "messages" does
+    not exist` for hours across 6+ releases, because this probe never
+    touched a real table and kept reporting "ready"). `messages` is the
+    first table `IngestMessageUseCase` reads on every single turn, so it
+    doubles as a canary for the schema as a whole.
+    """
     try:
         await session.execute(text("SELECT 1"))
+        await session.execute(text("SELECT 1 FROM messages LIMIT 1"))
         await redis_client.ping()
     except Exception:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
