@@ -214,11 +214,17 @@ CREATE_PATIENT_ACTION = "create_patient"
 
 #: `UnderstandingResult.operation_mention` -> this node's own action
 #: tokens, so a patient who says "quiero cancelar mi turno" skips the
-#: operation menu they already answered in words.
+#: operation menu they already answered in words. "view" mirrors
+#: `_OPERATION_BY_PAYLOAD`'s own `OPERATION_VIEW_PAYLOAD` entry below —
+#: seen live: "Qué turnos tengo?" had no matching key here at all, so it
+#: fell through past the CREATE-specific branch straight into offering
+#: specialties (CREATE's own fresh-entry path) instead of asking for
+#: name+DNI to look the patient's existing appointments up.
 _OPERATION_BY_MENTION = {
     "create": CREATE_APPOINTMENT_ACTION,
     "reschedule": RESCHEDULE_APPOINTMENT_ACTION,
     "cancel": CANCEL_APPOINTMENT_ACTION,
+    "view": RESCHEDULE_APPOINTMENT_ACTION,
 }
 
 #: Shared by `STAGE_AWAITING_OPERATION_SELECTION` (tapped from that stage's

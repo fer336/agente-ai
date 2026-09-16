@@ -410,6 +410,25 @@ async def test_a_stated_cancel_skips_to_identification():
 
 
 @pytest.mark.asyncio
+async def test_a_stated_view_request_skips_to_identification_instead_of_specialties():
+    # Regression, seen live: "Qué turnos tengo?" fell through
+    # `_OPERATION_BY_MENTION` (no "view" key at all) and landed in
+    # CREATE's own fresh-entry path, asking for a specialty instead of
+    # asking for name+DNI to look the patient's existing appointments up.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="que turnos tengo?",
+        collected_data={"operation_mention": "view"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
 async def test_an_unmatched_specialty_mention_still_shows_the_menu():
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
