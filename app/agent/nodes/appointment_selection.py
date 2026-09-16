@@ -15,7 +15,8 @@ from datetime import datetime
 from typing import cast
 
 from app.domain.entities.appointment_slot import AppointmentSlot
-from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage, ListRow
+from app.domain.value_objects.paginated_list import paginate_rows, truncate_title
 
 #: `datetime.strftime('%A')` is locale-dependent, and this codebase never
 #: sets a Spanish process locale (deliberately — `locale.setlocale` is
@@ -179,10 +180,44 @@ def format_slot_option(slot: AppointmentSlot, professional_names: dict[str, str]
     return f"- {professional_name}: {format_slot_datetime(slot.time_range.start)}"
 
 
-def slot_button(slot: AppointmentSlot) -> InteractiveButton:
-    return InteractiveButton(
-        id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-        title=slot.time_range.start.strftime("%d/%m %H:%M"),
+#: A `ListRow.title` needs no professional name: every slot search that
+#: produces the options shown here already passes a specific
+#: `professional_id` (see `_offer_slots`/`search_availability_node`'s own
+#: comments — Dentalink's `/v5/agendas` doesn't return `id_especialidad`,
+#: so the professional is the one filter that's always honoured), so a row
+#: only ever needs to tell two same-professional slots apart by date/time.
+_SLOT_ROW_CLOCK_EMOJI = "🕐"
+
+
+def slot_rows(
+    slots: list[AppointmentSlot], page: int = 0, include_back: bool = False
+) -> list[ListRow]:
+    """Builds the paginated rows for the available-slots screen."""
+    rows = [
+        ListRow(
+            id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+            title=truncate_title(
+                f"{_SLOT_ROW_CLOCK_EMOJI} {slot.time_range.start.strftime('%d/%m %H:%M')}"
+            ),
+        )
+        for slot in slots
+    ]
+    return paginate_rows(rows, page, include_back)
+
+
+def slots_list_message(
+    slots: list[AppointmentSlot], page: int = 0, include_back: bool = False
+) -> ListMessage:
+    """The paginated available-slots list message.
+
+    WhatsApp caps an interactive-button message at 3 buttons — with more
+    than 3 available slots, everything past the 3rd used to simply never
+    render. A list supports up to Meta's real 10-row cap instead.
+    """
+    return ListMessage(
+        button_label="Elegí horario",
+        rows=slot_rows(slots, page, include_back),
+        section_title="Horarios disponibles",
     )
 
 

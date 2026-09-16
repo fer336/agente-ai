@@ -47,15 +47,15 @@ from app.agent.nodes.appointment_selection import (
     resolve_choice,
     resolve_list_choice,
     resolve_numbered_choice,
-    slot_button,
     slot_by_id,
     slot_payload_id,
+    slot_rows,
+    slots_list_message,
     spanish_weekday,
 )
 from app.agent.workflow_state import invalidate_from
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.date_time_range import DateTimeRange
-from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
@@ -261,14 +261,26 @@ def test_format_slot_option_falls_back_to_a_generic_professional_name():
     assert line.startswith("- Profesional: ")
 
 
-def test_slot_button_keeps_the_payload_and_title_format():
+def test_slot_rows_keep_the_payload_format_and_a_clock_emoji_title():
     slot = _future_slot(id_="slot-42")
 
-    button = slot_button(slot)
+    rows = slot_rows([slot])
 
-    assert isinstance(button, InteractiveButton)
-    assert button.id == "SELECT_SLOT:slot-42"
-    assert button.title == slot.time_range.start.strftime("%d/%m %H:%M")
+    assert len(rows) == 1
+    assert rows[0].id == "SELECT_SLOT:slot-42"
+    assert rows[0].title == f"🕐 {slot.time_range.start.strftime('%d/%m %H:%M')}"
+
+
+def test_slots_list_message_offers_more_than_three_slots():
+    # Regression: slots used to render as reply buttons, capped at 3 by
+    # WhatsApp — any 4th+ available slot simply never showed. A list
+    # supports up to Meta's real 10-row cap.
+    slots = [_future_slot(id_=f"slot-{i}") for i in range(5)]
+
+    message = slots_list_message(slots)
+
+    assert message.button_label == "Elegí horario"
+    assert len(message.rows) == 5
 
 
 # --- Spanish, locale-independent date/time formatting ---

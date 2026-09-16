@@ -40,7 +40,7 @@ from app.agent.nodes.appointment_selection import (
     resolve_by_name as _resolve_by_name,
 )
 from app.agent.nodes.appointment_selection import (
-    slot_button as _slot_button,
+    slots_list_message as _slots_list_message,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
@@ -105,6 +105,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_VIEW_PAYLOAD,
 )
 from app.domain.value_objects.paginated_list import (
+    MAX_ROWS,
     professionals_list_message,
     specialties_list_message,
 )
@@ -125,10 +126,11 @@ logger = logging.getLogger(__name__)
 #: reaching "no hay turnos", which was enough on its own to trip Dentalink's
 #: undocumented rate limit. 14 trades a little reach for far fewer requests.
 _SEARCH_WINDOW = timedelta(days=14)
-#: WhatsApp/Meta rejects an interactive message with more than 3 reply
-#: buttons. Nothing downstream (`SendReplyUseCase`, `YCloudMessagingGateway`,
-#: `YCloudClient`) enforces it, so every button list is capped here.
-_MAX_OPTIONS_SHOWN = 3
+#: Available slots render as a WhatsApp list (`_slots_list_message`), not
+#: buttons — Meta caps buttons at 3, which used to hide any 4th+ available
+#: slot outright. A list still caps out at `MAX_ROWS` (10), so options are
+#: capped there instead.
+_MAX_OPTIONS_SHOWN = MAX_ROWS
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -558,7 +560,7 @@ async def _merge_identification(
     )
 
 
-#: `_format_slot_option` and `_slot_button` now live in
+#: `_format_slot_option` and `_slots_list_message` now live in
 #: `appointment_selection.py` (imported above) — same no-behavior-change
 #: extraction as the payload/pagination helpers.
 
@@ -1168,7 +1170,8 @@ def create_appointment_node(
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         return {
             "response_text": f"{_CHOOSE_SLOT_PROMPT}\n\n{lines}",
-            "response_buttons": [_slot_button(slot) for slot in options],
+            "response_buttons": None,
+            "response_list": _slots_list_message(options),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
@@ -1639,7 +1642,8 @@ def create_appointment_node(
                 )
                 return {
                     "response_text": f"{message}\n\n{lines}",
-                    "response_buttons": [_slot_button(slot) for slot in available_slots],
+                    "response_buttons": None,
+                    "response_list": _slots_list_message(available_slots),
                     "requires_handoff": False,
                 }
 
@@ -1653,7 +1657,8 @@ def create_appointment_node(
                 )
                 return {
                     "response_text": f"{_STALE_SLOT_SELECTION_MESSAGE}\n\n{lines}",
-                    "response_buttons": [_slot_button(slot) for slot in available_slots],
+                    "response_buttons": None,
+                    "response_list": _slots_list_message(available_slots),
                     "requires_handoff": False,
                 }
 

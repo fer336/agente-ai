@@ -43,9 +43,9 @@ from app.agent.nodes.appointment_selection import (
     format_slot_option,
     next_page,
     resolve_list_choice,
-    slot_button,
     slot_by_id,
     slot_payload_id,
+    slots_list_message,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.workflow_state import invalidate_from
@@ -75,6 +75,7 @@ from app.domain.value_objects.menu_payloads import (
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
+    MAX_ROWS,
     professionals_list_message,
     specialties_list_message,
 )
@@ -86,9 +87,11 @@ logger = logging.getLogger(__name__)
 #: the module docstring's one-way-dependency note.
 _CREATE_APPOINTMENT_ACTION = "create_appointment"
 
-#: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW`/`_MAX_OPTIONS_SHOWN`.
+#: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW`/`_MAX_OPTIONS_SHOWN` —
+#: slots render as a list (`slots_list_message`), not buttons, so the cap is
+#: Meta's real list-row cap, not the 3-button one.
 _SEARCH_WINDOW = timedelta(days=14)
-_MAX_OPTIONS_SHOWN = 3
+_MAX_OPTIONS_SHOWN = MAX_ROWS
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -605,7 +608,8 @@ def build_appointment_decision_graph(
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         return {
             "response_text": f"{_CHOOSE_SLOT_PROMPT}\n\n{lines}",
-            "response_buttons": [slot_button(slot) for slot in options],
+            "response_buttons": None,
+            "response_list": slots_list_message(options),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
@@ -663,7 +667,8 @@ def build_appointment_decision_graph(
             )
             return {
                 "response_text": f"{message}\n\n{lines}",
-                "response_buttons": [slot_button(slot) for slot in available_slots],
+                "response_buttons": None,
+                "response_list": slots_list_message(available_slots),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",
@@ -677,7 +682,8 @@ def build_appointment_decision_graph(
             )
             return {
                 "response_text": f"{_STALE_SLOT_SELECTION_MESSAGE}\n\n{lines}",
-                "response_buttons": [slot_button(slot) for slot in available_slots],
+                "response_buttons": None,
+                "response_list": slots_list_message(available_slots),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",

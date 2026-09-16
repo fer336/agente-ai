@@ -702,7 +702,10 @@ async def test_professional_selection_shows_only_that_doctors_slots():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_professional_id"] == "prof-1"
-    assert [b.id for b in result["response_buttons"]] == [f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"]
+    assert result["response_buttons"] is None
+    assert [row.id for row in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"
+    ]
 
 
 @pytest.mark.asyncio
@@ -873,8 +876,10 @@ async def test_specialty_and_professional_stages_leave_free_input():
 
 
 @pytest.mark.asyncio
-async def test_slot_offer_never_exceeds_three_buttons():
-    # WhatsApp caps interactive reply buttons at 3.
+async def test_slot_offer_renders_as_a_list_and_shows_more_than_three_slots():
+    # Regression: slots used to render as reply buttons, capped at 3 by
+    # WhatsApp — any 4th+ available slot simply never showed. A list
+    # supports up to Meta's real 10-row cap instead.
     slots = [_future_slot(id_=f"slot-{i}", days=i + 1) for i in range(6)]
     node, _, _ = await _make_node_and_conversation(available_slots=slots)
     state = make_agent_state(
@@ -890,7 +895,8 @@ async def test_slot_offer_never_exceeds_three_buttons():
 
     result = await node(state)
 
-    assert len(result["response_buttons"]) == 3
+    assert result["response_buttons"] is None
+    assert len(result["response_list"].rows) == 6
 
 
 @pytest.mark.asyncio
@@ -1768,7 +1774,8 @@ async def test_slot_selection_stage_reminds_instead_of_advancing_on_free_text():
 
     assert "elegí uno de los horarios" in result["response_text"].lower()
     assert "collected_data" not in result
-    assert len(result["response_buttons"]) == 1
+    assert result["response_buttons"] is None
+    assert len(result["response_list"].rows) == 1
 
 
 @pytest.mark.asyncio
