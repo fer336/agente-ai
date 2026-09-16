@@ -7,10 +7,12 @@ from app.agent.nodes.appointment import (
     resolve_by_name,
     staffed_specialty_ids,
 )
+from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.application.specialties.list_specialties import ListSpecialtiesUseCase
 from app.domain.repositories.gateways import AppointmentGateway, SpecialtyGateway
+from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -73,6 +75,7 @@ def _has_booking_context(button_payload: str | None, collected_data: dict[str, o
 def create_specialties_node(
     gateway: SpecialtyGateway,
     appointment_gateway: AppointmentGateway,
+    llm_provider: LLMProvider,
 ) -> AgentNode:
     """Lists the clinic's dental specialties from Dentalink (PRD.md §27.1).
 
@@ -116,7 +119,16 @@ def create_specialties_node(
         specialties = [s for s in specialties if s.id in staffed]
 
         if not specialties:
-            return {"response_text": _NO_SPECIALTIES_MESSAGE, "requires_handoff": False}
+            text = await generate_or_fallback(
+                llm_provider,
+                state["conversation_id"],
+                "no_specialties",
+                {"situacion": "No hay especialidades cargadas en este momento."},
+                _NO_SPECIALTIES_MESSAGE,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+            return {"response_text": text, "requires_handoff": False}
 
         # Pagination: the catalog path re-renders on LIST_MORE taps.
         page = cast(int, collected_data.get("specialties_page", 0) or 0)

@@ -6,14 +6,19 @@ from app.agent.nodes.appointment import (
 )
 from app.agent.nodes.specialties import create_specialties_node
 from tests.fixtures.agent_state import make_agent_state
-from tests.fixtures.gateways import make_dentalink_gateway, make_specialty_gateway
+from tests.fixtures.gateways import (
+    make_dentalink_gateway,
+    make_llm_provider,
+    make_specialty_gateway,
+)
 from tests.fixtures.seed_objects import make_professional, make_specialty
 
 
-def _node(specialties=None, professionals=None):
+def _node(specialties=None, professionals=None, llm_provider=None):
     return create_specialties_node(
         make_specialty_gateway(specialties=specialties),
         make_dentalink_gateway(professionals=professionals),
+        llm_provider or make_llm_provider(),
     )
 
 
@@ -201,5 +206,5 @@ async def test_never_crashes_on_an_empty_catalog():
 
     result = await node(make_agent_state(user_message="¿Qué especialidades tienen?"))
 
-    assert "no tenemos especialidades" in result["response_text"]
+    assert result["response_text"] == "[fake-response for intent=no_specialties]"
     assert result["requires_handoff"] is False
