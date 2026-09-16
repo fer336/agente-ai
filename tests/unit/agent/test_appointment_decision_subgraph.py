@@ -250,7 +250,7 @@ async def test_create_path_keeps_no_specialties_result_for_successful_empty_staf
     )
 
     safe_lookup.assert_awaited_once_with(appointment_gateway)
-    assert result["response_text"].startswith("En este momento no tengo")
+    assert result["response_text"] == "[fake-response for intent=no_specialties]"
     assert result.get("response_list") is None
 
 
@@ -460,7 +460,7 @@ async def test_missing_slot_payload_reminds_with_the_current_options():
 
     result = await graph.ainvoke(state)
 
-    assert "elegí uno de los horarios" in result["response_text"].lower()
+    assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
     assert result["response_buttons"] is None
     assert len(result["response_list"].rows) == 1
 
@@ -480,7 +480,7 @@ async def test_stale_slot_payload_is_rejected():
 
     result = await graph.ainvoke(state)
 
-    assert "ya no está disponible" in result["response_text"]
+    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
 
 
 # --- Availability outcomes -----------------------------------------------

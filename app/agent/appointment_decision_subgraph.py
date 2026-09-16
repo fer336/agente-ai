@@ -288,7 +288,10 @@ def build_appointment_decision_graph(
     set_conversation_input_state = SetConversationInputStateUseCase(conversation_repository)
 
     async def _offer_specialties(
-        conversation_id: ConversationId, collected_data: dict[str, object]
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
     ) -> dict[str, object]:
         specialties = await list_specialties.execute()
         staffed = await _staffed_specialty_ids_safe(appointment_gateway)
@@ -296,8 +299,17 @@ def build_appointment_decision_graph(
             specialties = [s for s in specialties if s.id in staffed]
         if not specialties:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            text = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "no_specialties",
+                {"situacion": "No hay especialidades cargadas en este momento."},
+                _NO_SPECIALTIES_MESSAGE,
+                recent_messages,
+                contact_memory,
+            )
             return {
-                "response_text": _NO_SPECIALTIES_MESSAGE,
+                "response_text": text,
                 "response_buttons": None,
                 "requires_handoff": False,
                 "collected_data": {},
@@ -308,8 +320,22 @@ def build_appointment_decision_graph(
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
         page = current_page(collected_data, "specialties_page")
+        text = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "choose_specialty",
+            {
+                "situacion": (
+                    "Hay que preguntarle para qué especialidad quiere el turno; le vamos a "
+                    "mostrar una lista de especialidades para elegir."
+                ),
+            },
+            _CHOOSE_SPECIALTY_PROMPT,
+            recent_messages,
+            contact_memory,
+        )
         return {
-            "response_text": _CHOOSE_SPECIALTY_PROMPT,
+            "response_text": text,
             "response_buttons": None,
             "response_list": specialties_list_message(specialties, page=page, include_back=True),
             "requires_handoff": False,
@@ -329,12 +355,27 @@ def build_appointment_decision_graph(
         specialty_id: str,
         specialty_name: str,
         collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
     ) -> dict[str, object]:
         professionals = await appointment_gateway.list_professionals(specialty_id=specialty_id)
         if not professionals:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            text = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "no_professionals",
+                {
+                    "situacion": (
+                        f"No hay profesionales cargados para la especialidad {specialty_name}."
+                    ),
+                },
+                _NO_PROFESSIONALS_MESSAGE,
+                recent_messages,
+                contact_memory,
+            )
             return {
-                "response_text": _NO_PROFESSIONALS_MESSAGE,
+                "response_text": text,
                 "response_buttons": None,
                 "requires_handoff": False,
                 "collected_data": {},
@@ -345,8 +386,22 @@ def build_appointment_decision_graph(
 
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
         page = current_page(collected_data, "doctors_page")
+        text = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "choose_professional",
+            {
+                "situacion": (
+                    "Hay que preguntarle con qué profesional prefiere atenderse; le vamos a "
+                    "mostrar una lista para elegir."
+                ),
+            },
+            _CHOOSE_PROFESSIONAL_PROMPT,
+            recent_messages,
+            contact_memory,
+        )
         return {
-            "response_text": _CHOOSE_PROFESSIONAL_PROMPT,
+            "response_text": text,
             "response_buttons": None,
             "response_list": professionals_list_message(
                 professionals, page=page, include_back=True
@@ -392,13 +447,21 @@ def build_appointment_decision_graph(
         options = cast(list[Specialty], collected_data.get("specialty_options", []))
         button_payload = state.get("button_payload")
 
+        recent_messages = state.get("recent_messages", [])
+        contact_memory = state.get("contact_memory_summary")
+
         if not options:
-            return await _offer_specialties(conversation_id, collected_data)
+            return await _offer_specialties(
+                conversation_id, collected_data, recent_messages, contact_memory
+            )
 
         if button_payload == LIST_MORE_PAYLOAD:
             updated_page = next_page(collected_data, "specialties_page")
             return await _offer_specialties(
-                conversation_id, {**collected_data, "specialties_page": updated_page}
+                conversation_id,
+                {**collected_data, "specialties_page": updated_page},
+                recent_messages,
+                contact_memory,
             )
         if button_payload == LIST_BACK_PAYLOAD:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
@@ -462,7 +525,9 @@ def build_appointment_decision_graph(
         # re-entering the dual-purpose `choose_professional` node — that
         # node's own "no options yet" signal means something different (a
         # stale/corrupted checkpoint), so it cannot double as "just chosen".
-        return await _offer_professionals(conversation_id, chosen.id, chosen.name, collected_data)
+        return await _offer_professionals(
+            conversation_id, chosen.id, chosen.name, collected_data, recent_messages, contact_memory
+        )
 
     async def choose_professional(state: AppointmentDecisionState) -> dict[str, object]:
         collected_data = dict(state.get("collected_data", {}))
@@ -472,15 +537,21 @@ def build_appointment_decision_graph(
         )
         specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
         button_payload = state.get("button_payload")
+        recent_messages = state.get("recent_messages", [])
+        contact_memory = state.get("contact_memory_summary")
 
         if specialty_id is None:
-            return await _offer_specialties(conversation_id, collected_data)
+            return await _offer_specialties(
+                conversation_id, collected_data, recent_messages, contact_memory
+            )
         if not professional_options:
             return await _offer_professionals(
                 conversation_id,
                 specialty_id,
                 str(collected_data.get("chosen_specialty_name", "esa especialidad")),
                 collected_data,
+                recent_messages,
+                contact_memory,
             )
 
         if button_payload == LIST_MORE_PAYLOAD:
@@ -490,10 +561,15 @@ def build_appointment_decision_graph(
                 specialty_id,
                 str(collected_data.get("chosen_specialty_name", "")),
                 {**collected_data, "doctors_page": updated_page},
+                recent_messages,
+                contact_memory,
             )
         if button_payload == LIST_BACK_PAYLOAD:
             return await _offer_specialties(
-                conversation_id, invalidate_from(collected_data, "specialty")
+                conversation_id,
+                invalidate_from(collected_data, "specialty"),
+                recent_messages,
+                contact_memory,
             )
 
         index = resolve_list_choice(
@@ -572,8 +648,22 @@ def build_appointment_decision_graph(
             # below — `decision_entry_node_for_stage` never maps either
             # back into this subgraph.
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+            no_slots_other_text = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "no_slots_other_professionals",
+                {
+                    "situacion": (
+                        "No hay horarios disponibles con ese profesional en los próximos "
+                        "días; ofrecele ver otros profesionales de la misma especialidad."
+                    ),
+                },
+                _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+                state.get("recent_messages", []),
+                state.get("contact_memory_summary"),
+            )
             return {
-                "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+                "response_text": no_slots_other_text,
                 "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
                 "requires_handoff": False,
                 "pending_action_id": None,
@@ -587,8 +677,22 @@ def build_appointment_decision_graph(
             }
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+            no_slots_text = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "no_slots",
+                {
+                    "situacion": (
+                        "No hay horarios disponibles en los próximos días; ofrecele pasarlo "
+                        "con administración."
+                    ),
+                },
+                _NO_SLOTS_MESSAGE,
+                state.get("recent_messages", []),
+                state.get("contact_memory_summary"),
+            )
             return {
-                "response_text": _NO_SLOTS_MESSAGE,
+                "response_text": no_slots_text,
                 "response_buttons": _NO_AVAILABILITY_BUTTONS,
                 "requires_handoff": False,
                 "pending_action_id": None,
@@ -606,8 +710,23 @@ def build_appointment_decision_graph(
         professional_names = {p.id: p.full_name for p in professionals}
         lines = "\n".join(format_slot_option(slot, professional_names) for slot in options)
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        choose_slot_text = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "choose_slot",
+            {
+                "situacion": "Hay horarios disponibles y hay que invitar al paciente a elegir uno.",
+                "instruccion": (
+                    "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
+                    "los menciones ni los repitas, solo invitá a elegir uno."
+                ),
+            },
+            _CHOOSE_SLOT_PROMPT,
+            state.get("recent_messages", []),
+            state.get("contact_memory_summary"),
+        )
         return {
-            "response_text": f"{_CHOOSE_SLOT_PROMPT}\n\n{lines}",
+            "response_text": f"{choose_slot_text}\n\n{lines}",
             "response_buttons": None,
             "response_list": slots_list_message(options),
             "requires_handoff": False,
@@ -639,13 +758,25 @@ def build_appointment_decision_graph(
         button_payload = state.get("button_payload")
         professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
 
+        recent_messages = state.get("recent_messages", [])
+        contact_memory = state.get("contact_memory_summary")
+
         if not available_slots:
             # Defensive only: `search_availability` is the only node that
             # ever sets `available_slots`, so this stage is not normally
             # reached with it empty. Mirrors `appointment.py`'s own
             # `_SESSION_LOST_MESSAGE` used elsewhere for lost context.
+            session_lost_text = await generate_or_fallback(
+                llm_provider,
+                str(state["conversation_id"]),
+                "session_lost",
+                {"situacion": "Se perdió el contexto de la conversación."},
+                _SESSION_LOST_MESSAGE,
+                recent_messages,
+                contact_memory,
+            )
             return {
-                "response_text": _SESSION_LOST_MESSAGE,
+                "response_text": session_lost_text,
                 "response_buttons": None,
                 "requires_handoff": False,
                 "pending_action_id": None,
@@ -657,10 +788,36 @@ def build_appointment_decision_graph(
 
         slot_id = slot_payload_id(button_payload)
         if slot_id is None:
-            message = (
-                _SLOT_SELECTION_REMINDER
+            intent, situacion, static_message = (
+                (
+                    "slot_selection_reminder",
+                    (
+                        "El paciente escribió texto libre pero en este paso solo se "
+                        "puede elegir un horario tocando un botón."
+                    ),
+                    _SLOT_SELECTION_REMINDER,
+                )
                 if button_payload is None
-                else _STALE_SLOT_SELECTION_MESSAGE
+                else (
+                    "stale_slot_selection",
+                    "El paciente tocó un horario de un mensaje anterior que ya no está vigente.",
+                    _STALE_SLOT_SELECTION_MESSAGE,
+                )
+            )
+            message = await generate_or_fallback(
+                llm_provider,
+                str(state["conversation_id"]),
+                intent,
+                {
+                    "situacion": situacion,
+                    "instruccion": (
+                        "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
+                        "mensaje — NO la repitas, solo invitá a elegir uno."
+                    ),
+                },
+                static_message,
+                recent_messages,
+                contact_memory,
             )
             lines = "\n".join(
                 format_slot_option(slot, professional_names) for slot in available_slots
@@ -677,11 +834,29 @@ def build_appointment_decision_graph(
 
         selected = slot_by_id(available_slots, slot_id)
         if selected is None:
+            stale_slot_text = await generate_or_fallback(
+                llm_provider,
+                str(state["conversation_id"]),
+                "stale_slot_selection",
+                {
+                    "situacion": (
+                        "El paciente tocó un horario de un mensaje anterior que ya no "
+                        "está vigente."
+                    ),
+                    "instruccion": (
+                        "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
+                        "mensaje — NO la repitas, solo invitá a elegir uno."
+                    ),
+                },
+                _STALE_SLOT_SELECTION_MESSAGE,
+                recent_messages,
+                contact_memory,
+            )
             lines = "\n".join(
                 format_slot_option(slot, professional_names) for slot in available_slots
             )
             return {
-                "response_text": f"{_STALE_SLOT_SELECTION_MESSAGE}\n\n{lines}",
+                "response_text": f"{stale_slot_text}\n\n{lines}",
                 "response_buttons": None,
                 "response_list": slots_list_message(available_slots),
                 "requires_handoff": False,
