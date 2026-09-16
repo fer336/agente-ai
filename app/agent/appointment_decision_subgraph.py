@@ -35,6 +35,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.nodes.appointment_selection import (
+    STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
@@ -119,6 +120,19 @@ _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
     "Querés que te comunique con administración?"
 )
+#: Mirrors `app.agent.nodes.appointment`'s own `_NO_SLOTS_OTHER_
+#: PROFESSIONALS_MESSAGE`/`_VIEW_OTHER_PROFESSIONALS_PAYLOAD`/
+#: `_NO_SLOTS_CHOICE_BUTTONS` — same one-way-dependency duplication this
+#: module already does for `_NO_SLOTS_MESSAGE` above. This session's own
+#: brief: a professional with zero availability used to only offer
+#: "Menú principal" (start over from scratch), discarding the specialty
+#: the patient already picked — offering another professional in that
+#: same specialty first is a much smaller ask.
+_NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE = (
+    "No encontramos horarios disponibles con ese profesional en los próximos días. "
+    "¿Querés ver otros profesionales de la misma especialidad?"
+)
+_VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
 _CHOOSE_SLOT_PROMPT = "Elegí un horario tocando uno de los botones:"
 _SLOT_SELECTION_REMINDER = (
     "Por favor, elegí uno de los horarios tocando un botón — todavía no puedo "
@@ -131,6 +145,9 @@ _SESSION_LOST_MESSAGE = (
 
 _NO_AVAILABILITY_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
+]
+_NO_SLOTS_CHOICE_BUTTONS = [
+    InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
 ]
 
 
@@ -543,6 +560,28 @@ def build_appointment_decision_graph(
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
             limit=_MAX_OPTIONS_SHOWN,
         )
+        if not slots and collected_data.get("chosen_specialty_id") is not None:
+            # A specialty is already known — offer another professional in
+            # it before falling back to "start over from scratch" (see
+            # `_NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE`'s own comment).
+            # `STAGE_AWAITING_NO_SLOTS_CHOICE`'s follow-up stays
+            # legacy-owned, same as `awaiting_no_availability_choice`
+            # below — `decision_entry_node_for_stage` never maps either
+            # back into this subgraph.
+            await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+            return {
+                "response_text": _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+                "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
+                "requires_handoff": False,
+                "pending_action_id": None,
+                "collected_data": {
+                    **collected_data,
+                    "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
+                },
+                "next_node": "end",
+                "decision_node": "search_availability",
+                "exit_reason": "legacy_no_slots",
+            }
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
             return {

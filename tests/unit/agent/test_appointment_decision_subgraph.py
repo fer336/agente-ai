@@ -18,6 +18,7 @@ import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
 from app.agent.appointment_decision_subgraph import build_appointment_decision_graph
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX,
+    STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SLOT_SELECTION,
     STAGE_AWAITING_SPECIALTY_SELECTION,
@@ -502,7 +503,10 @@ async def test_availability_with_slots_offers_up_to_three_buttons():
 
 
 @pytest.mark.asyncio
-async def test_no_availability_exits_to_legacy_ownership():
+async def test_no_availability_with_a_known_specialty_exits_to_legacy_no_slots_choice():
+    # This session's own brief: a known specialty must offer "ver otros
+    # profesionales" instead of discarding it and sending the patient back
+    # to the main menu.
     graph, conversation_repository, _ = await _make_graph(available_slots=[])
     state = _decision_state(
         button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1",
@@ -515,11 +519,13 @@ async def test_no_availability_exits_to_legacy_ownership():
 
     result = await graph.ainvoke(state)
 
-    assert result["collected_data"]["stage"] == "awaiting_no_availability_choice"
-    assert result["exit_reason"] == "legacy_no_availability"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
+    assert result["exit_reason"] == "legacy_no_slots"
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
+
+
 
 
 # --- Pre-identification slot selection safety -----------------------------
