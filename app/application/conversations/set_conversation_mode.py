@@ -1,4 +1,3 @@
-from app.domain.entities.conversation import Conversation
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.value_objects.conversation_id import ConversationId
 
@@ -21,12 +20,11 @@ class SetConversationModeUseCase:
         if conversation is None:
             raise ValueError(f"Conversation {conversation_id} not found")
 
-        updated = Conversation(
-            id=conversation.id,
-            contact_id=conversation.contact_id,
-            mode=mode,
-            created_at=conversation.created_at,
-            input_state=conversation.input_state,
-            last_human_reply_at=conversation.last_human_reply_at,
-        )
-        await self._conversation_repository.save(updated)
+        # Mutate in place — see `SetConversationInputStateUseCase`'s own
+        # comment for why reconstructing a `Conversation` with a
+        # hand-picked field list is the bug this replaces: it silently
+        # dropped `workflow_session_generation`/`workflow_last_activity_at`/
+        # `awaiting_fresh_restart` back to their dataclass defaults on
+        # every mode flip.
+        conversation.mode = mode
+        await self._conversation_repository.save(conversation)

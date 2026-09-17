@@ -7,10 +7,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from app.agent.graph import build_state_reset_graph
 from app.application.appointments.schedule_follow_up import (
     APPOINTMENT_FLOW_FOLLOW_UP_PROMPT,
     APPOINTMENT_FLOW_FOLLOW_UP_RESET,
+)
+from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
+from app.application.conversations.schedule_conversation_reset import (
+    CONVERSATION_IDLE_RESET_ACTION,
+)
+from app.application.conversations.set_conversation_input_state import (
+    FREE_INPUT,
+    SetConversationInputStateUseCase,
 )
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.message import ROLE_ASSISTANT, Message
@@ -22,6 +29,7 @@ from app.domain.repositories.scheduled_action_repository import ScheduledActionR
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.idempotency_key import IdempotencyKey
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +46,11 @@ _FOLLOW_UP_RESET_MESSAGE = (
 )
 
 _OWNED_ACTION_TYPES = frozenset(
-    {APPOINTMENT_FLOW_FOLLOW_UP_PROMPT, APPOINTMENT_FLOW_FOLLOW_UP_RESET}
+    {
+        APPOINTMENT_FLOW_FOLLOW_UP_PROMPT,
+        APPOINTMENT_FLOW_FOLLOW_UP_RESET,
+        CONVERSATION_IDLE_RESET_ACTION,
+    }
 )
 
 
@@ -56,7 +68,9 @@ async def run_follow_up_tick(
 ) -> int:
     """Inactivity follow-up sweep — one poll tick (this session's own
     brief, no PRD.md section): claims up to `limit` due `ScheduledAction`s
-    of this module's own two `action_type`s and processes each.
+    of this module's own `action_type`s (the appointment-flow follow-up
+    prompt/reset pair, and the conversation-level idle reset) and
+    processes each.
 
     DELIBERATELY NOT a running process/scheduler on its own — mirrors the
     exact convention `app.workers.audio_tasks`/`incident_tasks`/
@@ -95,6 +109,24 @@ async def run_follow_up_tick(
         processed += 1
         conversation_id = scheduled_action.conversation_id
 
+        if scheduled_action.action_type == CONVERSATION_IDLE_RESET_ACTION:
+            # Unlike the appointment-flow pair below, this action's own
+            # staleness check IS the CAS win above: `reconcile()` cancels
+            # and reschedules this row on EVERY inbound message, so a row
+            # still `scheduled` by the time it's claimed here means
+            # nothing happened in EITHER direction since it was set —
+            # `_agent_is_last_to_speak` would wrongly skip a conversation
+            # whose last message was the patient's own (e.g. a closing
+            # "Gracias" the agent already answered).
+            await _handle_conversation_idle_reset(
+                conversation_repository, contact_repository, message_repository, send_reply,
+                conversation_id, now,
+            )
+            await scheduled_action_repository.transition_status(
+                scheduled_action.id, from_status="processing", to_status="executed"
+            )
+            continue
+
         agent_still_last_to_speak = await _agent_is_last_to_speak(
             message_repository, conversation_id
         )
@@ -124,10 +156,21 @@ async def run_follow_up_tick(
                 scheduled_action_repository, conversation_id, now, reset_delay_seconds
             )
         else:
-            reset_graph = build_state_reset_graph(checkpointer)
-            await reset_graph.aupdate_state(
-                {"configurable": {"thread_id": str(conversation_id)}}, {"collected_data": {}}
-            )
+            # CAS-rotate the workflow generation instead of touching the
+            # checkpoint directly: a bare `str(conversation_id)` thread_id
+            # (the previous approach here) never matches any real
+            # checkpoint row — every actual thread_id carries a
+            # `:session:{generation}` suffix
+            # (`app.infrastructure.agent.langgraph_agent_invoker.handle`)
+            # — so this reset used to be a silent no-op even though the
+            # "reinicié el trámite" message went out regardless. Rotating
+            # the generation instead makes the NEXT turn start a genuinely
+            # fresh, empty thread, no checkpoint access needed.
+            conversation = await conversation_repository.get_by_id(conversation_id)
+            if conversation is not None:
+                await RotateWorkflowSessionUseCase(conversation_repository).execute(
+                    conversation_id, expected_generation=conversation.workflow_session_generation
+                )
             await send_reply.execute(conversation_id, contact.phone, _FOLLOW_UP_RESET_MESSAGE)
             await _record_outbound(
                 message_repository, conversation_id, _FOLLOW_UP_RESET_MESSAGE, now
@@ -156,6 +199,43 @@ async def _resolve_contact(
     if conversation is None:
         return None
     return await contact_repository.get_by_id(conversation.contact_id)
+
+
+async def _handle_conversation_idle_reset(
+    conversation_repository: ConversationRepository,
+    contact_repository: ContactRepository,
+    message_repository: MessageRepository,
+    send_reply: SendReplyUseCase,
+    conversation_id: ConversationId,
+    now: datetime,
+) -> None:
+    """The patient's own ask: after the configured idle window, the next
+    thing the conversation sees is the canonical welcome menu, on a fresh
+    workflow generation — not a silent continuation of whatever stage it
+    was last left in.
+
+    Never fires in `mode="human"`: a staff handoff owns its own
+    reactivation timing
+    (`IngestMessageUseCase._HUMAN_MODE_REACTIVATION_TIMEOUT`), and barging
+    in with the bot's welcome menu mid-handoff would undercut it.
+    """
+    conversation = await conversation_repository.get_by_id(conversation_id)
+    if conversation is None or conversation.mode != "agent":
+        return
+    contact = await contact_repository.get_by_id(conversation.contact_id)
+    if contact is None:
+        return
+
+    await RotateWorkflowSessionUseCase(conversation_repository).execute(
+        conversation_id, expected_generation=conversation.workflow_session_generation
+    )
+    await SetConversationInputStateUseCase(conversation_repository).execute(
+        conversation_id, FREE_INPUT
+    )
+    await send_reply.execute(
+        conversation_id, contact.phone, WELCOME_TEXT, list_message=WELCOME_LIST
+    )
+    await _record_outbound(message_repository, conversation_id, WELCOME_TEXT, now)
 
 
 async def _record_outbound(

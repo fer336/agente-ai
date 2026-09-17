@@ -13,6 +13,9 @@ from app.application.conversations.rotate_workflow_session import (
     RotateWorkflowSessionUseCase,
     WorkflowSessionRepositoriesProvider,
 )
+from app.application.conversations.schedule_conversation_reset import (
+    ScheduleConversationResetUseCase,
+)
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.send_reply import SendReplyUseCase
@@ -27,6 +30,7 @@ from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.media_processing_job_repository import MediaProcessingJobRepository
 from app.domain.repositories.message_repository import MessageRepository
+from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -67,6 +71,7 @@ class MessageRepositories:
     contacts: ContactRepository
     conversations: ConversationRepository
     media_processing_jobs: MediaProcessingJobRepository
+    scheduled_actions: ScheduledActionRepository
 
 
 # A zero-arg async context manager factory yielding a fresh `MessageRepositories`
@@ -107,6 +112,7 @@ class IngestMessageUseCase:
         audio_rate_limit_per_minute: int = 0,
         welcome_image_url: str | None = None,
         workflow_session_repositories_provider: WorkflowSessionRepositoriesProvider | None = None,
+        conversation_idle_reset_delay_seconds: int = 7200,
     ) -> None:
         self._repositories_provider = repositories_provider
         self._debounce_tracker = debounce_tracker
@@ -135,6 +141,16 @@ class IngestMessageUseCase:
         #: default) keeps every existing environment/test unaffected.
         self._welcome_image_url = welcome_image_url
         self._workflow_session_repositories_provider = workflow_session_repositories_provider
+        #: How long a conversation can sit completely silent (in either
+        #: direction) in normal `mode="agent"` operation before the next
+        #: turn gets the canonical welcome menu instead of an LLM
+        #: continuation of the old thread — the patient's own explicit
+        #: ask: "empezar la conversación de 0" after a couple of hours of
+        #: silence. Reconciled on every inbound message below; actually
+        #: consumed by `app.workers.follow_up_worker`, the same poller
+        #: that already owns the appointment-flow follow-up/reset pair.
+        #: Default: 2 hours.
+        self._conversation_idle_reset_delay_seconds = conversation_idle_reset_delay_seconds
         # Per-conversation accumulator of (message_id, text, button_payload,
         # wamid) tuples awaiting grouping into one Etapa-5 handoff. In-process
         # only — see the class docstring's singleton-lifetime note and the
@@ -210,6 +226,14 @@ class IngestMessageUseCase:
                 conversation.workflow_last_activity_at = received_at
                 await repositories.conversations.save(conversation)
             workflow_key = f"{conversation_key}:session:{conversation.workflow_session_generation}"
+
+            # Reconciled on EVERY inbound message (any mode, any stage —
+            # unlike `ScheduleFollowUpUseCase`, which only tracks an
+            # active booking trámite) so the idle window always counts
+            # from the most recent real activity.
+            await ScheduleConversationResetUseCase(
+                repositories.scheduled_actions, self._conversation_idle_reset_delay_seconds
+            ).reconcile(conversation.id)
 
             if is_new_conversation:
                 # Sent synchronously, inline in this same request — NOT
