@@ -1,4 +1,3 @@
-from app.domain.entities.conversation import Conversation
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.value_objects.conversation_id import ConversationId
 
@@ -27,12 +26,15 @@ class SetConversationInputStateUseCase:
         if conversation is None:
             raise ValueError(f"Conversation {conversation_id} not found")
 
-        updated = Conversation(
-            id=conversation.id,
-            contact_id=conversation.contact_id,
-            mode=conversation.mode,
-            created_at=conversation.created_at,
-            input_state=input_state,
-            last_human_reply_at=conversation.last_human_reply_at,
-        )
-        await self._conversation_repository.save(updated)
+        # Mutate in place rather than reconstructing a `Conversation` with
+        # a hand-picked field list: the old reconstruction silently
+        # dropped `workflow_session_generation`/`workflow_last_activity_at`/
+        # `awaiting_fresh_restart` back to their dataclass defaults on
+        # EVERY call — this use case runs on nearly every agent turn
+        # (`appointment.py` alone calls it 24 times), so it was resetting
+        # the workflow generation to 1 essentially every turn. Confirmed
+        # live: this is what actually split conversations across two
+        # LangGraph checkpoint threads, not just the rarer concurrent-
+        # webhook race `IngestMessageUseCase`'s own lock now covers.
+        conversation.input_state = input_state
+        await self._conversation_repository.save(conversation)

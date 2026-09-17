@@ -128,6 +128,7 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
             contacts=SqlAlchemyContactRepository(session),
             conversations=SqlAlchemyConversationRepository(session),
             media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
+            scheduled_actions=SqlAlchemyScheduledActionRepository(session),
         )
         await session.commit()
 

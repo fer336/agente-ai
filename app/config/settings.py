@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     #: etc.) and layers on top even while a confirmation is outstanding.
     appointment_follow_up_prompt_delay_seconds: int = 1200
     appointment_follow_up_reset_delay_seconds: int = 1200
+    #: Conversation-level idle reset (no PRD.md section — this session's
+    #: own brief): after this many seconds of total silence in
+    #: `mode="agent"`, the next turn renders the canonical welcome menu
+    #: instead of continuing the old thread. Independent of the
+    #: appointment-flow follow-up pair above — this applies to EVERY
+    #: conversation, not just one stuck mid-booking. Default: 2 hours.
+    conversation_idle_reset_delay_seconds: int = 7200
     #: How often the follow-up worker's polling loop (`app.workers.
     #: follow_up_worker`, started from `app.main`'s `lifespan`) checks
     #: `ScheduledActionRepository.get_due` for work, and the max rows it

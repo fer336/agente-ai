@@ -17,6 +17,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.application.conversations.schedule_conversation_reset import (
+    CONVERSATION_IDLE_RESET_ACTION,
+)
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
 from app.domain.entities.contact import Contact
@@ -32,6 +35,7 @@ from tests.fixtures.gateways import (
     make_media_processing_job_repository,
     make_message_repository,
     make_runtime_config_service,
+    make_scheduled_action_repository,
     make_send_reply_use_case,
     make_ycloud_messaging_gateway,
 )
@@ -78,6 +82,7 @@ def _build_use_case(
     contact_repository=None,
     conversation_repository=None,
     media_processing_job_repository=None,
+    scheduled_action_repository=None,
     redis_client=None,
     debounce_tracker=None,
     agent_invoker=None,
@@ -85,6 +90,7 @@ def _build_use_case(
     debounce_seconds: int = _DEBOUNCE_SECONDS,
     audio_rate_limit_per_minute: int = 0,
     welcome_image_url: str | None = None,
+    conversation_idle_reset_delay_seconds: int = 7200,
 ) -> IngestMessageUseCase:
     message_repository = (
         message_repository if message_repository is not None else make_message_repository()
@@ -102,6 +108,11 @@ def _build_use_case(
         if media_processing_job_repository is not None
         else make_media_processing_job_repository()
     )
+    scheduled_action_repository = (
+        scheduled_action_repository
+        if scheduled_action_repository is not None
+        else make_scheduled_action_repository()
+    )
     redis_client = redis_client if redis_client is not None else InMemoryFakeRedis()
     debounce_tracker = (
         debounce_tracker
@@ -118,6 +129,7 @@ def _build_use_case(
             contacts=contact_repository,
             conversations=conversation_repository,
             media_processing_jobs=media_processing_job_repository,
+            scheduled_actions=scheduled_action_repository,
         )
 
     return IngestMessageUseCase(
@@ -129,6 +141,7 @@ def _build_use_case(
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
         welcome_image_url=welcome_image_url,
+        conversation_idle_reset_delay_seconds=conversation_idle_reset_delay_seconds,
     )
 
 
@@ -255,6 +268,23 @@ async def test_new_conversation_created_with_ycloud_prefixed_id_and_agent_mode()
     conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert conversation is not None
     assert conversation.mode == "agent"
+
+
+@pytest.mark.asyncio
+async def test_every_inbound_message_reconciles_the_idle_reset_timer():
+    # The patient's own ask: after enough silence, the conversation should
+    # get the welcome menu again — `ScheduleConversationResetUseCase` is
+    # what tracks that window, reconciled here on every inbound message so
+    # it always counts from the MOST RECENT activity.
+    scheduled_action_repository = make_scheduled_action_repository()
+    use_case = _build_use_case(scheduled_action_repository=scheduled_action_repository)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    scheduled = await scheduled_action_repository.get_scheduled_by_conversation_id(
+        "ycloud-+5491122334455"
+    )
+    assert [s.action_type for s in scheduled] == [CONVERSATION_IDLE_RESET_ACTION]
 
 
 @pytest.mark.asyncio

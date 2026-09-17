@@ -349,6 +349,8 @@ def make_ingest_message_use_case(
     debounce_seconds: float = 6,
     runtime_config_service: RuntimeConfigService | None = None,
     audio_rate_limit_per_minute: int = 0,
+    scheduled_action_repository: FakeScheduledActionRepository | None = None,
+    conversation_idle_reset_delay_seconds: int = 7200,
 ) -> IngestMessageUseCase:
     """Builds an `IngestMessageUseCase` wired entirely to fakes.
 
@@ -374,6 +376,11 @@ def make_ingest_message_use_case(
         if media_processing_job_repository is not None
         else make_media_processing_job_repository()
     )
+    scheduled_action_repository = (
+        scheduled_action_repository
+        if scheduled_action_repository is not None
+        else make_scheduled_action_repository()
+    )
     redis_client = redis_client if redis_client is not None else InMemoryFakeRedis()
     agent_invoker = agent_invoker if agent_invoker is not None else make_agent_invoker()
     send_reply = send_reply if send_reply is not None else make_send_reply_use_case()
@@ -391,6 +398,7 @@ def make_ingest_message_use_case(
             contacts=contact_repository,
             conversations=conversation_repository,
             media_processing_jobs=media_processing_job_repository,
+            scheduled_actions=scheduled_action_repository,
         )
 
     return IngestMessageUseCase(
@@ -401,4 +409,5 @@ def make_ingest_message_use_case(
         runtime_config_service=runtime_config_service,
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
+        conversation_idle_reset_delay_seconds=conversation_idle_reset_delay_seconds,
     )
