@@ -1,4 +1,4 @@
-"""scheduled_action_pending_action_nullable
+"""scheduled_action_nullable
 
 Relaxes `scheduled_actions.pending_action_id` to nullable, matching the
 SQLAlchemy model (`app/infrastructure/database/models/scheduled_action.py`)
@@ -14,7 +14,18 @@ constraint then rejected outright: seen live, every single inbound message
 that reached an active stage started failing with
 `NotNullViolationError: null value in column "pending_action_id"`.
 
-Revision ID: 0016_scheduled_action_pending_nullable
+First attempt at this migration (revision id
+"0016_scheduled_action_pending_nullable", 38 characters) shipped as v0.30.1
+and crashed the container outright: `alembic_version.version_num` is
+`VARCHAR(32)`, so the final `UPDATE alembic_version SET version_num=...`
+step of `upgrade()` failed with `StringDataRightTruncationError`, rolling
+back the whole migration transaction (including the actual `ALTER COLUMN`)
+and taking `entrypoint.sh` down with it (`set -eu`) before uvicorn ever
+started — a NEW, worse outage (no container answering at all) stacked
+directly on top of the one this migration was meant to fix. This revision
+id is deliberately kept to 30 characters.
+
+Revision ID: 0016_scheduled_action_nullable
 Revises: 0015_sent_messages
 Create Date: 2026-09-17
 
@@ -26,7 +37,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0016_scheduled_action_pending_nullable"
+revision: str = "0016_scheduled_action_nullable"
 down_revision: str | None = "0015_sent_messages"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
