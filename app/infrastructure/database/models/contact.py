@@ -12,7 +12,11 @@ class ContactModel(Base):
     __tablename__ = "contacts"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    phone: Mapped[str] = mapped_column(String, nullable=False)
+    #: `unique=True` matches migration 0017_contacts_phone_unique — added
+    #: after a live race let two concurrent webhook deliveries for the same
+    #: brand-new phone number silently create two separate contact rows
+    #: (see that migration's own docstring).
+    phone: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     patient_id: Mapped[str | None] = mapped_column(String, ForeignKey("patients.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

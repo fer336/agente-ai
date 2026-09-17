@@ -21,6 +21,7 @@ from app.domain.entities.conversation import Conversation
 from app.domain.entities.media_processing_job import PENDING as JOB_PENDING
 from app.domain.entities.media_processing_job import MediaProcessingJob
 from app.domain.entities.message import MEDIA_PENDING, Message
+from app.domain.exceptions.errors import ContactAlreadyExistsError, ConversationAlreadyExistsError
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -514,7 +515,22 @@ class IngestMessageUseCase:
         if contact is not None:
             return contact
         contact = Contact(id=str(uuid4()), phone=phone, patient_id=None)
-        await contact_repository.save(contact)
+        try:
+            await contact_repository.save(contact)
+        except ContactAlreadyExistsError:
+            # Race: another concurrent webhook for this same brand-new
+            # phone number already created a contact row between our own
+            # get_by_phone and save() (see that exception's own
+            # docstring). Re-read rather than proceed with two contact
+            # records for the same person.
+            existing = await contact_repository.get_by_phone(phone)
+            if existing is not None:
+                return existing
+            # Flushed a moment too late for us to see it yet under READ
+            # COMMITTED — provably about to exist with these exact fields
+            # either way, so continue with our own in-memory copy rather
+            # than fail the whole turn over a read-timing gap.
+            return contact
         return contact
 
     async def _resolve_or_create_conversation(
@@ -538,7 +554,21 @@ class IngestMessageUseCase:
             mode="agent",
             created_at=datetime.now(UTC),
         )
-        await conversation_repository.save(conversation)
+        try:
+            await conversation_repository.save(conversation)
+        except ConversationAlreadyExistsError:
+            # Race: another concurrent webhook for this same brand-new
+            # contact already created this conversation row between our
+            # own get_by_id and save() (see that exception's own
+            # docstring) — seen live, this crashed the whole webhook
+            # request outright with an unhandled IntegrityError. Re-read
+            # and report it as NOT new, same posture as the ordinary
+            # repeat-visitor branch above: whichever concurrent request
+            # actually won gets to send the once-ever welcome message.
+            existing = await conversation_repository.get_by_id(conversation_id)
+            if existing is not None:
+                return existing, False
+            return conversation, False
         # The `bool` here is the ONLY place in this class that can tell a
         # conversation's first-ever turn apart from any later one — by the
         # time any other method runs, the row this same call just saved is

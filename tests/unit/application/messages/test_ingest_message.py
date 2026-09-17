@@ -20,6 +20,7 @@ import pytest
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
 from app.domain.entities.contact import Contact
+from app.domain.exceptions.errors import ContactAlreadyExistsError, ConversationAlreadyExistsError
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.redis.debounce import DebounceTracker
@@ -176,6 +177,72 @@ async def test_existing_contact_resolved_not_duplicated():
         c for c in contact_repository._contacts_by_id.values() if str(c.phone) == "+5491122334455"
     ]
     assert matching == [existing]
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_contact_creation_race_is_recovered_not_duplicated():
+    # Regression, seen live: two near-simultaneous webhooks for the same
+    # brand-new phone number both pass get_by_phone's "not found" check
+    # before either commits — the real repository now raises
+    # ContactAlreadyExistsError instead of silently creating a second
+    # contact row for the same person.
+    contact_repository = make_contact_repository()
+    winner = Contact(id="contact-winner", phone=PhoneNumber("+5491122334455"), patient_id=None)
+
+    class _RacingContactRepository(type(contact_repository)):
+        def __init__(self) -> None:
+            super().__init__()
+            self._raced = False
+
+        async def save(self, contact):
+            if not self._raced:
+                self._raced = True
+                await super().save(winner)
+                raise ContactAlreadyExistsError(str(contact.phone))
+            await super().save(contact)
+
+    racing_repository = _RacingContactRepository()
+    use_case = _build_use_case(contact_repository=racing_repository)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    matching = [
+        c
+        for c in racing_repository._contacts_by_id.values()
+        if str(c.phone) == "+5491122334455"
+    ]
+    assert matching == [winner]
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_conversation_creation_race_is_recovered_not_crashed():
+    # Same race, one level up: two webhooks for the same brand-new contact
+    # both create a Conversation whose id is deterministically
+    # `ycloud-{phone}` — the second `save()` used to raise an unhandled
+    # IntegrityError straight out of the webhook route, seen live.
+    conversation_repository = make_conversation_repository()
+    winner = make_conversation(id_="ycloud-+5491122334455", mode="agent")
+
+    class _RacingConversationRepository(type(conversation_repository)):
+        def __init__(self) -> None:
+            super().__init__()
+            self._raced = False
+
+        async def save(self, conversation):
+            if not self._raced:
+                self._raced = True
+                await super().save(winner)
+                raise ConversationAlreadyExistsError(str(conversation.id))
+            await super().save(conversation)
+
+    racing_repository = _RacingConversationRepository()
+    use_case = _build_use_case(conversation_repository=racing_repository)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+
+    assert len(racing_repository._conversations_by_id) == 1
+    fetched = await racing_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert fetched == winner
 
 
 @pytest.mark.asyncio

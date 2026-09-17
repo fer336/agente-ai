@@ -2,9 +2,11 @@ from typing import cast
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.conversation import Conversation
+from app.domain.exceptions.errors import ConversationAlreadyExistsError
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.database.models.conversation import ConversationModel
 
@@ -23,6 +25,7 @@ class SqlAlchemyConversationRepository:
 
     async def save(self, conversation: Conversation) -> None:
         model = await self._session.get(ConversationModel, str(conversation.id))
+        is_insert = model is None
         if model is None:
             model = ConversationModel(id=str(conversation.id))
             self._session.add(model)
@@ -35,7 +38,16 @@ class SqlAlchemyConversationRepository:
         model.workflow_session_generation = conversation.workflow_session_generation
         model.workflow_last_activity_at = conversation.workflow_last_activity_at
         model.awaiting_fresh_restart = conversation.awaiting_fresh_restart
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            # Only ever the PK collision this class's own docstring
+            # explains — an UPDATE never hits it, since `session.get`
+            # above already found that exact row.
+            await self._session.rollback()
+            if not is_insert:
+                raise
+            raise ConversationAlreadyExistsError(str(conversation.id)) from exc
 
     async def rotate_workflow_session(
         self, conversation_id: ConversationId, expected_generation: int
