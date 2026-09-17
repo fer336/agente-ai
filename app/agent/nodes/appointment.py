@@ -21,17 +21,12 @@ from app.agent.nodes.appointment_selection import (
 )
 from app.agent.nodes.appointment_selection import (
     current_page,
+    next_page,
     slot_by_id,
     slot_payload_id,
 )
 from app.agent.nodes.appointment_selection import (
     format_confirmation_datetime as _format_confirmation_datetime,
-)
-from app.agent.nodes.appointment_selection import (
-    format_slot_datetime as _format_slot_datetime,
-)
-from app.agent.nodes.appointment_selection import (
-    format_slot_option as _format_slot_option,
 )
 from app.agent.nodes.appointment_selection import (
     numbered_list as _numbered_list,
@@ -96,6 +91,8 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
@@ -105,7 +102,6 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_VIEW_PAYLOAD,
 )
 from app.domain.value_objects.paginated_list import (
-    MAX_ROWS,
     professionals_list_message,
     specialties_list_message,
 )
@@ -126,11 +122,6 @@ logger = logging.getLogger(__name__)
 #: reaching "no hay turnos", which was enough on its own to trip Dentalink's
 #: undocumented rate limit. 14 trades a little reach for far fewer requests.
 _SEARCH_WINDOW = timedelta(days=14)
-#: Available slots render as a WhatsApp list (`_slots_list_message`), not
-#: buttons — Meta caps buttons at 3, which used to hide any 4th+ available
-#: slot outright. A list still caps out at `MAX_ROWS` (10), so options are
-#: capped there instead.
-_MAX_OPTIONS_SHOWN = MAX_ROWS
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -621,12 +612,6 @@ async def _merge_identification(
 #: `_format_slot_option` and `_slots_list_message` now live in
 #: `appointment_selection.py` (imported above) — same no-behavior-change
 #: extraction as the payload/pagination helpers.
-
-
-def _format_appointment_option(appointment: Appointment, professional_names: dict[str, str]) -> str:
-    professional_name = professional_names.get(appointment.slot.professional_id, "Profesional")
-    start = appointment.slot.time_range.start
-    return f"- {professional_name}: {_format_slot_datetime(start)}"
 
 
 def _appointment_button(appointment: Appointment) -> InteractiveButton:
@@ -1495,9 +1480,6 @@ def create_appointment_node(
             specialty_id=None,
             professional_id=cast(str | None, collected_data.get("chosen_professional_id")),
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
-            # Only this many are ever shown, and each extra day searched is
-            # another Dentalink request — see the port's own docstring.
-            limit=_MAX_OPTIONS_SHOWN,
         )
         if not slots and collected_data.get("chosen_specialty_id") is not None:
             # A specialty is already known — offer another professional in
@@ -1557,12 +1539,11 @@ def create_appointment_node(
                 },
             }
 
-        options = slots[:_MAX_OPTIONS_SHOWN]
         professionals = await appointment_gateway.list_professionals()
         professional_names = {
             professional.id: professional.full_name for professional in professionals
         }
-        lines = "\n".join(_format_slot_option(slot, professional_names) for slot in options)
+        page = current_page(collected_data, "slots_page")
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         text = await generate_or_fallback(
             llm_provider,
@@ -1580,9 +1561,9 @@ def create_appointment_node(
             contact_memory,
         )
         return {
-            "response_text": f"{text}\n\n{lines}",
+            "response_text": text,
             "response_buttons": None,
-            "response_list": _slots_list_message(options),
+            "response_list": _slots_list_message(slots, page=page, include_back=True),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
@@ -1592,8 +1573,9 @@ def create_appointment_node(
                 # "not identified yet" state) erase a patient RESCHEDULE
                 # already identified earlier in `collected_data`.
                 "patient": patient if patient is not None else collected_data.get("patient"),
-                "available_slots": options,
+                "available_slots": slots,
                 "professional_names": professional_names,
+                "slots_page": page,
             },
         }
 
@@ -1692,10 +1674,6 @@ def create_appointment_node(
         professional_names = {
             professional.id: professional.full_name for professional in professionals
         }
-        lines = "\n".join(
-            _format_appointment_option(appointment, professional_names)
-            for appointment in appointments
-        )
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         # Operation-specific framing — CANCEL, RESCHEDULE and VIEW all reach
         # this same "pick which appointment" screen, but the tone must not
@@ -1733,7 +1711,7 @@ def create_appointment_node(
             contact_memory,
         )
         return {
-            "response_text": f"{text}\n\n{lines}",
+            "response_text": text,
             "response_buttons": [_appointment_button(appointment) for appointment in appointments],
             "requires_handoff": False,
             "pending_action_id": None,
@@ -2308,6 +2286,56 @@ def create_appointment_node(
                     state["contact_memory_summary"],
                 )
 
+            if button_payload == LIST_MORE_PAYLOAD:
+                updated_page = next_page(collected_data, "slots_page")
+                more_text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "choose_slot",
+                    {
+                        "situacion": (
+                            "Hay más horarios disponibles y hay que invitar al paciente a "
+                            "elegir uno."
+                        ),
+                        "instruccion": (
+                            "Le vamos a mostrar una lista de horarios debajo de tu mensaje — "
+                            "NO los menciones ni los repitas, solo invitá a elegir uno."
+                        ),
+                    },
+                    _CHOOSE_SLOT_PROMPT,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": more_text,
+                    "response_buttons": None,
+                    "response_list": _slots_list_message(
+                        available_slots, page=updated_page, include_back=True
+                    ),
+                    "requires_handoff": False,
+                    "collected_data": {**collected_data, "slots_page": updated_page},
+                }
+            if button_payload == LIST_BACK_PAYLOAD:
+                specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+                if specialty_id is not None:
+                    return await _offer_professionals(
+                        conversation_id,
+                        specialty_id,
+                        str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                        invalidate_from(collected_data, "professional"),
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                return {
+                    "response_text": WELCOME_TEXT,
+                    "response_buttons": None,
+                    "response_list": WELCOME_LIST,
+                    "requires_handoff": False,
+                    "pending_action_id": None,
+                    "collected_data": {},
+                }
+
             slot_id = slot_payload_id(button_payload)
             if slot_id is None:
                 intent, situacion, static_message = (
@@ -2344,16 +2372,13 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
-                professional_names = cast(
-                    dict[str, str], collected_data.get("professional_names", {})
-                )
-                lines = "\n".join(
-                    _format_slot_option(slot, professional_names) for slot in available_slots
-                )
+                page = current_page(collected_data, "slots_page")
                 return {
-                    "response_text": f"{message}\n\n{lines}",
+                    "response_text": message,
                     "response_buttons": None,
-                    "response_list": _slots_list_message(available_slots),
+                    "response_list": _slots_list_message(
+                        available_slots, page=page, include_back=True
+                    ),
                     "requires_handoff": False,
                 }
 
@@ -2377,16 +2402,13 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
-                professional_names = cast(
-                    dict[str, str], collected_data.get("professional_names", {})
-                )
-                lines = "\n".join(
-                    _format_slot_option(slot, professional_names) for slot in available_slots
-                )
+                page = current_page(collected_data, "slots_page")
                 return {
-                    "response_text": f"{stale_slot_text}\n\n{lines}",
+                    "response_text": stale_slot_text,
                     "response_buttons": None,
-                    "response_list": _slots_list_message(available_slots),
+                    "response_list": _slots_list_message(
+                        available_slots, page=page, include_back=True
+                    ),
                     "requires_handoff": False,
                 }
 
@@ -2488,15 +2510,8 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
-                professional_names = cast(
-                    dict[str, str], collected_data.get("professional_names", {})
-                )
-                lines = "\n".join(
-                    _format_appointment_option(appointment, professional_names)
-                    for appointment in patient_appointments
-                )
                 return {
-                    "response_text": f"{message}\n\n{lines}",
+                    "response_text": message,
                     "response_buttons": [
                         _appointment_button(appointment) for appointment in patient_appointments
                     ],
@@ -2527,12 +2542,8 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
-                lines = "\n".join(
-                    _format_appointment_option(appointment, professional_names)
-                    for appointment in patient_appointments
-                )
                 return {
-                    "response_text": f"{stale_appointment_text}\n\n{lines}",
+                    "response_text": stale_appointment_text,
                     "response_buttons": [
                         _appointment_button(appointment) for appointment in patient_appointments
                     ],

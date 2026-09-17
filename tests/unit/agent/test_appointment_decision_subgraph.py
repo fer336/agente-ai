@@ -27,6 +27,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
@@ -426,7 +427,8 @@ async def test_valid_professional_row_tap_advances_to_availability_search():
     assert result["collected_data"]["chosen_professional_id"] == "prof-1"
     assert result["response_buttons"] is None
     assert [row.id for row in result["response_list"].rows] == [
-        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}"
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        LIST_BACK_PAYLOAD,
     ]
 
 
@@ -507,7 +509,10 @@ async def test_missing_slot_payload_reminds_with_the_current_options():
 
     assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
     assert result["response_buttons"] is None
-    assert len(result["response_list"].rows) == 1
+    assert [row.id for row in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        LIST_BACK_PAYLOAD,
+    ]
 
 
 @pytest.mark.asyncio
@@ -550,7 +555,9 @@ async def test_availability_with_slots_renders_as_a_list_with_more_than_three():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["response_buttons"] is None
-    assert len(result["response_list"].rows) == 5
+    # 5 real slot rows plus the "Volver atrás" row.
+    assert len(result["response_list"].rows) == 6
+    assert result["response_list"].rows[-1].id == LIST_BACK_PAYLOAD
     assert result["exit_reason"] == "none"
 
 

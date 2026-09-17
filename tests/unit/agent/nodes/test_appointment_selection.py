@@ -268,7 +268,10 @@ def test_slot_rows_keep_the_payload_format_and_a_clock_emoji_title():
 
     assert len(rows) == 1
     assert rows[0].id == "SELECT_SLOT:slot-42"
-    assert rows[0].title == f"🕐 {slot.time_range.start.strftime('%d/%m %H:%M')}"
+    assert rows[0].title == (
+        f"🕐 {spanish_weekday(slot.time_range.start)} "
+        f"{slot.time_range.start.strftime('%d/%m %H:%M')}"
+    )
 
 
 def test_slots_list_message_offers_more_than_three_slots():

@@ -40,7 +40,6 @@ from app.agent.nodes.appointment_selection import (
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
     decision_entry_node_for_stage,
-    format_slot_option,
     next_page,
     resolve_list_choice,
     slot_by_id,
@@ -76,7 +75,6 @@ from app.domain.value_objects.menu_payloads import (
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
-    MAX_ROWS,
     professionals_list_message,
     specialties_list_message,
 )
@@ -88,11 +86,13 @@ logger = logging.getLogger(__name__)
 #: the module docstring's one-way-dependency note.
 _CREATE_APPOINTMENT_ACTION = "create_appointment"
 
-#: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW`/`_MAX_OPTIONS_SHOWN` —
-#: slots render as a list (`slots_list_message`), not buttons, so the cap is
-#: Meta's real list-row cap, not the 3-button one.
+#: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW` — the 14-day window
+#: is the only cap on how many slots come back; no `limit` is passed to the
+#: search, and the full result is paginated (`slots_list_message`, 9 rows
+#: per page + "Ver más"/"Volver atrás") instead of being truncated to one
+#: screen. The 14-day window itself already bounds Dentalink request volume
+#: (see the window's own comment on `app.agent.nodes.appointment`).
 _SEARCH_WINDOW = timedelta(days=14)
-_MAX_OPTIONS_SHOWN = MAX_ROWS
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -723,7 +723,6 @@ def build_appointment_decision_graph(
             specialty_id=None,
             professional_id=cast(str | None, collected_data.get("chosen_professional_id")),
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
-            limit=_MAX_OPTIONS_SHOWN,
         )
         if not slots and collected_data.get("chosen_specialty_id") is not None:
             # A specialty is already known — offer another professional in
@@ -791,10 +790,9 @@ def build_appointment_decision_graph(
                 "exit_reason": "legacy_no_availability",
             }
 
-        options = slots[:_MAX_OPTIONS_SHOWN]
         professionals = await appointment_gateway.list_professionals()
         professional_names = {p.id: p.full_name for p in professionals}
-        lines = "\n".join(format_slot_option(slot, professional_names) for slot in options)
+        page = current_page(collected_data, "slots_page")
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         choose_slot_text = await generate_or_fallback(
             llm_provider,
@@ -812,17 +810,18 @@ def build_appointment_decision_graph(
             state.get("contact_memory_summary"),
         )
         return {
-            "response_text": f"{choose_slot_text}\n\n{lines}",
+            "response_text": choose_slot_text,
             "response_buttons": None,
-            "response_list": slots_list_message(options),
+            "response_list": slots_list_message(slots, page=page, include_back=True),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
                 **collected_data,
                 "stage": "awaiting_slot_selection",
                 "patient": collected_data.get("patient"),
-                "available_slots": options,
+                "available_slots": slots,
                 "professional_names": professional_names,
+                "slots_page": page,
             },
             "next_node": "end",
             "decision_node": "search_availability",
@@ -842,10 +841,54 @@ def build_appointment_decision_graph(
 
         available_slots = cast(list[AppointmentSlot], collected_data.get("available_slots", []))
         button_payload = state.get("button_payload")
-        professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
+        conversation_id = ConversationId(state["conversation_id"])
 
         recent_messages = state.get("recent_messages", [])
         contact_memory = state.get("contact_memory_summary")
+
+        if button_payload == LIST_MORE_PAYLOAD and available_slots:
+            updated_page = next_page(collected_data, "slots_page")
+            more_text = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "choose_slot",
+                {
+                    "situacion": (
+                        "Hay más horarios disponibles y hay que invitar al paciente a "
+                        "elegir uno."
+                    ),
+                    "instruccion": (
+                        "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
+                        "los menciones ni los repitas, solo invitá a elegir uno."
+                    ),
+                },
+                _CHOOSE_SLOT_PROMPT,
+                recent_messages,
+                contact_memory,
+            )
+            return {
+                "response_text": more_text,
+                "response_buttons": None,
+                "response_list": slots_list_message(
+                    available_slots, page=updated_page, include_back=True
+                ),
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "slots_page": updated_page},
+                "next_node": "end",
+                "decision_node": "choose_slot",
+                "exit_reason": "none",
+            }
+        if button_payload == LIST_BACK_PAYLOAD and available_slots:
+            specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+            if specialty_id is not None:
+                return await _offer_professionals(
+                    conversation_id,
+                    specialty_id,
+                    str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                    invalidate_from(collected_data, "professional"),
+                    recent_messages,
+                    contact_memory,
+                )
 
         if not available_slots:
             # Defensive only: `search_availability` is the only node that
@@ -905,13 +948,13 @@ def build_appointment_decision_graph(
                 recent_messages,
                 contact_memory,
             )
-            lines = "\n".join(
-                format_slot_option(slot, professional_names) for slot in available_slots
-            )
+            page = current_page(collected_data, "slots_page")
             return {
-                "response_text": f"{message}\n\n{lines}",
+                "response_text": message,
                 "response_buttons": None,
-                "response_list": slots_list_message(available_slots),
+                "response_list": slots_list_message(
+                    available_slots, page=page, include_back=True
+                ),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",
@@ -938,13 +981,13 @@ def build_appointment_decision_graph(
                 recent_messages,
                 contact_memory,
             )
-            lines = "\n".join(
-                format_slot_option(slot, professional_names) for slot in available_slots
-            )
+            page = current_page(collected_data, "slots_page")
             return {
-                "response_text": f"{stale_slot_text}\n\n{lines}",
+                "response_text": stale_slot_text,
                 "response_buttons": None,
-                "response_list": slots_list_message(available_slots),
+                "response_list": slots_list_message(
+                    available_slots, page=page, include_back=True
+                ),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",

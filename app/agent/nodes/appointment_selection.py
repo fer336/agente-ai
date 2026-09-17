@@ -192,12 +192,16 @@ _SLOT_ROW_CLOCK_EMOJI = "🕐"
 def slot_rows(
     slots: list[AppointmentSlot], page: int = 0, include_back: bool = False
 ) -> list[ListRow]:
-    """Builds the paginated rows for the available-slots screen."""
+    """Builds the paginated rows for the available-slots screen — each row
+    shows the weekday name, date and time (PRD requirement: patients must
+    see "Martes 17/09 14:30", not just the date, so they never have to
+    tap a row to find out what day it falls on)."""
     rows = [
         ListRow(
             id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
             title=truncate_title(
-                f"{_SLOT_ROW_CLOCK_EMOJI} {slot.time_range.start.strftime('%d/%m %H:%M')}"
+                f"{_SLOT_ROW_CLOCK_EMOJI} {spanish_weekday(slot.time_range.start)} "
+                f"{slot.time_range.start.strftime('%d/%m %H:%M')}"
             ),
         )
         for slot in slots

@@ -161,23 +161,54 @@ class IngestMessageUseCase:
             rotate_workflow = RotateWorkflowSessionUseCase(
                 self._workflow_session_repositories_provider or repositories.conversations
             )
-            if rotate_workflow.is_inactive(conversation.workflow_last_activity_at, received_at):
-                rotated = await rotate_workflow.execute(
-                    conversation.id,
-                    expected_generation=conversation.workflow_session_generation,
-                )
-                if rotated:
-                    conversation.workflow_session_generation += 1
-                    conversation.input_state = "FREE_INPUT"
-                else:
-                    # Another accepted turn won the CAS while this one waited.
-                    # Refresh before saving activity so stale ORM/domain state
-                    # cannot write the old generation back.
+            # `SqlAlchemyConversationRepository.save()` is a blind, non-CAS
+            # full-row UPDATE — without a lock here, a concurrent webhook for
+            # this same conversation (a second message arriving within the
+            # debounce window) can load `conversation` BEFORE this rotation
+            # commits, then `.save()` its own stale
+            # `workflow_session_generation` afterwards, silently reverting a
+            # just-committed rotation. That "lost update" is what split one
+            # real conversation across two live checkpoint threads in
+            # production (`...:session:1` and `...:session:2` both active
+            # the same day). Reusing the same per-conversation lock
+            # `_debounce_and_process` already holds around `handle()` closes
+            # the gap: a short `blocking_timeout` keeps this best-effort —
+            # rotation is self-healing (the next inbound message retries it),
+            # so a lock miss must never block persisting the message itself.
+            async with redis_lock(
+                self._redis_client, f"lock:conversation:{conversation_key}", blocking_timeout=2.0
+            ) as rotation_lock_acquired:
+                if rotation_lock_acquired:
                     refreshed = await repositories.conversations.get_by_id(conversation.id)
                     if refreshed is not None:
                         conversation = refreshed
-            conversation.workflow_last_activity_at = received_at
-            await repositories.conversations.save(conversation)
+                    if rotate_workflow.is_inactive(
+                        conversation.workflow_last_activity_at, received_at
+                    ):
+                        rotated = await rotate_workflow.execute(
+                            conversation.id,
+                            expected_generation=conversation.workflow_session_generation,
+                        )
+                        if rotated:
+                            conversation.workflow_session_generation += 1
+                            conversation.input_state = "FREE_INPUT"
+                        else:
+                            # Another accepted turn won the CAS while this
+                            # one waited. Refresh before saving activity so
+                            # stale ORM/domain state cannot write the old
+                            # generation back.
+                            refreshed = await repositories.conversations.get_by_id(
+                                conversation.id
+                            )
+                            if refreshed is not None:
+                                conversation = refreshed
+                else:
+                    logger.warning(
+                        "ingest_message.rotation_lock_not_acquired conversation=%s",
+                        conversation_key,
+                    )
+                conversation.workflow_last_activity_at = received_at
+                await repositories.conversations.save(conversation)
             workflow_key = f"{conversation_key}:session:{conversation.workflow_session_generation}"
 
             if is_new_conversation:
@@ -245,22 +276,35 @@ class IngestMessageUseCase:
                 # the next graph turn renders the canonical welcome menu
                 # deterministically instead of LLM-continuing the stale
                 # thread. Durable messages/ContactMemory are untouched.
-                if await rotate_workflow.execute(
-                    conversation.id,
-                    expected_generation=conversation.workflow_session_generation,
-                ):
-                    # Re-read BEFORE stamping: SetConversationModeUseCase
-                    # saved a fresh object without the new generation, so
-                    # the local `conversation` copy is stale — saving it
-                    # as-is would revert `mode` to "human" (seen in tests).
-                    persisted = await repositories.conversations.get_by_id(conversation.id)
-                    if persisted is not None:
-                        # rotate_workflow_session already incremented the
-                        # persisted generation — mirror it locally, then
-                        # stamp the fresh-restart flag.
-                        persisted.input_state = "FREE_INPUT"
-                        persisted.awaiting_fresh_restart = True
-                        await repositories.conversations.save(persisted)
+                # Same lock as the inactivity-rotation site above — this is
+                # a second, independent place that can bump
+                # `workflow_session_generation` for the same conversation.
+                async with redis_lock(
+                    self._redis_client,
+                    f"lock:conversation:{conversation_key}",
+                    blocking_timeout=2.0,
+                ) as rotation_lock_acquired:
+                    if not rotation_lock_acquired:
+                        logger.warning(
+                            "ingest_message.rotation_lock_not_acquired conversation=%s",
+                            conversation_key,
+                        )
+                    elif await rotate_workflow.execute(
+                        conversation.id,
+                        expected_generation=conversation.workflow_session_generation,
+                    ):
+                        # Re-read BEFORE stamping: SetConversationModeUseCase
+                        # saved a fresh object without the new generation, so
+                        # the local `conversation` copy is stale — saving it
+                        # as-is would revert `mode` to "human" (seen in tests).
+                        persisted = await repositories.conversations.get_by_id(conversation.id)
+                        if persisted is not None:
+                            # rotate_workflow_session already incremented the
+                            # persisted generation — mirror it locally, then
+                            # stamp the fresh-restart flag.
+                            persisted.input_state = "FREE_INPUT"
+                            persisted.awaiting_fresh_restart = True
+                            await repositories.conversations.save(persisted)
                 logger.info(
                     "ingest_message.human_mode_lazy_timeout_reactivated conversation=%s",
                     conversation_key,
