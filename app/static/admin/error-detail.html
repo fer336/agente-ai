@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Error — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors" class="active">Errores</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main>
+    <a class="back-link link" href="/admin/errors">← Volver a errores</a>
+    <div id="content"><p class="muted">Cargando…</p></div>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script>
+    (async () => {
+      const me = await ADMIN.requireAuth();
+      document.getElementById("who-label").textContent = `${me.username} · ${me.role}`;
+      document.getElementById("logout-btn").addEventListener("click", ADMIN.logout);
+
+      const pathParts = window.location.pathname.split("/").filter(Boolean);
+      const errorId = decodeURIComponent(pathParts[pathParts.length - 1]);
+      const content = document.getElementById("content");
+
+      // Nodo/Tool/Provider/Operación/Duración/HTTP status (PRD.md §44.3)
+      // aren't fields on ErrorRecord itself — they live on whichever
+      // NodeExecution/ToolExecution this error's id is attached to, found
+      // by cross-referencing the run this error's agent_run_id points to
+      // (same "no extra join, follow the plain fields" design
+      // ErrorQueryService's own docstring already documents).
+      async function findExecutionContext(agentRunId, errorId) {
+        if (!agentRunId) return null;
+        const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(agentRunId)}`);
+        if (!response.ok) return null;
+        const detail = await response.json();
+        const tool = detail.tool_executions.find((t) => t.error_id === errorId);
+        if (tool) {
+          const node = detail.node_executions.find((n) => n.id === tool.node_execution_id);
+          return { tool, node };
+        }
+        const node = detail.node_executions.find((n) => n.error_id === errorId);
+        if (node) return { tool: null, node };
+        return null;
+      }
+
+      async function resolveError() {
+        const response = await ADMIN.apiFetch(`/errors/${encodeURIComponent(errorId)}/resolve`, {
+          method: "POST",
+        });
+        if (!response.ok) {
+          alert("No se pudo resolver el error.");
+          return;
+        }
+        window.location.reload();
+      }
+
+      const response = await ADMIN.apiFetch(`/errors/${encodeURIComponent(errorId)}`);
+      if (!response.ok) {
+        content.innerHTML = `<p class="empty-state">No se encontró el error.</p>`;
+        return;
+      }
+      const error = await response.json();
+      const context = await findExecutionContext(error.agent_run_id, error.id);
+
+      const resolveButton =
+        me.role === "ADMIN_TECHNICAL" && !error.resolved_at
+          ? `<button class="primary" id="resolve-btn">Marcar resuelto</button>`
+          : "";
+
+      content.innerHTML = `
+        <div class="card">
+          <dl class="field-grid">
+            <div><dt>Nodo</dt><dd>${context && context.node ? ADMIN.escapeHtml(context.node.node_name) : '<span class="muted">—</span>'}</dd></div>
+            <div><dt>Tool</dt><dd>${context && context.tool ? ADMIN.escapeHtml(context.tool.tool_name) : '<span class="muted">—</span>'}</dd></div>
+            <div><dt>Provider</dt><dd>${context && context.tool ? ADMIN.escapeHtml(context.tool.provider) : ADMIN.escapeHtml(error.source)}</dd></div>
+            <div><dt>Operación</dt><dd>${context && context.tool ? ADMIN.escapeHtml(context.tool.operation) : '<span class="muted">—</span>'}</dd></div>
+            <div><dt>Fecha</dt><dd>${ADMIN.formatDateTime(error.created_at)}</dd></div>
+            <div><dt>Duración</dt><dd>${context && context.tool ? context.tool.duration_ms + "ms" : '<span class="muted">—</span>'}</dd></div>
+            <div><dt>Estado</dt><dd>${error.resolved_at ? '<span class="badge status-completed">Resuelto</span>' : '<span class="badge status-error">Abierto</span>'}</dd></div>
+            <div><dt>HTTP status</dt><dd>${context && context.tool && context.tool.http_status ? ADMIN.escapeHtml(context.tool.http_status) : '<span class="muted">—</span>'}</dd></div>
+            <div><dt>Error type</dt><dd>${ADMIN.escapeHtml(error.error_type)}</dd></div>
+            <div><dt>Mensaje técnico</dt><dd>${ADMIN.escapeHtml(error.technical_detail || error.message)}</dd></div>
+            <div><dt>Retryable</dt><dd>${error.retryable ? "Sí" : "No"}</dd></div>
+            <div><dt>Trace ID</dt><dd>${ADMIN.escapeHtml(error.trace_id || "—")}</dd></div>
+            <div><dt>Agent Run ID</dt><dd>${
+              error.agent_run_id
+                ? `<a class="link" href="/admin/runs/${encodeURIComponent(error.agent_run_id)}">${ADMIN.escapeHtml(error.agent_run_id)}</a>`
+                : '<span class="muted">—</span>'
+            }</dd></div>
+            <div><dt>Conversación</dt><dd>${
+              error.conversation_id
+                ? `<a class="link" href="/admin/conversations/${encodeURIComponent(error.conversation_id)}">${ADMIN.escapeHtml(error.conversation_id)}</a>`
+                : '<span class="muted">—</span>'
+            }</dd></div>
+          </dl>
+          ${resolveButton}
+        </div>
+      `;
+
+      const resolveBtn = document.getElementById("resolve-btn");
+      if (resolveBtn) resolveBtn.addEventListener("click", resolveError);
+    })();
+  </script>
+</body>
+</html>
