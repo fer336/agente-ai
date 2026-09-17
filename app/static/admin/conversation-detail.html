@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conversación — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations" class="active">Conversaciones</a>
+      <a href="/admin/errors">Errores</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main>
+    <a class="back-link link" href="/admin/conversations">← Volver a conversaciones</a>
+    <div id="content"><p class="muted">Cargando…</p></div>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script>
+    (async () => {
+      const me = await ADMIN.requireAuth();
+      document.getElementById("who-label").textContent = `${me.username} · ${me.role}`;
+      document.getElementById("logout-btn").addEventListener("click", ADMIN.logout);
+
+      const pathParts = window.location.pathname.split("/").filter(Boolean);
+      const conversationId = decodeURIComponent(pathParts[pathParts.length - 1]);
+      const content = document.getElementById("content");
+
+      async function loadTrace(agentRunId, container) {
+        const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(agentRunId)}`);
+        if (!response.ok) {
+          container.innerHTML = `<p class="muted">No se pudo cargar la traza.</p>`;
+          return;
+        }
+        const detail = await response.json();
+        if (detail.node_executions.length === 0) {
+          container.innerHTML = `<p class="muted">Sin nodos registrados.</p>`;
+          return;
+        }
+        container.innerHTML = detail.node_executions
+          .map((node) => {
+            const ok = node.status !== "failed";
+            return `
+              <div class="trace-step">
+                <span class="mark ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>
+                <span>${ADMIN.escapeHtml(node.node_name)}</span>
+                <span class="muted">(${node.duration_ms}ms)</span>
+              </div>
+            `;
+          })
+          .join("");
+        if (detail.tool_executions.length > 0) {
+          container.innerHTML += `<h2>Tools ejecutadas</h2>` +
+            detail.tool_executions
+              .map(
+                (tool) => `
+                  <div class="trace-step">
+                    <span class="mark ${tool.status === "failed" ? "fail" : "ok"}">
+                      ${tool.status === "failed" ? "✗" : "✓"}
+                    </span>
+                    <span>${ADMIN.escapeHtml(tool.tool_name)} · ${ADMIN.escapeHtml(tool.provider)} · ${ADMIN.escapeHtml(tool.operation)}</span>
+                    <span class="muted">(${tool.duration_ms}ms)</span>
+                  </div>
+                `
+              )
+              .join("");
+        }
+      }
+
+      function renderMessage(message) {
+        const direction = message.direction === "outbound" ? "outbound" : "inbound";
+        return `
+          <div class="message ${direction}">
+            <div>${ADMIN.escapeHtml(message.text || "(sin texto)")}</div>
+            <div class="meta">${direction === "outbound" ? "Agente" : "Paciente"} · ${ADMIN.formatDateTime(message.created_at)}</div>
+          </div>
+        `;
+      }
+
+      async function resetConversation() {
+        if (!confirm("Esto borra los mensajes, la memoria y el estado del flujo de esta conversación. ¿Confirmás?")) {
+          return;
+        }
+        const response = await ADMIN.apiFetch(`/conversations/${encodeURIComponent(conversationId)}/reset`, {
+          method: "POST",
+        });
+        if (!response.ok) {
+          alert("No se pudo reiniciar la conversación.");
+          return;
+        }
+        window.location.reload();
+      }
+
+      const response = await ADMIN.apiFetch(`/conversations/${encodeURIComponent(conversationId)}`);
+      if (!response.ok) {
+        content.innerHTML = `<p class="empty-state">No se encontró la conversación.</p>`;
+        return;
+      }
+      const detail = await response.json();
+
+      const resetButton =
+        me.role === "ADMIN_TECHNICAL"
+          ? `<button class="danger" id="reset-btn">Reiniciar conversación</button>`
+          : "";
+
+      content.innerHTML = `
+        <div class="card">
+          <dl class="field-grid">
+            <div><dt>ID</dt><dd>${ADMIN.escapeHtml(detail.conversation.id)}</dd></div>
+            <div><dt>Estado</dt><dd><span class="badge mode-${detail.conversation.mode}">${ADMIN.escapeHtml(detail.conversation.mode)}</span></dd></div>
+            <div><dt>Input</dt><dd>${ADMIN.escapeHtml(detail.conversation.input_state)}</dd></div>
+            <div><dt>Creada</dt><dd>${ADMIN.formatDateTime(detail.conversation.created_at)}</dd></div>
+          </dl>
+          ${resetButton}
+        </div>
+
+        <h2>Mensajes</h2>
+        <div class="message-list" id="message-list">
+          ${detail.messages.length ? detail.messages.map(renderMessage).join("") : '<p class="muted">Sin mensajes.</p>'}
+        </div>
+
+        <h2>Agent runs</h2>
+        ${detail.agent_runs.length ? "" : '<p class="muted">Sin runs registrados.</p>'}
+        ${detail.agent_runs
+          .map(
+            (run) => `
+              <div class="card">
+                <dl class="field-grid">
+                  <div><dt>Estado</dt><dd><span class="badge status-${run.status}">${ADMIN.escapeHtml(run.status)}</span></dd></div>
+                  <div><dt>Modelo</dt><dd>${ADMIN.escapeHtml(run.model)}</dd></div>
+                  <div><dt>Iniciado</dt><dd>${ADMIN.formatDateTime(run.started_at)}</dd></div>
+                  <div><dt>Trace ID</dt><dd><a class="link" href="/admin/runs/${encodeURIComponent(run.id)}">${ADMIN.escapeHtml(run.trace_id)}</a></dd></div>
+                </dl>
+                <h2>Traza</h2>
+                <div id="trace-${ADMIN.escapeHtml(run.id)}"><p class="muted">Cargando…</p></div>
+              </div>
+            `
+          )
+          .join("")}
+
+        <h2>Errores</h2>
+        ${detail.errors.length ? "" : '<p class="muted">Sin errores.</p>'}
+        ${detail.errors
+          .map(
+            (error) => `
+              <div class="card">
+                <dl class="field-grid">
+                  <div><dt>Tipo</dt><dd>${ADMIN.escapeHtml(error.error_type)}</dd></div>
+                  <div><dt>Severidad</dt><dd>${ADMIN.escapeHtml(error.severity)}</dd></div>
+                  <div><dt>Mensaje</dt><dd>${ADMIN.escapeHtml(error.message)}</dd></div>
+                  <div><dt>Detalle</dt><dd><a class="link" href="/admin/errors/${encodeURIComponent(error.id)}">Ver detalle</a></dd></div>
+                </dl>
+              </div>
+            `
+          )
+          .join("")}
+      `;
+
+      detail.agent_runs.forEach((run) => {
+        loadTrace(run.id, document.getElementById(`trace-${run.id}`));
+      });
+
+      const resetBtn = document.getElementById("reset-btn");
+      if (resetBtn) resetBtn.addEventListener("click", resetConversation);
+    })();
+  </script>
+</body>
+</html>

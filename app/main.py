@@ -3,8 +3,10 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies.checkpointer import close_agent_checkpointer, get_agent_checkpointer
 from app.api.dependencies.gateways import get_messaging_gateway
@@ -15,6 +17,7 @@ from app.api.dependencies.repositories import (
 from app.api.routes.admin import router as admin_router
 from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
+from app.api.routes.admin_pages import router as admin_pages_router
 from app.api.routes.health import router as health_router
 from app.api.routes.internal_eval import router as internal_eval_router
 from app.api.routes.webhook import router as webhook_router
@@ -94,7 +97,17 @@ app.include_router(webhook_router)
 app.include_router(admin_auth_router)
 app.include_router(admin_router)
 app.include_router(admin_docs_router)
+app.include_router(admin_pages_router)
 app.include_router(internal_eval_router)
+#: The admin panel's own CSS/JS (app/static/admin/{style.css,app.js}) —
+#: plain static files, no auth needed to fetch them (they carry no data,
+#: only markup/behavior; the real data calls from app.js are what the
+#: session cookie/CSRF check actually guards).
+app.mount(
+    "/admin/static",
+    StaticFiles(directory=Path(__file__).resolve().parent / "static" / "admin"),
+    name="admin-static",
+)
 
 
 if __name__ == "__main__":

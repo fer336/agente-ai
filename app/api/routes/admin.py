@@ -28,7 +28,12 @@ from app.infrastructure.ycloud.flows import (
     build_verification_flow_json,
 )
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+#: `/admin/api` (not bare `/admin`) — the PRD.md §44 routes
+#: (`/admin/conversations`, `/admin/errors`, `/admin/runs/{id}`) name
+#: HTML pages a human visits in a browser, not this JSON data layer. The
+#: panel's own static pages (`app/static/admin/`) occupy those exact
+#: paths and fetch their data from here client-side.
+router = APIRouter(prefix="/admin/api", tags=["admin"])
 
 #: PRD.md §74.3: "respuestas genéricas... protección contra enumeración de
 #: identificadores" — every missing-resource path in this module returns
@@ -173,6 +178,26 @@ class RunDetailResponse(BaseModel):
     agent_run: AgentRunResponse
     node_executions: list[NodeExecutionResponse]
     tool_executions: list[ToolExecutionResponse]
+
+
+class MeResponse(BaseModel):
+    username: str
+    role: str
+
+
+@router.get("/me", response_model=MeResponse)
+async def get_me(
+    session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+) -> MeResponse:
+    """The panel's own pages call this on load — both to confirm the
+    session cookie is still valid (a 401 here is the page's cue to
+    redirect to `/admin/login`) and to learn the caller's `role`, which
+    the signed session cookie carries but no client-side JS can read
+    directly (it's `HttpOnly`, and `/admin/login`'s own response body is
+    only ever seen once, at login time — a page opened fresh in a new tab
+    has no other way to know it).
+    """
+    return MeResponse(username=session.username, role=session.role)
 
 
 class ConfigResponse(BaseModel):

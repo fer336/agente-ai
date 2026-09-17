@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Errores — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors" class="active">Errores</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main>
+    <h1>Errores</h1>
+    <div id="content"><p class="muted">Cargando…</p></div>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script>
+    (async () => {
+      const me = await ADMIN.requireAuth();
+      document.getElementById("who-label").textContent = `${me.username} · ${me.role}`;
+      document.getElementById("logout-btn").addEventListener("click", ADMIN.logout);
+
+      const content = document.getElementById("content");
+      const response = await ADMIN.apiFetch("/errors");
+      if (!response.ok) {
+        content.innerHTML = `<p class="empty-state">No se pudo cargar la lista.</p>`;
+        return;
+      }
+      const rows = await response.json();
+      if (rows.length === 0) {
+        content.innerHTML = `<p class="empty-state">Sin errores registrados.</p>`;
+        return;
+      }
+
+      const table = document.createElement("table");
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Tipo</th>
+            <th>Severidad</th>
+            <th>Mensaje</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const tbody = table.querySelector("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.className = "clickable";
+        const resolved = row.resolved_at
+          ? `<span class="badge status-completed">Resuelto</span>`
+          : `<span class="badge status-error">Abierto</span>`;
+        tr.innerHTML = `
+          <td>${ADMIN.formatDateTime(row.created_at)}</td>
+          <td>${ADMIN.escapeHtml(row.error_type)}</td>
+          <td>${ADMIN.escapeHtml(row.severity)}</td>
+          <td>${ADMIN.escapeHtml(row.message)}</td>
+          <td>${resolved}</td>
+        `;
+        tr.addEventListener("click", () => {
+          window.location.href = `/admin/errors/${encodeURIComponent(row.id)}`;
+        });
+        tbody.appendChild(tr);
+      });
+      content.innerHTML = "";
+      content.appendChild(table);
+    })();
+  </script>
+</body>
+</html>

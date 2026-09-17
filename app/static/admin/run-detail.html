@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ejecución — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors">Errores</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main>
+    <div id="content"><p class="muted">Cargando…</p></div>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script>
+    (async () => {
+      const me = await ADMIN.requireAuth();
+      document.getElementById("who-label").textContent = `${me.username} · ${me.role}`;
+      document.getElementById("logout-btn").addEventListener("click", ADMIN.logout);
+
+      const pathParts = window.location.pathname.split("/").filter(Boolean);
+      const agentRunId = decodeURIComponent(pathParts[pathParts.length - 1]);
+      const content = document.getElementById("content");
+
+      const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(agentRunId)}`);
+      if (!response.ok) {
+        content.innerHTML = `<p class="empty-state">No se encontró la ejecución.</p>`;
+        return;
+      }
+      const detail = await response.json();
+      const run = detail.agent_run;
+
+      const nodesHtml = detail.node_executions.length
+        ? detail.node_executions
+            .map((node) => {
+              const ok = node.status !== "failed";
+              return `
+                <div class="trace-step">
+                  <span class="mark ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>
+                  <span>${ADMIN.escapeHtml(node.node_name)}</span>
+                  <span class="muted">(${node.duration_ms}ms)</span>
+                  ${
+                    node.error_id
+                      ? `<a class="link" href="/admin/errors/${encodeURIComponent(node.error_id)}">ver error</a>`
+                      : ""
+                  }
+                </div>
+              `;
+            })
+            .join("")
+        : '<p class="muted">Sin nodos registrados.</p>';
+
+      const toolsHtml = detail.tool_executions.length
+        ? detail.tool_executions
+            .map((tool) => {
+              const ok = tool.status !== "failed";
+              return `
+                <div class="trace-step">
+                  <span class="mark ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>
+                  <span>${ADMIN.escapeHtml(tool.tool_name)} · ${ADMIN.escapeHtml(tool.provider)} · ${ADMIN.escapeHtml(tool.operation)}</span>
+                  <span class="muted">(${tool.duration_ms}ms)</span>
+                  ${
+                    tool.error_id
+                      ? `<a class="link" href="/admin/errors/${encodeURIComponent(tool.error_id)}">ver error</a>`
+                      : ""
+                  }
+                </div>
+              `;
+            })
+            .join("")
+        : '<p class="muted">Sin tools registradas.</p>';
+
+      content.innerHTML = `
+        <a class="back-link link" href="/admin/conversations/${encodeURIComponent(run.conversation_id)}">← Volver a la conversación</a>
+        <h1>Agent run</h1>
+        <div class="card">
+          <dl class="field-grid">
+            <div><dt>ID</dt><dd>${ADMIN.escapeHtml(run.id)}</dd></div>
+            <div><dt>Estado</dt><dd><span class="badge status-${run.status}">${ADMIN.escapeHtml(run.status)}</span></dd></div>
+            <div><dt>Modelo</dt><dd>${ADMIN.escapeHtml(run.model)}</dd></div>
+            <div><dt>Prompt version</dt><dd>${ADMIN.escapeHtml(run.prompt_version)}</dd></div>
+            <div><dt>Iniciado</dt><dd>${ADMIN.formatDateTime(run.started_at)}</dd></div>
+            <div><dt>Finalizado</dt><dd>${ADMIN.formatDateTime(run.finished_at)}</dd></div>
+            <div><dt>Nodo actual</dt><dd>${ADMIN.escapeHtml(run.current_node || "—")}</dd></div>
+            <div><dt>Trace ID</dt><dd>${ADMIN.escapeHtml(run.trace_id)}</dd></div>
+            <div><dt>Error</dt><dd>${
+              run.error_id
+                ? `<a class="link" href="/admin/errors/${encodeURIComponent(run.error_id)}">${ADMIN.escapeHtml(run.error_id)}</a>`
+                : '<span class="muted">—</span>'
+            }</dd></div>
+          </dl>
+        </div>
+
+        <h2>Nodos ejecutados</h2>
+        <div class="card">${nodesHtml}</div>
+
+        <h2>Tools ejecutadas</h2>
+        <div class="card">${toolsHtml}</div>
+      `;
+    })();
+  </script>
+</body>
+</html>

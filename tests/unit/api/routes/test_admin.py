@@ -118,12 +118,13 @@ async def _post(
 @pytest.mark.parametrize(
     "path",
     [
-        "/admin/conversations",
-        "/admin/conversations/conv-1",
-        "/admin/errors",
-        "/admin/errors/err-1",
-        "/admin/runs/run-1",
-        "/admin/config",
+        "/admin/api/conversations",
+        "/admin/api/conversations/conv-1",
+        "/admin/api/errors",
+        "/admin/api/errors/err-1",
+        "/admin/api/runs/run-1",
+        "/admin/api/config",
+        "/admin/api/me",
     ],
 )
 async def test_unauthenticated_request_is_rejected(path: str):
@@ -137,14 +138,14 @@ async def test_an_expired_session_is_rejected():
     expired_now = datetime.now(UTC) - timedelta(hours=2)
     cookies = _session_cookies(READ_ONLY, now=expired_now)
 
-    response = await _get("/admin/conversations", cookies=cookies)
+    response = await _get("/admin/api/conversations", cookies=cookies)
 
     assert response.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_a_tampered_session_cookie_is_rejected():
-    response = await _get("/admin/conversations", cookies={"admin_session": "garbage.garbage"})
+    response = await _get("/admin/api/conversations", cookies={"admin_session": "garbage.garbage"})
 
     assert response.status_code == 401
 
@@ -158,7 +159,7 @@ async def test_list_conversations_returns_a_summary_row(_override_admin_dependen
     await fakes.conversations.save(make_conversation(id_="conv-1", contact_id="contact-9"))
     await fakes.messages.save(make_message(id_="msg-1", conversation_id="conv-1", text="hola"))
 
-    response = await _get("/admin/conversations", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/conversations", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 200
     body = response.json()
@@ -170,7 +171,7 @@ async def test_list_conversations_returns_a_summary_row(_override_admin_dependen
 
 @pytest.mark.asyncio
 async def test_get_conversation_detail_returns_404_for_a_missing_conversation():
-    response = await _get("/admin/conversations/missing", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/conversations/missing", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Not found."
@@ -186,7 +187,7 @@ async def test_get_conversation_detail_returns_messages_runs_and_errors(
     await fakes.agent_runs.save(make_agent_run(id_="run-1", conversation_id="conv-1"))
     await fakes.errors.save(make_error_record(id_="err-1", conversation_id="conv-1"))
 
-    response = await _get("/admin/conversations/conv-1", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/conversations/conv-1", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 200
     body = response.json()
@@ -200,7 +201,7 @@ async def test_get_conversation_detail_returns_messages_runs_and_errors(
 async def test_list_errors_returns_recent_errors(_override_admin_dependencies: _AdminFakes):
     await _override_admin_dependencies.errors.save(make_error_record(id_="err-1"))
 
-    response = await _get("/admin/errors", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/errors", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 200
     assert [e["id"] for e in response.json()] == ["err-1"]
@@ -208,7 +209,7 @@ async def test_list_errors_returns_recent_errors(_override_admin_dependencies: _
 
 @pytest.mark.asyncio
 async def test_get_error_detail_returns_404_for_a_missing_error():
-    response = await _get("/admin/errors/missing", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/errors/missing", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 404
 
@@ -217,7 +218,7 @@ async def test_get_error_detail_returns_404_for_a_missing_error():
 async def test_get_error_detail_returns_the_error(_override_admin_dependencies: _AdminFakes):
     await _override_admin_dependencies.errors.save(make_error_record(id_="err-1"))
 
-    response = await _get("/admin/errors/err-1", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/errors/err-1", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 200
     assert response.json()["id"] == "err-1"
@@ -232,7 +233,7 @@ async def test_get_run_detail_returns_node_and_tool_executions(
     await fakes.node_executions.save(make_node_execution(id_="ne-1", agent_run_id="run-1"))
     await fakes.tool_executions.save(make_tool_execution(id_="te-1", agent_run_id="run-1"))
 
-    response = await _get("/admin/runs/run-1", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/runs/run-1", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 200
     body = response.json()
@@ -243,7 +244,7 @@ async def test_get_run_detail_returns_node_and_tool_executions(
 
 @pytest.mark.asyncio
 async def test_get_run_detail_returns_404_for_a_missing_run():
-    response = await _get("/admin/runs/missing", cookies=_session_cookies(READ_ONLY))
+    response = await _get("/admin/api/runs/missing", cookies=_session_cookies(READ_ONLY))
 
     assert response.status_code == 404
 
@@ -257,7 +258,7 @@ async def test_read_only_cannot_resolve_an_error(_override_admin_dependencies: _
     cookies = _session_cookies(READ_ONLY)
 
     response = await _post(
-        "/admin/errors/err-1/resolve",
+        "/admin/api/errors/err-1/resolve",
         cookies=cookies,
         headers={"x-csrf-token": cookies["admin_csrf"]},
     )
@@ -270,7 +271,7 @@ async def test_read_only_cannot_resolve_an_error(_override_admin_dependencies: _
 
 @pytest.mark.asyncio
 async def test_admin_clinic_cannot_access_technical_config():
-    response = await _get("/admin/config", cookies=_session_cookies(ADMIN_CLINIC))
+    response = await _get("/admin/api/config", cookies=_session_cookies(ADMIN_CLINIC))
 
     assert response.status_code == 403
 
@@ -279,14 +280,25 @@ async def test_admin_clinic_cannot_access_technical_config():
 async def test_admin_clinic_can_still_view_conversations(
     _override_admin_dependencies: _AdminFakes,
 ):
-    response = await _get("/admin/conversations", cookies=_session_cookies(ADMIN_CLINIC))
+    response = await _get("/admin/api/conversations", cookies=_session_cookies(ADMIN_CLINIC))
 
     assert response.status_code == 200
 
 
 @pytest.mark.asyncio
+async def test_me_returns_the_sessions_username_and_role():
+    # The panel's static pages (app/static/admin/app.js) call this on load
+    # both as their auth check and to learn the role, which no client-side
+    # JS can otherwise read off the HttpOnly session cookie.
+    response = await _get("/admin/api/me", cookies=_session_cookies(READ_ONLY))
+
+    assert response.status_code == 200
+    assert response.json() == {"username": "tech1", "role": READ_ONLY}
+
+
+@pytest.mark.asyncio
 async def test_admin_technical_can_access_technical_config():
-    response = await _get("/admin/config", cookies=_session_cookies(ADMIN_TECHNICAL))
+    response = await _get("/admin/api/config", cookies=_session_cookies(ADMIN_TECHNICAL))
 
     assert response.status_code == 200
     body = response.json()
@@ -309,7 +321,7 @@ async def test_admin_technical_resolves_an_error_with_a_valid_csrf_token(
     cookies = _session_cookies(ADMIN_TECHNICAL)
 
     response = await _post(
-        "/admin/errors/err-1/resolve",
+        "/admin/api/errors/err-1/resolve",
         cookies=cookies,
         headers={"x-csrf-token": cookies["admin_csrf"]},
     )
@@ -325,7 +337,7 @@ async def test_resolve_is_rejected_without_a_csrf_header(
     await _override_admin_dependencies.errors.save(make_error_record(id_="err-1"))
     cookies = _session_cookies(ADMIN_TECHNICAL)
 
-    response = await _post("/admin/errors/err-1/resolve", cookies=cookies)
+    response = await _post("/admin/api/errors/err-1/resolve", cookies=cookies)
 
     assert response.status_code == 403
 
@@ -338,7 +350,7 @@ async def test_resolve_is_rejected_with_a_wrong_csrf_token(
     cookies = _session_cookies(ADMIN_TECHNICAL)
 
     response = await _post(
-        "/admin/errors/err-1/resolve", cookies=cookies, headers={"x-csrf-token": "wrong-token"}
+        "/admin/api/errors/err-1/resolve", cookies=cookies, headers={"x-csrf-token": "wrong-token"}
     )
 
     assert response.status_code == 403
@@ -349,7 +361,7 @@ async def test_resolve_returns_404_for_a_missing_error():
     cookies = _session_cookies(ADMIN_TECHNICAL)
 
     response = await _post(
-        "/admin/errors/missing/resolve",
+        "/admin/api/errors/missing/resolve",
         cookies=cookies,
         headers={"x-csrf-token": cookies["admin_csrf"]},
     )
@@ -388,7 +400,7 @@ async def test_admin_technical_creates_and_publishes_both_flows(
     cookies = _session_cookies(ADMIN_TECHNICAL)
 
     response = await _post(
-        "/admin/flows/create",
+        "/admin/api/flows/create",
         cookies=cookies,
         headers={"x-csrf-token": cookies["admin_csrf"]},
     )
@@ -406,7 +418,7 @@ async def test_creating_flows_is_rejected_without_a_csrf_header(
 ):
     cookies = _session_cookies(ADMIN_TECHNICAL)
 
-    response = await _post("/admin/flows/create", cookies=cookies)
+    response = await _post("/admin/api/flows/create", cookies=cookies)
 
     assert response.status_code == 403
     assert _stub_ycloud_client.create_flow_calls == []
@@ -417,7 +429,7 @@ async def test_read_only_cannot_create_flows(_stub_ycloud_client: _StubYCloudCli
     cookies = _session_cookies(READ_ONLY)
 
     response = await _post(
-        "/admin/flows/create",
+        "/admin/api/flows/create",
         cookies=cookies,
         headers={"x-csrf-token": cookies["admin_csrf"]},
     )
