@@ -1793,6 +1793,46 @@ async def test_confirmation_stage_rejects_new_patient_creation_proposal():
 
 
 @pytest.mark.asyncio
+async def test_confirmation_stage_treats_a_free_text_decline_like_the_cancel_button():
+    # Seen live: "No gracias" typed as free text used to fall into the
+    # generic "solo podés confirmar o cancelar tocando un botón" reminder
+    # — the reply ended up SOUNDING like it accepted the decline while the
+    # code still reattached Confirmar/Cancelar to it, since nothing had
+    # actually rejected the proposal. Confirmar/Cancelar must never linger
+    # on a message that isn't an outstanding proposal.
+    repositories_provider = make_proposal_repositories_provider()
+    node, conversation_repository, _ = await _make_node_and_conversation(
+        patients=[], proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1",
+                action_type=CREATE_PATIENT_ACTION,
+                status="pending",
+                payload={"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"},
+            )
+        )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="No gracias",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] is None
+    assert result["pending_action_id"] is None
+    assert result["response_buttons"] is None
+    async with repositories_provider() as repositories:
+        rejected = await repositories.pending_actions.get_by_id("pa-1")
+        assert rejected is not None
+        assert rejected.status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_duplicates():
     slot = _future_slot()
     repositories_provider = make_proposal_repositories_provider()
