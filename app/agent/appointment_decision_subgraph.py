@@ -151,7 +151,7 @@ _NO_AVAILABILITY_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 _NO_SLOTS_CHOICE_BUTTONS = [
-    InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="🔎 Ver otros profesionales"),
+    InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="Otros profesionales"),
 ]
 
 #: After this many consecutive invalid picks from the specialty/professional

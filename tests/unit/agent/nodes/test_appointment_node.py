@@ -1260,7 +1260,7 @@ async def test_professional_selection_offers_other_professionals_when_no_slots_a
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
     assert [(button.id, button.title) for button in result["response_buttons"]] == [
-        (_VIEW_OTHER_PROFESSIONALS_PAYLOAD, "🔎 Ver otros profesionales"),
+        (_VIEW_OTHER_PROFESSIONALS_PAYLOAD, "Otros profesionales"),
     ]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
