@@ -1298,6 +1298,10 @@ async def test_no_availability_choice_stage_re_offers_main_menu_on_a_stale_tap()
 
 @pytest.mark.asyncio
 async def test_no_slots_choice_stage_offers_other_professionals_on_button_tap():
+    # Regression, seen live: the professional just confirmed to have zero
+    # availability (prof-1) was re-listed among the "other professionals"
+    # — the patient could tap them again and get the same "no hay lugares"
+    # a second time, for no reason.
     node, _, _ = await _make_node_and_conversation(
         professionals=[
             make_professional(id_="prof-1", specialty_id="cleaning"),
@@ -1320,10 +1324,7 @@ async def test_no_slots_choice_stage_offers_other_professionals_on_button_tap():
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    assert [p.id for p in result["collected_data"]["professional_options"]] == [
-        "prof-1",
-        "prof-2",
-    ]
+    assert [p.id for p in result["collected_data"]["professional_options"]] == ["prof-2"]
 
 
 @pytest.mark.asyncio

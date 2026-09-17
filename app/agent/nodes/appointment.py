@@ -1407,8 +1407,19 @@ def create_appointment_node(
         collected_data: dict[str, object],
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
+        exclude_professional_id: str | None = None,
     ) -> dict[str, object]:
         professionals = await appointment_gateway.list_professionals(specialty_id=specialty_id)
+        if exclude_professional_id is not None:
+            # Seen live: "ver otros profesionales" (reached after a
+            # professional was just confirmed to have zero availability)
+            # kept re-listing that exact same professional — the patient
+            # picked them again, got told the same "no hay lugares" a
+            # second time, for no reason. Only ever passed from
+            # STAGE_AWAITING_NO_SLOTS_CHOICE's own handler, never from
+            # this function's other call sites (a fresh specialty pick has
+            # nothing to exclude).
+            professionals = [p for p in professionals if p.id != exclude_professional_id]
         if not professionals:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             text = await generate_or_fallback(
@@ -2645,6 +2656,9 @@ def create_appointment_node(
             if state["button_payload"] == _VIEW_OTHER_PROFESSIONALS_PAYLOAD:
                 no_slots_specialty_id = cast(str, collected_data.get("chosen_specialty_id", ""))
                 no_slots_specialty_name = cast(str, collected_data.get("chosen_specialty_name", ""))
+                no_slots_professional_id = cast(
+                    str | None, collected_data.get("chosen_professional_id")
+                )
                 return await _offer_professionals(
                     conversation_id,
                     no_slots_specialty_id,
@@ -2652,6 +2666,7 @@ def create_appointment_node(
                     collected_data,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    exclude_professional_id=no_slots_professional_id,
                 )
             no_slots_choice_text = await generate_or_fallback(
                 llm_provider,
