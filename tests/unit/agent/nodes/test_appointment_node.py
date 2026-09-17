@@ -47,6 +47,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
+    LIST_BACK_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
@@ -764,7 +765,8 @@ async def test_professional_selection_shows_only_that_doctors_slots():
     assert result["collected_data"]["chosen_professional_id"] == "prof-1"
     assert result["response_buttons"] is None
     assert [row.id for row in result["response_list"].rows] == [
-        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine",
+        LIST_BACK_PAYLOAD,
     ]
 
 
@@ -956,7 +958,10 @@ async def test_slot_offer_renders_as_a_list_and_shows_more_than_three_slots():
     result = await node(state)
 
     assert result["response_buttons"] is None
-    assert len(result["response_list"].rows) == 6
+    # 6 real slot rows fit on one page (under Meta's 10-row cap even with a
+    # reserved back row) plus the "Volver atrás" row.
+    assert len(result["response_list"].rows) == 7
+    assert result["response_list"].rows[-1].id == LIST_BACK_PAYLOAD
 
 
 @pytest.mark.asyncio
@@ -1923,7 +1928,10 @@ async def test_slot_selection_stage_reminds_instead_of_advancing_on_free_text():
     assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
     assert "collected_data" not in result
     assert result["response_buttons"] is None
-    assert len(result["response_list"].rows) == 1
+    assert [row.id for row in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        LIST_BACK_PAYLOAD,
+    ]
 
 
 @pytest.mark.asyncio
