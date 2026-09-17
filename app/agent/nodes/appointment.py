@@ -246,6 +246,40 @@ REJECT_APPOINTMENT_PAYLOAD = "REJECT_APPOINTMENT"
 RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD = "RESCHEDULE_KEEP_PROFESSIONAL"
 RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD = "RESCHEDULE_CHANGE_PROFESSIONAL"
 
+#: Seen live: "No gracias" typed as free text at `STAGE_AWAITING_CONFIRMATION`
+#: fell into the generic "solo podés confirmar o cancelar tocando un botón"
+#: reminder — the LLM-generated reply ended up acknowledging the decline
+#: ("dale, no hay problema...") while the code still reattached
+#: `_CONFIRM_BUTTONS` to it, since nothing had actually rejected the
+#: pending proposal. An unambiguous decline in free text is treated
+#: exactly like tapping "Cancelar" instead — Confirmar/Cancelar must only
+#: ever appear on an outstanding proposal (user's own explicit rule).
+_DECLINE_KEYWORDS = (
+    "no gracias",
+    "no, gracias",
+    "mejor no",
+    "no quiero",
+    "no lo quiero",
+    "cancelalo",
+    "cancélalo",
+    "cancela eso",
+    "cancelá eso",
+    "olvidalo",
+    "olvídalo",
+    "dejalo",
+    "déjalo",
+    "no importa",
+    "ya no",
+    "no me sirve",
+)
+
+
+def _is_free_text_decline(text: str) -> bool:
+    lowered = text.strip().casefold()
+    if lowered in {"no", "nop", "no.", "nel"}:
+        return True
+    return any(keyword in lowered for keyword in _DECLINE_KEYWORDS)
+
 #: No upper bound on digit count here — `Dni` (7-8 digits) is the real
 #: gatekeeper for validity. Capping this at 9 used to truncate a longer
 #: run (e.g. a 10-digit typo) and leak the leftover digit into the parsed
@@ -1832,6 +1866,15 @@ def create_appointment_node(
         if stage == STAGE_AWAITING_CONFIRMATION:
             pending_action_id = state.get("pending_action_id")
             button_payload = state["button_payload"]
+            if (
+                button_payload is None
+                and pending_action_id is not None
+                and _is_free_text_decline(state["user_message"])
+            ):
+                # Normalize onto the exact same path a "Cancelar" tap
+                # takes below — never a separate branch, so there is only
+                # one place that decides what a decline looks like.
+                button_payload = REJECT_APPOINTMENT_PAYLOAD
 
             if button_payload is None or pending_action_id is None:
                 confirmation_reminder_text = await generate_or_fallback(
