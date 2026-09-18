@@ -122,6 +122,14 @@ logger = logging.getLogger(__name__)
 #: reaching "no hay turnos", which was enough on its own to trip Dentalink's
 #: undocumented rate limit. 14 trades a little reach for far fewer requests.
 _SEARCH_WINDOW = timedelta(days=14)
+#: Dentalink's `/v5/agendas` has no range filter — the gateway walks ONE
+#: sequential HTTP request per day in the window above, stopping early once
+#: it has collected this many slots. Confirmed live: with no cap at all, a
+#: professional with heavy availability makes the search walk all 14 days
+#: before replying — one real search measured 8.3s. This still supports
+#: three full "Ver más" pages (`PAGE_SIZE` rows each) before falling back
+#: to whatever the window actually has.
+_MAX_SLOTS_SEARCHED = 27
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -1480,6 +1488,7 @@ def create_appointment_node(
             specialty_id=None,
             professional_id=cast(str | None, collected_data.get("chosen_professional_id")),
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
+            limit=_MAX_SLOTS_SEARCHED,
         )
         if not slots and collected_data.get("chosen_specialty_id") is not None:
             # A specialty is already known — offer another professional in

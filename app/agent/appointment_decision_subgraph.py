@@ -86,13 +86,14 @@ logger = logging.getLogger(__name__)
 #: the module docstring's one-way-dependency note.
 _CREATE_APPOINTMENT_ACTION = "create_appointment"
 
-#: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW` — the 14-day window
-#: is the only cap on how many slots come back; no `limit` is passed to the
-#: search, and the full result is paginated (`slots_list_message`, 9 rows
-#: per page + "Ver más"/"Volver atrás") instead of being truncated to one
-#: screen. The 14-day window itself already bounds Dentalink request volume
-#: (see the window's own comment on `app.agent.nodes.appointment`).
+#: Mirrors `app.agent.nodes.appointment._SEARCH_WINDOW`/`_MAX_SLOTS_SEARCHED`
+#: — Dentalink's `/v5/agendas` has no range filter, so the gateway walks one
+#: sequential HTTP request per day in the window below, stopping early once
+#: it has `_MAX_SLOTS_SEARCHED` slots. Confirmed live: with no cap at all, a
+#: professional with heavy availability makes the search walk all 14 days
+#: before replying — one real search measured 8.3s.
 _SEARCH_WINDOW = timedelta(days=14)
+_MAX_SLOTS_SEARCHED = 27
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -723,6 +724,7 @@ def build_appointment_decision_graph(
             specialty_id=None,
             professional_id=cast(str | None, collected_data.get("chosen_professional_id")),
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
+            limit=_MAX_SLOTS_SEARCHED,
         )
         if not slots and collected_data.get("chosen_specialty_id") is not None:
             # A specialty is already known — offer another professional in
