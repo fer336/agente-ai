@@ -96,6 +96,24 @@ _AGENDA_FILTER_FIELDS = frozenset({"id_sucursal", "fecha", "duracion", "id_profe
 _DENTISTA_FILTER_FIELDS = frozenset({"id_especialidad", "especialidad", "habilitado"})
 
 
+def _is_enabled(raw_dentista: dict[str, object]) -> bool:
+    """Confirmed live: `habilitado` comes back as a literal `0`/`1` int on
+    a real account, but this stays tolerant of a bool/str shape too rather
+    than trust one exact type. A missing/unrecognized value defaults to
+    enabled — same "never hide a professional we can't positively rule
+    out" stance `search_availability` already takes for an unparseable
+    slot, rather than the reverse (silently hiding real professionals if
+    the field's shape ever changes)."""
+    value = raw_dentista.get("habilitado")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().casefold() not in ("", "0", "false")
+    return True
+
+
 class DentalinkAppointmentGateway:
     """`DentalinkClient`-based real implementation of the `AppointmentGateway` port.
 
@@ -212,16 +230,28 @@ class DentalinkAppointmentGateway:
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:
         async def _call() -> list[Professional]:
-            params = (
-                build_q_param(
-                    {"id_especialidad": ("eq", specialty_id)},
-                    allowed_fields=_DENTISTA_FILTER_FIELDS,
-                )
-                if specialty_id is not None
-                else None
-            )
+            filters: dict[str, tuple[str, object]] = {"habilitado": ("eq", "1")}
+            if specialty_id is not None:
+                filters["id_especialidad"] = ("eq", specialty_id)
+            params = build_q_param(filters, allowed_fields=_DENTISTA_FILTER_FIELDS)
             raw_dentistas = await self._client.get("/v1/dentistas", params=params)
-            professionals = [professional_from_dentista(raw) for raw in as_list(raw_dentistas)]
+            # Confirmed live: `/v1/dentistas` returns EVERY professional the
+            # clinic has ever entered, most of them `habilitado: 0` (staff
+            # who no longer work there, or were never actually activated) —
+            # patients were being offered these exactly like a real option,
+            # then always hitting "no hay horarios" for that specific
+            # professional (looks like a broken search, not a disabled
+            # professional). The `habilitado` filter above is what keeps the
+            # server-side response small; this client-side check is defense
+            # in depth for the same reason the specialty one below is — if
+            # a live account's `q` semantics ever differ from what's
+            # documented, a disabled professional must still never reach
+            # the patient.
+            professionals = [
+                professional_from_dentista(raw)
+                for raw in as_list(raw_dentistas)
+                if _is_enabled(raw)
+            ]
             if specialty_id is None:
                 return professionals
             # Defense in depth: the server-side `q` filter above is what
