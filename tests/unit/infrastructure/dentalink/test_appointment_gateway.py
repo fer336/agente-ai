@@ -283,18 +283,48 @@ async def test_list_professionals_filters_by_specialty_server_side():
     path, params = client.get_calls[0]
     assert path == "/v1/dentistas"
     assert params is not None
-    assert json.loads(params["q"]) == {"id_especialidad": {"eq": "cleaning"}}
+    assert json.loads(params["q"]) == {
+        "habilitado": {"eq": "1"},
+        "id_especialidad": {"eq": "cleaning"},
+    }
 
 
 @pytest.mark.asyncio
-async def test_list_professionals_sends_no_filter_when_no_specialty_given():
+async def test_list_professionals_always_filters_disabled_ones_server_side():
+    # Confirmed live: `/v1/dentistas` returns every professional the
+    # clinic has ever entered, most `habilitado: 0` (no longer active) —
+    # patients were being offered these like a real option, then always
+    # hitting "no hay horarios" for that one professional, which looks
+    # like a broken search rather than a disabled professional.
     client = _StubDentalinkClient(get_responses={"/v1/dentistas": []})
     gateway = _gateway(client)
 
     await gateway.list_professionals()
 
-    _, params = client.get_calls[0]
-    assert params is None
+    path, params = client.get_calls[0]
+    assert path == "/v1/dentistas"
+    assert params is not None
+    assert json.loads(params["q"]) == {"habilitado": {"eq": "1"}}
+
+
+@pytest.mark.asyncio
+async def test_list_professionals_drops_a_disabled_one_even_if_the_server_ignores_the_filter():
+    # Defense in depth — same reasoning the specialty filter below already
+    # has: a disabled professional must never reach the patient even if a
+    # live account's `q` semantics for `habilitado` differ from documented.
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v1/dentistas": [
+                {"id_dentista": 17, "nombre": "Sofia Llinas", "habilitado": 0},
+                {"id_dentista": 33, "nombre": "Matias Brua", "habilitado": 1},
+            ]
+        }
+    )
+    gateway = _gateway(client)
+
+    professionals = await gateway.list_professionals()
+
+    assert [p.id for p in professionals] == ["33"]
 
 
 @pytest.mark.asyncio

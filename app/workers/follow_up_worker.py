@@ -29,7 +29,6 @@ from app.domain.repositories.scheduled_action_repository import ScheduledActionR
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.idempotency_key import IdempotencyKey
-from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +117,7 @@ async def run_follow_up_tick(
             # `_agent_is_last_to_speak` would wrongly skip a conversation
             # whose last message was the patient's own (e.g. a closing
             # "Gracias" the agent already answered).
-            await _handle_conversation_idle_reset(
-                conversation_repository, contact_repository, message_repository, send_reply,
-                conversation_id, now,
-            )
+            await _handle_conversation_idle_reset(conversation_repository, conversation_id)
             await scheduled_action_repository.transition_status(
                 scheduled_action.id, from_status="processing", to_status="executed"
             )
@@ -203,27 +199,23 @@ async def _resolve_contact(
 
 async def _handle_conversation_idle_reset(
     conversation_repository: ConversationRepository,
-    contact_repository: ContactRepository,
-    message_repository: MessageRepository,
-    send_reply: SendReplyUseCase,
     conversation_id: ConversationId,
-    now: datetime,
 ) -> None:
-    """The patient's own ask: after the configured idle window, the next
-    thing the conversation sees is the canonical welcome menu, on a fresh
-    workflow generation — not a silent continuation of whatever stage it
-    was last left in.
+    """The patient's own ask (revised — an earlier version of this sent the
+    welcome menu proactively here, which the user explicitly asked to
+    remove): after the configured idle window, a stuck workflow generation
+    is retired SILENTLY, with no message of any kind. This only clears the
+    hung graph server-side so the NEXT real inbound message starts a
+    genuinely fresh turn instead of continuing whatever stage this one was
+    left in — the patient never sees a "empezamos de cero" message unless
+    they write again and normal turn routing decides to send one.
 
     Never fires in `mode="human"`: a staff handoff owns its own
     reactivation timing
-    (`IngestMessageUseCase._HUMAN_MODE_REACTIVATION_TIMEOUT`), and barging
-    in with the bot's welcome menu mid-handoff would undercut it.
+    (`IngestMessageUseCase._HUMAN_MODE_REACTIVATION_TIMEOUT`).
     """
     conversation = await conversation_repository.get_by_id(conversation_id)
     if conversation is None or conversation.mode != "agent":
-        return
-    contact = await contact_repository.get_by_id(conversation.contact_id)
-    if contact is None:
         return
 
     await RotateWorkflowSessionUseCase(conversation_repository).execute(
@@ -232,10 +224,6 @@ async def _handle_conversation_idle_reset(
     await SetConversationInputStateUseCase(conversation_repository).execute(
         conversation_id, FREE_INPUT
     )
-    await send_reply.execute(
-        conversation_id, contact.phone, WELCOME_TEXT, list_message=WELCOME_LIST
-    )
-    await _record_outbound(message_repository, conversation_id, WELCOME_TEXT, now)
 
 
 async def _record_outbound(

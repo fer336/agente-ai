@@ -13,7 +13,7 @@ from app.domain.value_objects.menu_payloads import (
 WELCOME_TEXT = (
     "Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷\n"
     "Centro Odontológico Integral\n\n"
-    "🕐 Horario de atención: lunes a viernes de *10:00* a *18:00*\n\n"
+    "🕐 Horario de atención: lunes a viernes de *9:00* a *18:00*\n\n"
     "📸 Mirá nuestros tratamientos en Instagram: instagram.com/smiling.pilar\n\n"
     "¿En qué te puedo ayudar hoy?"
 )
