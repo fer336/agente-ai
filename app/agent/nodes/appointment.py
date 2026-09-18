@@ -24,6 +24,7 @@ from app.agent.nodes.appointment_selection import (
     next_page,
     slot_by_id,
     slot_payload_id,
+    text_leaks_a_name,
 )
 from app.agent.nodes.appointment_selection import (
     format_confirmation_datetime as _format_confirmation_datetime,
@@ -1378,6 +1379,8 @@ def create_appointment_node(
             recent_messages,
             contact_memory,
         )
+        if text_leaks_a_name(text, [s.name for s in specialties]):
+            text = _CHOOSE_SPECIALTY_PROMPT
         return {
             "response_text": text,
             "response_buttons": None,
@@ -1455,6 +1458,8 @@ def create_appointment_node(
             recent_messages,
             contact_memory,
         )
+        if text_leaks_a_name(text, [p.full_name for p in professionals]):
+            text = _CHOOSE_PROFESSIONAL_PROMPT
         return {
             "response_text": text,
             "response_buttons": None,

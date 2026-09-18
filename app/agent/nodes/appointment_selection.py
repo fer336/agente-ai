@@ -84,6 +84,27 @@ def decision_entry_node_for_stage(stage: str | None) -> str | None:
     return LEGACY_STAGE_TO_DECISION_NODE.get(stage)
 
 
+# --- LLM-output safety net ---------------------------------------------
+
+
+def text_leaks_a_name(text: str, names: list[str]) -> bool:
+    """True when `text` mentions any of `names` — a defensive backstop for
+    every call site whose `instruccion` tells the model not to name the
+    options a List/buttons message already shows.
+
+    Confirmed live (user-reported, screenshot): the model's own prompt
+    compliance is not a guarantee — it has fabricated an entire plausible-
+    sounding specialty/professional list in free text despite the explicit
+    instruction not to mention one at all. Callers must discard the
+    LLM-generated text and use their own static fallback when this returns
+    True, so the rule holds even when a stronger prompt still doesn't.
+    Case-insensitive substring match — deliberately simple and cheap, no
+    LLM call of its own.
+    """
+    lowered = text.casefold()
+    return any(name.casefold() in lowered for name in names if name)
+
+
 # --- Payload resolution helpers --------------------------------------------
 
 #: A patient answering a numbered list types "2", "2." or "opción 2" —

@@ -175,6 +175,64 @@ async def test_route_entry_from_no_stage_with_create_booking_context_offers_spec
 
 
 @pytest.mark.asyncio
+async def test_a_hallucinated_specialty_list_falls_back_to_the_static_prompt():
+    # User-confirmed regression (screenshot): the LLM fabricated its own
+    # bulleted specialty list in free text despite the instruccion telling
+    # it not to mention one at all. This is the defensive backstop —
+    # discard whatever the LLM said and use the safe static prompt
+    # instead, whenever the LLM's own text names one of the real options
+    # about to be shown in the List.
+    class _HallucinatingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            if context.intent == "choose_specialty":
+                return "Elegí entre Ortodoncia, Implantes o Estética dental."
+            return await super().generate_response(context)
+
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        llm_provider=_HallucinatingLLMProvider(),
+    )
+    state = _decision_state(collected_data={"operation": _CREATE_APPOINTMENT_ACTION})
+
+    result = await graph.ainvoke(state)
+
+    assert result["response_text"] == appointment_decision_subgraph._CHOOSE_SPECIALTY_PROMPT
+    assert "Ortodoncia" not in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_hallucinated_professional_list_falls_back_to_the_static_prompt():
+    # This backstop catches the LLM repeating a REAL catalog name it was
+    # told not to mention (deterministic, name-matching) — a model that
+    # instead invents an entirely fictional name relies on the prompt's
+    # own "never invent data" rule instead, which isn't a hard guarantee.
+    class _HallucinatingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            if context.intent == "choose_professional":
+                return "Te paso con Marcos Nahuel Alvarez, que tiene buena disponibilidad."
+            return await super().generate_response(context)
+
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", full_name="Marcos Nahuel Alvarez")],
+        llm_provider=_HallucinatingLLMProvider(),
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["response_text"] == appointment_decision_subgraph._CHOOSE_PROFESSIONAL_PROMPT
+    assert "Marcos Nahuel Alvarez" not in result["response_text"]
+
+
+@pytest.mark.asyncio
 async def test_staffed_specialty_lookup_wrapper_returns_none_and_warns_on_error(
     monkeypatch, caplog
 ):

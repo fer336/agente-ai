@@ -52,6 +52,7 @@ from app.agent.nodes.appointment_selection import (
     slot_rows,
     slots_list_message,
     spanish_weekday,
+    text_leaks_a_name,
 )
 from app.agent.workflow_state import invalidate_from
 from app.domain.entities.appointment_slot import AppointmentSlot
@@ -396,3 +397,24 @@ def test_slot_invalidation_clears_only_the_slot_window():
     assert repaired["chosen_specialty_id"] == "spec-1"
     assert repaired["chosen_professional_id"] == "prof-1"
     assert repaired["patient"] == data["patient"]
+
+
+def test_text_leaks_a_name_catches_a_case_insensitive_substring():
+    # User-confirmed regression: the LLM fabricated its own specialty/
+    # professional list in free text despite the instruccion telling it
+    # not to — this defensive check is what a caller uses to discard that
+    # text and fall back to a safe static message instead.
+    assert text_leaks_a_name(
+        "Dale, para eso te recomiendo Ortodoncia o Endodoncia.", ["Ortodoncia", "Endodoncia"]
+    )
+    assert text_leaks_a_name("te paso con la dra. Laura Giménez", ["Laura Giménez"])
+
+
+def test_text_leaks_a_name_is_false_for_clean_text():
+    assert not text_leaks_a_name(
+        "Dale, perfecto. Elegí una opción de la lista.", ["Ortodoncia", "Endodoncia"]
+    )
+
+
+def test_text_leaks_a_name_ignores_empty_names():
+    assert not text_leaks_a_name("cualquier texto", ["", None])  # type: ignore[list-item]

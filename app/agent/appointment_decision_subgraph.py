@@ -45,6 +45,7 @@ from app.agent.nodes.appointment_selection import (
     slot_by_id,
     slot_payload_id,
     slots_list_message,
+    text_leaks_a_name,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.workflow_state import invalidate_from
@@ -355,6 +356,8 @@ def build_appointment_decision_graph(
             recent_messages,
             contact_memory,
         )
+        if text_leaks_a_name(text, [s.name for s in specialties]):
+            text = _CHOOSE_SPECIALTY_PROMPT
         return {
             "response_text": text,
             "response_buttons": None,
@@ -425,6 +428,8 @@ def build_appointment_decision_graph(
             recent_messages,
             contact_memory,
         )
+        if text_leaks_a_name(text, [p.full_name for p in professionals]):
+            text = _CHOOSE_PROFESSIONAL_PROMPT
         return {
             "response_text": text,
             "response_buttons": None,
@@ -563,6 +568,8 @@ def build_appointment_decision_graph(
                 state.get("recent_messages", []),
                 state.get("contact_memory_summary"),
             )
+            if text_leaks_a_name(text, [option.name for option in options]):
+                text = _SPECIALTY_NOT_UNDERSTOOD_MESSAGE
             page = current_page(collected_data, "specialties_page")
             return {
                 "response_text": text,
@@ -687,6 +694,8 @@ def build_appointment_decision_graph(
                 state.get("recent_messages", []),
                 state.get("contact_memory_summary"),
             )
+            if text_leaks_a_name(text, [option.full_name for option in professional_options]):
+                text = _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE
             page = current_page(collected_data, "doctors_page")
             return {
                 "response_text": text,
