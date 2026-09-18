@@ -44,6 +44,7 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
         welcome_image_url=settings.welcome_image_url or None,
         workflow_session_repositories_provider=open_sqlalchemy_workflow_session_repositories,
+        conversation_idle_reset_delay_seconds=settings.conversation_idle_reset_delay_seconds,
     )
 
 

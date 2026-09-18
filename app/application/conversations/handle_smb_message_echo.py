@@ -86,12 +86,11 @@ class HandleSmbMessageEchoUseCase:
         await self._conversation_repository.save(conversation)
 
     async def _touch_last_human_reply(self, conversation: Conversation) -> None:
-        updated = Conversation(
-            id=conversation.id,
-            contact_id=conversation.contact_id,
-            mode=conversation.mode,
-            created_at=conversation.created_at,
-            input_state=conversation.input_state,
-            last_human_reply_at=datetime.now(UTC),
-        )
-        await self._conversation_repository.save(updated)
+        # Mutate in place — reconstructing a `Conversation` with a
+        # hand-picked field list (the previous approach here) silently
+        # drops `workflow_session_generation`/`workflow_last_activity_at`/
+        # `awaiting_fresh_restart` back to their dataclass defaults; see
+        # `SetConversationInputStateUseCase`'s own comment for the full
+        # story — same bug, same fix, different call site.
+        conversation.last_human_reply_at = datetime.now(UTC)
+        await self._conversation_repository.save(conversation)
