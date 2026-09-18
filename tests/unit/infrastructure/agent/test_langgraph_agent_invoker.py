@@ -13,6 +13,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact_memory import ContactMemory
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.menu_payloads import CHOOSE_PROFESSIONAL_PAYLOAD
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
@@ -436,6 +437,11 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
     )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    # Turn 3b: the browse-choice screen shown after picking a specialty —
+    # tap "Elegir profesional" to reach the professional list.
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
 
     compiled_graph = compile_graph(
@@ -497,6 +503,11 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
     )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    # Turn 3b: the browse-choice screen shown after picking a specialty —
+    # tap "Elegir profesional" to reach the professional list.
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
     # Turn 5: pick the offered slot — the subgraph's `choose_slot` stores
     # `pending_selected_slot` and exits to legacy `_begin_identification`.
@@ -568,6 +579,11 @@ async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
     )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    # Turn 3b: the browse-choice screen shown after picking a specialty —
+    # tap "Elegir profesional" to reach the professional list.
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
     await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)

@@ -35,6 +35,7 @@ from app.agent.nodes.appointment_selection import (
     STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SLOT_SELECTION,
+    STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
     decision_entry_node_for_stage,
@@ -80,6 +81,7 @@ def _future_slot(id_: str = "slot-1", professional_id: str = "prof-1") -> Appoin
 def test_mapping_routes_each_migrated_stage_to_its_decision_entry_node():
     assert LEGACY_STAGE_TO_DECISION_NODE == {
         STAGE_AWAITING_SPECIALTY_SELECTION: "choose_specialty",
+        STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE: "choose_browse_mode",
         STAGE_AWAITING_PROFESSIONAL_SELECTION: "choose_professional",
         STAGE_AWAITING_SLOT_SELECTION: "choose_slot",
     }

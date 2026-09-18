@@ -22,6 +22,8 @@ _DROP_BY_LEVEL: dict[SelectionLevel, frozenset[str]] = {
             "available_slots",
             "pending_selected_slot",
             "professional_names",
+            "slots_page",
+            "slots_multi_professional",
         }
     ),
     "professional": frozenset(
@@ -35,6 +37,8 @@ _DROP_BY_LEVEL: dict[SelectionLevel, frozenset[str]] = {
             "available_slots",
             "pending_selected_slot",
             "professional_names",
+            "slots_page",
+            "slots_multi_professional",
         }
     ),
     "slot": frozenset(
@@ -43,6 +47,8 @@ _DROP_BY_LEVEL: dict[SelectionLevel, frozenset[str]] = {
             "navigation_target",
             "available_slots",
             "pending_selected_slot",
+            "slots_page",
+            "slots_multi_professional",
         }
     ),
 }

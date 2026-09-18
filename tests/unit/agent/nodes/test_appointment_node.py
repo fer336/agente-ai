@@ -35,6 +35,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_REGISTRATION_FLOW,
     STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
     STAGE_AWAITING_SLOT_SELECTION,
+    STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
     STAGE_AWAITING_SPECIALTY_SELECTION,
     STAGE_AWAITING_VERIFICATION_CONFIRMATION,
     STAGE_AWAITING_VERIFICATION_FLOW,
@@ -47,6 +48,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
+    CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
@@ -609,12 +611,14 @@ async def test_legacy_specialty_and_professional_list_prompts_do_not_require_num
 
 
 @pytest.mark.asyncio
-async def test_specialty_selection_by_number_lists_that_specialtys_professionals():
+async def test_specialty_selection_advances_to_the_browse_choice_screen():
+    # A valid specialty pick now lands on "ver próximos turnos vs elegir
+    # profesional" (this change — most patients are new and don't know a
+    # professional by name), not straight on the professional list.
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
         professionals=[
             make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="cleaning"),
-            make_professional(id_="prof-9", full_name="Dr. Otro", specialty_id="whitening"),
         ],
     )
     state = make_agent_state(
@@ -624,6 +628,34 @@ async def test_specialty_selection_by_number_lists_that_specialtys_professionals
             "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
             "operation": CREATE_APPOINTMENT_ACTION,
             "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    assert result.get("response_list") is None
+    assert len(result["response_buttons"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_choose_professional_from_browse_choice_lists_that_specialtys_professionals():
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="cleaning"),
+            make_professional(id_="prof-9", full_name="Dr. Otro", specialty_id="whitening"),
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CHOOSE_PROFESSIONAL_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
         },
     )
 
@@ -655,7 +687,7 @@ async def test_specialty_selection_by_name_also_works():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
 
 
@@ -721,15 +753,19 @@ async def test_stale_button_during_specialty_selection_is_treated_as_unrecognize
 
 
 @pytest.mark.asyncio
-async def test_specialty_with_no_professionals_dead_ends_gracefully():
+async def test_choosing_professional_with_none_for_that_specialty_dead_ends_gracefully():
+    # The specialty pick itself no longer checks for professionals — that
+    # only matters once the patient actually asks to see them (tapping
+    # "Elegir profesional" from the browse-choice screen).
     node, conversation_repository, _ = await _make_node_and_conversation(professionals=[])
     state = make_agent_state(
         conversation_id="conv-1",
-        user_message="1",
+        button_payload=CHOOSE_PROFESSIONAL_PAYLOAD,
         collected_data={
-            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "stage": STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
             "operation": CREATE_APPOINTMENT_ACTION,
-            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
         },
     )
 
@@ -3053,8 +3089,14 @@ async def test_decision_node_attribution_never_replaces_the_public_stage_cursor(
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    for internal_name in ("choose_specialty", "choose_professional", "search_availability"):
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    for internal_name in (
+        "choose_specialty",
+        "choose_browse_mode",
+        "choose_professional",
+        "search_availability",
+        "search_availability_any_professional",
+    ):
         assert result["collected_data"]["stage"] != internal_name
 
 
