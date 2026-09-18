@@ -119,10 +119,11 @@ def _due_action(
 
 
 @pytest.mark.asyncio
-async def test_conversation_idle_reset_in_agent_mode_rotates_and_sends_welcome_menu():
-    # The patient's own ask: after a couple of hours of total silence, the
-    # next thing the conversation sees is the welcome menu on a fresh
-    # workflow generation — not a silent continuation of the old thread.
+async def test_conversation_idle_reset_in_agent_mode_rotates_silently():
+    # Revised per the user's own explicit ask: this used to also send the
+    # welcome menu proactively — now it ONLY retires the stuck workflow
+    # generation server-side, with no message of any kind. The patient
+    # only sees a fresh start once they write again.
     conversation_repository = make_conversation_repository()
     await conversation_repository.save(make_conversation(mode="agent"))
     contact_repository = make_contact_repository()
@@ -149,7 +150,11 @@ async def test_conversation_idle_reset_in_agent_mode_rotates_and_sends_welcome_m
     conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert conversation is not None
     assert conversation.workflow_session_generation == 2
-    assert len(messaging_gateway.sent_lists) == 1
+    assert messaging_gateway.sent_lists == []
+    assert messaging_gateway.sent_messages == []
+    assert await message_repository.get_recent_by_conversation_id(
+        ConversationId("ycloud-+5491122334455"), limit=10
+    ) == []
     action = await scheduled_action_repository.get_by_id("action-1")
     assert action is not None
     assert action.status == "executed"
