@@ -151,6 +151,12 @@ STAGE_AWAITING_OPERATION_SELECTION = "awaiting_operation_selection"
 #: `FREE_INPUT` (PRD.md §24.2 reserves button-only input for selections
 #: and confirmations that mutate something).
 STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
+#: Mirrors `app.agent.appointment_decision_subgraph.STAGE_AWAITING_
+#: SPECIALTY_BROWSE_CHOICE` — same one-way-dependency duplication this
+#: module already keeps for the specialty/professional/slot stages above
+#: and below. Subgraph-owned only, never set by legacy code (create-flow
+#: only — reschedule never reaches specialty selection at all).
+STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE = "awaiting_specialty_browse_choice"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
 #: Reached from `STAGE_AWAITING_IDENTIFICATION` only when `identify_patient`
@@ -3355,9 +3361,15 @@ def create_appointment_node(
         if stage == STAGE_AWAITING_SPECIALTY_SELECTION:
             # Fully owned by `app.agent.appointment_decision_subgraph` (PR 2)
             # — offering, pagination (`LIST_MORE`/`LIST_BACK`), valid/invalid/
-            # stale `SPECIALTY:` resolution, and the professional-list handoff
-            # on a valid choice. See `should_use_appointment_decision_subgraph`'s
+            # stale `SPECIALTY:` resolution, and the browse-choice handoff on
+            # a valid choice. See `should_use_appointment_decision_subgraph`'s
             # own docstring for the rollback point.
+            return await _delegate_to_decision_subgraph(state, collected_data)
+
+        if stage == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE:
+            # Fully owned by `app.agent.appointment_decision_subgraph` — the
+            # "ver próximos turnos vs elegir profesional" screen a valid
+            # specialty choice now lands on.
             return await _delegate_to_decision_subgraph(state, collected_data)
 
         if stage == STAGE_AWAITING_PROFESSIONAL_SELECTION:

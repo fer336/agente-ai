@@ -6,6 +6,7 @@ import pytest
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
+    STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
     STAGE_AWAITING_SPECIALTY_SELECTION,
 )
 from app.domain.value_objects.menu_payloads import (
@@ -179,7 +180,11 @@ async def test_professional_selection_by_row_id_advances_the_flow():
 
 
 @pytest.mark.asyncio
-async def test_specialty_row_tap_advances_to_professionals():
+async def test_specialty_row_tap_advances_to_the_browse_choice_screen():
+    # A valid specialty pick now lands on "ver próximos turnos vs elegir
+    # profesional" — see tests/unit/agent/test_appointment_decision_subgraph.py
+    # for the dedicated coverage of reaching the professional list FROM
+    # that screen (tapping "Elegir profesional").
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
@@ -196,7 +201,7 @@ async def test_specialty_row_tap_advances_to_professionals():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
     assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
 
 

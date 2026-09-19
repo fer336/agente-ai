@@ -58,3 +58,12 @@ LIST_BACK_PAYLOAD = "LIST_BACK"
 #: `button_payload` by `webhook_parser.py`).
 SPECIALTY_PAYLOAD_PREFIX = "SPECIALTY:"
 PROFESSIONAL_PAYLOAD_PREFIX = "PROFESSIONAL:"
+
+#: The post-specialty "how do you want to pick a slot" screen (this
+#: change, PRD.md has no section for it — most patients are new and don't
+#: know any professional by name). A third way out of that same screen
+#: ("otra especialidad") deliberately reuses `LIST_BACK_PAYLOAD` rather
+#: than getting its own id — it means the same thing ("pop one level up")
+#: that payload already means everywhere else in this flow.
+BROWSE_SLOTS_PAYLOAD = "BROWSE_SLOTS"
+CHOOSE_PROFESSIONAL_PAYLOAD = "CHOOSE_PROFESSIONAL"
