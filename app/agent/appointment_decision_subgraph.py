@@ -104,20 +104,21 @@ _CREATE_APPOINTMENT_ACTION = "create_appointment"
 _SEARCH_WINDOW = timedelta(days=14)
 _MAX_SLOTS_SEARCHED = 27
 
-#: "Ver próximos turnos" (this change) — aggregates slots across several
-#: professionals of the chosen specialty instead of one. Sequential search
-#: across professionals (see `SearchAvailabilityAnyProfessionalUseCase`'s
-#: own docstring for why not parallel) means total request volume scales
-#: with `_AGGREGATE_MAX_PROFESSIONALS_ATTEMPTED`, not with the specialty's
-#: real professional count — worst case (every attempted professional has
-#: zero availability across the whole window) is
-#: `_AGGREGATE_MAX_PROFESSIONALS_ATTEMPTED * _AGGREGATE_SEARCH_WINDOW.days`
-#: sequential Dentalink requests (6 * 7 = 42 today). The window is
-#: narrower than the single-professional `_SEARCH_WINDOW` (14 days) on
-#: purpose: a patient asking for "the soonest slot, don't care who" cares
-#: about near-term availability, not two weeks out.
+#: "Ver próximos turnos" (this change) — aggregates slots across ALL
+#: enabled professionals of the chosen specialty instead of one. One
+#: Dentalink request per calendar day in the window (see
+#: `SearchAvailabilityAnyProfessionalUseCase`'s own docstring), so request
+#: volume scales with `_AGGREGATE_SEARCH_WINDOW.days`, not with the
+#: specialty's professional count — worst case is 7 sequential Dentalink
+#: requests today, regardless of how many professionals the specialty has.
+#: An earlier version of this use case looped one `search_availability`
+#: call PER professional and hit a live `429 Too Many Attempts` in
+#: production — fixed by walking by day instead (see the use case's
+#: docstring for the full incident). The window is narrower than the
+#: single-professional `_SEARCH_WINDOW` (14 days) on purpose: a patient
+#: asking for "the soonest slot, don't care who" cares about near-term
+#: availability, not two weeks out.
 _AGGREGATE_TARGET_SLOTS = 18
-_AGGREGATE_MAX_PROFESSIONALS_ATTEMPTED = 6
 _AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
@@ -629,7 +630,6 @@ def build_appointment_decision_graph(
             specialty_id=specialty_id,
             date_range=DateTimeRange(now, now + _AGGREGATE_SEARCH_WINDOW),
             target_slot_count=_AGGREGATE_TARGET_SLOTS,
-            max_professionals_attempted=_AGGREGATE_MAX_PROFESSIONALS_ATTEMPTED,
         )
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
