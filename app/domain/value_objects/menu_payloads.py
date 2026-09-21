@@ -59,11 +59,12 @@ LIST_BACK_PAYLOAD = "LIST_BACK"
 SPECIALTY_PAYLOAD_PREFIX = "SPECIALTY:"
 PROFESSIONAL_PAYLOAD_PREFIX = "PROFESSIONAL:"
 
-#: The post-specialty "how do you want to pick a slot" screen (this
-#: change, PRD.md has no section for it — most patients are new and don't
-#: know any professional by name). A third way out of that same screen
-#: ("otra especialidad") deliberately reuses `LIST_BACK_PAYLOAD` rather
-#: than getting its own id — it means the same thing ("pop one level up")
-#: that payload already means everywhere else in this flow.
-BROWSE_SLOTS_PAYLOAD = "BROWSE_SLOTS"
+#: Shown only when "ver próximos turnos" (a valid specialty pick now goes
+#: straight there, no intermediate screen — PRD.md has no section for it,
+#: most patients are new and don't know any professional by name) finds
+#: nothing to offer: lets the patient fall back to picking a specific
+#: professional's full agenda instead. "Otra especialidad", the other way
+#: out of that same fallback screen, deliberately reuses `LIST_BACK_PAYLOAD`
+#: rather than getting its own id — it means the same thing ("pop one level
+#: up") that payload already means everywhere else in this flow.
 CHOOSE_PROFESSIONAL_PAYLOAD = "CHOOSE_PROFESSIONAL"

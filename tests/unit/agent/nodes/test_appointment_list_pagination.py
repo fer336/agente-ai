@@ -6,7 +6,7 @@ import pytest
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
-    STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
+    STAGE_AWAITING_SLOT_SELECTION,
     STAGE_AWAITING_SPECIALTY_SELECTION,
 )
 from app.domain.value_objects.menu_payloads import (
@@ -17,7 +17,7 @@ from app.domain.value_objects.menu_payloads import (
 )
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.seed_objects import make_professional, make_specialty
-from tests.unit.agent.nodes.test_appointment_node import _make_node_and_conversation
+from tests.unit.agent.nodes.test_appointment_node import _future_slot, _make_node_and_conversation
 
 
 def _specialties(n: int) -> list:
@@ -180,14 +180,16 @@ async def test_professional_selection_by_row_id_advances_the_flow():
 
 
 @pytest.mark.asyncio
-async def test_specialty_row_tap_advances_to_the_browse_choice_screen():
-    # A valid specialty pick now lands on "ver próximos turnos vs elegir
-    # profesional" — see tests/unit/agent/test_appointment_decision_subgraph.py
-    # for the dedicated coverage of reaching the professional list FROM
-    # that screen (tapping "Elegir profesional").
+async def test_specialty_row_tap_advances_directly_to_the_slot_list():
+    # A valid specialty pick now lists its soonest slots across ALL
+    # enabled professionals directly — see
+    # tests/unit/agent/test_appointment_decision_subgraph.py for dedicated
+    # coverage of the no-availability fallback screen (tapping "Elegir
+    # profesional" instead) and of the aggregation itself.
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
+        available_slots=[_future_slot(professional_id="prof-1")],
     )
     state = make_agent_state(
         conversation_id="conv-1",
@@ -201,7 +203,7 @@ async def test_specialty_row_tap_advances_to_the_browse_choice_screen():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
 
 

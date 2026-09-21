@@ -611,10 +611,12 @@ async def test_legacy_specialty_and_professional_list_prompts_do_not_require_num
 
 
 @pytest.mark.asyncio
-async def test_specialty_selection_advances_to_the_browse_choice_screen():
-    # A valid specialty pick now lands on "ver próximos turnos vs elegir
-    # profesional" (this change — most patients are new and don't know a
-    # professional by name), not straight on the professional list.
+async def test_specialty_selection_advances_directly_to_the_slot_list():
+    # A valid specialty pick now lists its soonest slots across ALL
+    # enabled professionals directly (this change — most patients are new
+    # and don't know a professional by name, and doctor names/choice
+    # shouldn't appear at this point at all), not straight on the
+    # professional list.
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
         professionals=[
@@ -633,10 +635,11 @@ async def test_specialty_selection_advances_to_the_browse_choice_screen():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
-    assert result.get("response_list") is None
-    assert len(result["response_buttons"]) == 3
+    assert result["response_buttons"] is None
+    assert result["response_list"] is not None
+    assert "Dra. Laura Pérez" not in result["response_list"].rows[0].title
 
 
 @pytest.mark.asyncio
@@ -687,7 +690,7 @@ async def test_specialty_selection_by_name_also_works():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
 
 
@@ -3089,7 +3092,7 @@ async def test_decision_node_attribution_never_replaces_the_public_stage_cursor(
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     for internal_name in (
         "choose_specialty",
         "choose_browse_mode",
