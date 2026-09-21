@@ -42,12 +42,10 @@ from app.agent.nodes.appointment_selection import (
     current_page,
     decision_entry_node_for_stage,
     next_page,
-    professional_surname,
     resolve_list_choice,
     slot_by_id,
     slot_payload_id,
     slots_list_message,
-    slots_list_message_multi_professional,
     text_leaks_a_name,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
@@ -74,7 +72,6 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.menu_payloads import (
-    BROWSE_SLOTS_PAYLOAD,
     CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -104,21 +101,23 @@ _CREATE_APPOINTMENT_ACTION = "create_appointment"
 _SEARCH_WINDOW = timedelta(days=14)
 _MAX_SLOTS_SEARCHED = 27
 
-#: "Ver próximos turnos" (this change) — aggregates slots across ALL
-#: enabled professionals of the chosen specialty instead of one. One
-#: Dentalink request per calendar day in the window (see
-#: `SearchAvailabilityAnyProfessionalUseCase`'s own docstring), so request
-#: volume scales with `_AGGREGATE_SEARCH_WINDOW.days`, not with the
-#: specialty's professional count — worst case is 7 sequential Dentalink
-#: requests today, regardless of how many professionals the specialty has.
-#: An earlier version of this use case looped one `search_availability`
-#: call PER professional and hit a live `429 Too Many Attempts` in
-#: production — fixed by walking by day instead (see the use case's
-#: docstring for the full incident). The window is narrower than the
-#: single-professional `_SEARCH_WINDOW` (14 days) on purpose: a patient
-#: asking for "the soonest slot, don't care who" cares about near-term
-#: availability, not two weeks out.
-_AGGREGATE_TARGET_SLOTS = 18
+#: A valid specialty pick goes straight here now (the user's own ask: most
+#: patients are new and don't know any professional by name, and doctor
+#: names/choice shouldn't appear in the slot-picking list at all — only
+#: date/day/time). Aggregates slots across ALL enabled professionals of
+#: the chosen specialty. One Dentalink request per calendar day in the
+#: window (see `SearchAvailabilityAnyProfessionalUseCase`'s own
+#: docstring), so request volume scales with `_AGGREGATE_SEARCH_WINDOW.days`,
+#: not with the specialty's professional count — worst case is 7
+#: sequential Dentalink requests today, regardless of how many
+#: professionals the specialty has. An earlier version of this use case
+#: looped one `search_availability` call PER professional and hit a live
+#: `429 Too Many Attempts` in production — fixed by walking by day instead
+#: (see the use case's docstring for the full incident). The window is
+#: narrower than the single-professional `_SEARCH_WINDOW` (14 days) on
+#: purpose: a patient asking for "the soonest slot, don't care who" cares
+#: about near-term availability, not two weeks out.
+_AGGREGATE_TARGET_SLOTS = 15
 _AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
@@ -137,27 +136,21 @@ _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
     "Querés que te comunique con administración?"
 )
-#: "Ver próximos turnos" screen (this change) — every button title here
-#: stays under `InteractiveButton`'s 20-char cap.
-_CHOOSE_BROWSE_MODE_PROMPT = (
-    "Puedo mostrarte los próximos turnos disponibles con cualquier profesional, o "
-    "podés elegir con quién atenderte. Vos decidís:"
+#: Fallback screen shown only when the aggregated "ver próximos turnos"
+#: search finds nothing (see `_offer_any_professional_slots`) — every
+#: button title here stays under `InteractiveButton`'s 20-char cap.
+_NO_SLOTS_FALLBACK_PROMPT = (
+    "No encontramos turnos próximos con ningún profesional de esa especialidad. "
+    "Podés elegir un profesional puntual para ver su agenda completa, o cambiar "
+    "de especialidad:"
 )
-_BROWSE_MODE_REMINDER = (
-    "Por favor, elegí una opción tocando un botón: ver los próximos turnos, elegir "
-    "profesional, u otra especialidad."
+_NO_SLOTS_FALLBACK_REMINDER = (
+    "Por favor, elegí una opción tocando un botón: elegir profesional, u otra "
+    "especialidad."
 )
-_NO_SLOTS_ANY_PROFESSIONAL_MESSAGE = (
-    "No encontramos horarios próximos con ningún profesional de esa especialidad. "
-    "¿Querés elegir un profesional para ver su agenda completa?"
-)
-_BROWSE_MODE_BUTTONS = [
-    InteractiveButton(id=BROWSE_SLOTS_PAYLOAD, title="Ver próximos turnos"),
+_NO_SLOTS_FALLBACK_BUTTONS = [
     InteractiveButton(id=CHOOSE_PROFESSIONAL_PAYLOAD, title="Elegir profesional"),
     InteractiveButton(id=LIST_BACK_PAYLOAD, title="Otra especialidad"),
-]
-_CHOOSE_PROFESSIONAL_ONLY_BUTTON = [
-    InteractiveButton(id=CHOOSE_PROFESSIONAL_PAYLOAD, title="Elegir profesional"),
 ]
 
 _CHOOSE_PROFESSIONAL_PROMPT = (
@@ -246,7 +239,6 @@ class AppointmentDecisionState(TypedDict, total=False):
         "choose_browse_mode",
         "choose_professional",
         "search_availability",
-        "search_availability_any_professional",
         "choose_slot",
         "end",
         "legacy_exit",
@@ -512,11 +504,12 @@ def build_appointment_decision_graph(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object]:
-        """The patient's own ask, via the user (most patients are new and
-        don't know any professional by name): a valid specialty pick no
-        longer forces choosing a professional next — it offers this
-        3-button screen instead ("ver próximos turnos" / "elegir
-        profesional" / "otra especialidad")."""
+        """Fallback screen shown only when the aggregated "ver próximos
+        turnos" search (`_offer_any_professional_slots`) finds nothing for
+        the specialty in the window: lets the patient pick a specific
+        professional's full agenda instead, or go back to choose a
+        different specialty. Also re-shown verbatim by `choose_browse_mode`
+        when the patient's next reply isn't one of these 2 buttons."""
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         text = await generate_or_fallback(
             llm_provider,
@@ -524,22 +517,22 @@ def build_appointment_decision_graph(
             "choose_browse_mode",
             {
                 "situacion": (
-                    "El paciente ya eligió especialidad; hay que preguntarle si quiere "
-                    "ver los próximos turnos con cualquier profesional o prefiere elegir "
-                    "con quién atenderse."
+                    "No encontramos turnos próximos con ningún profesional de esa "
+                    "especialidad; hay que ofrecerle elegir un profesional puntual para "
+                    "ver su agenda completa, o cambiar de especialidad."
                 ),
                 "instruccion": (
-                    "Le vamos a mostrar 3 botones debajo de tu mensaje — no los repitas "
+                    "Le vamos a mostrar 2 botones debajo de tu mensaje — no los repitas "
                     "en el texto, solo planteá la pregunta."
                 ),
             },
-            _CHOOSE_BROWSE_MODE_PROMPT,
+            _NO_SLOTS_FALLBACK_PROMPT,
             recent_messages,
             contact_memory,
         )
         return {
             "response_text": text,
-            "response_buttons": _BROWSE_MODE_BUTTONS,
+            "response_buttons": _NO_SLOTS_FALLBACK_BUTTONS,
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
@@ -583,13 +576,6 @@ def build_appointment_decision_graph(
                 conversation_id, specialty_id, specialty_name, collected_data,
                 recent_messages, contact_memory,
             )
-        if button_payload == BROWSE_SLOTS_PAYLOAD:
-            return {
-                "collected_data": collected_data,
-                "next_node": "search_availability_any_professional",
-                "decision_node": "choose_browse_mode",
-                "exit_reason": "none",
-            }
 
         reminder_text = await generate_or_fallback(
             llm_provider,
@@ -598,19 +584,19 @@ def build_appointment_decision_graph(
             {
                 "situacion": (
                     "El paciente escribió texto libre o tocó algo inválido en este paso; "
-                    "solo puede elegir tocando uno de los 3 botones."
+                    "solo puede elegir tocando uno de los 2 botones."
                 ),
                 "instruccion": (
                     "Pedile que toque uno de los botones — no los repitas en el texto."
                 ),
             },
-            _BROWSE_MODE_REMINDER,
+            _NO_SLOTS_FALLBACK_REMINDER,
             recent_messages,
             contact_memory,
         )
         return {
             "response_text": reminder_text,
-            "response_buttons": _BROWSE_MODE_BUTTONS,
+            "response_buttons": _NO_SLOTS_FALLBACK_BUTTONS,
             "requires_handoff": False,
             "next_node": "end",
             "decision_node": "choose_browse_mode",
@@ -632,39 +618,11 @@ def build_appointment_decision_graph(
             target_slot_count=_AGGREGATE_TARGET_SLOTS,
         )
         if not slots:
-            await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_slots_any_professional",
-                {
-                    "situacion": (
-                        "No hay horarios próximos con ningún profesional de esa "
-                        "especialidad; ofrecele elegir un profesional para ver su "
-                        "agenda completa."
-                    ),
-                },
-                _NO_SLOTS_ANY_PROFESSIONAL_MESSAGE,
-                recent_messages,
-                contact_memory,
+            return await _offer_browse_choice(
+                conversation_id, specialty_id, specialty_name, collected_data,
+                recent_messages, contact_memory,
             )
-            return {
-                "response_text": text,
-                "response_buttons": _CHOOSE_PROFESSIONAL_ONLY_BUTTON,
-                "requires_handoff": False,
-                "collected_data": {
-                    **collected_data,
-                    "stage": STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
-                },
-                "next_node": "end",
-                "decision_node": "search_availability_any_professional",
-                "exit_reason": "none",
-            }
 
-        professional_surnames = {
-            professional_id: professional_surname(name)
-            for professional_id, name in professional_names.items()
-        }
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         text = await generate_or_fallback(
             llm_provider,
@@ -672,12 +630,13 @@ def build_appointment_decision_graph(
             "choose_slot",
             {
                 "situacion": (
-                    "Hay horarios disponibles con varios profesionales y hay que "
-                    "invitar al paciente a elegir uno."
+                    "Hay horarios disponibles y hay que invitar al paciente a elegir uno."
                 ),
                 "instruccion": (
                     "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno."
+                    "los menciones ni los repitas, y NO nombres ningún profesional: el "
+                    "paciente todavía no eligió con quién atenderse, eso se confirma "
+                    "recién después de elegir un horario."
                 ),
             },
             _CHOOSE_SLOT_PROMPT,
@@ -689,42 +648,22 @@ def build_appointment_decision_graph(
         return {
             "response_text": text,
             "response_buttons": None,
-            "response_list": slots_list_message_multi_professional(
-                slots, professional_surnames, page=0, include_back=True
-            ),
+            "response_list": slots_list_message(slots, page=0, include_back=True),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
                 **collected_data,
                 "stage": "awaiting_slot_selection",
+                "chosen_specialty_id": specialty_id,
+                "chosen_specialty_name": specialty_name,
                 "available_slots": slots,
                 "professional_names": professional_names,
                 "slots_page": 0,
-                "slots_multi_professional": True,
             },
             "next_node": "end",
             "decision_node": "search_availability_any_professional",
             "exit_reason": "none",
         }
-
-    async def search_availability_any_professional_node(
-        state: AppointmentDecisionState,
-    ) -> dict[str, object]:
-        collected_data = dict(state.get("collected_data", {}))
-        conversation_id = ConversationId(state["conversation_id"])
-        specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
-        recent_messages = state.get("recent_messages", [])
-        contact_memory = state.get("contact_memory_summary")
-
-        if specialty_id is None:
-            return await _offer_specialties(
-                conversation_id, collected_data, recent_messages, contact_memory
-            )
-        specialty_name = str(collected_data.get("chosen_specialty_name", "esa especialidad"))
-        return await _offer_any_professional_slots(
-            conversation_id, specialty_id, specialty_name, collected_data,
-            recent_messages, contact_memory,
-        )
 
     async def route_entry(state: AppointmentDecisionState) -> dict[str, object]:
         collected_data = state.get("collected_data", {})
@@ -859,14 +798,13 @@ def build_appointment_decision_graph(
             }
 
         chosen = options[index]
-        # A valid specialty selection renders the "ver próximos turnos vs
-        # elegir profesional" choice screen in the SAME turn (this change —
-        # most patients are new and don't know any professional by name),
-        # rather than re-entering the dual-purpose `choose_browse_mode`
-        # node — that node's own "no specialty yet" signal means something
-        # different (a stale/corrupted checkpoint), so it cannot double as
-        # "just chosen".
-        return await _offer_browse_choice(
+        # A valid specialty selection searches and lists its soonest slots
+        # across ALL enabled professionals in the SAME turn (this change —
+        # most patients are new and don't know any professional by name, so
+        # forcing that pick before showing a single available slot was pure
+        # friction for them; the professional is auto-assigned from
+        # whichever slot the patient ends up picking).
+        return await _offer_any_professional_slots(
             conversation_id, chosen.id, chosen.name, collected_data, recent_messages, contact_memory
         )
 
@@ -1129,29 +1067,6 @@ def build_appointment_decision_graph(
         available_slots = cast(list[AppointmentSlot], collected_data.get("available_slots", []))
         button_payload = state.get("button_payload")
         conversation_id = ConversationId(state["conversation_id"])
-        # "Ver próximos turnos" (this change): a slot list aggregated
-        # across several professionals needs a different row format (which
-        # doctor owns each slot) and a different "volver atrás" target
-        # (back to the 3-button choice screen, not the professional list).
-        multi_professional = bool(collected_data.get("slots_multi_professional"))
-        professional_surnames = (
-            {
-                professional_id: professional_surname(name)
-                for professional_id, name in cast(
-                    dict[str, str], collected_data.get("professional_names", {})
-                ).items()
-            }
-            if multi_professional
-            else {}
-        )
-
-        def _current_slots_list_message(slots: list[AppointmentSlot], page: int) -> ListMessage:
-            if multi_professional:
-                return slots_list_message_multi_professional(
-                    slots, professional_surnames, page=page, include_back=True
-                )
-            return slots_list_message(slots, page=page, include_back=True)
-
         recent_messages = state.get("recent_messages", [])
         contact_memory = state.get("contact_memory_summary")
 
@@ -1178,7 +1093,9 @@ def build_appointment_decision_graph(
             return {
                 "response_text": more_text,
                 "response_buttons": None,
-                "response_list": _current_slots_list_message(available_slots, updated_page),
+                "response_list": slots_list_message(
+                    available_slots, page=updated_page, include_back=True
+                ),
                 "requires_handoff": False,
                 "collected_data": {**collected_data, "slots_page": updated_page},
                 "next_node": "end",
@@ -1191,11 +1108,12 @@ def build_appointment_decision_graph(
                 specialty_name = str(
                     collected_data.get("chosen_specialty_name", "esa especialidad")
                 )
-                if multi_professional:
-                    # Back from an aggregated "cualquier profesional" list
-                    # goes up to the 3-button choice screen, not the
-                    # professional list (there was never one shown).
-                    return await _offer_browse_choice(
+                professional_id = collected_data.get("chosen_professional_id")
+                if professional_id is not None:
+                    # A specific professional was chosen (the "elegir
+                    # profesional" fallback path) — back goes to their own
+                    # professional list.
+                    return await _offer_professionals(
                         conversation_id,
                         specialty_id,
                         specialty_name,
@@ -1203,11 +1121,12 @@ def build_appointment_decision_graph(
                         recent_messages,
                         contact_memory,
                     )
-                return await _offer_professionals(
+                # Aggregated "ver próximos turnos" list (no professional was
+                # ever chosen for it) — back goes up to specialty selection,
+                # there is no intermediate screen to return to.
+                return await _offer_specialties(
                     conversation_id,
-                    specialty_id,
-                    specialty_name,
-                    invalidate_from(collected_data, "professional"),
+                    invalidate_from(collected_data, "specialty"),
                     recent_messages,
                     contact_memory,
                 )
@@ -1274,7 +1193,7 @@ def build_appointment_decision_graph(
             return {
                 "response_text": message,
                 "response_buttons": None,
-                "response_list": _current_slots_list_message(available_slots, page),
+                "response_list": slots_list_message(available_slots, page=page, include_back=True),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",
@@ -1305,7 +1224,7 @@ def build_appointment_decision_graph(
             return {
                 "response_text": stale_slot_text,
                 "response_buttons": None,
-                "response_list": _current_slots_list_message(available_slots, page),
+                "response_list": slots_list_message(available_slots, page=page, include_back=True),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",
@@ -1337,13 +1256,6 @@ def build_appointment_decision_graph(
     def _route_after_professional(state: AppointmentDecisionState) -> str:
         return "search_availability" if state.get("next_node") == "search_availability" else END
 
-    def _route_after_browse_choice(state: AppointmentDecisionState) -> str:
-        return (
-            "search_availability_any_professional"
-            if state.get("next_node") == "search_availability_any_professional"
-            else END
-        )
-
     graph: StateGraph[
         AppointmentDecisionState, None, AppointmentDecisionState, AppointmentDecisionState
     ] = StateGraph(AppointmentDecisionState)
@@ -1353,12 +1265,6 @@ def build_appointment_decision_graph(
     graph.add_node("choose_professional", _traced("choose_professional", choose_professional))
     graph.add_node(
         "search_availability", _traced("search_availability", search_availability_node)
-    )
-    graph.add_node(
-        "search_availability_any_professional",
-        _traced(
-            "search_availability_any_professional", search_availability_any_professional_node
-        ),
     )
     graph.add_node("choose_slot", _traced("choose_slot", choose_slot))
 
@@ -1375,25 +1281,20 @@ def build_appointment_decision_graph(
         },
     )
     # `choose_specialty`'s valid-selection branch always calls
-    # `_offer_browse_choice` directly in the same turn (see its docstring
-    # comment above) and never returns `next_node="choose_browse_mode"`,
-    # so this edge is a plain unconditional exit, not a routing decision.
+    # `_offer_any_professional_slots` directly in the same turn (see its
+    # docstring comment above) and `choose_browse_mode` only ever renders
+    # its own fallback screen or inline-delegates to `_offer_professionals`/
+    # `_offer_specialties` — neither node ever returns a `next_node` that
+    # routes elsewhere, so both are plain unconditional exits, not routing
+    # decisions.
     graph.add_edge("choose_specialty", END)
-    graph.add_conditional_edges(
-        "choose_browse_mode",
-        _route_after_browse_choice,
-        {
-            "search_availability_any_professional": "search_availability_any_professional",
-            END: END,
-        },
-    )
+    graph.add_edge("choose_browse_mode", END)
     graph.add_conditional_edges(
         "choose_professional",
         _route_after_professional,
         {"search_availability": "search_availability", END: END},
     )
     graph.add_edge("search_availability", END)
-    graph.add_edge("search_availability_any_professional", END)
     graph.add_edge("choose_slot", END)
 
     return graph.compile()

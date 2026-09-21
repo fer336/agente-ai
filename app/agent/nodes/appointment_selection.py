@@ -59,10 +59,12 @@ SELECT_SLOT_PAYLOAD_PREFIX = "SELECT_SLOT:"
 #: values for its many other stage-dispatch branches; both are asserted
 #: equal by `tests/unit/agent/nodes/test_appointment_selection.py`.
 STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
-#: The post-specialty "ver próximos turnos vs elegir profesional" screen
-#: (this change — most patients are new and don't know any professional by
-#: name, so forcing that pick before showing a single available slot was
-#: pure friction for them).
+#: Fallback screen shown only when "ver próximos turnos" (a valid
+#: specialty pick goes straight there now — most patients are new and
+#: don't know any professional by name, so forcing that pick before
+#: showing a single available slot was pure friction for them) finds
+#: nothing to offer: lets the patient pick a specific professional's full
+#: agenda instead, or go back to choose a different specialty.
 STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE = "awaiting_specialty_browse_choice"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_SLOT_SELECTION = "awaiting_slot_selection"
@@ -249,68 +251,6 @@ def slots_list_message(
         button_label="Elegí horario",
         rows=slot_rows(slots, page, include_back),
         section_title="Horarios disponibles",
-    )
-
-
-def professional_surname(full_name: str) -> str:
-    """Last whitespace-separated token of a professional's name — a
-    deliberately lossy abbreviation (same "good enough for a 24-char row
-    title, not a legal identifier" tradeoff `professional_emoji` already
-    takes) so a slot row can fit "weekday + date + time + doctor" under
-    WhatsApp's row-title cap. Falls back to the raw name if it has no
-    whitespace at all (never raises)."""
-    parts = full_name.split()
-    return parts[-1] if parts else full_name
-
-
-def slot_rows_multi_professional(
-    slots: list[AppointmentSlot],
-    professional_surnames: dict[str, str],
-    page: int = 0,
-    include_back: bool = False,
-) -> list[ListRow]:
-    """Sibling of `slot_rows` for a slot list aggregated across MULTIPLE
-    professionals (PRD.md has no section for this — most patients are new
-    and don't know any professional by name, so this is what "ver próximos
-    turnos" without picking one first shows). Unlike `slot_rows`, every row
-    here needs to say WHICH doctor it belongs to, since two rows can share
-    the same date/time.
-
-    A separate function rather than a new parameter on `slot_rows` — the
-    single-professional path stays byte-for-byte unchanged, no behavior
-    risk to its own existing callers/tests.
-
-    Row format drops the clock emoji and abbreviates the weekday to 3
-    letters to make room: "Mié 17/09 14:30 Alvarez" — 23 chars for the
-    longest realistic case, 1 under `TITLE_MAX_CHARS`; `truncate_title`
-    still hard-caps anything longer.
-    """
-    rows = [
-        ListRow(
-            id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-            title=truncate_title(
-                f"{spanish_weekday(slot.time_range.start)[:3]} "
-                f"{slot.time_range.start.strftime('%d/%m %H:%M')} "
-                f"{professional_surnames.get(slot.professional_id, 'Profesional')}"
-            ),
-        )
-        for slot in slots
-    ]
-    return paginate_rows(rows, page, include_back)
-
-
-def slots_list_message_multi_professional(
-    slots: list[AppointmentSlot],
-    professional_surnames: dict[str, str],
-    page: int = 0,
-    include_back: bool = False,
-) -> ListMessage:
-    """Sibling of `slots_list_message` for the aggregated, any-professional
-    slot list — see `slot_rows_multi_professional`'s own docstring."""
-    return ListMessage(
-        button_label="Elegí horario",
-        rows=slot_rows_multi_professional(slots, professional_surnames, page, include_back),
-        section_title="Próximos turnos",
     )
 
 
