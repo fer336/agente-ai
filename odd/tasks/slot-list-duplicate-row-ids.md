@@ -63,7 +63,7 @@ The "soonest slots across all professionals" list must reach the patient on What
   - **(c) R3-stray-asyncio-mark-on-helper (SUGGESTION).** Removed the stray `@pytest.mark.asyncio` above the sync `_one_slot_for_the_queried_day` helper in `test_appointment_gateway.py`; the actual async test right below it already carries its own mark, so nothing needed re-adding.
   - Corrected the T4-era "pre-existing caveat" line above: it was this exact bug, introduced by T2, not pre-existing (T2 is what introduced the calendar-day-aligned windowing in the first place).
   - TDD: RED observed (3 failing tests total across (a)/(b): 2 behavioral RED, 1 RED via a missing `clinic_timezone` kwarg surfacing the plumbing gap) before implementation, GREEN after.
-  - Verification: `uv run pytest -q` — 1546 passed, 82 skipped, 5 failed (the same pre-existing failures noted above, confirmed unrelated). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files. Commit: see below.
+  - Verification: `uv run pytest -q` — 1546 passed, 82 skipped, 5 failed (the same pre-existing failures noted above, confirmed unrelated). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files. Commit: `d9b728d` fix(agent): align aggregated slot search to clinic-local calendar days.
 
 ## Next step
 Archive once the parent orchestrator reviews; the 5 pre-existing failing tests (DI/fake-gateway defaults, unrelated to this fix) are a separate, out-of-scope issue for the parent to triage.
