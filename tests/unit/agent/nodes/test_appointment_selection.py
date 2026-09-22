@@ -303,6 +303,23 @@ def test_slot_rows_titles_never_exceed_twenty_characters():
         assert len(row.title) <= 20
 
 
+def test_slot_rows_dedupes_slots_that_share_an_id_before_pagination():
+    # Last-line guard: even if a slot list somehow reaches this builder
+    # with two entries sharing an id (the gateway/use-case layers already
+    # dedupe, but this is the layer that actually turns ids into WhatsApp
+    # row ids), two rows must never share an id — WhatsApp rejects the
+    # whole list with [131009] Duplicated row id otherwise.
+    first = _future_slot(id_="dup-id", professional_id="prof-1")
+    duplicate = _future_slot(id_="dup-id", professional_id="prof-2")
+    other = _future_slot(id_="slot-other", professional_id="prof-1")
+
+    rows = slot_rows([first, duplicate, other])
+
+    ids = [row.id for row in rows]
+    assert ids == ["SELECT_SLOT:dup-id", "SELECT_SLOT:slot-other"]
+    assert len(ids) == len(set(ids))
+
+
 def test_slots_list_message_offers_more_than_three_slots():
     # Regression: slots used to render as reply buttons, capped at 3 by
     # WhatsApp — any 4th+ available slot simply never showed. A list

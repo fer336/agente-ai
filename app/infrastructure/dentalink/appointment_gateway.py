@@ -166,6 +166,15 @@ class DentalinkAppointmentGateway:
 
         async def _call() -> list[AppointmentSlot]:
             slots: list[AppointmentSlot] = []
+            # `slot_from_agenda` derives its id from professional + start —
+            # dedupe by id here, at the source, keeping the first
+            # occurrence: two raw agenda rows for the same
+            # professional/minute (a Dentalink glitch, or an overlapping
+            # re-query) must never both reach a caller, since that's
+            # exactly what makes WhatsApp reject an outbound list with
+            # `[131009] Duplicated row id`. This also makes `limit` below
+            # count real distinct slots, never raw duplicate rows.
+            seen_ids: set[str] = set()
             day = date_range.start.date()
             # `date_range` is a half-open [start, end) interval — if `end`
             # lands exactly at midnight, that day itself has no included
@@ -204,8 +213,12 @@ class DentalinkAppointmentGateway:
                         continue
                     if specialty_id is not None and slot.specialty_id != specialty_id:
                         continue
-                    if date_range.contains(slot.time_range.start):
-                        slots.append(slot)
+                    if not date_range.contains(slot.time_range.start):
+                        continue
+                    if slot.id in seen_ids:
+                        continue
+                    seen_ids.add(slot.id)
+                    slots.append(slot)
 
                 if limit is not None and len(slots) >= limit:
                     # One HTTP call per day: keep walking the window after

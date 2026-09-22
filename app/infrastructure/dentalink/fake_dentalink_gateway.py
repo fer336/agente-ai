@@ -30,13 +30,24 @@ class FakeDentalinkGateway:
         date_range: DateTimeRange,
         limit: int | None = None,
     ) -> list[AppointmentSlot]:
-        matches = [
-            slot
-            for slot in self._available_slots
-            if (specialty_id is None or slot.specialty_id == specialty_id)
-            and (professional_id is None or slot.professional_id == professional_id)
-            and date_range.contains(slot.time_range.start)
-        ]
+        # Dedupe by id, keeping the first occurrence — mirrors
+        # `DentalinkAppointmentGateway.search_availability`'s own dedupe,
+        # so a test built against this fake can't pass with a slot list
+        # the real gateway would collapse (or reject via WhatsApp's
+        # `[131009] Duplicated row id`).
+        matches: list[AppointmentSlot] = []
+        seen_ids: set[str] = set()
+        for slot in self._available_slots:
+            if specialty_id is not None and slot.specialty_id != specialty_id:
+                continue
+            if professional_id is not None and slot.professional_id != professional_id:
+                continue
+            if not date_range.contains(slot.time_range.start):
+                continue
+            if slot.id in seen_ids:
+                continue
+            seen_ids.add(slot.id)
+            matches.append(slot)
         return matches if limit is None else matches[:limit]
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:

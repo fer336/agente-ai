@@ -26,6 +26,29 @@ async def test_search_availability_filters_by_specialty_and_date_range():
 
 
 @pytest.mark.asyncio
+async def test_search_availability_dedupes_slots_that_share_an_id_keeping_the_first():
+    # Consistency with `DentalinkAppointmentGateway`, which now also
+    # dedupes by id at the source — the fake should behave the same way a
+    # test double stands in for, or a test built against the fake could
+    # pass while the real gateway would still reject the duplicate.
+    first = make_slot(
+        id_="dup-id", start=datetime(2026, 8, 1, 9, 0), end=datetime(2026, 8, 1, 9, 30)
+    )
+    duplicate = make_slot(
+        id_="dup-id", start=datetime(2026, 8, 1, 10, 0), end=datetime(2026, 8, 1, 10, 30)
+    )
+    gateway = make_dentalink_gateway(available_slots=[first, duplicate])
+
+    results = await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(datetime(2026, 8, 1, 0, 0), datetime(2026, 8, 2, 0, 0)),
+    )
+
+    assert results == [first]
+
+
+@pytest.mark.asyncio
 async def test_search_availability_returns_empty_list_when_no_slot_matches_professional():
     slot = make_slot(professional_id="prof-1")
     gateway = make_dentalink_gateway(available_slots=[slot])

@@ -232,18 +232,32 @@ def slot_rows(
     shows the abbreviated weekday, date and time (PRD requirement: patients
     must see "Mié 17/09 14:30", not just the date, so they never have to
     tap a row to find out what day it falls on), kept at or under
-    `_SLOT_ROW_TITLE_MAX_CHARS`."""
-    rows = [
-        ListRow(
-            id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-            title=truncate_title(
-                f"{_SLOT_ROW_CLOCK_EMOJI} {spanish_weekday(slot.time_range.start)[:3]} "
-                f"{slot.time_range.start.strftime('%d/%m %H:%M')}",
-                limit=_SLOT_ROW_TITLE_MAX_CHARS,
-            ),
+    `_SLOT_ROW_TITLE_MAX_CHARS`.
+
+    Last-line guard: deduped by row id (keeping the first occurrence)
+    BEFORE pagination, so a page's contents stay consistent even if two
+    input slots somehow share an id — the gateway and aggregated use case
+    already dedupe upstream, but this is the layer that actually turns an
+    id into the WhatsApp row id WhatsApp rejects a duplicate of
+    (`[131009] Duplicated row id`).
+    """
+    rows: list[ListRow] = []
+    seen_row_ids: set[str] = set()
+    for slot in slots:
+        row_id = f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}"
+        if row_id in seen_row_ids:
+            continue
+        seen_row_ids.add(row_id)
+        rows.append(
+            ListRow(
+                id=row_id,
+                title=truncate_title(
+                    f"{_SLOT_ROW_CLOCK_EMOJI} {spanish_weekday(slot.time_range.start)[:3]} "
+                    f"{slot.time_range.start.strftime('%d/%m %H:%M')}",
+                    limit=_SLOT_ROW_TITLE_MAX_CHARS,
+                ),
+            )
         )
-        for slot in slots
-    ]
     return paginate_rows(rows, page, include_back)
 
 
