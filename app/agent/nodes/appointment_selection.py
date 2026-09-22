@@ -217,20 +217,29 @@ def format_slot_option(slot: AppointmentSlot, professional_names: dict[str, str]
 #: only ever needs to tell two same-professional slots apart by date/time.
 _SLOT_ROW_CLOCK_EMOJI = "🕐"
 
+#: Slot rows use a tighter cap than `paginated_list.TITLE_MAX_CHARS` (24):
+#: WhatsApp rejected a real outbound list with `[131009]`, and the fix
+#: settled on 20 chars for this specific row shape. The abbreviated
+#: (3-letter) weekday below is what makes "🕐 Mié 24/09 14:30" (17 chars)
+#: fit comfortably under it while still showing weekday + date + time.
+_SLOT_ROW_TITLE_MAX_CHARS = 20
+
 
 def slot_rows(
     slots: list[AppointmentSlot], page: int = 0, include_back: bool = False
 ) -> list[ListRow]:
     """Builds the paginated rows for the available-slots screen — each row
-    shows the weekday name, date and time (PRD requirement: patients must
-    see "Martes 17/09 14:30", not just the date, so they never have to
-    tap a row to find out what day it falls on)."""
+    shows the abbreviated weekday, date and time (PRD requirement: patients
+    must see "Mié 17/09 14:30", not just the date, so they never have to
+    tap a row to find out what day it falls on), kept at or under
+    `_SLOT_ROW_TITLE_MAX_CHARS`."""
     rows = [
         ListRow(
             id=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
             title=truncate_title(
-                f"{_SLOT_ROW_CLOCK_EMOJI} {spanish_weekday(slot.time_range.start)} "
-                f"{slot.time_range.start.strftime('%d/%m %H:%M')}"
+                f"{_SLOT_ROW_CLOCK_EMOJI} {spanish_weekday(slot.time_range.start)[:3]} "
+                f"{slot.time_range.start.strftime('%d/%m %H:%M')}",
+                limit=_SLOT_ROW_TITLE_MAX_CHARS,
             ),
         )
         for slot in slots

@@ -271,10 +271,36 @@ def test_slot_rows_keep_the_payload_format_and_a_clock_emoji_title():
 
     assert len(rows) == 1
     assert rows[0].id == "SELECT_SLOT:slot-42"
+    # Abbreviated (3-letter) weekday, not the full name — see
+    # `test_slot_rows_titles_never_exceed_twenty_characters` below for why.
     assert rows[0].title == (
-        f"🕐 {spanish_weekday(slot.time_range.start)} "
+        f"🕐 {spanish_weekday(slot.time_range.start)[:3]} "
         f"{slot.time_range.start.strftime('%d/%m %H:%M')}"
     )
+
+
+def test_slot_rows_titles_never_exceed_twenty_characters():
+    # Regression: WhatsApp rejects a row title over its real cap; slot rows
+    # specifically must stay at or under 20 chars (tighter than the 24-char
+    # `TITLE_MAX_CHARS` other lists use) while still showing weekday, date
+    # and time, e.g. "🕐 Mié 24/09 14:30".
+    now = datetime.now(UTC)
+    slots = [
+        AppointmentSlot(
+            id=f"slot-{i}",
+            professional_id="prof-1",
+            specialty_id="cleaning",
+            time_range=DateTimeRange(
+                now + timedelta(days=i + 1), now + timedelta(days=i + 1, hours=1)
+            ),
+        )
+        for i in range(7)  # one per weekday
+    ]
+
+    rows = slot_rows(slots)
+
+    for row in rows:
+        assert len(row.title) <= 20
 
 
 def test_slots_list_message_offers_more_than_three_slots():
