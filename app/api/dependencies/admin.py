@@ -12,6 +12,7 @@ from app.application.admin.run_queries import RunQueryService
 from app.application.conversations.reset_conversation import ResetConversationUseCase
 from app.application.memory.memory_service import MemoryService
 from app.config.settings import Settings, get_settings
+from app.domain.repositories.admin_audit_log_repository import AdminAuditLogRepository
 from app.infrastructure.database.repositories.admin_audit_log_repository import (
     SqlAlchemyAdminAuditLogRepository,
 )
@@ -35,6 +36,16 @@ from app.infrastructure.database.repositories.node_execution_repository import (
 from app.infrastructure.database.repositories.tool_execution_repository import (
     SqlAlchemyToolExecutionRepository,
 )
+
+
+def get_committing_admin_audit_log_repository(
+    session: AsyncSession = Depends(get_committing_db_session),
+) -> AdminAuditLogRepository:
+    """Mirrors `get_committing_error_query_service`'s shape — a fresh,
+    committing-session-backed repository per mutating request, so an
+    audit-log write actually survives past the request that made it.
+    """
+    return SqlAlchemyAdminAuditLogRepository(session)
 
 
 def get_authenticate_admin_use_case(

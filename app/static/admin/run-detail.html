@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ejecución — Admin</title>
   <link rel="stylesheet" href="/admin/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 </head>
 <body>
   <header class="topbar">
     <nav>
       <a href="/admin/conversations">Conversaciones</a>
       <a href="/admin/errors">Errores</a>
+      <a href="/admin/llm-config">Configuración LLM</a>
     </nav>
     <div class="who">
       <span id="who-label"></span>
@@ -21,6 +23,7 @@
     <div id="content"><p class="muted">Cargando…</p></div>
   </main>
   <script src="/admin/static/app.js"></script>
+  <script src="/admin/static/graph-view.js"></script>
   <script>
     (async () => {
       const me = await ADMIN.requireAuth();
@@ -31,33 +34,31 @@
       const agentRunId = decodeURIComponent(pathParts[pathParts.length - 1]);
       const content = document.getElementById("content");
 
-      const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(agentRunId)}`);
-      if (!response.ok) {
-        content.innerHTML = `<p class="empty-state">No se encontró la ejecución.</p>`;
-        return;
+      async function loadRun() {
+        const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(agentRunId)}`);
+        if (!response.ok) {
+          content.innerHTML = `<p class="empty-state">No se encontró la ejecución.</p>`;
+          return null;
+        }
+        return response.json();
       }
-      const detail = await response.json();
-      const run = detail.agent_run;
 
-      const nodesHtml = detail.node_executions.length
-        ? detail.node_executions
-            .map((node) => {
-              const ok = node.status !== "failed";
-              return `
-                <div class="trace-step">
-                  <span class="mark ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>
-                  <span>${ADMIN.escapeHtml(node.node_name)}</span>
-                  <span class="muted">(${node.duration_ms}ms)</span>
-                  ${
-                    node.error_id
-                      ? `<a class="link" href="/admin/errors/${encodeURIComponent(node.error_id)}">ver error</a>`
-                      : ""
-                  }
-                </div>
-              `;
-            })
-            .join("")
-        : '<p class="muted">Sin nodos registrados.</p>';
+      async function refreshGraph() {
+        const detail = await loadRun();
+        if (!detail) return;
+        await AdminGraph.render(
+          document.getElementById("graph-container"),
+          detail.node_executions,
+          (execution) => {
+            document.getElementById("graph-detail").innerHTML = AdminGraph.renderDetail(execution);
+          },
+          agentRunId
+        );
+      }
+
+      const detail = await loadRun();
+      if (!detail) return;
+      const run = detail.agent_run;
 
       const toolsHtml = detail.tool_executions.length
         ? detail.tool_executions
@@ -100,12 +101,23 @@
           </dl>
         </div>
 
-        <h2>Nodos ejecutados</h2>
-        <div class="card">${nodesHtml}</div>
+        <h2>Grafo del agente</h2>
+        <p class="muted">
+          El nodo "appointment" incluye varios pasos internos (elegir especialidad,
+          profesional, turno) que no se registran por separado.
+        </p>
+        <div id="graph-container" class="graph-container"><p class="muted">Cargando…</p></div>
+        <h2>Detalle del nodo</h2>
+        <div id="graph-detail" class="card">
+          <p class="muted">Seleccioná un nodo ejecutado para ver el detalle.</p>
+        </div>
 
         <h2>Tools ejecutadas</h2>
         <div class="card">${toolsHtml}</div>
       `;
+
+      await refreshGraph();
+      AdminGraph.startPolling(refreshGraph, 10000);
     })();
   </script>
 </body>

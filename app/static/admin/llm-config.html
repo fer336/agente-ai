@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Configuración LLM — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors">Errores</a>
+      <a href="/admin/llm-config" class="active">Configuración LLM</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main>
+    <h1>Configuración del modelo y los prompts</h1>
+    <div id="content"><p class="muted">Cargando…</p></div>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script>
+    (async () => {
+      const me = await ADMIN.requireAuth();
+      document.getElementById("who-label").textContent = `${me.username} · ${me.role}`;
+      document.getElementById("logout-btn").addEventListener("click", ADMIN.logout);
+
+      const content = document.getElementById("content");
+
+      // Cosmetic only — the backend already 403s GET/PUT /llm-config for
+      // any role but ADMIN_TECHNICAL (PRD.md §74.3: never just hide a
+      // button). This just avoids showing a confusing 403 in the form.
+      if (me.role !== "ADMIN_TECHNICAL") {
+        content.innerHTML = '<p class="empty-state">No tenés permiso para ver esta sección.</p>';
+        return;
+      }
+
+      async function load() {
+        const response = await ADMIN.apiFetch("/llm-config");
+        if (!response.ok) {
+          content.innerHTML = '<p class="empty-state">No se pudo cargar la configuración.</p>';
+          return;
+        }
+        const config = await response.json();
+        content.innerHTML = `
+          <form class="card form-card" id="llm-config-form">
+            <label for="model">Modelo</label>
+            <input type="text" id="model" name="model" value="${ADMIN.escapeHtml(config.model)}" required />
+
+            <label for="temperature">Temperatura (0.0 a 2.0)</label>
+            <input type="number" id="temperature" name="temperature" step="0.1" min="0" max="2"
+                   value="${config.temperature}" required />
+
+            <label for="classify_intent_prompt">Prompt de clasificación de intención</label>
+            <p class="hint muted">No requiere placeholders.</p>
+            <textarea id="classify_intent_prompt" name="classify_intent_prompt" rows="6" required>${ADMIN.escapeHtml(config.classify_intent_prompt)}</textarea>
+
+            <label for="extract_information_prompt">Prompt de extracción de información</label>
+            <p class="hint muted">Debe incluir el placeholder <code>{required_fields}</code>.</p>
+            <textarea id="extract_information_prompt" name="extract_information_prompt" rows="6" required>${ADMIN.escapeHtml(config.extract_information_prompt)}</textarea>
+
+            <label for="generate_response_prompt">Prompt de generación de respuesta</label>
+            <p class="hint muted">Debe incluir los placeholders <code>{intent}</code> y <code>{collected_data}</code>.</p>
+            <textarea id="generate_response_prompt" name="generate_response_prompt" rows="10" required>${ADMIN.escapeHtml(config.generate_response_prompt)}</textarea>
+
+            <div class="error-text" id="form-error"></div>
+            <button type="submit" class="primary">Guardar</button>
+            <p class="muted" id="meta-line">Última modificación: ${ADMIN.formatDateTime(config.updated_at)} · ${ADMIN.escapeHtml(config.updated_by)}</p>
+          </form>
+        `;
+
+        document.getElementById("llm-config-form").addEventListener("submit", onSubmit);
+      }
+
+      async function onSubmit(event) {
+        event.preventDefault();
+        const errorEl = document.getElementById("form-error");
+        errorEl.textContent = "";
+
+        const form = event.target;
+        const body = {
+          model: form.model.value,
+          temperature: Number.parseFloat(form.temperature.value),
+          classify_intent_prompt: form.classify_intent_prompt.value,
+          extract_information_prompt: form.extract_information_prompt.value,
+          generate_response_prompt: form.generate_response_prompt.value,
+        };
+
+        const response = await ADMIN.apiFetch("/llm-config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          errorEl.textContent = (payload && payload.detail) || "No se pudo guardar la configuración.";
+          return;
+        }
+
+        await load();
+      }
+
+      await load();
+    })();
+  </script>
+</body>
+</html>

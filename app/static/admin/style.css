@@ -323,3 +323,49 @@ button:disabled {
   display: inline-block;
   margin-bottom: 12px;
 }
+
+.form-card label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 16px 0 4px;
+}
+
+.form-card label:first-child {
+  margin-top: 0;
+}
+
+.form-card .hint {
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+
+.form-card input[type="text"],
+.form-card input[type="number"],
+.form-card textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b0d11;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.form-card textarea {
+  resize: vertical;
+}
+
+.form-card button {
+  margin-top: 16px;
+}
+
+.graph-container {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}

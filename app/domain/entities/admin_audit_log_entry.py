@@ -9,6 +9,7 @@ LOGIN_FAILURE = "login_failure"
 VIEW_CONVERSATION = "view_conversation"
 VIEW_ERROR = "view_error"
 RESOLVE_ERROR = "resolve_error"
+LLM_CONFIG_UPDATED = "llm_config_updated"
 
 
 @dataclass
