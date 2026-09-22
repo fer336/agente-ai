@@ -230,7 +230,14 @@ async def test_get_run_detail_returns_node_and_tool_executions(
 ):
     fakes = _override_admin_dependencies
     await fakes.agent_runs.save(make_agent_run(id_="run-1"))
-    await fakes.node_executions.save(make_node_execution(id_="ne-1", agent_run_id="run-1"))
+    await fakes.node_executions.save(
+        make_node_execution(
+            id_="ne-1",
+            agent_run_id="run-1",
+            input_summary="intent=appointment button=yes",
+            output_summary="response_len=42",
+        )
+    )
     await fakes.tool_executions.save(make_tool_execution(id_="te-1", agent_run_id="run-1"))
 
     response = await _get("/admin/api/runs/run-1", cookies=_session_cookies(READ_ONLY))
@@ -239,6 +246,8 @@ async def test_get_run_detail_returns_node_and_tool_executions(
     body = response.json()
     assert body["agent_run"]["id"] == "run-1"
     assert [n["id"] for n in body["node_executions"]] == ["ne-1"]
+    assert body["node_executions"][0]["input_summary"] == "intent=appointment button=yes"
+    assert body["node_executions"][0]["output_summary"] == "response_len=42"
     assert [t["id"] for t in body["tool_executions"]] == ["te-1"]
 
 

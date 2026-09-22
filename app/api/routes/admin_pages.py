@@ -50,3 +50,8 @@ async def admin_error_detail_page(error_id: str) -> FileResponse:
 @router.get("/runs/{agent_run_id}")
 async def admin_run_detail_page(agent_run_id: str) -> FileResponse:
     return FileResponse(_STATIC_DIR / "run-detail.html")
+
+
+@router.get("/llm-config")
+async def admin_llm_config_page() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "llm-config.html")

@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Conversación — Admin</title>
   <link rel="stylesheet" href="/admin/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 </head>
 <body>
   <header class="topbar">
     <nav>
       <a href="/admin/conversations" class="active">Conversaciones</a>
       <a href="/admin/errors">Errores</a>
+      <a href="/admin/llm-config">Configuración LLM</a>
     </nav>
     <div class="who">
       <span id="who-label"></span>
@@ -22,6 +24,7 @@
     <div id="content"><p class="muted">Cargando…</p></div>
   </main>
   <script src="/admin/static/app.js"></script>
+  <script src="/admin/static/graph-view.js"></script>
   <script>
     (async () => {
       const me = await ADMIN.requireAuth();
@@ -32,32 +35,23 @@
       const conversationId = decodeURIComponent(pathParts[pathParts.length - 1]);
       const content = document.getElementById("content");
 
-      async function loadTrace(agentRunId, container) {
+      async function loadTrace(agentRunId, graphEl, detailEl, toolsEl) {
         const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(agentRunId)}`);
         if (!response.ok) {
-          container.innerHTML = `<p class="muted">No se pudo cargar la traza.</p>`;
+          graphEl.innerHTML = `<p class="muted">No se pudo cargar la traza.</p>`;
           return;
         }
         const detail = await response.json();
-        if (detail.node_executions.length === 0) {
-          container.innerHTML = `<p class="muted">Sin nodos registrados.</p>`;
-          return;
-        }
-        container.innerHTML = detail.node_executions
-          .map((node) => {
-            const ok = node.status !== "failed";
-            return `
-              <div class="trace-step">
-                <span class="mark ${ok ? "ok" : "fail"}">${ok ? "✓" : "✗"}</span>
-                <span>${ADMIN.escapeHtml(node.node_name)}</span>
-                <span class="muted">(${node.duration_ms}ms)</span>
-              </div>
-            `;
-          })
-          .join("");
-        if (detail.tool_executions.length > 0) {
-          container.innerHTML += `<h2>Tools ejecutadas</h2>` +
-            detail.tool_executions
+        await AdminGraph.render(
+          graphEl,
+          detail.node_executions,
+          (execution) => {
+            detailEl.innerHTML = AdminGraph.renderDetail(execution);
+          },
+          agentRunId
+        );
+        toolsEl.innerHTML = detail.tool_executions.length
+          ? detail.tool_executions
               .map(
                 (tool) => `
                   <div class="trace-step">
@@ -69,8 +63,19 @@
                   </div>
                 `
               )
-              .join("");
-        }
+              .join("")
+          : '<p class="muted">Sin tools registradas.</p>';
+      }
+
+      function loadAllTraces(detail) {
+        detail.agent_runs.forEach((run) => {
+          loadTrace(
+            run.id,
+            document.getElementById(`graph-${run.id}`),
+            document.getElementById(`graph-detail-${run.id}`),
+            document.getElementById(`tools-${run.id}`)
+          );
+        });
       }
 
       function renderMessage(message) {
@@ -97,13 +102,25 @@
         window.location.reload();
       }
 
-      const response = await ADMIN.apiFetch(`/conversations/${encodeURIComponent(conversationId)}`);
-      if (!response.ok) {
-        content.innerHTML = `<p class="empty-state">No se encontró la conversación.</p>`;
-        return;
-      }
-      const detail = await response.json();
+      // Rebuilds the whole view from a fresh fetch — used both for the
+      // initial load and every polling tick, so a brand-new agent_run
+      // (the next turn, which is exactly what polling exists to catch)
+      // gets its own card instead of silently having nowhere to render.
+      async function refreshAll() {
+        const response = await ADMIN.apiFetch(`/conversations/${encodeURIComponent(conversationId)}`);
+        if (!response.ok) {
+          content.innerHTML = `<p class="empty-state">No se encontró la conversación.</p>`;
+          return;
+        }
+        const detail = await response.json();
+        renderContent(detail);
+        loadAllTraces(detail);
 
+        const resetBtn = document.getElementById("reset-btn");
+        if (resetBtn) resetBtn.addEventListener("click", resetConversation);
+      }
+
+      function renderContent(detail) {
       const resetButton =
         me.role === "ADMIN_TECHNICAL"
           ? `<button class="danger" id="reset-btn">Reiniciar conversación</button>`
@@ -127,6 +144,10 @@
 
         <h2>Agent runs</h2>
         ${detail.agent_runs.length ? "" : '<p class="muted">Sin runs registrados.</p>'}
+        <p class="muted">
+          El nodo "appointment" incluye varios pasos internos (elegir especialidad,
+          profesional, turno) que no se registran por separado.
+        </p>
         ${detail.agent_runs
           .map(
             (run) => `
@@ -137,8 +158,13 @@
                   <div><dt>Iniciado</dt><dd>${ADMIN.formatDateTime(run.started_at)}</dd></div>
                   <div><dt>Trace ID</dt><dd><a class="link" href="/admin/runs/${encodeURIComponent(run.id)}">${ADMIN.escapeHtml(run.trace_id)}</a></dd></div>
                 </dl>
-                <h2>Traza</h2>
-                <div id="trace-${ADMIN.escapeHtml(run.id)}"><p class="muted">Cargando…</p></div>
+                <h2>Grafo del agente</h2>
+                <div id="graph-${run.id}" class="graph-container"><p class="muted">Cargando…</p></div>
+                <div id="graph-detail-${run.id}" class="card">
+                  <p class="muted">Seleccioná un nodo ejecutado para ver el detalle.</p>
+                </div>
+                <h2>Tools ejecutadas</h2>
+                <div id="tools-${run.id}"><p class="muted">Cargando…</p></div>
               </div>
             `
           )
@@ -161,13 +187,16 @@
           )
           .join("")}
       `;
+      }
 
-      detail.agent_runs.forEach((run) => {
-        loadTrace(run.id, document.getElementById(`trace-${run.id}`));
-      });
+      await refreshAll();
 
-      const resetBtn = document.getElementById("reset-btn");
-      if (resetBtn) resetBtn.addEventListener("click", resetConversation);
+      // Refetches the whole conversation and re-renders it every ~10s —
+      // catches a brand-new turn (agent_run) that happened since the
+      // last load, not just updates to runs already on screen. There is
+      // never anything new before a turn's whole trace commits at once
+      // anyway (see graph-view.js's own comment on startPolling).
+      AdminGraph.startPolling(refreshAll, 10000);
     })();
   </script>
 </body>

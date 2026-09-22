@@ -78,6 +78,8 @@ class NodeExecutionResponse(BaseModel):
     finished_at: datetime
     duration_ms: int
     error_id: str | None
+    input_summary: str
+    output_summary: str
 
 
 class ToolExecutionResponse(BaseModel):
