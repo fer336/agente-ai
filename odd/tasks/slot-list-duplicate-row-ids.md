@@ -49,7 +49,7 @@ The "soonest slots across all professionals" list must reach the patient on What
   4. `FakeDentalinkGateway.search_availability` updated to dedupe the same way, for test-fidelity with the real gateway.
   - A pre-existing test (`test_search_availability_stops_querying_once_it_has_enough_slots`) relied on its stub returning the exact same raw slot (same id) for every simulated day — that behavior was masking exactly this class of bug. Fixed the stub to vary the raw response per queried day (`_StubDentalinkClient` now supports a callable response) and kept the test's original intent (3 distinct days -> 3 distinct slots).
   - TDD: RED observed (4 failing tests: gateway never-duplicate, gateway limit-counts-deduped, fake-gateway dedupe, `slot_rows` dedupe) before implementation, GREEN after.
-  - Verification: `uv run pytest -q` — 1543 passed, 82 skipped, 5 failed (the same pre-existing failures noted above, confirmed unrelated). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files. Commit: see below.
+  - Verification: `uv run pytest -q` — 1543 passed, 82 skipped, 5 failed (the same pre-existing failures noted above, confirmed unrelated). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files. Commit: `f741cf7` fix(agent): dedupe slot ids on every path, not only the aggregated search.
 
 ## Next step
 Archive once the parent orchestrator reviews; the 5 pre-existing failing tests (DI/fake-gateway defaults, unrelated to this fix) are a separate, out-of-scope issue for the parent to triage.
