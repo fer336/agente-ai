@@ -132,6 +132,14 @@ _AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
 #: response from disappearing indefinitely when Dentalink is slow.
 _STAFFED_SPECIALTY_TIMEOUT = timedelta(seconds=8)
 
+#: Maximum time to wait for the specialty-catalog lookup `route_entry`'s
+#: `SPECIALTY:` reroute uses to validate a payload (see its own docstring
+#: comment). A sibling of `_STAFFED_SPECIALTY_TIMEOUT`, not a reuse of it:
+#: the two guard unrelated calls (this one gates `route_entry` itself,
+#: before any stage-specific node even runs), and keeping them separate
+#: lets either be tuned without touching the other.
+_SPECIALTY_REROUTE_TIMEOUT = timedelta(seconds=8)
+
 #: Mirrors the matching message constants in `app.agent.nodes.appointment` —
 #: only ever used by the specialty/professional/slot selection behavior
 #: this module now owns.
@@ -303,6 +311,33 @@ async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] |
             exc_info=exc,
         )
         return None
+
+
+async def _specialty_catalog_for_reroute_safe(
+    list_specialties: ListSpecialtiesUseCase,
+) -> list[Specialty] | None:
+    """Wrapper that applies a timeout to the specialty-catalog lookup
+    `route_entry`'s `SPECIALTY:` reroute uses to validate a payload.
+
+    Mirrors `_staffed_specialty_ids_safe`'s own shape/reasoning: without
+    this, a slow or failing gateway would fail the WHOLE turn here, where
+    an unrecognized payload at this stage never made an external call at
+    all before this reroute existed — it just took the stale/reminder
+    fallback. ``None`` on timeout/failure tells `route_entry` to fall
+    through to that exact same fallback, same as an unmatched id.
+    """
+    try:
+        return await asyncio.wait_for(
+            list_specialties.execute(), timeout=_SPECIALTY_REROUTE_TIMEOUT.total_seconds()
+        )
+    except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+        logger.warning(
+            "specialty_reroute_catalog_lookup failed or timed out; "
+            "falling back to stale/reminder handling",
+            exc_info=exc,
+        )
+        return None
+
 
 class _DecisionNode(Protocol):
     """Callable shape LangGraph's `StateGraph.add_node` expects for this
@@ -728,8 +763,10 @@ def build_appointment_decision_graph(
             and collected_data.get("rescheduling_appointment_id") is None
         ):
             requested_specialty_id = button_payload[len(SPECIALTY_PAYLOAD_PREFIX) :]
-            specialties = await list_specialties.execute()
-            if any(specialty.id == requested_specialty_id for specialty in specialties):
+            specialties = await _specialty_catalog_for_reroute_safe(list_specialties)
+            if specialties is not None and any(
+                specialty.id == requested_specialty_id for specialty in specialties
+            ):
                 # Valid: reroute to `choose_specialty` with the catalog
                 # repopulated (validated "the same way `choose_specialty`
                 # does" — its own `resolve_list_choice` match-by-id logic
@@ -747,8 +784,10 @@ def build_appointment_decision_graph(
                         "specialty_options": specialties,
                     },
                 }
-            # Unknown/invalid specialty id: fall through to `entry`'s own
-            # existing stale/reminder handling below, unchanged.
+            # Unknown/invalid specialty id, or the catalog lookup itself
+            # timed out/failed (`specialties is None`): fall through to
+            # `entry`'s own existing stale/reminder handling below,
+            # unchanged.
 
         if entry is None and stage is None:
             if collected_data.get("operation") == _CREATE_APPOINTMENT_ACTION:

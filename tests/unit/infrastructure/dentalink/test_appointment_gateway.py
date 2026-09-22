@@ -245,6 +245,31 @@ async def test_search_availability_derives_fecha_from_the_clinic_timezone_not_th
 
 
 @pytest.mark.asyncio
+async def test_search_availability_treats_a_naive_date_range_as_already_clinic_local():
+    # T7c: `astimezone()` on a NAIVE datetime silently interprets it as the
+    # HOST machine's own local time before converting — never correct
+    # here, since a naive datetime elsewhere in this codebase is always
+    # treated as already clinic-local (see `_parse_datetime`'s own
+    # docstring). A naive `date_range` must query `fecha` exactly as
+    # written, not shifted by whatever tz the host happens to be running
+    # in. `00:30` is deliberately close to midnight: under the old
+    # (buggy) `astimezone()`-on-naive behavior, a UTC host would shift it
+    # to the PREVIOUS day once "converted" to the clinic's UTC-3 offset.
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+    naive_range = DateTimeRange(datetime(2026, 9, 22, 0, 30), datetime(2026, 9, 22, 1, 0))
+
+    await gateway.search_availability(
+        specialty_id=None, professional_id=None, date_range=naive_range
+    )
+
+    assert len(client.get_calls) == 1
+    _, params = client.get_calls[0]
+    assert params is not None
+    assert json.loads(params["q"])["fecha"] == {"eq": "2026-09-22"}
+
+
+@pytest.mark.asyncio
 async def test_list_professionals_maps_dentistas_response():
     client = _StubDentalinkClient(
         get_responses={
