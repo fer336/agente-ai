@@ -7,7 +7,7 @@ endpoint — without tracking the returned id ourselves, every mirrored
 turn would spawn a new Chatwoot conversation instead of continuing the
 same thread.
 
-Revision ID: 0018_chatwoot_conversation_mapping
+Revision ID: 0018_chatwoot_mapping
 Revises: 0017_contacts_phone_unique
 Create Date: 2026-09-22
 
@@ -19,7 +19,16 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0018_chatwoot_conversation_mapping"
+#
+# Deliberately shorter than the filename/table name (matches the existing
+# 0014/0011 precedent) — `alembic_version.version_num` is `VARCHAR(32)` in
+# every environment this project has ever migrated (0001_base), and the
+# original `"0018_chatwoot_conversation_mapping"` (34 chars) exceeded that,
+# which `tests/integration/test_migrations.py`'s own regression test caught
+# in CI before this ever reached a real deploy (confirmed: production is
+# still on v0.34.0, pre-dating this migration entirely — the release
+# pipeline's `validate-and-test` gate did its job).
+revision: str = "0018_chatwoot_mapping"
 down_revision: str | None = "0017_contacts_phone_unique"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
