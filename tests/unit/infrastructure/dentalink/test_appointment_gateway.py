@@ -107,7 +107,9 @@ async def test_search_availability_issues_one_request_for_a_single_day_range():
         "fecha": {"eq": "2026-08-15"},
         "duracion": {"eq": "30"},
     }
-    assert [s.id for s in slots] == ["slot-1"]
+    # The id is derived from professional + start, not the raw agenda
+    # `id` — see `slot_from_agenda`'s own docstring comment.
+    assert [s.id for s in slots] == ["626-202608151530"]
 
 
 @pytest.mark.asyncio
@@ -142,7 +144,9 @@ async def test_search_availability_skips_an_unparseable_slot_instead_of_losing_t
         date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
     )
 
-    assert [s.id for s in slots] == ["good"]
+    # The id is derived from professional + start, not the raw agenda
+    # `id` — see `slot_from_agenda`'s own docstring comment.
+    assert [s.id for s in slots] == ["626-202608151530"]
 
 
 @pytest.mark.asyncio

@@ -79,9 +79,19 @@ def slot_from_agenda(
     duration_minutes = int(str(raw.get("duracion", default_duration_minutes)))
     end = start + timedelta(minutes=duration_minutes)
 
-    slot_id = raw.get("id", f"{professional_id}-{start.isoformat()}")
+    # Deliberately NEVER the raw agenda `id` — confirmed live, WhatsApp
+    # rejected an aggregated slot list with `[131009] Duplicated row id]`
+    # because Dentalink's raw `/v5/agendas` `id` is not unique across the
+    # slots of one aggregated search. Derived instead from professional +
+    # start (compact `YYYYMMDDHHMM`, not the full ISO string, so it stays
+    # short in a WhatsApp list row id): deterministic, and unique for any
+    # two slots that don't share the same professional AND start minute —
+    # which is exactly what `SearchAvailabilityAnyProfessionalUseCase`'s
+    # own dedupe-by-id also relies on. Booking never sends `slot.id` back
+    # to Dentalink (create uses professional/date/time), so this is safe.
+    slot_id = f"{professional_id}-{start.strftime('%Y%m%d%H%M')}"
     return AppointmentSlot(
-        id=str(slot_id),
+        id=slot_id,
         professional_id=str(professional_id),
         specialty_id=_optional_str(raw.get("id_especialidad")) or "",
         time_range=DateTimeRange(start, end),

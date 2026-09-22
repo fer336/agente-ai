@@ -28,7 +28,7 @@ adapter to hand off to legacy `_begin_identification(...)`.
 import asyncio
 import logging
 from collections.abc import Awaitable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Literal, Protocol, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
@@ -116,8 +116,15 @@ _MAX_SLOTS_SEARCHED = 27
 #: (see the use case's docstring for the full incident). The window is
 #: narrower than the single-professional `_SEARCH_WINDOW` (14 days) on
 #: purpose: a patient asking for "the soonest slot, don't care who" cares
-#: about near-term availability, not two weeks out.
-_AGGREGATE_TARGET_SLOTS = 15
+#: about near-term availability, not two weeks out. 18 slots is 2 full
+#: pages of 9 rows (the WhatsApp list's real 10-row cap minus the "Ver
+#: más"/"Volver" navigation row) — see `_offer_any_professional_slots`
+#: below for why the search `date_range` itself is built from TODAY's
+#: midnight, not from `now` directly: it's what keeps the window at
+#: exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates (today + the
+#: next 6), so the use case's calendar-day-aligned walk never exceeds 7
+#: real Dentalink requests.
+_AGGREGATE_TARGET_SLOTS = 18
 _AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
@@ -612,9 +619,20 @@ def build_appointment_decision_graph(
         contact_memory: str | None,
     ) -> dict[str, object]:
         now = datetime.now(UTC)
+        # Aligned to TODAY's midnight (not `now` itself) so the range spans
+        # exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates — today
+        # (partial, from `now` on) plus the next 6 full days — instead of
+        # `_AGGREGATE_SEARCH_WINDOW` literal hours from `now`, which would
+        # touch 8 distinct calendar dates (e.g. 19:58 today through 19:58
+        # in 7 days spans today AND the following 7 days). The use case's
+        # own walk is calendar-day-aligned, so this is what keeps the real
+        # Dentalink request count at `_AGGREGATE_SEARCH_WINDOW.days` (7),
+        # not 8.
+        today_midnight = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
+        search_range = DateTimeRange(now, today_midnight + _AGGREGATE_SEARCH_WINDOW)
         slots, professional_names = await search_availability_any_professional.execute(
             specialty_id=specialty_id,
-            date_range=DateTimeRange(now, now + _AGGREGATE_SEARCH_WINDOW),
+            date_range=search_range,
             target_slot_count=_AGGREGATE_TARGET_SLOTS,
         )
         if not slots:
