@@ -1,7 +1,9 @@
+import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.domain.entities.sent_message import SentMessage
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.repositories.sent_message_repository import SentMessageRepository
@@ -60,9 +62,11 @@ class SendReplyUseCase:
         self,
         messaging_gateway: MessagingGateway,
         sent_message_repositories_provider: SentMessageRepositoriesProvider,
+        mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     ) -> None:
         self._messaging_gateway = messaging_gateway
         self._sent_message_repositories_provider = sent_message_repositories_provider
+        self._mirror_to_chatwoot = mirror_to_chatwoot
 
     async def execute(
         self,
@@ -93,6 +97,16 @@ class SendReplyUseCase:
                     conversation_id=str(conversation_id),
                     sent_at=datetime.now(UTC),
                 )
+            )
+
+        if self._mirror_to_chatwoot is not None and text.strip():
+            # Fire-and-forget: adds zero latency to the reply the patient
+            # is waiting for (see MirrorMessageToChatwootUseCase's own
+            # "Regla de oro" docstring). Skipped entirely for a blank
+            # `text` (e.g. some `location` sends) — nothing meaningful to
+            # mirror.
+            asyncio.create_task(
+                self._mirror_to_chatwoot.mirror_outgoing(conversation_id, to, str(to), text)
             )
 
         return external_id

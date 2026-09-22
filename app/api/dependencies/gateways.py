@@ -6,14 +6,17 @@ from app.api.dependencies.config import get_runtime_config_service
 from app.api.dependencies.redis import get_shared_redis_client
 from app.api.dependencies.repositories import (
     open_sqlalchemy_agent_repositories,
+    open_sqlalchemy_chatwoot_mapping_repository,
     open_sqlalchemy_proposal_repositories,
     open_sqlalchemy_sent_message_repository,
     open_sqlalchemy_trace_repositories,
 )
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.config.settings import get_settings
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.alert_notifier import AlertNotifier
+from app.domain.repositories.chatwoot_gateway import ChatwootGateway
 from app.domain.repositories.gateways import (
     AgreementGateway,
     AppointmentGateway,
@@ -29,6 +32,9 @@ from app.domain.repositories.media_downloader import MediaDownloader
 from app.domain.repositories.media_gateway import MediaGateway
 from app.domain.repositories.transcription_gateway import TranscriptionGateway
 from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvoker
+from app.infrastructure.chatwoot.client import ChatwootClient
+from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
+from app.infrastructure.chatwoot.gateway import ChatwootConversationGateway
 from app.infrastructure.dentalink.agreement_gateway import DentalinkAgreementGateway
 from app.infrastructure.dentalink.appointment_gateway import DentalinkAppointmentGateway
 from app.infrastructure.dentalink.client import DentalinkClient
@@ -252,6 +258,54 @@ def get_human_handoff_gateway() -> HumanHandoffGateway:
 
 
 @lru_cache
+def _get_chatwoot_client() -> ChatwootClient:
+    settings = get_settings()
+    return ChatwootClient(
+        base_url=settings.chatwoot_base_url,
+        account_id=settings.chatwoot_account_id,
+        api_access_token=settings.chatwoot_api_access_token,
+        agent_bot_token=settings.chatwoot_agent_bot_token,
+        inbox_id=settings.chatwoot_inbox_id,
+    )
+
+
+@lru_cache
+def _get_fake_chatwoot_gateway() -> FakeChatwootGateway:
+    return FakeChatwootGateway()
+
+
+@lru_cache
+def _get_real_chatwoot_gateway() -> ChatwootConversationGateway:
+    return ChatwootConversationGateway(_get_chatwoot_client())
+
+
+def get_chatwoot_gateway() -> ChatwootGateway:
+    """FastAPI dependency providing the `ChatwootGateway` port.
+
+    Returns the real, `httpx`-based `ChatwootConversationGateway` whenever
+    `settings.chatwoot_api_access_token` is configured, else the
+    in-memory `FakeChatwootGateway` — same conditional pattern as
+    `get_human_handoff_gateway` above. Callers only depend on the
+    `ChatwootGateway` Protocol.
+    """
+    if get_settings().chatwoot_api_access_token:
+        return _get_real_chatwoot_gateway()
+    return _get_fake_chatwoot_gateway()
+
+
+@lru_cache
+def get_mirror_to_chatwoot_use_case() -> MirrorMessageToChatwootUseCase:
+    """FastAPI dependency providing the `MirrorMessageToChatwootUseCase`
+    process-level singleton — the same "singleton use case, fresh
+    session per call via a repositories_provider" shape as
+    `SendReplyUseCase` (see that class's own docstring)."""
+    return MirrorMessageToChatwootUseCase(
+        chatwoot_gateway=get_chatwoot_gateway(),
+        mapping_repositories_provider=open_sqlalchemy_chatwoot_mapping_repository,
+    )
+
+
+@lru_cache
 def _get_fake_llm_provider() -> FakeLLMProvider:
     return FakeLLMProvider()
 
@@ -419,7 +473,9 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         llm_provider=get_llm_provider(),
         repositories_provider=open_sqlalchemy_agent_repositories,
         send_reply=SendReplyUseCase(
-            get_messaging_gateway(), open_sqlalchemy_sent_message_repository
+            get_messaging_gateway(),
+            open_sqlalchemy_sent_message_repository,
+            mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
         ),
         patient_gateway=get_patient_gateway(),
         proposal_repositories_provider=open_sqlalchemy_proposal_repositories,

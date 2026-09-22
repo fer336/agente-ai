@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from mutagen import File as MutagenFile
 
 from app.application.messages.ingest_message import IngestMessageUseCase
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.domain.entities.media_processing_job import COMPLETED as JOB_COMPLETED
 from app.domain.entities.media_processing_job import DOWNLOADING as JOB_DOWNLOADING
 from app.domain.entities.media_processing_job import FAILED as JOB_FAILED
@@ -83,6 +84,7 @@ class TranscribeAudioUseCase:
         transcription_timeout_seconds: float,
         provider_name: str,
         model_name: str,
+        mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     ) -> None:
         self._repositories_provider = repositories_provider
         self._media_gateway = media_gateway
@@ -96,6 +98,7 @@ class TranscribeAudioUseCase:
         self._transcription_timeout_seconds = transcription_timeout_seconds
         self._provider_name = provider_name
         self._model_name = model_name
+        self._mirror_to_chatwoot = mirror_to_chatwoot
 
     async def execute(self, job_id: str) -> None:
         async with self._repositories_provider() as repositories:
@@ -305,4 +308,16 @@ class TranscribeAudioUseCase:
                 "transcribe_audio.fallback_reply_failed conversation=%s",
                 message.conversation_id,
                 exc_info=True,
+            )
+            return
+
+        if self._mirror_to_chatwoot is not None:
+            # This path bypasses `SendReplyUseCase` entirely (no
+            # `SentMessage` correlation either — see that class's own
+            # docstring), so it needs its own mirror hook rather than
+            # relying on `SendReplyUseCase.execute()`'s.
+            asyncio.create_task(
+                self._mirror_to_chatwoot.mirror_outgoing(
+                    message.conversation_id, PhoneNumber(phone), phone, text
+                )
             )

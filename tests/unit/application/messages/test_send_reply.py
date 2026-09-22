@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,8 +12,10 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
 from app.infrastructure.database.fake_sent_message_repository import FakeSentMessageRepository
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
+from tests.fixtures.gateways import make_mirror_to_chatwoot_use_case
 
 _CONVERSATION_ID = ConversationId("conv-1")
 
@@ -20,6 +23,7 @@ _CONVERSATION_ID = ConversationId("conv-1")
 def _make_use_case(
     messaging_gateway: FakeYCloudMessagingGateway,
     sent_messages: FakeSentMessageRepository | None = None,
+    mirror_to_chatwoot=None,
 ) -> tuple[SendReplyUseCase, FakeSentMessageRepository]:
     sent_messages = sent_messages or FakeSentMessageRepository()
 
@@ -27,7 +31,7 @@ def _make_use_case(
     async def provider() -> AsyncIterator[SentMessageRepository]:
         yield sent_messages
 
-    return SendReplyUseCase(messaging_gateway, provider), sent_messages
+    return SendReplyUseCase(messaging_gateway, provider, mirror_to_chatwoot), sent_messages
 
 
 @pytest.mark.asyncio
@@ -288,3 +292,57 @@ async def test_send_reply_correlates_the_external_message_id_to_the_conversation
     stored = await sent_messages.get_by_id(external_id)
     assert stored is not None
     assert stored.conversation_id == "conv-42"
+
+
+@pytest.mark.asyncio
+async def test_send_reply_mirrors_the_text_reply_to_chatwoot():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case, _ = _make_use_case(messaging_gateway, mirror_to_chatwoot=mirror_to_chatwoot)
+
+    await use_case.execute(
+        conversation_id=_CONVERSATION_ID,
+        to=PhoneNumber("+5491122334455"),
+        text="Tu turno fue confirmado",
+    )
+    await asyncio.sleep(0.05)  # let the fire-and-forget mirror task run
+
+    assert len(chatwoot_gateway.sent_outgoing) == 1
+    assert chatwoot_gateway.sent_outgoing[0][1] == "Tu turno fue confirmado"
+
+
+@pytest.mark.asyncio
+async def test_send_reply_skips_the_mirror_for_blank_text():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case, _ = _make_use_case(messaging_gateway, mirror_to_chatwoot=mirror_to_chatwoot)
+
+    await use_case.execute(
+        conversation_id=_CONVERSATION_ID,
+        to=PhoneNumber("+5491122334455"),
+        text="",
+        location=LocationRequest(latitude=1.0, longitude=2.0, name="Smiling Pilar"),
+    )
+    await asyncio.sleep(0.05)
+
+    assert chatwoot_gateway.sent_outgoing == []
+
+
+@pytest.mark.asyncio
+async def test_send_reply_still_returns_the_external_id_when_chatwoot_mirror_fails():
+    # Regla de oro: a broken Chatwoot mirror must never affect the real
+    # WhatsApp reply the patient already received.
+    messaging_gateway = FakeYCloudMessagingGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(FakeChatwootGateway(fail=True))
+    use_case, _ = _make_use_case(messaging_gateway, mirror_to_chatwoot=mirror_to_chatwoot)
+
+    external_id = await use_case.execute(
+        conversation_id=_CONVERSATION_ID,
+        to=PhoneNumber("+5491122334455"),
+        text="Tu turno fue confirmado",
+    )
+    await asyncio.sleep(0.05)
+
+    assert external_id == "fake-msg-1"

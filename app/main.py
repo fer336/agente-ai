@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies.checkpointer import close_agent_checkpointer, get_agent_checkpointer
-from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.gateways import get_messaging_gateway, get_mirror_to_chatwoot_use_case
 from app.api.dependencies.repositories import (
     open_sqlalchemy_follow_up_worker_repositories,
     open_sqlalchemy_sent_message_repository,
@@ -68,7 +68,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         run_follow_up_loop(
             open_sqlalchemy_follow_up_worker_repositories,
             get_agent_checkpointer,
-            SendReplyUseCase(get_messaging_gateway(), open_sqlalchemy_sent_message_repository),
+            SendReplyUseCase(
+                get_messaging_gateway(),
+                open_sqlalchemy_sent_message_repository,
+                mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
+            ),
             interval_seconds=settings.follow_up_worker_interval_seconds,
             batch_limit=settings.follow_up_worker_batch_limit,
             reset_delay_seconds=settings.appointment_follow_up_reset_delay_seconds,

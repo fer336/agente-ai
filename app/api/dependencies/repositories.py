@@ -14,6 +14,7 @@ from app.application.audio.transcribe_audio import TranscriptionRepositories
 from app.application.conversations.rotate_workflow_session import WorkflowSessionRepositories
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
+from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.incident_repository import IncidentRepository
@@ -23,6 +24,9 @@ from app.domain.repositories.sent_message_repository import SentMessageRepositor
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
+)
+from app.infrastructure.database.repositories.chatwoot_mapping_repository import (
+    SqlAlchemyChatwootMappingRepository,
 )
 from app.infrastructure.database.repositories.contact_memory_repository import (
     SqlAlchemyContactMemoryRepository,
@@ -308,4 +312,18 @@ async def open_sqlalchemy_sent_message_repository() -> AsyncIterator[SentMessage
     session_factory = _get_session_factory()
     async with session_factory() as session:
         yield SqlAlchemySentMessageRepository(session)
+        await session.commit()
+
+
+@asynccontextmanager
+async def open_sqlalchemy_chatwoot_mapping_repository() -> AsyncIterator[ChatwootMappingRepository]:
+    """`MirrorMessageToChatwootUseCase`'s `mapping_repositories_provider`
+    for production DI. Same rationale as
+    `open_sqlalchemy_sent_message_repository` above — a fresh session per
+    call, committed explicitly so the conversation_id -> Chatwoot mapping
+    actually persists past the call.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield SqlAlchemyChatwootMappingRepository(session)
         await session.commit()

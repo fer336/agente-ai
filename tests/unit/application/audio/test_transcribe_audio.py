@@ -12,6 +12,7 @@ from app.domain.entities.message import Message
 from app.domain.repositories.media_gateway import MediaLocation
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
+from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
 from app.infrastructure.media.exceptions import MediaDownloadError
 from app.infrastructure.media.fake_media_downloader import FakeMediaDownloader
@@ -25,6 +26,7 @@ from tests.fixtures.gateways import (
     make_conversation_repository,
     make_ingest_message_use_case,
     make_media_processing_job_repository,
+    make_mirror_to_chatwoot_use_case,
 )
 from tests.fixtures.seed_objects import make_conversation
 
@@ -101,6 +103,7 @@ def _build_use_case(
     agent_invoker: object | None = None,
     max_duration_seconds: int = 180,
     allowed_mime_types: frozenset[str] = _ALLOWED_MIME_TYPES,
+    mirror_to_chatwoot: object | None = None,
 ) -> tuple[TranscribeAudioUseCase, object, object, FakeYCloudMessagingGateway, object]:
     job_repository = (
         job_repository if job_repository is not None else make_media_processing_job_repository()
@@ -164,6 +167,7 @@ def _build_use_case(
         transcription_timeout_seconds=5,
         provider_name="groq",
         model_name="whisper-large-v3-turbo",
+        mirror_to_chatwoot=mirror_to_chatwoot,
     )
     return use_case, job_repository, message_repository, messaging_gateway, ingest_message_use_case
 
@@ -581,3 +585,44 @@ async def test_message_not_found_marks_job_failed():
     job = await job_repository.get_by_id("job-1")
     assert job is not None
     assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_fallback_reply_is_mirrored_to_chatwoot():
+    job_repository = make_media_processing_job_repository()
+    await job_repository.save(_job())
+    message_repository = FakeMessageRepository()
+    await message_repository.save(_audio_message())
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case, *_2 = _build_use_case(
+        job_repository=job_repository,
+        message_repository=message_repository,
+        allowed_mime_types=frozenset({"audio/mp4"}),  # rejects "audio/ogg" -> fallback sent
+        mirror_to_chatwoot=mirror_to_chatwoot,
+    )
+
+    await use_case.execute("job-1")
+    await asyncio.sleep(0.05)  # let the fire-and-forget mirror task run
+
+    assert len(chatwoot_gateway.sent_outgoing) == 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_reply_still_succeeds_when_the_chatwoot_mirror_fails():
+    job_repository = make_media_processing_job_repository()
+    await job_repository.save(_job())
+    message_repository = FakeMessageRepository()
+    await message_repository.save(_audio_message())
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(FakeChatwootGateway(fail=True))
+    use_case, *_2, messaging_gateway, _ = _build_use_case(
+        job_repository=job_repository,
+        message_repository=message_repository,
+        allowed_mime_types=frozenset({"audio/mp4"}),
+        mirror_to_chatwoot=mirror_to_chatwoot,
+    )
+
+    await use_case.execute("job-1")
+    await asyncio.sleep(0.05)
+
+    assert len(messaging_gateway.sent_messages) == 1

@@ -26,6 +26,7 @@ from app.domain.entities.contact import Contact
 from app.domain.exceptions.errors import ContactAlreadyExistsError, ConversationAlreadyExistsError
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
 from app.infrastructure.redis.debounce import DebounceTracker
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
@@ -34,6 +35,7 @@ from tests.fixtures.gateways import (
     make_conversation_repository,
     make_media_processing_job_repository,
     make_message_repository,
+    make_mirror_to_chatwoot_use_case,
     make_runtime_config_service,
     make_scheduled_action_repository,
     make_send_reply_use_case,
@@ -91,6 +93,7 @@ def _build_use_case(
     audio_rate_limit_per_minute: int = 0,
     welcome_image_url: str | None = None,
     conversation_idle_reset_delay_seconds: int = 7200,
+    mirror_to_chatwoot=None,
 ) -> IngestMessageUseCase:
     message_repository = (
         message_repository if message_repository is not None else make_message_repository()
@@ -142,6 +145,7 @@ def _build_use_case(
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
         welcome_image_url=welcome_image_url,
         conversation_idle_reset_delay_seconds=conversation_idle_reset_delay_seconds,
+        mirror_to_chatwoot=mirror_to_chatwoot,
     )
 
 
@@ -945,3 +949,46 @@ async def test_resume_after_transcription_does_not_forward_when_conversation_is_
 
     assert agent_invoker.calls == []
     assert await redis_client.get("debounce:conversation:ycloud-+5491122334455") is None
+
+
+@pytest.mark.asyncio
+async def test_a_text_message_is_mirrored_to_chatwoot():
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case = _build_use_case(mirror_to_chatwoot=mirror_to_chatwoot)
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455", text="quiero un turno"))
+    await asyncio.sleep(0.05)  # let the fire-and-forget mirror task run
+
+    assert len(chatwoot_gateway.sent_incoming) == 1
+    assert chatwoot_gateway.sent_incoming[0][1] == "quiero un turno"
+
+
+@pytest.mark.asyncio
+async def test_an_audio_message_is_not_mirrored_on_ingestion():
+    # `dto.text` is empty for an audio message at ingestion time — the
+    # transcript only exists later, mirrored separately once transcribed.
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case = _build_use_case(mirror_to_chatwoot=mirror_to_chatwoot)
+
+    await use_case.execute(_make_audio_dto())
+    await asyncio.sleep(0.05)
+
+    assert chatwoot_gateway.sent_incoming == []
+
+
+@pytest.mark.asyncio
+async def test_ingestion_succeeds_even_when_the_chatwoot_mirror_fails():
+    # Regla de oro: a broken Chatwoot mirror must never affect real
+    # message ingestion.
+    message_repository = make_message_repository()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(FakeChatwootGateway(fail=True))
+    use_case = _build_use_case(
+        message_repository=message_repository, mirror_to_chatwoot=mirror_to_chatwoot
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455", text="quiero un turno"))
+    await asyncio.sleep(0.05)
+
+    assert len(message_repository._messages_by_id) == 1

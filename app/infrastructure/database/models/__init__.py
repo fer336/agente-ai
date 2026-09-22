@@ -5,6 +5,9 @@ from app.infrastructure.database.models.appointment import AppointmentModel
 from app.infrastructure.database.models.appointment_action import AppointmentActionModel
 from app.infrastructure.database.models.approved_content import ApprovedContentModel
 from app.infrastructure.database.models.base import Base
+from app.infrastructure.database.models.chatwoot_conversation_mapping import (
+    ChatwootConversationMappingModel,
+)
 from app.infrastructure.database.models.contact import ContactModel
 from app.infrastructure.database.models.contact_memory import ContactMemoryModel
 from app.infrastructure.database.models.conversation import ConversationModel
@@ -30,6 +33,7 @@ __all__ = [
     "AppointmentModel",
     "ApprovedContentModel",
     "Base",
+    "ChatwootConversationMappingModel",
     "ContactMemoryModel",
     "ContactModel",
     "ConversationModel",
