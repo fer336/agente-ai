@@ -37,5 +37,8 @@ The "soonest slots across all professionals" list must reach the patient on What
 - 2026-09-22: T3 implemented (route: delegated). `slot_rows` now abbreviates the weekday to 3 letters and clamps titles to a dedicated `_SLOT_ROW_TITLE_MAX_CHARS = 20` (not the shared 24-char `TITLE_MAX_CHARS`, left untouched — a global change would have clipped longer specialty/professional names). TDD: RED observed (2 failing tests) before implementation, GREEN after. Commit: see this same commit (doc update bundled with T3's code change).
 - Verification (full run, after all 3 tasks): `uv run pytest -q` — 1539 passed, 82 skipped, 5 failed (pre-existing on `origin/main` before this branch's changes, confirmed via `git stash`: `test_internal_eval_wiring.py::test_get_evaluate_chat_turn_use_case_wires_a_working_isolated_agent` and 4 tests in `test_gateway_dependency.py`, all about DI defaulting to fakes — unrelated to this change). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files.
 
+- Parent spot check: `uv run pytest -q tests/unit/infrastructure/dentalink tests/unit/application/appointments tests/unit/agent` — 482 passed. RDD assess (base `2b8affb`, committed-only): risk `medium`, `review_due=false` (`under_budget`, 345 lines); pending in slice.
+- Known caveat (pre-existing, not changed here): day windows are UTC-aligned and the gateway takes `.date()` from them without converting to the clinic tz, so a clinic slot at or after 21:00 local (UTC-3) falls outside its day's window.
+
 ## Next step
 Archive once the parent orchestrator reviews; the 5 pre-existing failing tests (DI/fake-gateway defaults, unrelated to this fix) are a separate, out-of-scope issue for the parent to triage.
