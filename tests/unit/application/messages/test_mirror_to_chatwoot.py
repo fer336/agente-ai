@@ -131,6 +131,36 @@ async def test_mirror_incoming_never_raises_when_the_mapping_repository_fails():
 
 
 @pytest.mark.asyncio
+async def test_escalate_to_administracion_labels_the_conversation():
+    use_case, gateway, mapping_repository = _make_use_case()
+
+    await use_case.escalate_to_administracion(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    assert gateway.labels_by_conversation == {mapping.chatwoot_conversation_id: "administracion"}
+
+
+@pytest.mark.asyncio
+async def test_escalate_to_administracion_creates_the_mapping_when_none_exists_yet():
+    # A handoff can be the very first message of a conversation — no
+    # earlier `mirror_incoming`/`mirror_outgoing` call has necessarily
+    # created a mapping yet.
+    use_case, _, mapping_repository = _make_use_case()
+
+    await use_case.escalate_to_administracion(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+    assert await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID)) is not None
+
+
+@pytest.mark.asyncio
+async def test_escalate_to_administracion_never_raises_when_the_gateway_fails():
+    use_case, _, _ = _make_use_case(chatwoot_gateway=FakeChatwootGateway(fail=True))
+
+    await use_case.escalate_to_administracion(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+
+@pytest.mark.asyncio
 async def test_a_failed_first_attempt_does_not_persist_a_partial_mapping():
     # If contact/conversation creation fails mid-way, no mapping row should
     # be left behind — otherwise a later successful call could incorrectly

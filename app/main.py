@@ -19,6 +19,7 @@ from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
 from app.api.routes.admin_llm_config import router as admin_llm_config_router
 from app.api.routes.admin_pages import router as admin_pages_router
+from app.api.routes.chatwoot_webhook import router as chatwoot_webhook_router
 from app.api.routes.health import router as health_router
 from app.api.routes.internal_eval import router as internal_eval_router
 from app.api.routes.webhook import router as webhook_router
@@ -99,6 +100,7 @@ app = FastAPI(
 )
 app.include_router(health_router)
 app.include_router(webhook_router)
+app.include_router(chatwoot_webhook_router)
 app.include_router(admin_auth_router)
 app.include_router(admin_router)
 app.include_router(admin_llm_config_router)

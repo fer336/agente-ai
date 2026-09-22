@@ -17,6 +17,7 @@ from app.application.appointments.schedule_follow_up import ScheduleFollowUpUseC
 from app.application.errors.error_service import ErrorService
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.memory.memory_service import MemoryService
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositoriesProvider
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF, RUNNING, AgentRun
@@ -152,6 +153,7 @@ class LangGraphAgentInvoker:
         checkpointer_provider: CheckpointerProvider | None = None,
         verification_flow_id: str = "",
         registration_flow_id: str = "",
+        mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
@@ -179,6 +181,7 @@ class LangGraphAgentInvoker:
         self._checkpointer_provider = checkpointer_provider
         self._verification_flow_id = verification_flow_id
         self._registration_flow_id = registration_flow_id
+        self._mirror_to_chatwoot = mirror_to_chatwoot
 
     async def handle(
         self,
@@ -259,6 +262,7 @@ class LangGraphAgentInvoker:
                     checkpointer=checkpointer,
                     verification_flow_id=self._verification_flow_id,
                     registration_flow_id=self._registration_flow_id,
+                    mirror_to_chatwoot=self._mirror_to_chatwoot,
                 )
 
                 previous_values: dict[str, Any] = {}
