@@ -53,3 +53,5 @@ The "soonest slots across all professionals" list must reach the patient on What
 
 ## Next step
 Archive once the parent orchestrator reviews; the 5 pre-existing failing tests (DI/fake-gateway defaults, unrelated to this fix) are a separate, out-of-scope issue for the parent to triage.
+
+- 2026-09-22: Parent spot check after T4: 486 passed (dentalink, agent, appointments). RDD assess (base `2b8affb`): risk `medium`, `review_due=true` (`slice_budget_reached`, 565 lines). The user declined the review for this candidate (`declined_this_candidate`). Delivery now follows ordinary repository policy.
