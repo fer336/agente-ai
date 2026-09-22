@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -215,6 +215,36 @@ async def test_search_availability_issues_one_request_per_calendar_day():
 
 
 @pytest.mark.asyncio
+async def test_search_availability_derives_fecha_from_the_clinic_timezone_not_the_callers():
+    # Regression guard (T5a, defense in depth): `fecha` must reflect the
+    # CLINIC's own calendar date, regardless of what tz a caller's
+    # `date_range` happens to carry. A clinic-local 22:00 slot in a UTC-3
+    # clinic is 01:00 the NEXT day in UTC — a naive `date_range.start.date()`
+    # on a UTC-expressed instant would ask Dentalink for the wrong day and
+    # silently lose that slot (the actual T2 aggregated-search regression;
+    # the aggregated search itself is now fixed by passing a clinic-tz
+    # `date_range`, but the gateway must not depend on every caller doing
+    # that correctly).
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+    # 2026-09-23T01:00:00+00:00 == 2026-09-22T22:00:00-03:00 (clinic-local).
+    clinic_local_2200_as_utc = datetime(2026, 9, 23, 1, 0, tzinfo=UTC)
+
+    await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(
+            clinic_local_2200_as_utc, clinic_local_2200_as_utc + timedelta(minutes=30)
+        ),
+    )
+
+    assert len(client.get_calls) == 1
+    _, params = client.get_calls[0]
+    assert params is not None
+    assert json.loads(params["q"])["fecha"] == {"eq": "2026-09-22"}
+
+
+@pytest.mark.asyncio
 async def test_list_professionals_maps_dentistas_response():
     client = _StubDentalinkClient(
         get_responses={
@@ -231,7 +261,6 @@ async def test_list_professionals_maps_dentistas_response():
     assert [p.id for p in professionals] == ["626"]
 
 
-@pytest.mark.asyncio
 def _one_slot_for_the_queried_day(params: dict[str, str] | None) -> list[dict[str, object]]:
     """Varies the raw `/v5/agendas` payload by the `fecha` the caller just
     queried, so each simulated day returns a slot with its OWN derived id

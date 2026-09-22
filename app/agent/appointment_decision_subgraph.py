@@ -618,7 +618,19 @@ def build_appointment_decision_graph(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object]:
-        now = datetime.now(UTC)
+        # CLINIC-LOCAL `now`, not UTC (regression fixed here, T5a): a
+        # calendar "day" only means what Dentalink itself means by one —
+        # the clinic's own local date — and `SearchAvailabilityAnyProfessionalUseCase`
+        # aligns its per-day windows to midnight in whatever tz `now` (and
+        # therefore `search_range`) carries. A UTC-aligned `now` used to
+        # make a late clinic-local slot (e.g. 22:00 in a UTC-3 clinic,
+        # already the NEXT calendar date in UTC) fall in the wrong day's
+        # window, and the real gateway would then ask Dentalink for the
+        # wrong `fecha` — silently losing that slot from every window.
+        # `AppointmentGateway.clinic_timezone` is exposed on the PORT
+        # itself precisely so this agent-layer caller can get it without
+        # importing infrastructure/`Settings` directly.
+        now = datetime.now(appointment_gateway.clinic_timezone)
         # Aligned to TODAY's midnight (not `now` itself) so the range spans
         # exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates — today
         # (partial, from `now` on) plus the next 6 full days — instead of

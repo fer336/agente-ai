@@ -1,3 +1,4 @@
+from datetime import UTC, tzinfo
 from itertools import count
 
 from app.domain.entities.appointment import Appointment
@@ -16,12 +17,21 @@ class FakeDentalinkGateway:
         self,
         available_slots: list[AppointmentSlot] | None = None,
         professionals: list[Professional] | None = None,
+        clinic_timezone: tzinfo | None = None,
     ) -> None:
         self._available_slots = list(available_slots) if available_slots else []
         self._professionals = list(professionals) if professionals else []
         self._appointments_by_key: dict[str, Appointment] = {}
         self._appointments_by_id: dict[str, Appointment] = {}
         self._next_id = count(1)
+        #: Defaults to UTC — fine for every existing test/dev use, which
+        #: doesn't care about calendar-day alignment. A caller that DOES
+        #: (e.g. `_offer_any_professional_slots`) passes its own.
+        self._clinic_timezone = clinic_timezone if clinic_timezone is not None else UTC
+
+    @property
+    def clinic_timezone(self) -> tzinfo:
+        return self._clinic_timezone
 
     async def search_availability(
         self,

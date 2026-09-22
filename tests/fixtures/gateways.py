@@ -7,7 +7,7 @@ matches the call shape of the inline `Fake*()` construction these replace.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.config.runtime_config_service import RuntimeConfigService
@@ -73,8 +73,13 @@ from tests.fixtures.fake_redis import InMemoryFakeRedis
 def make_dentalink_gateway(
     available_slots: list[AppointmentSlot] | None = None,
     professionals: list[Professional] | None = None,
+    clinic_timezone: tzinfo | None = None,
 ) -> FakeDentalinkGateway:
-    return FakeDentalinkGateway(available_slots=available_slots, professionals=professionals)
+    return FakeDentalinkGateway(
+        available_slots=available_slots,
+        professionals=professionals,
+        clinic_timezone=clinic_timezone,
+    )
 
 
 def make_agreement_gateway(

@@ -1,3 +1,4 @@
+from datetime import tzinfo
 from typing import Protocol, runtime_checkable
 
 from app.domain.entities.agreement import Agreement
@@ -19,6 +20,21 @@ from app.domain.value_objects.phone_number import PhoneNumber
 @runtime_checkable
 class AppointmentGateway(Protocol):
     """Port to the external appointment scheduling system (e.g. Dentalink)."""
+
+    @property
+    def clinic_timezone(self) -> tzinfo:
+        """The clinic's own timezone — needed by any caller that must
+        align a search window to a CALENDAR day as Dentalink itself
+        understands one (`fecha` is a clinic-local calendar date, not a
+        UTC one). Exposed on the port itself, not just the real gateway's
+        constructor, so an application/agent-layer caller can build a
+        clinic-tz-aligned `DateTimeRange` without importing infrastructure
+        or `Settings` directly — see `SearchAvailabilityAnyProfessionalUseCase`'s
+        caller (`_offer_any_professional_slots`) for the motivating case: a
+        UTC-aligned window silently lost a clinic-local slot that fell on
+        the next UTC calendar date.
+        """
+        ...
 
     async def search_availability(
         self,
