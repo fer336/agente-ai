@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 
 from app.application.errors.error_types import (
     APPOINTMENT_NOT_FOUND,
@@ -144,6 +144,25 @@ class DentalinkAppointmentGateway:
         self._cancellation_state_ids: frozenset[str] = frozenset()
         self._cancellation_state_resolved = False
 
+    @property
+    def clinic_timezone(self) -> tzinfo:
+        return self._clinic_timezone
+
+    def _clinic_local_date(self, moment: datetime) -> date:
+        """`moment`'s calendar date in the CLINIC's own timezone.
+
+        `datetime.astimezone()` on a NAIVE `moment` silently interprets it
+        as the HOST machine's local time before converting — never correct
+        here, since a naive appointment datetime is always treated as
+        already clinic-local elsewhere in this codebase (see
+        `schemas._parse_datetime`'s own docstring). A naive `moment`'s
+        `.date()` is therefore used as-is; only an AWARE one is actually
+        converted.
+        """
+        if moment.tzinfo is None:
+            return moment.date()
+        return moment.astimezone(self._clinic_timezone).date()
+
     async def search_availability(
         self,
         specialty_id: str | None,
@@ -166,11 +185,27 @@ class DentalinkAppointmentGateway:
 
         async def _call() -> list[AppointmentSlot]:
             slots: list[AppointmentSlot] = []
-            day = date_range.start.date()
+            # `slot_from_agenda` derives its id from professional + start —
+            # dedupe by id here, at the source, keeping the first
+            # occurrence: two raw agenda rows for the same
+            # professional/minute (a Dentalink glitch, or an overlapping
+            # re-query) must never both reach a caller, since that's
+            # exactly what makes WhatsApp reject an outbound list with
+            # `[131009] Duplicated row id`. This also makes `limit` below
+            # count real distinct slots, never raw duplicate rows.
+            seen_ids: set[str] = set()
+            # `fecha` is a CLINIC-LOCAL calendar date to Dentalink, not a
+            # UTC one — deriving it via `self._clinic_local_date` (instead
+            # of taking `.date()` off whatever tz the caller's `date_range`
+            # happens to carry) is what keeps a late clinic-local slot
+            # (e.g. 22:00 in a UTC-3 clinic, which is already the NEXT
+            # calendar date in UTC) queried under its real `fecha` even if
+            # a caller ever passes a UTC-aligned range.
+            day = self._clinic_local_date(date_range.start)
             # `date_range` is a half-open [start, end) interval — if `end`
             # lands exactly at midnight, that day itself has no included
             # moments, so the last day to query is the one just before it.
-            last_day = (date_range.end - timedelta(microseconds=1)).date()
+            last_day = self._clinic_local_date(date_range.end - timedelta(microseconds=1))
             days_queried = 0
             while day <= last_day and days_queried < _MAX_SEARCH_AVAILABILITY_DAYS:
                 filters: dict[str, tuple[str, object]] = {
@@ -204,8 +239,12 @@ class DentalinkAppointmentGateway:
                         continue
                     if specialty_id is not None and slot.specialty_id != specialty_id:
                         continue
-                    if date_range.contains(slot.time_range.start):
-                        slots.append(slot)
+                    if not date_range.contains(slot.time_range.start):
+                        continue
+                    if slot.id in seen_ids:
+                        continue
+                    seen_ids.add(slot.id)
+                    slots.append(slot)
 
                 if limit is not None and len(slots) >= limit:
                     # One HTTP call per day: keep walking the window after

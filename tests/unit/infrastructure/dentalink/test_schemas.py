@@ -59,12 +59,49 @@ def test_slot_from_agenda_maps_id_profesional_fecha_and_hora_inicio():
         timezone=_TZ,
     )
 
-    assert slot.id == "slot-1"
+    # The id is derived (professional + start), never the raw `id` field —
+    # see `test_slot_from_agenda_derives_a_deterministic_id_ignoring_the_
+    # raw_agenda_id` below for why.
+    assert slot.id == "626-202608151530"
     assert slot.professional_id == "626"
     assert slot.specialty_id == "cleaning"
     assert slot.time_range.start.hour == 15
     assert slot.time_range.start.minute == 30
     assert slot.time_range.duration().total_seconds() == 30 * 60
+
+
+def test_slot_from_agenda_derives_a_deterministic_id_ignoring_the_raw_agenda_id():
+    # Regression: WhatsApp rejected an aggregated slot list with
+    # `[131009] Duplicated row id` because Dentalink's raw agenda `id` is
+    # not unique across the slots returned for one aggregated search (seen
+    # live — two different slots, same raw `id`). Booking never sends
+    # `slot.id` back to Dentalink (create uses professional/date/time), so
+    # deriving it from professional + start instead of trusting the raw
+    # `id` is safe, and it's deterministic: the same professional/start
+    # pair always yields the same id, which is what the aggregated use
+    # case's dedupe relies on.
+    raw_slot_1 = {
+        "id": "same-raw-id",
+        "id_profesional": 626,
+        "fecha": "2026-08-15",
+        "hora_inicio": "15:30",
+    }
+    raw_slot_2 = {
+        "id": "same-raw-id",
+        "id_profesional": 626,
+        "fecha": "2026-08-15",
+        "hora_inicio": "16:00",
+    }
+
+    slot_1 = slot_from_agenda(raw_slot_1, default_duration_minutes=30, timezone=_TZ)
+    slot_2 = slot_from_agenda(raw_slot_2, default_duration_minutes=30, timezone=_TZ)
+
+    assert slot_1.id != slot_2.id
+    # Same professional + start (even with a different raw `id`) yields the
+    # same derived id — this is what dedupe-by-id relies on.
+    raw_slot_1_again = {**raw_slot_1, "id": "a-different-raw-id"}
+    slot_1_again = slot_from_agenda(raw_slot_1_again, default_duration_minutes=30, timezone=_TZ)
+    assert slot_1_again.id == slot_1.id
 
 
 def test_slot_from_agenda_falls_back_to_id_dentista_and_default_duration():

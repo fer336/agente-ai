@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -48,7 +48,11 @@ class _StubDentalinkClient:
         key = ("GET", path)
         if key in self._raises_on:
             raise self._raises_on[key]
-        return self._get_responses.get(path, [])
+        response = self._get_responses.get(path, [])
+        # A callable response lets a test vary the payload per query (e.g.
+        # per queried `fecha`) instead of returning the exact same fixed
+        # payload for every call to that path.
+        return response(params) if callable(response) else response
 
     async def post(self, path: str, json: dict[str, object]) -> object:
         self.post_calls.append((path, json))
@@ -107,7 +111,9 @@ async def test_search_availability_issues_one_request_for_a_single_day_range():
         "fecha": {"eq": "2026-08-15"},
         "duracion": {"eq": "30"},
     }
-    assert [s.id for s in slots] == ["slot-1"]
+    # The id is derived from professional + start, not the raw agenda
+    # `id` — see `slot_from_agenda`'s own docstring comment.
+    assert [s.id for s in slots] == ["626-202608151530"]
 
 
 @pytest.mark.asyncio
@@ -142,7 +148,9 @@ async def test_search_availability_skips_an_unparseable_slot_instead_of_losing_t
         date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
     )
 
-    assert [s.id for s in slots] == ["good"]
+    # The id is derived from professional + start, not the raw agenda
+    # `id` — see `slot_from_agenda`'s own docstring comment.
+    assert [s.id for s in slots] == ["626-202608151530"]
 
 
 @pytest.mark.asyncio
@@ -207,6 +215,61 @@ async def test_search_availability_issues_one_request_per_calendar_day():
 
 
 @pytest.mark.asyncio
+async def test_search_availability_derives_fecha_from_the_clinic_timezone_not_the_callers():
+    # Regression guard (T5a, defense in depth): `fecha` must reflect the
+    # CLINIC's own calendar date, regardless of what tz a caller's
+    # `date_range` happens to carry. A clinic-local 22:00 slot in a UTC-3
+    # clinic is 01:00 the NEXT day in UTC — a naive `date_range.start.date()`
+    # on a UTC-expressed instant would ask Dentalink for the wrong day and
+    # silently lose that slot (the actual T2 aggregated-search regression;
+    # the aggregated search itself is now fixed by passing a clinic-tz
+    # `date_range`, but the gateway must not depend on every caller doing
+    # that correctly).
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+    # 2026-09-23T01:00:00+00:00 == 2026-09-22T22:00:00-03:00 (clinic-local).
+    clinic_local_2200_as_utc = datetime(2026, 9, 23, 1, 0, tzinfo=UTC)
+
+    await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(
+            clinic_local_2200_as_utc, clinic_local_2200_as_utc + timedelta(minutes=30)
+        ),
+    )
+
+    assert len(client.get_calls) == 1
+    _, params = client.get_calls[0]
+    assert params is not None
+    assert json.loads(params["q"])["fecha"] == {"eq": "2026-09-22"}
+
+
+@pytest.mark.asyncio
+async def test_search_availability_treats_a_naive_date_range_as_already_clinic_local():
+    # T7c: `astimezone()` on a NAIVE datetime silently interprets it as the
+    # HOST machine's own local time before converting — never correct
+    # here, since a naive datetime elsewhere in this codebase is always
+    # treated as already clinic-local (see `_parse_datetime`'s own
+    # docstring). A naive `date_range` must query `fecha` exactly as
+    # written, not shifted by whatever tz the host happens to be running
+    # in. `00:30` is deliberately close to midnight: under the old
+    # (buggy) `astimezone()`-on-naive behavior, a UTC host would shift it
+    # to the PREVIOUS day once "converted" to the clinic's UTC-3 offset.
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+    naive_range = DateTimeRange(datetime(2026, 9, 22, 0, 30), datetime(2026, 9, 22, 1, 0))
+
+    await gateway.search_availability(
+        specialty_id=None, professional_id=None, date_range=naive_range
+    )
+
+    assert len(client.get_calls) == 1
+    _, params = client.get_calls[0]
+    assert params is not None
+    assert json.loads(params["q"])["fecha"] == {"eq": "2026-09-22"}
+
+
+@pytest.mark.asyncio
 async def test_list_professionals_maps_dentistas_response():
     client = _StubDentalinkClient(
         get_responses={
@@ -223,24 +286,24 @@ async def test_list_professionals_maps_dentistas_response():
     assert [p.id for p in professionals] == ["626"]
 
 
+def _one_slot_for_the_queried_day(params: dict[str, str] | None) -> list[dict[str, object]]:
+    """Varies the raw `/v5/agendas` payload by the `fecha` the caller just
+    queried, so each simulated day returns a slot with its OWN derived id
+    (`slot_from_agenda` derives the id from professional + start) instead
+    of every day repeating the exact same raw slot — which would make the
+    gateway's own id-dedupe collapse every day's "new" slot into one."""
+    assert params is not None
+    fecha = json.loads(params["q"])["fecha"]["eq"]
+    return [{"id": "slot", "id_profesional": "626", "fecha": fecha, "hora_inicio": "09:00"}]
+
+
 @pytest.mark.asyncio
 async def test_search_availability_stops_querying_once_it_has_enough_slots():
     # `/v5/agendas` only takes ONE date, so a 30-day window used to mean 30
     # sequential HTTP calls — every time any patient asked for a slot.
     # Live Dentalink answered `429 Too Many Attempts`. The caller only ever
     # shows a handful, so stop as soon as that many are in hand.
-    client = _StubDentalinkClient(
-        get_responses={
-            "/v5/agendas": [
-                {
-                    "id": "slot-1",
-                    "id_profesional": "626",
-                    "fecha": "2026-08-15",
-                    "hora_inicio": "09:00",
-                }
-            ]
-        }
-    )
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": _one_slot_for_the_queried_day})
     gateway = _gateway(client)
 
     slots = await gateway.search_availability(
@@ -250,10 +313,83 @@ async def test_search_availability_stops_querying_once_it_has_enough_slots():
         limit=3,
     )
 
-    # The stub returns one slot per day, so three days cover the limit —
-    # not the full 30-day window.
+    # The stub returns one (distinct) slot per day, so three days cover
+    # the limit — not the full 30-day window.
     assert len(client.get_calls) == 3
     assert len(slots) == 3
+    assert len({s.id for s in slots}) == 3
+
+
+@pytest.mark.asyncio
+async def test_search_availability_never_returns_two_slots_sharing_a_derived_id():
+    # Regression: WhatsApp rejects an outbound list carrying two rows with
+    # the same id ([131009] Duplicated row id). `slot_from_agenda` derives
+    # the id from professional + start, so two raw agenda rows for the
+    # same professional/minute (a Dentalink glitch, or an overlapping
+    # re-query) must collapse into a single slot here, at the source,
+    # regardless of which higher-level path called `search_availability`.
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v5/agendas": [
+                {
+                    "id": "raw-a",
+                    "id_profesional": "626",
+                    "fecha": "2026-08-15",
+                    "hora_inicio": "09:00",
+                },
+                {
+                    "id": "raw-b",  # different raw id, same professional+minute
+                    "id_profesional": "626",
+                    "fecha": "2026-08-15",
+                    "hora_inicio": "09:00",
+                },
+            ]
+        }
+    )
+    gateway = _gateway(client)
+
+    slots = await gateway.search_availability(
+        specialty_id=None,
+        professional_id=None,
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 16, 0, 0)),
+    )
+
+    assert len(slots) == 1
+    assert slots[0].id == "626-202608150900"
+
+
+@pytest.mark.asyncio
+async def test_search_availability_limit_counts_deduped_slots_not_raw_rows():
+    # A day whose raw response contains a duplicate must not let that
+    # duplicate count toward `limit` — otherwise the gateway could return
+    # fewer unique slots than the caller actually asked for and stop
+    # early believing it already had enough.
+    def _responses(params: dict[str, str] | None) -> list[dict[str, object]]:
+        assert params is not None
+        fecha = json.loads(params["q"])["fecha"]["eq"]
+        if fecha == "2026-08-15":
+            # Two raw rows, same professional+minute -> ONE unique slot.
+            return [
+                {"id": "raw-a", "id_profesional": "626", "fecha": fecha, "hora_inicio": "09:00"},
+                {"id": "raw-b", "id_profesional": "626", "fecha": fecha, "hora_inicio": "09:00"},
+            ]
+        return [{"id": "raw-c", "id_profesional": "626", "fecha": fecha, "hora_inicio": "09:00"}]
+
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": _responses})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_availability(
+        specialty_id=None,
+        professional_id="626",
+        date_range=DateTimeRange(_at(2026, 8, 15, 0, 0), _at(2026, 8, 20, 0, 0)),
+        limit=2,
+    )
+
+    # Day 1's duplicate collapses to 1 unique slot (not enough for
+    # limit=2), so a 2nd day must be queried to reach the real target.
+    assert len(client.get_calls) == 2
+    assert len(slots) == 2
+    assert len({s.id for s in slots}) == 2
 
 
 @pytest.mark.asyncio

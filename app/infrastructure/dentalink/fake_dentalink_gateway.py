@@ -1,3 +1,4 @@
+from datetime import UTC, tzinfo
 from itertools import count
 
 from app.domain.entities.appointment import Appointment
@@ -16,12 +17,21 @@ class FakeDentalinkGateway:
         self,
         available_slots: list[AppointmentSlot] | None = None,
         professionals: list[Professional] | None = None,
+        clinic_timezone: tzinfo | None = None,
     ) -> None:
         self._available_slots = list(available_slots) if available_slots else []
         self._professionals = list(professionals) if professionals else []
         self._appointments_by_key: dict[str, Appointment] = {}
         self._appointments_by_id: dict[str, Appointment] = {}
         self._next_id = count(1)
+        #: Defaults to UTC — fine for every existing test/dev use, which
+        #: doesn't care about calendar-day alignment. A caller that DOES
+        #: (e.g. `_offer_any_professional_slots`) passes its own.
+        self._clinic_timezone = clinic_timezone if clinic_timezone is not None else UTC
+
+    @property
+    def clinic_timezone(self) -> tzinfo:
+        return self._clinic_timezone
 
     async def search_availability(
         self,
@@ -30,13 +40,24 @@ class FakeDentalinkGateway:
         date_range: DateTimeRange,
         limit: int | None = None,
     ) -> list[AppointmentSlot]:
-        matches = [
-            slot
-            for slot in self._available_slots
-            if (specialty_id is None or slot.specialty_id == specialty_id)
-            and (professional_id is None or slot.professional_id == professional_id)
-            and date_range.contains(slot.time_range.start)
-        ]
+        # Dedupe by id, keeping the first occurrence — mirrors
+        # `DentalinkAppointmentGateway.search_availability`'s own dedupe,
+        # so a test built against this fake can't pass with a slot list
+        # the real gateway would collapse (or reject via WhatsApp's
+        # `[131009] Duplicated row id`).
+        matches: list[AppointmentSlot] = []
+        seen_ids: set[str] = set()
+        for slot in self._available_slots:
+            if specialty_id is not None and slot.specialty_id != specialty_id:
+                continue
+            if professional_id is not None and slot.professional_id != professional_id:
+                continue
+            if not date_range.contains(slot.time_range.start):
+                continue
+            if slot.id in seen_ids:
+                continue
+            seen_ids.add(slot.id)
+            matches.append(slot)
         return matches if limit is None else matches[:limit]
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:

@@ -9,13 +9,18 @@ delegates to it.
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
 import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
-from app.agent.appointment_decision_subgraph import build_appointment_decision_graph
+from app.agent.appointment_decision_subgraph import (
+    _AGGREGATE_SEARCH_WINDOW,
+    _AGGREGATE_TARGET_SLOTS,
+    build_appointment_decision_graph,
+)
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX,
     STAGE_AWAITING_NO_SLOTS_CHOICE,
@@ -67,12 +72,14 @@ async def _make_graph(
     available_slots=None,
     llm_provider=None,
     conversation_id="conv-1",
+    clinic_timezone=None,
 ):
     conversation_repository = make_conversation_repository()
     await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
     appointment_gateway = make_dentalink_gateway(
         available_slots=available_slots if available_slots is not None else [],
         professionals=professionals if professionals is not None else [],
+        clinic_timezone=clinic_timezone,
     )
     graph = build_appointment_decision_graph(
         appointment_gateway=appointment_gateway,
@@ -675,6 +682,298 @@ async def test_stale_slot_payload_is_rejected():
     assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
 
 
+@pytest.mark.asyncio
+async def test_specialty_payload_during_slot_selection_searches_the_new_specialty():
+    # Production bug: a patient picks a specialty (e.g. "General"), gets
+    # the slot list (`stage` becomes `awaiting_slot_selection`), then taps
+    # a DIFFERENT specialty on an OLD specialty-list message
+    # (`SPECIALTY:<id>`). `route_entry` used to route by `stage` straight
+    # to `choose_slot`, whose `slot_id is None` branch treated the payload
+    # as a stale slot pick and just re-sent the old list — changing
+    # specialty never worked.
+    slot_a = AppointmentSlot(
+        id="prof-a-slot",
+        professional_id="prof-a",
+        specialty_id="cleaning",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=1), datetime.now(UTC) + timedelta(days=1, hours=1)
+        ),
+    )
+    slot_b = AppointmentSlot(
+        id="prof-b-slot",
+        professional_id="prof-b",
+        specialty_id="endo",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=2), datetime.now(UTC) + timedelta(days=2, hours=1)
+        ),
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[
+            make_specialty(id_="cleaning", name="Ortodoncia"),
+            make_specialty(id_="endo", name="Endodoncia"),
+        ],
+        professionals=[
+            make_professional(id_="prof-a", specialty_id="cleaning"),
+            make_professional(id_="prof-b", specialty_id="endo"),
+        ],
+        available_slots=[slot_a, slot_b],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "available_slots": [slot_a],
+            "professional_names": {"prof-a": "Prof A"},
+            "slots_page": 0,
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["chosen_specialty_id"] == "endo"
+    assert result["collected_data"]["available_slots"] == [slot_b]
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot_b.id}" in row_ids
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot_a.id}" not in row_ids
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_for_the_same_specialty_re_runs_the_search():
+    # The exact production case: re-tapping "General" (the SAME specialty
+    # already chosen) on the old list must run a FRESH search, not just
+    # re-send whatever `available_slots` is already sitting in
+    # `collected_data` from before.
+    slot = AppointmentSlot(
+        id="prof-a-slot",
+        professional_id="prof-a",
+        specialty_id="cleaning",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=1), datetime.now(UTC) + timedelta(days=1, hours=1)
+        ),
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-a", specialty_id="cleaning")],
+        available_slots=[slot],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "available_slots": [slot],
+            "professional_names": {"prof-a": "Prof A"},
+            "slots_page": 0,
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}" in row_ids
+
+
+@pytest.mark.asyncio
+async def test_unknown_specialty_payload_during_slot_selection_keeps_the_stale_fallback():
+    slot = _future_slot()
+    graph, _, _ = await _make_graph(available_slots=[slot])
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}unknown-specialty",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "available_slots": [slot],
+            "professional_names": {},
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_slot"
+    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+
+
+class _RaisingSpecialtyGateway:
+    """Test double whose `list_specialties()` always raises — simulates a
+    failing Dentalink call during `route_entry`'s `SPECIALTY:` reroute
+    catalog lookup."""
+
+    async def list_specialties(self):
+        raise RuntimeError("dentalink is down")
+
+
+class _HangingSpecialtyGateway:
+    """Test double whose `list_specialties()` never resolves — simulates a
+    slow/hung Dentalink call. Paired with a monkeypatched (short) reroute
+    timeout so tests using it stay fast."""
+
+    async def list_specialties(self):
+        await asyncio.sleep(3600)
+        return []  # pragma: no cover - never reached
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_reroute_falls_back_to_stale_when_catalog_lookup_raises():
+    # T7a: before this guard, a failing catalog lookup during the reroute
+    # would fail the WHOLE turn, where an unrecognized payload at this
+    # stage never made an external call at all before this feature existed.
+    slot = _future_slot()
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    graph = build_appointment_decision_graph(
+        appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
+        specialty_gateway=_RaisingSpecialtyGateway(),
+        conversation_repository=conversation_repository,
+        llm_provider=FakeLLMProvider(),
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "available_slots": [slot],
+            "professional_names": {},
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_slot"
+    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_reroute_falls_back_to_stale_when_catalog_lookup_times_out(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        appointment_decision_subgraph, "_SPECIALTY_REROUTE_TIMEOUT", timedelta(seconds=0.01)
+    )
+    slot = _future_slot()
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    graph = build_appointment_decision_graph(
+        appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
+        specialty_gateway=_HangingSpecialtyGateway(),
+        conversation_repository=conversation_repository,
+        llm_provider=FakeLLMProvider(),
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "available_slots": [slot],
+            "professional_names": {},
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_slot"
+    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_during_browse_choice_searches_the_new_specialty():
+    # T7b: reroute also applies from the browse-choice stage
+    # (`STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE` -> `choose_browse_mode`).
+    slot_b = AppointmentSlot(
+        id="prof-b-slot",
+        professional_id="prof-b",
+        specialty_id="endo",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=1), datetime.now(UTC) + timedelta(days=1, hours=1)
+        ),
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[
+            make_specialty(id_="cleaning", name="Ortodoncia"),
+            make_specialty(id_="endo", name="Endodoncia"),
+        ],
+        professionals=[make_professional(id_="prof-b", specialty_id="endo")],
+        available_slots=[slot_b],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["chosen_specialty_id"] == "endo"
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot_b.id}" in row_ids
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_during_professional_selection_searches_the_new_specialty():
+    # T7b: reroute also applies from professional selection
+    # (`STAGE_AWAITING_PROFESSIONAL_SELECTION` -> `choose_professional`).
+    slot_b = AppointmentSlot(
+        id="prof-b-slot",
+        professional_id="prof-b",
+        specialty_id="endo",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=1), datetime.now(UTC) + timedelta(days=1, hours=1)
+        ),
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[
+            make_specialty(id_="cleaning", name="Ortodoncia"),
+            make_specialty(id_="endo", name="Endodoncia"),
+        ],
+        professionals=[make_professional(id_="prof-b", specialty_id="endo")],
+        available_slots=[slot_b],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "professional_options": [make_professional(id_="prof-a", specialty_id="cleaning")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["chosen_specialty_id"] == "endo"
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot_b.id}" in row_ids
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_during_reschedule_slot_selection_does_not_reroute():
+    # T7b: a reschedule in flight (`rescheduling_appointment_id` set) must
+    # stay legacy-owned even when the payload looks like a specialty pick.
+    slot = _future_slot()
+    graph, _, _ = await _make_graph(available_slots=[slot])
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "available_slots": [slot],
+            "professional_names": {},
+            "rescheduling_appointment_id": "appt-1",
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_slot"
+    assert result["exit_reason"] == "not_migrated"
+
+
 # --- Availability outcomes -----------------------------------------------
 
 
@@ -884,6 +1183,158 @@ async def test_a_valid_specialty_pick_lists_the_soonest_slot_across_professional
     row_titles = " ".join(row.title for row in result["response_list"].rows)
     assert "Alvarez" not in row_titles
     assert "Gomez" not in row_titles
+
+
+class _FechaScopedGateway:
+    """Minimal `AppointmentGateway` double that mimics Dentalink's real
+    per-`fecha` indexing: a slot is only returned when the LITERAL date
+    implied by `date_range.start.date()` — taken verbatim, no tz
+    conversion, exactly like `DentalinkAppointmentGateway.search_availability`
+    computes its own `fecha` filter — matches the slot's OWN clinic-local
+    calendar date.
+
+    This is what actually exposes the T5a regression: a UTC-midnight-
+    aligned window's naive `.date()` can land on the wrong clinic-local
+    day for a late-evening clinic slot, so the request for that day never
+    asks Dentalink for the right `fecha` at all — the bug is invisible to
+    a plain `date_range.contains(...)` fake like `FakeDentalinkGateway`,
+    which never simulates the per-day `fecha` filter losing a slot.
+    """
+
+    def __init__(self, slots, professionals, clinic_timezone):
+        self._slots = slots
+        self._professionals = professionals
+        self.clinic_timezone = clinic_timezone
+        self.calls: list[DateTimeRange] = []
+
+    async def search_availability(self, specialty_id, professional_id, date_range, limit=None):
+        self.calls.append(date_range)
+        requested_date = date_range.start.date()
+        matches = [
+            slot
+            for slot in self._slots
+            if slot.time_range.start.astimezone(self.clinic_timezone).date() == requested_date
+            and date_range.contains(slot.time_range.start)
+        ]
+        return matches if limit is None else matches[:limit]
+
+    async def list_professionals(self, specialty_id=None):
+        return [
+            professional
+            for professional in self._professionals
+            if specialty_id is None or professional.specialty_id == specialty_id
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_valid_specialty_pick_finds_a_late_clinic_local_slot(monkeypatch):
+    # Regression (T5a): T2's calendar-day-aligned aggregated search used
+    # UTC (`datetime.now(UTC)`) to build both `now` and the day windows.
+    # In a UTC-3 clinic, a slot at 22:00 local falls on the NEXT calendar
+    # date in UTC — every UTC-day window then asks Dentalink for the
+    # wrong `fecha`, and the slot is never found. The fix aligns `now`/
+    # the search window to the clinic's OWN local midnight instead.
+    clinic_timezone = ZoneInfo("America/Argentina/Buenos_Aires")
+    fixed_moment = datetime(2026, 9, 22, 13, 0, tzinfo=UTC)  # 10:00 clinic-local, same day
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_moment.astimezone(tz) if tz is not None else fixed_moment
+
+    monkeypatch.setattr(appointment_decision_subgraph, "datetime", _FixedDatetime)
+
+    late_slot = AppointmentSlot(
+        id="prof-1-202609222200",
+        professional_id="prof-1",
+        specialty_id="cleaning",
+        time_range=DateTimeRange(
+            datetime(2026, 9, 22, 22, 0, tzinfo=clinic_timezone),
+            datetime(2026, 9, 22, 22, 30, tzinfo=clinic_timezone),
+        ),
+    )
+    gateway = _FechaScopedGateway(
+        slots=[late_slot],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        clinic_timezone=clinic_timezone,
+    )
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    graph = build_appointment_decision_graph(
+        appointment_gateway=gateway,
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        conversation_repository=conversation_repository,
+        llm_provider=FakeLLMProvider(),
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{late_slot.id}" in row_ids
+
+
+@pytest.mark.asyncio
+async def test_offer_any_professional_slots_passes_a_clinic_local_range_and_the_real_target(
+    monkeypatch,
+):
+    # Node-level test for `_offer_any_professional_slots` (T5b): records
+    # what `date_range`/`target_slot_count` actually reach the use case,
+    # independent of whether any slot is found.
+    clinic_timezone = ZoneInfo("America/Argentina/Buenos_Aires")
+    captured: list[tuple[DateTimeRange, int]] = []
+
+    class _SpyUseCase:
+        def __init__(self, gateway):
+            del gateway
+
+        async def execute(self, *, specialty_id, date_range, target_slot_count):
+            del specialty_id
+            captured.append((date_range, target_slot_count))
+            return [], {}
+
+    monkeypatch.setattr(
+        appointment_decision_subgraph, "SearchAvailabilityAnyProfessionalUseCase", _SpyUseCase
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        clinic_timezone=clinic_timezone,
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        },
+    )
+
+    before = datetime.now(UTC)
+    await graph.ainvoke(state)
+    after = datetime.now(UTC)
+
+    assert len(captured) == 1
+    date_range, target_slot_count = captured[0]
+    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 18
+    # Starts at "now", in the CLINIC timezone (not UTC — its utcoffset is
+    # the clinic's, distinguishing this from the pre-fix UTC-anchored range).
+    assert before <= date_range.start <= after
+    assert date_range.start.utcoffset() == clinic_timezone.utcoffset(date_range.start)
+    # Ends at clinic-local midnight TODAY (the calendar day `date_range.start`
+    # itself falls on, in its own tz) + the 7-day search window.
+    expected_today_midnight = datetime.combine(
+        date_range.start.date(), time.min, tzinfo=date_range.start.tzinfo
+    )
+    assert date_range.end == expected_today_midnight + _AGGREGATE_SEARCH_WINDOW
 
 
 @pytest.mark.asyncio

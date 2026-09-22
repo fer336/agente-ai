@@ -28,7 +28,7 @@ adapter to hand off to legacy `_begin_identification(...)`.
 import asyncio
 import logging
 from collections.abc import Awaitable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Literal, Protocol, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
@@ -116,14 +116,29 @@ _MAX_SLOTS_SEARCHED = 27
 #: (see the use case's docstring for the full incident). The window is
 #: narrower than the single-professional `_SEARCH_WINDOW` (14 days) on
 #: purpose: a patient asking for "the soonest slot, don't care who" cares
-#: about near-term availability, not two weeks out.
-_AGGREGATE_TARGET_SLOTS = 15
+#: about near-term availability, not two weeks out. 18 slots is 2 full
+#: pages of 9 rows (the WhatsApp list's real 10-row cap minus the "Ver
+#: más"/"Volver" navigation row) — see `_offer_any_professional_slots`
+#: below for why the search `date_range` itself is built from TODAY's
+#: midnight, not from `now` directly: it's what keeps the window at
+#: exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates (today + the
+#: next 6), so the use case's calendar-day-aligned walk never exceeds 7
+#: real Dentalink requests.
+_AGGREGATE_TARGET_SLOTS = 18
 _AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
 #: response from disappearing indefinitely when Dentalink is slow.
 _STAFFED_SPECIALTY_TIMEOUT = timedelta(seconds=8)
+
+#: Maximum time to wait for the specialty-catalog lookup `route_entry`'s
+#: `SPECIALTY:` reroute uses to validate a payload (see its own docstring
+#: comment). A sibling of `_STAFFED_SPECIALTY_TIMEOUT`, not a reuse of it:
+#: the two guard unrelated calls (this one gates `route_entry` itself,
+#: before any stage-specific node even runs), and keeping them separate
+#: lets either be tuned without touching the other.
+_SPECIALTY_REROUTE_TIMEOUT = timedelta(seconds=8)
 
 #: Mirrors the matching message constants in `app.agent.nodes.appointment` —
 #: only ever used by the specialty/professional/slot selection behavior
@@ -209,6 +224,16 @@ _ESCALATION_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 
+#: Entry nodes for every migrated stage that comes AFTER a specialty is
+#: already chosen — see `route_entry`'s own `SPECIALTY:` interception.
+#: Deliberately excludes `choose_specialty` itself (a `SPECIALTY:` tap
+#: there is just the normal in-list pick, already handled) and any
+#: not-yet-migrated stage (`decision_entry_node_for_stage` already maps
+#: those to `None`, which is never a member here).
+_NODES_AFTER_SPECIALTY_SELECTION = frozenset(
+    {"choose_browse_mode", "choose_professional", "choose_slot"}
+)
+
 
 class AppointmentDecisionState(TypedDict, total=False):
     """Narrow, ephemeral state for the create-selection child graph.
@@ -286,6 +311,33 @@ async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] |
             exc_info=exc,
         )
         return None
+
+
+async def _specialty_catalog_for_reroute_safe(
+    list_specialties: ListSpecialtiesUseCase,
+) -> list[Specialty] | None:
+    """Wrapper that applies a timeout to the specialty-catalog lookup
+    `route_entry`'s `SPECIALTY:` reroute uses to validate a payload.
+
+    Mirrors `_staffed_specialty_ids_safe`'s own shape/reasoning: without
+    this, a slow or failing gateway would fail the WHOLE turn here, where
+    an unrecognized payload at this stage never made an external call at
+    all before this reroute existed — it just took the stale/reminder
+    fallback. ``None`` on timeout/failure tells `route_entry` to fall
+    through to that exact same fallback, same as an unmatched id.
+    """
+    try:
+        return await asyncio.wait_for(
+            list_specialties.execute(), timeout=_SPECIALTY_REROUTE_TIMEOUT.total_seconds()
+        )
+    except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+        logger.warning(
+            "specialty_reroute_catalog_lookup failed or timed out; "
+            "falling back to stale/reminder handling",
+            exc_info=exc,
+        )
+        return None
+
 
 class _DecisionNode(Protocol):
     """Callable shape LangGraph's `StateGraph.add_node` expects for this
@@ -611,10 +663,33 @@ def build_appointment_decision_graph(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object]:
-        now = datetime.now(UTC)
+        # CLINIC-LOCAL `now`, not UTC (regression fixed here, T5a): a
+        # calendar "day" only means what Dentalink itself means by one —
+        # the clinic's own local date — and `SearchAvailabilityAnyProfessionalUseCase`
+        # aligns its per-day windows to midnight in whatever tz `now` (and
+        # therefore `search_range`) carries. A UTC-aligned `now` used to
+        # make a late clinic-local slot (e.g. 22:00 in a UTC-3 clinic,
+        # already the NEXT calendar date in UTC) fall in the wrong day's
+        # window, and the real gateway would then ask Dentalink for the
+        # wrong `fecha` — silently losing that slot from every window.
+        # `AppointmentGateway.clinic_timezone` is exposed on the PORT
+        # itself precisely so this agent-layer caller can get it without
+        # importing infrastructure/`Settings` directly.
+        now = datetime.now(appointment_gateway.clinic_timezone)
+        # Aligned to TODAY's midnight (not `now` itself) so the range spans
+        # exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates — today
+        # (partial, from `now` on) plus the next 6 full days — instead of
+        # `_AGGREGATE_SEARCH_WINDOW` literal hours from `now`, which would
+        # touch 8 distinct calendar dates (e.g. 19:58 today through 19:58
+        # in 7 days spans today AND the following 7 days). The use case's
+        # own walk is calendar-day-aligned, so this is what keeps the real
+        # Dentalink request count at `_AGGREGATE_SEARCH_WINDOW.days` (7),
+        # not 8.
+        today_midnight = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
+        search_range = DateTimeRange(now, today_midnight + _AGGREGATE_SEARCH_WINDOW)
         slots, professional_names = await search_availability_any_professional.execute(
             specialty_id=specialty_id,
-            date_range=DateTimeRange(now, now + _AGGREGATE_SEARCH_WINDOW),
+            date_range=search_range,
             target_slot_count=_AGGREGATE_TARGET_SLOTS,
         )
         if not slots:
@@ -669,6 +744,51 @@ def build_appointment_decision_graph(
         collected_data = state.get("collected_data", {})
         stage = cast(str | None, collected_data.get("stage"))
         entry = decision_entry_node_for_stage(stage)
+        button_payload = state.get("button_payload")
+
+        # A `SPECIALTY:<id>` tap arriving at a stage AFTER specialty
+        # selection — a stale specialty-list message from earlier in the
+        # conversation (production bug: the patient picks a specialty, gets
+        # the slot list, then taps a DIFFERENT specialty — or the SAME one
+        # again — on that now-outdated specialty-list message), or simply
+        # the patient changing their mind — must run a FRESH search for
+        # that specialty, not whatever this stage's own payload handling
+        # does with an id it doesn't recognize (`choose_slot`'s
+        # `stale_slot_selection` re-send, which is what silently swallowed
+        # this in production). Reschedule stays legacy-owned, untouched.
+        if (
+            entry in _NODES_AFTER_SPECIALTY_SELECTION
+            and button_payload is not None
+            and button_payload.startswith(SPECIALTY_PAYLOAD_PREFIX)
+            and collected_data.get("rescheduling_appointment_id") is None
+        ):
+            requested_specialty_id = button_payload[len(SPECIALTY_PAYLOAD_PREFIX) :]
+            specialties = await _specialty_catalog_for_reroute_safe(list_specialties)
+            if specialties is not None and any(
+                specialty.id == requested_specialty_id for specialty in specialties
+            ):
+                # Valid: reroute to `choose_specialty` with the catalog
+                # repopulated (validated "the same way `choose_specialty`
+                # does" — its own `resolve_list_choice` match-by-id logic
+                # against `specialty_options`), so the EXACT same code path
+                # a normal in-list valid pick takes runs from here:
+                # `_offer_any_professional_slots` for the new specialty.
+                # No selection logic duplicated.
+                return {
+                    "entry_node": "choose_specialty",
+                    "next_node": "choose_specialty",
+                    "decision_node": "route_entry",
+                    "exit_reason": "none",
+                    "collected_data": {
+                        **invalidate_from(collected_data, "specialty"),
+                        "specialty_options": specialties,
+                    },
+                }
+            # Unknown/invalid specialty id, or the catalog lookup itself
+            # timed out/failed (`specialties is None`): fall through to
+            # `entry`'s own existing stale/reminder handling below,
+            # unchanged.
+
         if entry is None and stage is None:
             if collected_data.get("operation") == _CREATE_APPOINTMENT_ACTION:
                 entry = "choose_specialty"
