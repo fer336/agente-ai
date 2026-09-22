@@ -1,3 +1,5 @@
+import re
+
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -6,6 +8,40 @@ from app.domain.repositories.llm_provider import LLMProvider
 _UNKNOWN_ANSWER = (
     "Ese dato no lo tengo confirmado. Si querés, te comunico con administración para revisarlo."
 )
+
+#: Deterministic backstop (PRD.md §75.5: "prompt-injection... debe ser
+#: bloqueado por lógica de negocio, no solo confiando en el prompt"), same
+#: "never trust the prompt alone" posture as `text_leaks_a_name`
+#: (`appointment_selection.py`). Confirmed live: `understand()`'s free-text
+#: "answer" field for intent=question was talked into acting as a
+#: general-purpose assistant (a request for a recursive Python function got
+#: real Python code back). A legitimate clinic answer never contains a code
+#: block, a function/class definition, an import, or a SQL query — this is
+#: a cheap, low-false-positive signal that the prompt-level defense already
+#: failed, so the text must never reach the patient verbatim.
+_OFF_TOPIC_PATTERNS = re.compile(
+    r"```"
+    r"|\bdef\s+\w+\s*\("
+    r"|\bclass\s+\w+\s*[:(]"
+    r"|\bimport\s+\w+"
+    r"|\bfrom\s+\w+\s+import\b"
+    r"|\bprint\s*\("
+    r"|\bSELECT\b.+\bFROM\b"
+    r"|<script"
+    r"|#include"
+    r"|\bfunction\s*\("
+    r"|public\s+static\s+void",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_OFF_TOPIC_ANSWER = (
+    "Solo puedo ayudarte con turnos, especialidades, obra social y datos de la clínica. "
+    "Si necesitás otra cosa, te comunico con administración."
+)
+
+
+def _looks_off_topic(text: str) -> bool:
+    return bool(_OFF_TOPIC_PATTERNS.search(text))
 
 
 def create_question_node(llm_provider: LLMProvider) -> AgentNode:
@@ -21,8 +57,13 @@ def create_question_node(llm_provider: LLMProvider) -> AgentNode:
 
         collected_data = dict(state["collected_data"])
         pending_answer = collected_data.pop("pending_answer", None)
-        if isinstance(pending_answer, str) and pending_answer.strip():
-            text = pending_answer.strip()
+        stripped_answer = (
+            pending_answer.strip() if isinstance(pending_answer, str) else None
+        )
+        if stripped_answer and _looks_off_topic(stripped_answer):
+            text = _OFF_TOPIC_ANSWER
+        elif stripped_answer:
+            text = stripped_answer
         else:
             text = await generate_or_fallback(
                 llm_provider,
