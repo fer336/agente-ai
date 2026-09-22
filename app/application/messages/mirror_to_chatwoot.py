@@ -74,6 +74,26 @@ class MirrorMessageToChatwootUseCase:
                 exc_info=True,
             )
 
+    async def escalate_to_administracion(
+        self, conversation_id: ConversationId, phone: PhoneNumber, name: str
+    ) -> None:
+        """Labels the conversation "administracion" in Chatwoot when the
+        agent hands off to a human (`app.agent.nodes.handoff`) — resolves
+        (creating if needed) the same mapping every other mirror call uses,
+        since a handoff can be the very first message of a conversation,
+        before any earlier mirror call has had a chance to create one."""
+        try:
+            chatwoot_conversation_id = await self._resolve_conversation(
+                conversation_id, phone, name
+            )
+            await self._chatwoot_gateway.assign_administracion(chatwoot_conversation_id)
+        except Exception:  # noqa: BLE001 - mirror is best-effort, must never raise
+            logger.warning(
+                "mirror_to_chatwoot.escalate_to_administracion_failed conversation_id=%s",
+                conversation_id,
+                exc_info=True,
+            )
+
     async def _resolve_conversation(
         self, conversation_id: ConversationId, phone: PhoneNumber, name: str
     ) -> str:

@@ -22,6 +22,7 @@ from app.agent.nodes.specialties import create_specialties_node
 from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import (
     AgreementGateway,
@@ -138,6 +139,7 @@ def build_graph(
     error_service: ErrorService,
     verification_flow_id: str = "",
     registration_flow_id: str = "",
+    mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
 ) -> StateGraph[AgentState, None, AgentState, AgentState]:
     """Builds the (uncompiled) agent graph (PRD.md §29):
 
@@ -256,7 +258,7 @@ def build_graph(
         HANDOFF_NODE,
         with_error_handling(
             HANDOFF_NODE,
-            create_handoff_node(handoff_gateway, conversation_repository),
+            create_handoff_node(handoff_gateway, conversation_repository, mirror_to_chatwoot),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,
@@ -362,6 +364,7 @@ def compile_graph(
     checkpointer: "BaseCheckpointSaver[Any] | None" = None,
     verification_flow_id: str = "",
     registration_flow_id: str = "",
+    mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Compiles the graph, optionally with a checkpointer.
 
@@ -389,6 +392,7 @@ def compile_graph(
         error_service,
         verification_flow_id=verification_flow_id,
         registration_flow_id=registration_flow_id,
+        mirror_to_chatwoot=mirror_to_chatwoot,
     ).compile(checkpointer=checkpointer)
 
 

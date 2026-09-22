@@ -1,3 +1,5 @@
+import asyncio
+
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.application.conversations.set_conversation_input_state import HUMAN as INPUT_STATE_HUMAN
@@ -6,9 +8,11 @@ from app.application.conversations.set_conversation_input_state import (
 )
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.application.handoff.request_human_handoff import RequestHumanHandoffUseCase
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import HumanHandoffGateway
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.phone_number import PhoneNumber
 
 _HANDOFF_ACK_MESSAGE = (
     "Perfecto. Te comunico con administración de la clínica.\n\n"
@@ -19,6 +23,7 @@ _HANDOFF_ACK_MESSAGE = (
 def create_handoff_node(
     handoff_gateway: HumanHandoffGateway,
     conversation_repository: ConversationRepository,
+    mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
 ) -> AgentNode:
     """Derives the conversation to administración (PRD.md §21-22).
 
@@ -42,6 +47,18 @@ def create_handoff_node(
         await request_handoff.execute(conversation_id, reason=state["user_message"])
         await set_conversation_mode.execute(conversation_id, mode="human")
         await set_conversation_input_state.execute(conversation_id, INPUT_STATE_HUMAN)
+
+        if mirror_to_chatwoot is not None:
+            # Fire-and-forget, same "never delay the real reply" posture as
+            # every other mirror call site — see
+            # `MirrorMessageToChatwootUseCase`'s own docstring.
+            phone = str(conversation_id).removeprefix("ycloud-")
+            asyncio.create_task(
+                mirror_to_chatwoot.escalate_to_administracion(
+                    conversation_id, PhoneNumber(phone), phone
+                )
+            )
+
         return {"response_text": _HANDOFF_ACK_MESSAGE, "requires_handoff": True}
 
     return node
