@@ -216,6 +216,16 @@ _ESCALATION_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 
+#: Entry nodes for every migrated stage that comes AFTER a specialty is
+#: already chosen — see `route_entry`'s own `SPECIALTY:` interception.
+#: Deliberately excludes `choose_specialty` itself (a `SPECIALTY:` tap
+#: there is just the normal in-list pick, already handled) and any
+#: not-yet-migrated stage (`decision_entry_node_for_stage` already maps
+#: those to `None`, which is never a member here).
+_NODES_AFTER_SPECIALTY_SELECTION = frozenset(
+    {"choose_browse_mode", "choose_professional", "choose_slot"}
+)
+
 
 class AppointmentDecisionState(TypedDict, total=False):
     """Narrow, ephemeral state for the create-selection child graph.
@@ -699,6 +709,47 @@ def build_appointment_decision_graph(
         collected_data = state.get("collected_data", {})
         stage = cast(str | None, collected_data.get("stage"))
         entry = decision_entry_node_for_stage(stage)
+        button_payload = state.get("button_payload")
+
+        # A `SPECIALTY:<id>` tap arriving at a stage AFTER specialty
+        # selection — a stale specialty-list message from earlier in the
+        # conversation (production bug: the patient picks a specialty, gets
+        # the slot list, then taps a DIFFERENT specialty — or the SAME one
+        # again — on that now-outdated specialty-list message), or simply
+        # the patient changing their mind — must run a FRESH search for
+        # that specialty, not whatever this stage's own payload handling
+        # does with an id it doesn't recognize (`choose_slot`'s
+        # `stale_slot_selection` re-send, which is what silently swallowed
+        # this in production). Reschedule stays legacy-owned, untouched.
+        if (
+            entry in _NODES_AFTER_SPECIALTY_SELECTION
+            and button_payload is not None
+            and button_payload.startswith(SPECIALTY_PAYLOAD_PREFIX)
+            and collected_data.get("rescheduling_appointment_id") is None
+        ):
+            requested_specialty_id = button_payload[len(SPECIALTY_PAYLOAD_PREFIX) :]
+            specialties = await list_specialties.execute()
+            if any(specialty.id == requested_specialty_id for specialty in specialties):
+                # Valid: reroute to `choose_specialty` with the catalog
+                # repopulated (validated "the same way `choose_specialty`
+                # does" — its own `resolve_list_choice` match-by-id logic
+                # against `specialty_options`), so the EXACT same code path
+                # a normal in-list valid pick takes runs from here:
+                # `_offer_any_professional_slots` for the new specialty.
+                # No selection logic duplicated.
+                return {
+                    "entry_node": "choose_specialty",
+                    "next_node": "choose_specialty",
+                    "decision_node": "route_entry",
+                    "exit_reason": "none",
+                    "collected_data": {
+                        **invalidate_from(collected_data, "specialty"),
+                        "specialty_options": specialties,
+                    },
+                }
+            # Unknown/invalid specialty id: fall through to `entry`'s own
+            # existing stale/reminder handling below, unchanged.
+
         if entry is None and stage is None:
             if collected_data.get("operation") == _CREATE_APPOINTMENT_ACTION:
                 entry = "choose_specialty"

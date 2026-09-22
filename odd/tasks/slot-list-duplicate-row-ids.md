@@ -17,7 +17,7 @@ The "soonest slots across all professionals" list must reach the patient on What
 - Slot row titles are at most 20 chars and still show weekday, date and time (e.g. `🕐 Mié 24/09 14:30`).
 - Booking does not send `slot.id` to Dentalink (it uses professional/date/time), so deriving the id is safe.
 - TDD: strict (session config). Runner: `pytest` (pyproject). Also run `ruff check` and `mypy`.
-- Out of scope (pending user decision): a `SPECIALTY:` payload arriving while stage is `awaiting_slot_selection` is treated as a stale slot pick.
+- ~~Out of scope (pending user decision): a `SPECIALTY:` payload arriving while stage is `awaiting_slot_selection` is treated as a stale slot pick.~~ **Resolved by T6: user authorized fixing this in this branch on 2026-09-22.**
 
 ## Tasks
 - [x] T1 Unique slot ids: derive a deterministic id from professional + start, and dedupe the aggregated results. Route: delegated (writer trigger, 2+ files).
@@ -27,11 +27,14 @@ The "soonest slots across all professionals" list must reach the patient on What
 
 - [x] T5 Fix the review findings. (a) Align the day windows to clinic-local midnight so slots from 21:00 to 23:59 local are not dropped (a regression introduced by T2; the earlier "pre-existing" caveat was wrong). (b) Add a node-level test for the search range and the target of 18. (c) Remove the stray asyncio mark. Route: delegated.
 
+- [x] T6 A `SPECIALTY:` payload tapped from an older specialty list while the conversation is in a later stage (`awaiting_slot_selection`, or any later stage of the create-booking flow) is treated as a new specialty pick: it searches for that specialty. Today it is treated as a stale slot pick and the old slot list is re-sent. User authorized in this branch on 2026-09-22. Route: delegated.
+
 ## Acceptance criteria
 - An aggregated search whose raw agenda rows share ids yields unique slot ids and unique list row ids.
 - A 7-day search makes at most 7 `/v5/agendas` requests (one per date) and returns at most 18 slots, sorted.
 - Every slot row title is at most 20 chars.
 - No path (aggregated, single-professional, or legacy `appointment.py`) can ever hand a slot list with duplicate ids to a `ListRow` builder: deduped at the gateway (source), and again at the row-building layer (last-line guard).
+- A `SPECIALTY:<id>` payload tapped at `awaiting_slot_selection`, the browse-choice stage, or professional selection runs a fresh search for that specialty (same or different from the one already chosen); an unknown specialty id keeps the existing stale/reminder fallback; the reschedule path is untouched.
 - The full test suite, ruff and mypy pass.
 
 ## Progress / evidence
@@ -64,6 +67,11 @@ The "soonest slots across all professionals" list must reach the patient on What
   - Corrected the T4-era "pre-existing caveat" line above: it was this exact bug, introduced by T2, not pre-existing (T2 is what introduced the calendar-day-aligned windowing in the first place).
   - TDD: RED observed (3 failing tests total across (a)/(b): 2 behavioral RED, 1 RED via a missing `clinic_timezone` kwarg surfacing the plumbing gap) before implementation, GREEN after.
   - Verification: `uv run pytest -q` — 1546 passed, 82 skipped, 5 failed (the same pre-existing failures noted above, confirmed unrelated). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files. Commit: `d9b728d` fix(agent): align aggregated slot search to clinic-local calendar days.
+- 2026-09-22: T6 implemented (route: delegated). Production bug reproduced from logs: patient picks "General" -> gets the slot list (`stage` becomes `awaiting_slot_selection`) -> taps "General" again, then "Endodoncia", on the OLD specialty-list message (`SPECIALTY:<id>`). `route_entry` routed purely by `stage`, straight to `choose_slot`; its `slot_id is None` branch treated the payload as a stale slot pick and just re-sent the old list, so changing (or re-confirming) specialty silently did nothing.
+  - Design choice: intercepted in `route_entry` itself (the coordinator's suggested spot), not inside each individual stage node. `route_entry` already computes `entry` (the stage's normal target node) and has closure access to `list_specialties`. When `entry` is one of `{choose_browse_mode, choose_professional, choose_slot}` (`_NODES_AFTER_SPECIALTY_SELECTION`, a new constant — deliberately excludes `choose_specialty` itself, where a `SPECIALTY:` tap is just the normal in-list pick already handled, and any not-yet-migrated stage) AND the payload is `SPECIALTY:<id>` AND this isn't a reschedule (`rescheduling_appointment_id is None` — untouched, falls through to its own existing `legacy_exit` check unchanged), it fetches the live specialty catalog and validates the id against it — "the same way `choose_specialty` does" was taken literally: instead of duplicating `choose_specialty`'s match-by-id logic, `route_entry` repopulates `collected_data["specialty_options"]` with the fresh catalog (after `invalidate_from(collected_data, "specialty")`) and reroutes to `choose_specialty`, whose EXISTING `resolve_list_choice`-against-`specialty_options` logic then finds the exact same payload and runs the EXACT same code path a normal valid pick takes: `_offer_any_professional_slots` for the new (or re-confirmed) specialty. No new selection/validation logic duplicated.
+  - An id that doesn't match any real specialty falls through with `collected_data` untouched, so `entry`'s own pre-existing stale/reminder handling runs exactly as before (`choose_slot`'s `stale_slot_selection` message, etc.) — verified this needed no code change of its own, only a test.
+  - RED tests (both new-behavior ones failed with `decision_node == "choose_slot"` instead of `"search_availability_any_professional"` before the fix): a `SPECIALTY:B` tap during `awaiting_slot_selection` (specialty A already chosen) now searches B and returns B's slots only; the exact production case of re-tapping the SAME specialty (A) also re-runs the search and returns a fresh list. A third test (unknown specialty id keeps the stale fallback) was already green before the fix — confirmed as the correct baseline, not a regression to introduce.
+  - Verification: `uv run pytest -q` — 1549 passed, 82 skipped, 5 failed (the same pre-existing failures noted above, confirmed unrelated). `uv run ruff check .` — all checks passed. `uv run mypy app` — no issues in 320 source files. Commit: see below.
 
 ## Next step
 Archive once the parent orchestrator reviews; the 5 pre-existing failing tests (DI/fake-gateway defaults, unrelated to this fix) are a separate, out-of-scope issue for the parent to triage.

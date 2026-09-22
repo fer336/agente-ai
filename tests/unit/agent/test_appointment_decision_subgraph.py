@@ -682,6 +682,122 @@ async def test_stale_slot_payload_is_rejected():
     assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
 
 
+@pytest.mark.asyncio
+async def test_specialty_payload_during_slot_selection_searches_the_new_specialty():
+    # Production bug: a patient picks a specialty (e.g. "General"), gets
+    # the slot list (`stage` becomes `awaiting_slot_selection`), then taps
+    # a DIFFERENT specialty on an OLD specialty-list message
+    # (`SPECIALTY:<id>`). `route_entry` used to route by `stage` straight
+    # to `choose_slot`, whose `slot_id is None` branch treated the payload
+    # as a stale slot pick and just re-sent the old list — changing
+    # specialty never worked.
+    slot_a = AppointmentSlot(
+        id="prof-a-slot",
+        professional_id="prof-a",
+        specialty_id="cleaning",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=1), datetime.now(UTC) + timedelta(days=1, hours=1)
+        ),
+    )
+    slot_b = AppointmentSlot(
+        id="prof-b-slot",
+        professional_id="prof-b",
+        specialty_id="endo",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=2), datetime.now(UTC) + timedelta(days=2, hours=1)
+        ),
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[
+            make_specialty(id_="cleaning", name="Ortodoncia"),
+            make_specialty(id_="endo", name="Endodoncia"),
+        ],
+        professionals=[
+            make_professional(id_="prof-a", specialty_id="cleaning"),
+            make_professional(id_="prof-b", specialty_id="endo"),
+        ],
+        available_slots=[slot_a, slot_b],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}endo",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "available_slots": [slot_a],
+            "professional_names": {"prof-a": "Prof A"},
+            "slots_page": 0,
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["chosen_specialty_id"] == "endo"
+    assert result["collected_data"]["available_slots"] == [slot_b]
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot_b.id}" in row_ids
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot_a.id}" not in row_ids
+
+
+@pytest.mark.asyncio
+async def test_specialty_payload_for_the_same_specialty_re_runs_the_search():
+    # The exact production case: re-tapping "General" (the SAME specialty
+    # already chosen) on the old list must run a FRESH search, not just
+    # re-send whatever `available_slots` is already sitting in
+    # `collected_data` from before.
+    slot = AppointmentSlot(
+        id="prof-a-slot",
+        professional_id="prof-a",
+        specialty_id="cleaning",
+        time_range=DateTimeRange(
+            datetime.now(UTC) + timedelta(days=1), datetime.now(UTC) + timedelta(days=1, hours=1)
+        ),
+    )
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-a", specialty_id="cleaning")],
+        available_slots=[slot],
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "chosen_specialty_id": "cleaning",
+            "chosen_specialty_name": "Ortodoncia",
+            "available_slots": [slot],
+            "professional_names": {"prof-a": "Prof A"},
+            "slots_page": 0,
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}" in row_ids
+
+
+@pytest.mark.asyncio
+async def test_unknown_specialty_payload_during_slot_selection_keeps_the_stale_fallback():
+    slot = _future_slot()
+    graph, _, _ = await _make_graph(available_slots=[slot])
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}unknown-specialty",
+        collected_data={
+            "stage": STAGE_AWAITING_SLOT_SELECTION,
+            "available_slots": [slot],
+            "professional_names": {},
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "choose_slot"
+    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+
+
 # --- Availability outcomes -----------------------------------------------
 
 
