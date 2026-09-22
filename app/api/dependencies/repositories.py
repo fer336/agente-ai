@@ -89,6 +89,20 @@ def get_conversation_repository(
     return SqlAlchemyConversationRepository(session)
 
 
+def get_chatwoot_mapping_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> ChatwootMappingRepository:
+    """FastAPI dependency providing the `ChatwootMappingRepository` port.
+
+    Plain (non-committing) `get_db_session` is enough — the Chatwoot
+    inbound webhook route only ever READS this table (resolving our own
+    `conversation_id` from a Chatwoot conversation id); the actual writes
+    that need to survive the request (`conversation.mode`) go through
+    `get_committing_conversation_repository` instead.
+    """
+    return SqlAlchemyChatwootMappingRepository(session)
+
+
 def get_committing_conversation_repository(
     session: AsyncSession = Depends(get_committing_db_session),
 ) -> ConversationRepository:

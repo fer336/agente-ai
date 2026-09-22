@@ -14,3 +14,10 @@ class ChatwootMappingRepository(Protocol):
     async def get_by_conversation_id(
         self, conversation_id: str
     ) -> ChatwootConversationMapping | None: ...
+
+    async def get_by_chatwoot_conversation_id(
+        self, chatwoot_conversation_id: str
+    ) -> ChatwootConversationMapping | None:
+        """Reverse lookup, needed by the inbound Chatwoot webhook — it only
+        knows Chatwoot's OWN conversation id, never our own `conversation_id`."""
+        ...
