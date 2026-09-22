@@ -49,6 +49,39 @@ class Settings(BaseSettings):
     ycloud_verification_flow_id: str = ""
     ycloud_registration_flow_id: str = ""
 
+    #: Chatwoot mirror (this session's own brief, no PRD.md section number):
+    #: staff reads/replies to patients from Chatwoot's own inbox instead of
+    #: YCloud's Shared Team Inbox, because YCloud's contact-tag mechanism is
+    #: confirmed unreliable on Coexistence-connected contacts (see
+    #: `app.application.conversations.handle_smb_message_echo`'s own
+    #: docstring). `""` (the default) means the Chatwoot mirror is
+    #: disabled — same "empty = not configured, fail closed" convention as
+    #: every other third-party credential in this file.
+    chatwoot_base_url: str = ""
+    chatwoot_account_id: str = ""
+    chatwoot_inbox_id: str = ""
+    #: A real agent/admin's personal token — required for contact
+    #: create/search and label management, which Chatwoot's Agent Bot
+    #: tokens cannot access (confirmed against Chatwoot's own API
+    #: authorization docs, per-endpoint).
+    chatwoot_api_access_token: str = ""
+    #: Separate Agent Bot token so bot-authored outgoing messages are
+    #: attributed to `sender.type == "agent_bot"` in Chatwoot, distinct
+    #: from a real human agent's `sender.type == "user"` — this is exactly
+    #: the signal the inbound webhook uses to tell a genuine staff reply
+    #: apart from the bot's own mirrored messages.
+    chatwoot_agent_bot_token: str = ""
+    #: Segment of our own webhook path, same convention as
+    #: `ycloud_webhook_secret` — validated via `hmac.compare_digest`.
+    chatwoot_webhook_secret: str = ""
+    #: The signing secret Chatwoot returns when the ACCOUNT-level webhook
+    #: (`Settings → Integrations → Webhooks`) is created — deliberately
+    #: not the inbox/Agent-Bot-level webhook secret, which is confirmed
+    #: NOT to sign correctly in practice (open Chatwoot issue, maintainer-
+    #: confirmed: inbox/bot webhook deliveries never use that secret to
+    #: sign, despite older docs claiming otherwise).
+    chatwoot_webhook_signing_secret: str = ""
+
     #: Publicly reachable URL for the clinic's logo (this session's brief)
     #: — YCloud/WhatsApp's own servers fetch it, so it can't be a local
     #: file path. Attached as the welcome menu's image header when set;

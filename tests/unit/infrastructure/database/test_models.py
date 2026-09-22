@@ -25,6 +25,7 @@ _EXPECTED_TABLES = {
     "runtime_agent_config",
     "contact_memories",
     "sent_messages",
+    "chatwoot_conversation_mappings",
 }
 
 

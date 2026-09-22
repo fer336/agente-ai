@@ -6,6 +6,7 @@ from app.api.dependencies.gateways import (
     get_media_downloader,
     get_media_gateway,
     get_messaging_gateway,
+    get_mirror_to_chatwoot_use_case,
     get_transcription_gateway,
 )
 from app.api.dependencies.redis import get_debounce_tracker, get_shared_redis_client
@@ -39,12 +40,15 @@ def get_ingest_message_use_case() -> IngestMessageUseCase:
         agent_invoker=get_agent_invoker(),
         runtime_config_service=get_runtime_config_service(),
         send_reply=SendReplyUseCase(
-            get_messaging_gateway(), open_sqlalchemy_sent_message_repository
+            get_messaging_gateway(),
+            open_sqlalchemy_sent_message_repository,
+            mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
         ),
         audio_rate_limit_per_minute=settings.audio_rate_limit_per_conversation_per_minute,
         welcome_image_url=settings.welcome_image_url or None,
         workflow_session_repositories_provider=open_sqlalchemy_workflow_session_repositories,
         conversation_idle_reset_delay_seconds=settings.conversation_idle_reset_delay_seconds,
+        mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
     )
 
 
@@ -73,4 +77,5 @@ def get_transcribe_audio_use_case() -> TranscribeAudioUseCase:
         transcription_timeout_seconds=settings.audio_transcription_timeout_seconds,
         provider_name="groq",
         model_name=settings.groq_transcription_model,
+        mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
     )

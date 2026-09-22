@@ -18,6 +18,7 @@ from app.application.conversations.schedule_conversation_reset import (
 )
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.application.messages.inbound_message_dto import InboundMessageDTO
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.contact import Contact
 from app.domain.entities.conversation import Conversation
@@ -113,6 +114,7 @@ class IngestMessageUseCase:
         welcome_image_url: str | None = None,
         workflow_session_repositories_provider: WorkflowSessionRepositoriesProvider | None = None,
         conversation_idle_reset_delay_seconds: int = 7200,
+        mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     ) -> None:
         self._repositories_provider = repositories_provider
         self._debounce_tracker = debounce_tracker
@@ -151,6 +153,7 @@ class IngestMessageUseCase:
         #: that already owns the appointment-flow follow-up/reset pair.
         #: Default: 2 hours.
         self._conversation_idle_reset_delay_seconds = conversation_idle_reset_delay_seconds
+        self._mirror_to_chatwoot = mirror_to_chatwoot
         # Per-conversation accumulator of (message_id, text, button_payload,
         # wamid) tuples awaiting grouping into one Etapa-5 handoff. In-process
         # only — see the class docstring's singleton-lifetime note and the
@@ -279,6 +282,18 @@ class IngestMessageUseCase:
                 created_at=datetime.now(UTC),
             )
             await repositories.messages.save(message)
+
+            if self._mirror_to_chatwoot is not None and dto.text and dto.text.strip():
+                # Fires for EVERY inbound webhook message, before the
+                # debounce/grouping step below merges several into one LLM
+                # turn — see MirrorMessageToChatwootUseCase's own docstring
+                # for why this never blocks/breaks the real reply.
+                asyncio.create_task(
+                    self._mirror_to_chatwoot.mirror_incoming(
+                        conversation.id, dto.from_phone, str(dto.from_phone), dto.text
+                    )
+                )
+
             conversation_mode = conversation.mode
 
             if conversation_mode == "human" and self._human_mode_timeout_elapsed(conversation):

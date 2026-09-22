@@ -14,6 +14,7 @@ from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_service import ErrorService
 from app.application.memory.memory_service import MemoryService
 from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositories
 from app.domain.entities.agreement import Agreement
@@ -23,7 +24,11 @@ from app.domain.entities.professional import Professional
 from app.domain.entities.runtime_agent_config import RuntimeAgentConfig
 from app.domain.entities.specialty import Specialty
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
+from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
 from app.infrastructure.database.fake_agent_run_repository import FakeAgentRunRepository
+from app.infrastructure.database.fake_chatwoot_mapping_repository import (
+    FakeChatwootMappingRepository,
+)
 from app.infrastructure.database.fake_contact_memory_repository import (
     FakeContactMemoryRepository,
 )
@@ -276,9 +281,31 @@ def make_sent_message_repository() -> FakeSentMessageRepository:
     return FakeSentMessageRepository()
 
 
+def make_chatwoot_mapping_repository() -> FakeChatwootMappingRepository:
+    return FakeChatwootMappingRepository()
+
+
+def make_mirror_to_chatwoot_use_case(
+    chatwoot_gateway: FakeChatwootGateway | None = None,
+    mapping_repository: FakeChatwootMappingRepository | None = None,
+) -> MirrorMessageToChatwootUseCase:
+    chatwoot_gateway = chatwoot_gateway if chatwoot_gateway is not None else FakeChatwootGateway()
+    mapping_repository = (
+        mapping_repository if mapping_repository is not None
+        else make_chatwoot_mapping_repository()
+    )
+
+    @asynccontextmanager
+    async def provider() -> AsyncIterator[FakeChatwootMappingRepository]:
+        yield mapping_repository
+
+    return MirrorMessageToChatwootUseCase(chatwoot_gateway, provider)
+
+
 def make_send_reply_use_case(
     messaging_gateway: FakeYCloudMessagingGateway | None = None,
     sent_message_repository: FakeSentMessageRepository | None = None,
+    mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
 ) -> SendReplyUseCase:
     messaging_gateway = (
         messaging_gateway if messaging_gateway is not None else make_ycloud_messaging_gateway()
@@ -292,7 +319,9 @@ def make_send_reply_use_case(
     async def sent_message_repositories_provider() -> AsyncIterator[FakeSentMessageRepository]:
         yield sent_messages
 
-    return SendReplyUseCase(messaging_gateway, sent_message_repositories_provider)
+    return SendReplyUseCase(
+        messaging_gateway, sent_message_repositories_provider, mirror_to_chatwoot
+    )
 
 
 def make_runtime_config_service(
@@ -351,6 +380,7 @@ def make_ingest_message_use_case(
     audio_rate_limit_per_minute: int = 0,
     scheduled_action_repository: FakeScheduledActionRepository | None = None,
     conversation_idle_reset_delay_seconds: int = 7200,
+    mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
 ) -> IngestMessageUseCase:
     """Builds an `IngestMessageUseCase` wired entirely to fakes.
 
@@ -410,4 +440,5 @@ def make_ingest_message_use_case(
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
         conversation_idle_reset_delay_seconds=conversation_idle_reset_delay_seconds,
+        mirror_to_chatwoot=mirror_to_chatwoot,
     )
