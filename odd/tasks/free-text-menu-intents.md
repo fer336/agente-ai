@@ -62,7 +62,7 @@ option, so behavior is identical whichever the patient uses.
   stale stage and route by the classified intent instead of reminding to confirm.
   Mid-flow, a clearly different operation or menu option wins over the active stage.
   Route: delegated direct.
-- [ ] T2b — Review follow-ups on T2 (review-c980054b8c626f90, approved, advisory):
+- [x] T2b — Review follow-ups on T2 (review-c980054b8c626f90, approved, advisory):
   Confirmar/Cancelar tap or free-text decline with no pending action must recover
   instead of looping on the reminder (R3-button-tap-without-pending-id-reminds, in the
   acceptance criteria "never ask to confirm a proposal that does not exist"); test a
@@ -187,7 +187,68 @@ option, so behavior is identical whichever the patient uses.
   touched files → already formatted (this also cleaned pre-existing
   formatting drift within `appointment.py`, same as T1's touched files).
   `uv run mypy app` → no issues (320 files).
-  Commits: d0ece5a (code+tests), <doc commit to be added>.
+  Commits: d0ece5a (code+tests), 9a5e7cd (docs).
+
+- T2b done (`app/agent/nodes/appointment.py`, `STAGE_AWAITING_CONFIRMATION`
+  free-text branch, ~1885-2030, ~1978-1996, ~2388-2394). All 4 review
+  follow-ups addressed:
+  1. R3-button-tap-without-pending-id-reminds: a normalization step right
+     after the existing free-text-decline normalization (~1898-1910) now
+     resets `button_payload` to `None` whenever it's CONFIRM/REJECT with
+     `pending_action_id is None`, so the turn takes the SAME recovery path
+     free text with nothing to confirm already used (the `pending_action_
+     usable = False` branch two ifs below) instead of falling through the
+     CONFIRM/REJECT `elif`s' own `pending_action_id is not None` guards
+     into the final catch-all `else`, which used to give the identical
+     reminder back forever. Design choice: since a real button tap carries
+     no free-text `operation_mention`, this recovery lands on the same
+     operation menu (`STAGE_AWAITING_OPERATION_SELECTION`,
+     `_MAIN_MENU_RESET_MESSAGE`) a main-menu reset / the existing
+     dangling-action-no-operation case already uses — not the
+     `proposal_not_found` message, since that path already requires
+     something to reject in the first place and a bare tap alone gives no
+     new information to explain back. Updated the final `else`'s stale
+     comment (~2388-2394) to match.
+  2. R3-expired-row-branch-untested: pure test addition, no code change —
+     the existing `existing_pending_action.status == "pending"` check
+     already treated a non-pending row as unusable; added
+     `test_confirmation_stage_expired_pending_action_row_routes_a_fresh_request`
+     (a REAL saved row with `status="expired"`, unlike the pre-existing
+     dangling-id tests which never save a row at all) to prove it.
+  3. R3-new-db-lookup-unguarded: wrapped the `pending_actions.get_by_id`
+     lookup (~1920-1959) in `try/except Exception` (matching this file's
+     own `_staffed_specialty_ids_safe` convention: `# noqa: BLE001 --
+     broad catch is intentional` + `logger.warning(..., exc_info=exc)`).
+     Fail-safe direction: on error, return the SAME confirmation reminder
+     this gate always gave before T2 added the lookup — never guess the
+     proposal is gone and silently drop possibly-live stage/pending_action_id
+     state just because the DB couldn't be asked.
+  4. R3-switch-leaves-live-proposal-pending: when `operation_switch` fires
+     AND `pending_action_usable` is True (~1979-1996) — i.e. there IS a
+     genuinely live `pending` row being abandoned — it's now rejected via
+     `RejectPendingActionUseCase` + `_cancel_follow_up`, the exact same
+     use case and follow-up-cancellation call a Cancelar tap already uses,
+     so there is still only one path that ever transitions a pending
+     action out of `pending`. Updated
+     `test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_live_proposal`'s
+     assertion from `status == "pending"` (the old, now-wrong expectation)
+     to `status == "cancelled"`.
+  RED (observed via `git stash` on `appointment.py` only, tests kept):
+  `test_confirmation_stage_confirm_tap_with_no_pending_action_id_routes_a_fresh_request`
+  and `..._cancelar_tap_..._routes_a_fresh_request` both failed with
+  `KeyError: 'collected_data'` (still the reminder, no `collected_data` key
+  in the response); `test_confirmation_stage_falls_back_to_reminder_when_pending_action_lookup_fails`
+  failed with `RuntimeError: db unavailable` (unguarded, propagated);
+  `test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_live_proposal`
+  failed on `assert 'pending' == 'cancelled'`. (Two tests in the same batch —
+  the free-text-decline-without-id and the expired-row cases — already
+  passed pre-fix, confirming those two sub-cases were already correct
+  before T2b and needed only explicit regression coverage.)
+  Verification: `uv run pytest -q` → 1577 passed, 82 skipped, 5 failed (the
+  5 pre-declared known environmental failures only). `uv run ruff check .`
+  → all checks passed. `uv run ruff format --check` on both touched files
+  → already formatted. `uv run mypy app` → no issues (320 files).
+  Commit: bb5df7d (code+tests), <doc commit to be added>.
 
 ## Next step
 
