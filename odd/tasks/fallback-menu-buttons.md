@@ -53,7 +53,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
   - `uv run ruff check app/agent/nodes/fallback.py
     tests/unit/agent/nodes/test_fallback_node.py` -> All checks passed.
     `uv run mypy app/agent/nodes/fallback.py` -> Success.
-  - Commit: pending (recorded after this write).
+  - Commit: `b39876d` (`fix(agent): swap fallback buttons for book+administracion actions`).
 
 ## Next step
 T2: rename the subgraph escalation button.
