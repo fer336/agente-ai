@@ -146,3 +146,33 @@ async def test_understand_still_reads_a_plain_booking_request_as_create():
     result = await provider.understand("Quiero sacar un turno", context={})
 
     assert result.operation_mention == "create"
+
+
+@pytest.mark.asyncio
+async def test_understand_reads_a_cancel_request_as_cancel():
+    # T3(b) of the fallback-menu-buttons change: cancel/reschedule/book are
+    # meant to reach the appointment flow from free text alone (no dedicated
+    # buttons) — this pins the keyword layer for the exact phrasing PRD.md's
+    # brief calls out. "mi turno" alone would otherwise match
+    # `_VIEW_APPOINTMENT_KEYWORDS`, but the `cancelar`/`anular` check runs
+    # first in `understand()`'s if/elif chain.
+    provider = make_llm_provider()
+
+    result = await provider.understand("quiero cancelar mi turno", context={})
+
+    assert result.operation_mention == "cancel"
+
+
+@pytest.mark.asyncio
+async def test_understand_reads_a_reschedule_request_as_reschedule():
+    # T3(b): same regression-coverage gap as the cancel case above, for
+    # "reagendar" — this phrasing has no "turno"/"cita" in it at all, so
+    # `classify_intent` alone reads it as low-confidence "unknown"; only
+    # `operation_mention` carries the real signal (see
+    # `resolve_interaction.py`'s own low-confidence operation-mention
+    # carve-out).
+    provider = make_llm_provider()
+
+    result = await provider.understand("quiero reagendar", context={})
+
+    assert result.operation_mention == "reschedule"
