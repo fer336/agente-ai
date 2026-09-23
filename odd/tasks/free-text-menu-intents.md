@@ -70,7 +70,7 @@ option, so behavior is identical whichever the patient uses.
   guard the new repository lookup (R3-new-db-lookup-unguarded); expire the live
   proposal when the patient switches operation (R3-switch-leaves-live-proposal-pending).
   Route: delegated direct.
-- [ ] T3 — Free-text → canonical payload parity for every menu option: add "location"
+- [x] T3 — Free-text → canonical payload parity for every menu option: add "location"
   to the LLM understanding labels/prompt and map it to `MENU_LOCATION_PAYLOAD`;
   `navigation_target="main"` behaves like `MENU_MAIN_PAYLOAD`; handoff and operations
   keep parity. One parity test per option (button vs text → same reply/node).
@@ -248,8 +248,104 @@ option, so behavior is identical whichever the patient uses.
   5 pre-declared known environmental failures only). `uv run ruff check .`
   → all checks passed. `uv run ruff format --check` on both touched files
   → already formatted. `uv run mypy app` → no issues (320 files).
-  Commit: bb5df7d (code+tests), <doc commit to be added>.
+  Commit: bb5df7d (code+tests), f04145c (docs).
+
+- T3 done. Mapped first (via `codegraph_explore` + targeted reads, not
+  broad Read/Glob): `resolve_interaction.py`'s `_GLOBAL_BUTTON_INTENTS`
+  (~88-99) already mapped `MENU_LOCATION_PAYLOAD -> "location"`, "location"
+  was already in `_INFORMATION_INTENTS`/`_ROUTABLE_INTENTS`, and `graph.py`
+  already routed intent="location" to `LOCATION_NODE` — the deterministic
+  `asks_for_location` pre-check (~203-206) and the button both already
+  worked. The ONLY real gap was the LLM side: "location" was missing from
+  `_UNDERSTANDING_LABELS`/`DEFAULT_UNDERSTAND_PROMPT`
+  (`openai_compatible_llm_provider.py`), and the `question` bullet's own
+  examples ("dirección", "cómo llegar") actively told the model to
+  classify those as prose instead. Likewise, `navigation_target="main"`
+  already worked mid-flow (`appointment.py` ~1795, gated by
+  `_NAVIGABLE_STAGES`) — the only gap was IDLE (no stage), which the
+  top-of-node navigation check never covered at all.
+  Changes:
+  1. `app/infrastructure/llm/openai_compatible_llm_provider.py`: added
+     `"location"` to `_UNDERSTANDING_LABELS` (`_INTENT_LABELS` — used by
+     the separate, narrower `classify_intent`/eval-suite path — left
+     untouched, matching the task's own scope). Added a `location` bullet
+     to `DEFAULT_UNDERSTAND_PROMPT` (address/where located/how to get
+     there/directions/map) and removed the overlapping "dirección"/"cómo
+     llegar" examples from the `question` bullet, since the prompt itself
+     was steering the model to the wrong label for those phrasings.
+  2. `app/agent/nodes/appointment.py`: factored the `MENU_MAIN_PAYLOAD`
+     response (WELCOME_TEXT/WELCOME_LIST/`pending_action_id: None`/
+     `collected_data: {}`) into one shared `_welcome_reset_response`
+     helper (next to `_cancel_follow_up`), now called from all 3 sites —
+     the button check (~1881), the existing mid-stage `navigation_target
+     == "main"` branch (~1816), and a new `elif stage is None and
+     navigation_target == "main":` branch (~1870) for idle. Design choice:
+     did NOT extend this to STAGE_AWAITING_CONFIRMATION (unlike the real
+     button, which fires unconditionally before any stage check) —
+     `_NAVIGABLE_STAGES`'s own documented rationale is that free text must
+     never bypass an explicit Confirmar/Cancelar on a live proposal (T2b's
+     same principle); only a deterministic button tap gets that override
+     power. Did NOT broaden idle handling to other `navigation_target`
+     values (specialty/professional/slot) — out of this task's literal
+     scope ("navigation_target='main' ... also idle") and untested territory.
+  3. `app/infrastructure/llm/fake_llm_provider.py`: extended
+     `classify_intent`/`understand()` with `_LOCATION_UNDERSTANDING_KEYWORDS`
+     (phrasings the deterministic pre-check does NOT already catch, e.g.
+     "cómo hago para llegar" — chosen specifically so parity tests exercise
+     the NEW LLM label, not the old substring fast path) and
+     `_NAVIGATION_MAIN_KEYWORDS` ("volver al menú principal" etc.), forcing
+     `intent="appointment"`+`confidence=0.9` when a navigation keyword hits
+     and confidence would otherwise be too low — mirrors how `resolve_
+     interaction.py` already treats mid-flow navigation unconditionally
+     but idle only past the confidence gate.
+  4. Resolve_interaction itself needed NO routing changes — "location" and
+     `navigation_target` were already the single normalization point
+     (`_GLOBAL_BUTTON_INTENTS`/`_carried_understanding`); this task only
+     had to teach the LLM the label and extend appointment.py's own idle
+     coverage. `button_payload` was deliberately NOT set from
+     `resolve_interaction`'s return to fake a "same branch" — that field's
+     own documented contract is "never mutated by a node"
+     (`app/agent/state.py:20-23`); `_welcome_reset_response` is the actual
+     single-point-of-truth instead, one level down.
+  Parity tests added (button vs free-text equivalent, per option):
+  location (`test_location_free_text_llm_label_reaches_the_same_intent_as_the_button`),
+  main menu idle+mid-stage (`test_menu_main_free_text_reaches_the_same_intent_as_the_button`
+  in `test_resolve_interaction.py`; full-response-equality parity in
+  `test_navigation_target_main_from_idle_matches_the_menu_main_button` /
+  `..._mid_stage_...` in `test_appointment_node.py`), handoff
+  (`test_handoff_free_text_reaches_the_same_intent_as_the_admin_button`),
+  operations create/cancel/reschedule/view
+  (`test_operation_free_text_reaches_the_same_intent_as_its_button`,
+  parametrized), plus `test_understand_accepts_the_location_intent_label`
+  in `test_openai_compatible_llm_provider.py` proving the real provider's
+  parse/validation path (`_parse_understanding_result`'s `_UNDERSTANDING_
+  LABELS` allowlist) now accepts "location" instead of raising
+  `LLMInvalidResponseError`.
+  RED (observed via `git stash` per file, tests kept): with `appointment.py`
+  stashed, `test_navigation_target_main_from_idle_matches_the_menu_main_button`
+  failed (`response_text` was the operation-menu fallback text, not
+  `WELCOME_TEXT`) — its mid-stage sibling already passed pre-fix (that path
+  pre-dates T3, confirming it was truly idle-only gap). With `fake_llm_
+  provider.py` stashed, `test_menu_main_free_text_reaches_the_same_intent_as_the_button`
+  and `test_location_free_text_llm_label_reaches_the_same_intent_as_the_button`
+  both failed on `intent == 'unknown'`. With `openai_compatible_llm_
+  provider.py` stashed, `test_understand_accepts_the_location_intent_label`
+  failed with `LLMInvalidResponseError: Model returned an unrecognized
+  intent label: 'location'`.
+  Verification: `uv run pytest -q` → 1587 passed, 82 skipped, 5 failed (the
+  5 pre-declared known environmental failures only). `uv run ruff check .`
+  → all checks passed. `uv run ruff format --check` on all 6 touched files
+  → 5 already formatted; `openai_compatible_llm_provider.py` reports one
+  pre-existing drift spot (`DEFAULT_GENERATE_RESPONSE_PROMPT`, lines this
+  task never touched) confirmed present on the pre-T3 tree too via `git
+  stash` — not introduced here, left as-is (same "already formatted for
+  what this task touched" pattern T1/T2 recorded). `uv run mypy app` → no
+  issues (320 files).
+  Commit: 4112a63 (code+tests), <doc commit to be added>.
 
 ## Next step
 
-T3.
+Feature complete (T1, T2, T2b, T3 all done). Optional follow-up: the
+pre-existing `ruff format` drift in `openai_compatible_llm_provider.py`'s
+`DEFAULT_GENERATE_RESPONSE_PROMPT` (unrelated to this feature) could be
+cleaned up separately if desired.
