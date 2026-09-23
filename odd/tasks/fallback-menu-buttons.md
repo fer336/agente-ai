@@ -125,7 +125,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     `tests/integration/test_internal_eval_wiring.py`).
   - `uv run ruff check .` -> All checks passed.
   - `uv run mypy app` -> Success: no issues found in 320 source files.
-  - Commit: pending (recorded after this write).
+  - Commit: `fd7ce2c` (`test(agent): cover OPERATION_CREATE-from-fallback and free-text operation routing`).
 
 ## Next step
 None — T1-T3 complete, acceptance criteria met, working tree clean after the final commit.
