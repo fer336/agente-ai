@@ -62,6 +62,14 @@ option, so behavior is identical whichever the patient uses.
   stale stage and route by the classified intent instead of reminding to confirm.
   Mid-flow, a clearly different operation or menu option wins over the active stage.
   Route: delegated direct.
+- [ ] T2b — Review follow-ups on T2 (review-c980054b8c626f90, approved, advisory):
+  Confirmar/Cancelar tap or free-text decline with no pending action must recover
+  instead of looping on the reminder (R3-button-tap-without-pending-id-reminds, in the
+  acceptance criteria "never ask to confirm a proposal that does not exist"); test a
+  pending-action row that exists but is not `pending` (R3-expired-row-branch-untested);
+  guard the new repository lookup (R3-new-db-lookup-unguarded); expire the live
+  proposal when the patient switches operation (R3-switch-leaves-live-proposal-pending).
+  Route: delegated direct.
 - [ ] T3 — Free-text → canonical payload parity for every menu option: add "location"
   to the LLM understanding labels/prompt and map it to `MENU_LOCATION_PAYLOAD`;
   `navigation_target="main"` behaves like `MENU_MAIN_PAYLOAD`; handoff and operations
