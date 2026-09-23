@@ -24,6 +24,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
 - [x] T1 Fallback buttons become `📅 Agendar una cita` (`OPERATION_CREATE`) and `💬 Administración` (`MENU_ADMIN`). Update the fallback LLM context (`opciones_del_menu`) and the reply so a confused patient is asked whether they want to talk to administration. Route: delegated.
 - [x] T2 The subgraph escalation button "Administración" becomes `💬 Administración`. Route: delegated (same writer).
 - [x] T3 Verify that `OPERATION_CREATE` sent from the fallback button opens the specialty list directly, and that free-text cancel / reschedule / book reach the appointment flow. Add regression tests; report any gap. Route: delegated (same writer).
+- [x] T4 Fix the review findings. (a) WARNING: tapping `📅 Agendar una cita` (`OPERATION_CREATE`) after a fallback that kept a stale stage (e.g. `awaiting_slot_selection` or `awaiting_identification`) must still open the specialty list; prove it with an invoker-level test and fix the routing if needed. (b) SUGGESTION: also assert the slot title's UTF-16 length is at most 20. Route: delegated.
 
 ## Acceptance criteria
 - No outbound message contains a "Turnos", "Especialidades" or plain "Administración" button.
@@ -127,5 +128,70 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
   - `uv run mypy app` -> Success: no issues found in 320 source files.
   - Commit: `fd7ce2c` (`test(agent): cover OPERATION_CREATE-from-fallback and free-text operation routing`).
 
+- 2026-09-23 T4 (route: delegated, single writer, strict TDD; native review findings on this branch):
+  - **Traced the premise first**: read `resolve_interaction.py` end to end —
+    intent="unknown" (the only route to `FALLBACK_NODE`) is only ever
+    returned when `has_active_stage` is False; every button/free-text
+    branch while a stage IS active returns `intent="appointment"` (or an
+    information/handoff intent) instead. So `fallback.py` never actually
+    runs with `collected_data["stage"]` still set in the live routing —
+    the WARNING's literal premise ("the patient taps the fallback's
+    button while a stage lingers") can't occur through normal routing.
+    Tested the more general, real-world-equivalent risk instead: whatever
+    got a stale stage onto the checkpointer (a bug, a race, a future
+    routing change), does `OPERATION_CREATE_PAYLOAD` still safely reset
+    it? That's exactly what `appointment.py`'s existing `_MAIN_MENU_PAYLOADS`
+    reset (already added for an earlier, similar live bug — see its own
+    comment at line ~432) is supposed to guarantee.
+  - (a) RED/GREEN, routing: added
+    `test_operation_create_from_a_lingering_stage_still_opens_the_specialty_list`
+    to `tests/unit/infrastructure/agent/test_langgraph_agent_invoker.py`
+    (same `LangGraphAgentInvoker.handle()` seam as T3(a)), parametrized
+    over 3 lingering stages seeded directly on the checkpointer via
+    `compiled_graph.aupdate_state(...)`: `awaiting_slot_selection`
+    (subgraph-owned), `awaiting_identification` (legacy-owned,
+    reschedule), `awaiting_appointment_selection` (cancel). All 3 passed
+    on first run — **routing did not need a fix**: `_MAIN_MENU_PAYLOADS`
+    already resets `stage`/`collected_data` before any stage-conditional
+    branch, for every stage (legacy or subgraph-delegated), since
+    `create_appointment_node` is the single node used for all of them.
+  - (a) RED/GREEN, pending action: also added
+    `test_operation_create_from_a_lingering_confirmation_drops_the_stale_pending_action`
+    seeding `stage=awaiting_confirmation` + `pending_action_id=
+    "stale-pending-action"`, then tapping `OPERATION_CREATE_PAYLOAD`. RED:
+    `uv run pytest -q ... -k lingering` failed 1/4
+    (`assert 'stale-pending-action' is None`) — the stale
+    `pending_action_id` DID survive into the new specialty-selection
+    flow's checkpointed state, because neither `_offer_specialties` nor
+    `_delegate_to_decision_subgraph` return/change that field on their
+    own. GREEN: `app/agent/nodes/appointment.py`'s `CREATE_APPOINTMENT_ACTION`
+    branch (~line 3510) now explicitly merges `"pending_action_id": None`
+    into its result whenever `returned_to_main_menu` is true — mirrors
+    `MENU_MAIN_PAYLOAD`'s own explicit reset a few lines above, reusing
+    that existing pattern rather than new logic. `uv run pytest -q
+    tests/unit/infrastructure/agent/test_langgraph_agent_invoker.py -k
+    lingering` -> 4 passed. `uv run pytest -q
+    tests/unit/infrastructure/agent/test_langgraph_agent_invoker.py
+    tests/unit/agent` -> 347 passed (no regressions).
+    Harm assessment: a lingering `pending_action_id` is only ever read at
+    `STAGE_AWAITING_CONFIRMATION`; since `stage` is reset away from it in
+    the same turn, the stale id was never actually reachable before this
+    fix either — the fix is defense-in-depth/hygiene (matching
+    `MENU_MAIN_PAYLOAD`'s own existing convention), not a fix for an
+    exploitable bug.
+  - (b) `tests/unit/agent/nodes/test_appointment_selection.py`'s
+    `test_slot_rows_titles_never_exceed_twenty_characters`: added
+    `assert len(row.title.encode("utf-16-le")) // 2 <= 20` alongside the
+    existing codepoint-`len()` check. Passed immediately for all 7
+    weekday variants — no title exceeds 20 UTF-16 units either (the 🕐
+    clock emoji is a surrogate pair, e.g. `len()==17` vs UTF-16-units==18
+    for one sample title, both still under the 20 cap). No gap found; no
+    format change made.
+  - `uv run pytest -q` -> 1566 passed, 82 skipped, 5 failed (exactly the 5
+    known pre-existing failures).
+  - `uv run ruff check .` -> All checks passed.
+  - `uv run mypy app` -> Success: no issues found in 320 source files.
+  - Commit: pending (recorded after this write).
+
 ## Next step
-None — T1-T3 complete, acceptance criteria met, working tree clean after the final commit.
+None — T1-T4 complete, acceptance criteria met, working tree clean after the final commit.
