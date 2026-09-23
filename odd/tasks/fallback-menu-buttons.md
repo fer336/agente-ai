@@ -191,7 +191,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     known pre-existing failures).
   - `uv run ruff check .` -> All checks passed.
   - `uv run mypy app` -> Success: no issues found in 320 source files.
-  - Commit: pending (recorded after this write).
+  - Commit: `f455447` (`fix(agent): drop a stale pending action when OPERATION_CREATE resets a lingering stage`).
 
 ## Next step
 None — T1-T4 complete, acceptance criteria met, working tree clean after the final commit.
