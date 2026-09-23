@@ -6,7 +6,17 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.graph import compile_graph
-from app.agent.nodes.appointment import OPERATION_CREATE_PAYLOAD
+from app.agent.nodes.appointment import (
+    CANCEL_APPOINTMENT_ACTION,
+    CREATE_APPOINTMENT_ACTION,
+    OPERATION_CREATE_PAYLOAD,
+    RESCHEDULE_APPOINTMENT_ACTION,
+    STAGE_AWAITING_APPOINTMENT_SELECTION,
+    STAGE_AWAITING_CONFIRMATION,
+    STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_SLOT_SELECTION,
+    STAGE_AWAITING_SPECIALTY_SELECTION,
+)
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF
 from app.domain.entities.appointment_slot import AppointmentSlot
@@ -799,3 +809,195 @@ async def test_handle_does_not_seed_fresh_restart_when_the_flag_is_absent():
     # Normal turn: no welcome list was forced.
     assert messaging_gateway.sent_lists == []
     assert len(messaging_gateway.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_operation_create_payload_from_the_fallback_button_opens_the_specialty_list():
+    # T3(a) of the fallback-menu-buttons change: `fallback.py`'s new
+    # "📅 Agendar una cita" button carries `OPERATION_CREATE_PAYLOAD` — the
+    # exact payload sent here, with no prior `collected_data["stage"]` set,
+    # since the fallback node never sets one. Must reach the specialty
+    # list directly (`should_use_appointment_decision_subgraph` delegates
+    # here since `stage is None` and `operation == CREATE_APPOINTMENT_ACTION`
+    # — see `appointment.py`'s own docstring), never the (removed)
+    # 3-button operation menu.
+    invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        appointment_gateway=make_dentalink_gateway(
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")]
+        ),
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
+
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_lists) == 1
+    _, _, list_message = messaging_gateway.sent_lists[0]
+    assert "Ortodoncia" in list_message.rows[0].title
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stale_stage", "stale_collected_data"),
+    [
+        (
+            STAGE_AWAITING_SLOT_SELECTION,
+            {
+                "operation": CREATE_APPOINTMENT_ACTION,
+                "chosen_specialty_id": "cleaning",
+                "chosen_specialty_name": "Ortodoncia",
+                "chosen_professional_id": "prof-1",
+            },
+        ),
+        (
+            STAGE_AWAITING_IDENTIFICATION,
+            {"operation": RESCHEDULE_APPOINTMENT_ACTION},
+        ),
+        (
+            STAGE_AWAITING_APPOINTMENT_SELECTION,
+            {"operation": CANCEL_APPOINTMENT_ACTION},
+        ),
+    ],
+    ids=["slot_selection", "identification", "appointment_selection_cancel"],
+)
+async def test_operation_create_from_a_lingering_stage_still_opens_the_specialty_list(
+    stale_stage: str, stale_collected_data: dict[str, object]
+) -> None:
+    # T4(a): a review finding on this same branch — `fallback.py` preserves
+    # whatever `collected_data` (including a leftover "stage") it was
+    # handed, so IF the fallback's own "📅 Agendar una cita" button were
+    # ever tapped with a stage from an interrupted flow still lingering
+    # (`resolve_interaction.py` never actually routes to `fallback.py` with
+    # an active stage — see the task doc's T4 evidence — but nothing stops
+    # a stale stage from otherwise still being on the checkpointer when
+    # `OPERATION_CREATE_PAYLOAD` arrives), tapping it must still reset and
+    # open the specialty list, exactly like the main-menu's own "Agendar
+    # una cita" row does (`appointment.py`'s `_MAIN_MENU_PAYLOADS`, added
+    # for the identical "welcome list operation row abandons a stale
+    # stage" live bug — this seeds each of 3 different lingering stages,
+    # including 2 the existing node-level regression test doesn't cover:
+    # a subgraph-owned stage (`STAGE_AWAITING_SLOT_SELECTION`) and a
+    # reschedule/cancel-only one (`STAGE_AWAITING_APPOINTMENT_SELECTION`)).
+    checkpointer = MemorySaver()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        appointment_gateway=make_dentalink_gateway(
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")]
+        ),
+        checkpointer=checkpointer,
+    )
+    seeding_graph = compile_graph(
+        appointment_gateway=make_dentalink_gateway(),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=make_patient_gateway(),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-seed",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    )
+    thread_config = {"configurable": {"thread_id": "conv-1:session:1"}}
+    await seeding_graph.aupdate_state(
+        thread_config,
+        {"collected_data": {"stage": stale_stage, **stale_collected_data}},
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
+
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_lists) == 1
+    _, _, list_message = messaging_gateway.sent_lists[0]
+    assert "Ortodoncia" in list_message.rows[0].title
+    snapshot = await seeding_graph.aget_state(thread_config)
+    assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert snapshot.values["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
+async def test_operation_create_from_a_lingering_confirmation_drops_the_stale_pending_action():
+    # T4(a)'s "pending action must not survive in a harmful way" check: a
+    # `pending_action_id` is only ever consulted while `stage ==
+    # STAGE_AWAITING_CONFIRMATION` (`appointment.py`'s own confirm/reject
+    # branch), so a stale one lingering into a freshly (re)started
+    # create-booking flow is inert — nothing reads it again until a new
+    # proposal overwrites it on the way back to a fresh confirmation. This
+    # pins that: the stale id from an abandoned confirmation must not still
+    # be readable as the ACTIVE pending action once the patient is back in
+    # specialty selection.
+    checkpointer = MemorySaver()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        appointment_gateway=make_dentalink_gateway(
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")]
+        ),
+        checkpointer=checkpointer,
+    )
+    seeding_graph = compile_graph(
+        appointment_gateway=make_dentalink_gateway(),
+        agreement_gateway=make_agreement_gateway(),
+        specialty_gateway=make_specialty_gateway(),
+        handoff_gateway=make_ycloud_handoff_gateway(),
+        llm_provider=make_llm_provider(),
+        conversation_repository=conversation_repository,
+        patient_gateway=make_patient_gateway(),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        node_execution_repository=make_node_execution_repository(),
+        agent_run_id="run-seed",
+        tool_execution_repository=make_tool_execution_repository(),
+        error_service=make_error_service(),
+        checkpointer=checkpointer,
+    )
+    thread_config = {"configurable": {"thread_id": "conv-1:session:1"}}
+    await seeding_graph.aupdate_state(
+        thread_config,
+        {
+            "collected_data": {
+                "stage": STAGE_AWAITING_CONFIRMATION,
+                "operation": CREATE_APPOINTMENT_ACTION,
+            },
+            "pending_action_id": "stale-pending-action",
+        },
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
+
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_lists) == 1
+    snapshot = await seeding_graph.aget_state(thread_config)
+    assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert snapshot.values["pending_action_id"] is None

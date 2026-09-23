@@ -362,6 +362,27 @@ async def test_a_stated_operation_skips_the_operation_menu():
 
 
 @pytest.mark.asyncio
+async def test_a_stated_reschedule_skips_to_identification():
+    # T3(b) of the fallback-menu-buttons change: reschedule has no
+    # dedicated button either — same coverage this file already has for a
+    # stated "cancelar" (`test_a_stated_cancel_skips_to_identification`
+    # above) and a stated "sacar un turno"
+    # (`test_a_stated_operation_skips_the_operation_menu`), but reschedule
+    # itself had no equivalent test.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="quiero reagendar",
+        collected_data={"operation_mention": "reschedule"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+
+
+@pytest.mark.asyncio
 async def test_the_welcome_lists_create_row_skips_the_operation_menu():
     # The welcome list's booking rows carry these exact payloads directly
     # (this session's own brief) — a first-ever tap must reach the same

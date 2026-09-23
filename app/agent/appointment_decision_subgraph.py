@@ -220,7 +220,7 @@ _NO_SLOTS_CHOICE_BUTTONS = [
 #: the bot isn't getting through.
 _ESCALATE_AFTER_ATTEMPTS = 2
 _ESCALATION_BUTTONS = [
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 

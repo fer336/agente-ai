@@ -6,32 +6,28 @@ from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.location_request import LocationRequest
-from app.domain.value_objects.menu_payloads import (
-    MENU_ADMIN_PAYLOAD,
-    MENU_APPOINTMENT_PAYLOAD,
-    MENU_SPECIALTIES_PAYLOAD,
-)
+from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
 
-#: PRD.md §7's welcome menu, reused as the fallback prompt (PRD.md §8: "no
-#: puede determinarlo con suficiente seguridad" -> "Mostrará nuevamente las
-#: opciones principales"). Real tappable buttons, same payload ids as
-#: `IngestMessageUseCase._WELCOME_BUTTONS` — a button tap always carries a
-#: known intent (PRD.md §6), unlike free text the patient could mistype.
-#: These 3 buttons are ALWAYS attached to the fallback reply (user
-#: decision, this session's brief) regardless of what the LLM writes below
-#: them — only the accompanying text varies.
-_MAIN_MENU_MESSAGE = (
-    "Noto que las opciones que te dimos no son las que buscás. Elegí una de estas, o si "
-    "preferís hablar con administración tocá esa opción:"
+#: A confused patient gets exactly two ways forward (user decision, this
+#: session's brief): book directly (`OPERATION_CREATE_PAYLOAD`, the same
+#: payload `WELCOME_LIST`'s "📅 Agendar una cita" row carries — a tap opens
+#: the specialty list straight away) or talk to a human
+#: (`MENU_ADMIN_PAYLOAD`). The legacy "Turnos"/"Especialidades" buttons are
+#: gone — both were one extra tap away from a flow this reply can now open
+#: directly. `MENU_APPOINTMENT_PAYLOAD`/`MENU_SPECIALTIES_PAYLOAD` stay
+#: routable in `resolve_interaction.py` regardless (old chat history can
+#: still be tapped), this reply just never sends them again.
+_CONFUSED_PATIENT_MESSAGE = (
+    "Noto que las opciones que te dimos no son las que buscás. Tocá 📅 Agendar una cita si "
+    "querés sacar un turno, o 💬 Administración si preferís que te ayude alguien del consultorio."
 )
 #: A first miss gets a plain "no te entendí"; only a repeat one
 #: offers administración.
 _ESCALATE_AFTER_ATTEMPTS = 2
 
-_MAIN_MENU_BUTTONS = [
-    InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="Turnos"),
-    InteractiveButton(id=MENU_SPECIALTIES_PAYLOAD, title="Especialidades"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="Administración"),
+_CONFUSED_PATIENT_BUTTONS = [
+    InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 
 #: The clinic's real coordinates/address (given by the clinic owner) —
@@ -68,21 +64,22 @@ def _asks_for_location(text: str) -> bool:
 
 
 def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
-    """Shows the main menu again for an unrecognized/low-confidence turn (PRD.md §8, §29).
+    """Offers a direct way out for an unrecognized/low-confidence turn (PRD.md §8, §29).
 
     The wording is LLM-generated (this session's brief: a patient who keeps
     missing the menu should never see the exact same canned sentence twice,
     and a repeated miss should read as the bot noticing and offering
-    administración, not just repeating itself) — but the 3 buttons below it
-    are always the same static `_MAIN_MENU_BUTTONS`, never generated: a
+    administración, not just repeating itself) — but the 2 buttons below it
+    are always the same static `_CONFUSED_PATIENT_BUTTONS`, never generated: a
     fallback's whole job is to be a reliable safety net, so the one thing
     that must never fail or drift is the patient's way back to a known
     option. `collected_data["fallback_count"]` tracks how many consecutive
     unresolved turns this conversation has had, told to the LLM so it can
     escalate tone/offer administración more directly on a repeat miss. If
     `generate_response` itself fails (timeout, auth, bad output), this node
-    falls back to the static `_MAIN_MENU_MESSAGE` rather than propagating —
-    unlike every other business node, a bug here has nowhere softer to land.
+    falls back to the static `_CONFUSED_PATIENT_MESSAGE` rather than
+    propagating — unlike every other business node, a bug here has nowhere
+    softer to land.
     """
 
     async def node(state: AgentState) -> dict[str, object]:
@@ -119,7 +116,7 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
             return {
                 "response_text": pending_answer,
-                "response_buttons": _MAIN_MENU_BUTTONS,
+                "response_buttons": _CONFUSED_PATIENT_BUTTONS,
                 "requires_handoff": False,
                 "collected_data": remaining,
             }
@@ -131,11 +128,11 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
                 "El paciente escribió algo que no coincide con ninguna opción "
                 "del menú principal de la clínica."
             ),
-            "opciones_del_menu": ["Turnos", "Especialidades", "Administración"],
+            "opciones_del_menu": ["📅 Agendar una cita", "💬 Administración"],
             "instruccion": (
-                "Van a aparecer 3 botones debajo de tu mensaje con esas opciones — cerrá "
-                "el mensaje invitando a tocar uno de ellos, sin listarlos ni repetir sus "
-                "nombres."
+                "Van a aparecer 2 botones debajo de tu mensaje: uno para agendar una cita y "
+                "otro para hablar con alguien del consultorio — cerrá el mensaje invitando a "
+                "tocar uno de ellos, sin listarlos ni repetir sus nombres."
             ),
             "intentos_seguidos_sin_resolver": fallback_count,
         }
@@ -154,14 +151,14 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             state["conversation_id"],
             "fallback",
             context,
-            _MAIN_MENU_MESSAGE,
+            _CONFUSED_PATIENT_MESSAGE,
             state["recent_messages"],
             state["contact_memory_summary"],
         )
 
         return {
             "response_text": text,
-            "response_buttons": _MAIN_MENU_BUTTONS,
+            "response_buttons": _CONFUSED_PATIENT_BUTTONS,
             "requires_handoff": False,
             "collected_data": {**collected_data, "fallback_count": fallback_count},
         }
