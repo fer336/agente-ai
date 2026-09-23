@@ -22,7 +22,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
 
 ## Tasks
 - [x] T1 Fallback buttons become `📅 Agendar una cita` (`OPERATION_CREATE`) and `💬 Administración` (`MENU_ADMIN`). Update the fallback LLM context (`opciones_del_menu`) and the reply so a confused patient is asked whether they want to talk to administration. Route: delegated.
-- [ ] T2 The subgraph escalation button "Administración" becomes `💬 Administración`. Route: delegated (same writer).
+- [x] T2 The subgraph escalation button "Administración" becomes `💬 Administración`. Route: delegated (same writer).
 - [ ] T3 Verify that `OPERATION_CREATE` sent from the fallback button opens the specialty list directly, and that free-text cancel / reschedule / book reach the appointment flow. Add regression tests; report any gap. Route: delegated (same writer).
 
 ## Acceptance criteria
@@ -55,5 +55,28 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     `uv run mypy app/agent/nodes/fallback.py` -> Success.
   - Commit: `b39876d` (`fix(agent): swap fallback buttons for book+administracion actions`).
 
+- 2026-09-23 T2 (route: delegated, single writer, strict TDD):
+  - Swept `app/` with `rg -n "InteractiveButton\("... title="Administr"` —
+    confirmed only 2 plain "Administración" buttons existed:
+    `app/agent/nodes/fallback.py` (fixed in T1) and
+    `app/agent/appointment_decision_subgraph.py:223`'s
+    `_ESCALATION_BUTTONS`. No other plain "Administración" button found.
+  - RED: added a title assertion (`admin_button.title == "💬 Administración"`)
+    to both `test_a_second_invalid_specialty_choice_escalates_to_administracion`
+    and `test_a_second_invalid_professional_choice_escalates_to_administracion`
+    in `tests/unit/agent/test_appointment_decision_subgraph.py` — `uv run
+    pytest -q tests/unit/agent/test_appointment_decision_subgraph.py -k
+    escalates_to_administracion` failed both (`'Administración' ==
+    '💬 Administración'`).
+  - GREEN: `app/agent/appointment_decision_subgraph.py:223` — `_ESCALATION_BUTTONS`'
+    admin button title -> `"💬 Administración"` (same `MENU_ADMIN_PAYLOAD`).
+    `uv run pytest -q tests/unit/agent/test_appointment_decision_subgraph.py`
+    -> 50 passed. `uv run pytest -q tests/unit/agent` -> 320 passed.
+  - `uv run ruff check app/agent/appointment_decision_subgraph.py
+    tests/unit/agent/test_appointment_decision_subgraph.py` -> All checks
+    passed. `uv run mypy app/agent/appointment_decision_subgraph.py` ->
+    Success.
+  - Commit: pending (recorded after this write).
+
 ## Next step
-T2: rename the subgraph escalation button.
+T3: verification/regression tests for OPERATION_CREATE routing and free-text cancel/reschedule/book coverage.
