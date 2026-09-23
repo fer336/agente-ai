@@ -477,6 +477,8 @@ async def test_a_second_invalid_specialty_choice_escalates_to_administracion():
     assert result["collected_data"] == {}
     assert result.get("response_list") is None
     assert {b.id for b in result["response_buttons"]} == {MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD}
+    admin_button = next(b for b in result["response_buttons"] if b.id == MENU_ADMIN_PAYLOAD)
+    assert admin_button.title == "💬 Administración"
 
 
 @pytest.mark.asyncio
@@ -558,6 +560,8 @@ async def test_a_second_invalid_professional_choice_escalates_to_administracion(
     assert result["collected_data"] == {}
     assert result.get("response_list") is None
     assert {b.id for b in result["response_buttons"]} == {MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD}
+    admin_button = next(b for b in result["response_buttons"] if b.id == MENU_ADMIN_PAYLOAD)
+    assert admin_button.title == "💬 Administración"
 
 
 @pytest.mark.asyncio
