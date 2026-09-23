@@ -201,7 +201,24 @@ class IngestMessageUseCase:
                     refreshed = await repositories.conversations.get_by_id(conversation.id)
                     if refreshed is not None:
                         conversation = refreshed
-                    if rotate_workflow.is_inactive(
+                    # `is_new_conversation` also rotates here: a brand-new
+                    # `Conversation` row always starts at the same fixed
+                    # `workflow_session_generation` default, so its
+                    # checkpoint thread id (`{conversation_id}:session:1`)
+                    # is fully deterministic — if this exact conversation id
+                    # ever existed before (row deleted/recreated) and left a
+                    # stage/pending action tied to that same generation, a
+                    # brand-new incarnation must not let the very next agent
+                    # turn pick it back up (seen live: "Hola buenas" got the
+                    # welcome menu, then the next message landed straight
+                    # back in a confirmation gate for a proposal that no
+                    # longer existed). Rotating unconditionally on the
+                    # first-ever turn moves it onto a generation this exact
+                    # conversation id could not already have used, and
+                    # expires any pending action still parked at the old
+                    # one — same mechanism the lazy human-mode timeout below
+                    # already relies on for the same guarantee.
+                    if is_new_conversation or rotate_workflow.is_inactive(
                         conversation.workflow_last_activity_at, received_at
                     ):
                         rotated = await rotate_workflow.execute(
@@ -216,9 +233,7 @@ class IngestMessageUseCase:
                             # one waited. Refresh before saving activity so
                             # stale ORM/domain state cannot write the old
                             # generation back.
-                            refreshed = await repositories.conversations.get_by_id(
-                                conversation.id
-                            )
+                            refreshed = await repositories.conversations.get_by_id(conversation.id)
                             if refreshed is not None:
                                 conversation = refreshed
                 else:

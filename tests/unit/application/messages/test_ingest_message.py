@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
 from app.application.conversations.schedule_conversation_reset import (
     CONVERSATION_IDLE_RESET_ACTION,
 )
@@ -36,12 +37,13 @@ from tests.fixtures.gateways import (
     make_media_processing_job_repository,
     make_message_repository,
     make_mirror_to_chatwoot_use_case,
+    make_pending_action_repository,
     make_runtime_config_service,
     make_scheduled_action_repository,
     make_send_reply_use_case,
     make_ycloud_messaging_gateway,
 )
-from tests.fixtures.seed_objects import make_conversation, make_message
+from tests.fixtures.seed_objects import make_conversation, make_message, make_pending_action
 
 _DEBOUNCE_SECONDS = 6
 
@@ -85,6 +87,7 @@ def _build_use_case(
     conversation_repository=None,
     media_processing_job_repository=None,
     scheduled_action_repository=None,
+    pending_action_repository=None,
     redis_client=None,
     debounce_tracker=None,
     agent_invoker=None,
@@ -135,6 +138,23 @@ def _build_use_case(
             scheduled_actions=scheduled_action_repository,
         )
 
+    # Only wired when a test explicitly opts in with a
+    # `pending_action_repository` — keeps every other test on the same
+    # simple `conversations.rotate_workflow_session`-only fallback
+    # `IngestMessageUseCase` already falls back to, unchanged.
+    workflow_session_repositories_provider = None
+    if pending_action_repository is not None:
+
+        @asynccontextmanager
+        async def workflow_session_repositories_provider() -> AsyncIterator[
+            RotateWorkflowSessionUseCase.Repositories
+        ]:
+            yield RotateWorkflowSessionUseCase.Repositories(
+                conversations=conversation_repository,
+                pending_actions=pending_action_repository,
+                scheduled_actions=scheduled_action_repository,
+            )
+
     return IngestMessageUseCase(
         repositories_provider=repositories_provider,
         debounce_tracker=debounce_tracker,
@@ -144,6 +164,7 @@ def _build_use_case(
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
         welcome_image_url=welcome_image_url,
+        workflow_session_repositories_provider=workflow_session_repositories_provider,
         conversation_idle_reset_delay_seconds=conversation_idle_reset_delay_seconds,
         mirror_to_chatwoot=mirror_to_chatwoot,
     )
@@ -224,9 +245,7 @@ async def test_a_concurrent_contact_creation_race_is_recovered_not_duplicated():
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     matching = [
-        c
-        for c in racing_repository._contacts_by_id.values()
-        if str(c.phone) == "+5491122334455"
+        c for c in racing_repository._contacts_by_id.values() if str(c.phone) == "+5491122334455"
     ]
     assert matching == [winner]
 
@@ -331,6 +350,53 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
     # that silently grows past either gets rejected by WhatsApp itself,
     # not by us, so this must be caught here instead.
     assert all(len(row.title) <= 24 for row in list_message.rows)
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_welcome_rotates_workflow_session_and_expires_stale_pending_action():
+    # A brand-new `Conversation` row always starts at the SAME fixed
+    # `workflow_session_generation == 1` (`Conversation`'s own dataclass
+    # default), so its checkpoint thread id
+    # (`f"{conversation_id}:session:1"`) is fully deterministic. Seen
+    # live: a patient with a stale `awaiting_confirmation` stage and
+    # `pending_action_id` from an earlier flow sent "Hola buenas" and got
+    # the welcome menu, then their very next message landed straight back
+    # in the confirmation gate for a proposal that no longer existed —
+    # the old thread's stage/pending action had survived untouched. This
+    # reproduces that surviving state: a pending action already sitting
+    # at generation 1 for a conversation id that is about to be
+    # (re)created fresh must not still be live for the next agent turn.
+    pending_action_repository = make_pending_action_repository()
+    await pending_action_repository.save(
+        make_pending_action(
+            id_="stale-pending",
+            conversation_id="ycloud-+54900001111",
+            workflow_generation=1,
+        )
+    )
+    conversation_repository = make_conversation_repository()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        pending_action_repository=pending_action_repository,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+54900001111"))
+
+    stale = await pending_action_repository.get_by_id("stale-pending")
+    assert stale is not None
+    assert stale.status == "expired"
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+54900001111"))
+    assert conversation is not None
+    # `> 1` rather than an exact value: `FakeConversationRepository.
+    # rotate_workflow_session` mutates the shared `Conversation` object in
+    # place (unlike the real SQLAlchemy repository, which never touches the
+    # passed dataclass — it updates its own ORM row by a separate SQL
+    # statement), so it double-counts against this call site's own
+    # (production-necessary) manual increment. That fake-only artifact is
+    # not what this test is about — what matters is that the generation
+    # moved off its original value, guaranteeing a checkpoint thread this
+    # conversation id could not already have used.
+    assert conversation.workflow_session_generation > 1
 
 
 @pytest.mark.asyncio
@@ -564,13 +630,8 @@ async def test_lazy_timeout_reactivation_rotates_workflow_session_and_marks_fres
     # (the CAS rotation applies from the NEXT turn's key) — but the OLD
     # session key carries the debounced turn, and the rotation already
     # bumped the persisted generation so the next turn uses a new thread.
-    assert (
-        await redis_client.get("debounce:conversation:ycloud-+54922224455:session:1")
-        is not None
-    )
-    refreshed = await conversation_repository.get_by_id(
-        ConversationId("ycloud-+54922224455")
-    )
+    assert await redis_client.get("debounce:conversation:ycloud-+54922224455:session:1") is not None
+    refreshed = await conversation_repository.get_by_id(ConversationId("ycloud-+54922224455"))
     assert refreshed is not None
     assert refreshed.workflow_session_generation == 2
 
