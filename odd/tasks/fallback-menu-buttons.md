@@ -18,7 +18,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
 - Cancel, reschedule and book are understood from free text by the LLM intent layer; no extra buttons for them. Verify the existing coverage and report gaps; do not invent a new classifier.
 - `MENU_APPOINTMENT` / `MENU_SPECIALTIES` payloads remain routable (old messages in chat history can still be tapped).
 - TDD: strict. Runner: `uv run pytest`, plus `ruff check` and `mypy app`.
-- Branch: `fix/slot-list-duplicate-row-ids` (PR #127). The user wants everything merged together.
+- Branch: `fix/fallback-menu-buttons` from `main`. PR #127 was squash-merged before these commits were pushed, so they were cherry-picked onto a fresh branch (original hashes on `fix/slot-list-duplicate-row-ids`: b39876d, 168048f, fd7ce2c, f455447).
 
 ## Tasks
 - [x] T1 Fallback buttons become `📅 Agendar una cita` (`OPERATION_CREATE`) and `💬 Administración` (`MENU_ADMIN`). Update the fallback LLM context (`opciones_del_menu`) and the reply so a confused patient is asked whether they want to talk to administration. Route: delegated.
@@ -54,7 +54,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
   - `uv run ruff check app/agent/nodes/fallback.py
     tests/unit/agent/nodes/test_fallback_node.py` -> All checks passed.
     `uv run mypy app/agent/nodes/fallback.py` -> Success.
-  - Commit: `b39876d` (`fix(agent): swap fallback buttons for book+administracion actions`).
+  - Commit: `ac92e95` (`fix(agent): swap fallback buttons for book+administracion actions`).
 
 - 2026-09-23 T2 (route: delegated, single writer, strict TDD):
   - Swept `app/` with `rg -n "InteractiveButton\("... title="Administr"` —
@@ -77,7 +77,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     tests/unit/agent/test_appointment_decision_subgraph.py` -> All checks
     passed. `uv run mypy app/agent/appointment_decision_subgraph.py` ->
     Success.
-  - Commit: `168048f` (`fix(agent): use the chat-bubble administracion title in the subgraph escalation`).
+  - Commit: `1ccd448` (`fix(agent): use the chat-bubble administracion title in the subgraph escalation`).
 
 - 2026-09-23 T3 (route: delegated, single writer):
   - T3(a) graph-level: added
@@ -126,7 +126,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     `tests/integration/test_internal_eval_wiring.py`).
   - `uv run ruff check .` -> All checks passed.
   - `uv run mypy app` -> Success: no issues found in 320 source files.
-  - Commit: `fd7ce2c` (`test(agent): cover OPERATION_CREATE-from-fallback and free-text operation routing`).
+  - Commit: `2cc028f` (`test(agent): cover OPERATION_CREATE-from-fallback and free-text operation routing`).
 
 - 2026-09-23 T4 (route: delegated, single writer, strict TDD; native review findings on this branch):
   - **Traced the premise first**: read `resolve_interaction.py` end to end —
@@ -191,7 +191,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     known pre-existing failures).
   - `uv run ruff check .` -> All checks passed.
   - `uv run mypy app` -> Success: no issues found in 320 source files.
-  - Commit: `f455447` (`fix(agent): drop a stale pending action when OPERATION_CREATE resets a lingering stage`).
+  - Commit: `4673f20` (`fix(agent): drop a stale pending action when OPERATION_CREATE resets a lingering stage`).
 
 ## Next step
 None — T1-T4 complete, acceptance criteria met, working tree clean after the final commit.
