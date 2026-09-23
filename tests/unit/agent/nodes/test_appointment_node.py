@@ -579,9 +579,7 @@ async def test_legacy_staffed_specialty_lookup_wrapper_times_out_and_completes_c
 @pytest.mark.asyncio
 async def test_actual_create_route_shows_all_specialties_when_staffed_lookup_fails(monkeypatch):
     safe_lookup = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
-    )
+    monkeypatch.setattr(appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup)
     specialties = [
         make_specialty(id_="cleaning", name="Ortodoncia"),
         make_specialty(id_="whitening", name="Endodoncia"),
@@ -2092,13 +2090,185 @@ async def test_slot_selection_stage_proposes_immediately_when_rescheduling():
 
 @pytest.mark.asyncio
 async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
-    node, _, _ = await _make_node_and_conversation()
+    # A genuinely live, resolvable proposal (`pa-1` is actually saved below)
+    # plus ambiguous free text with no classified operation: the reminder is
+    # still the right response here — only a missing/unresolvable pending
+    # action or a clearly different operation should ever skip it (see the
+    # dangling/operation-switch tests right below).
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
     state = make_agent_state(
         conversation_id="conv-1",
         user_message="si dale",
         button_payload=None,
         pending_action_id="pa-1",
-        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert "collected_data" not in result
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_with_a_dangling_pending_action_routes_a_fresh_create_request():
+    # Seen live (screenshot, 2026-09-23): a stale STAGE_AWAITING_CONFIRMATION
+    # survived from an earlier incarnation of this conversation id, with a
+    # `pending_action_id` that no longer resolves to anything real
+    # ("dangling" — never saved here, exactly like the screenshot's
+    # checkpoint). "Quería agendar un turno" used to get the confirm/cancel
+    # reminder forever, because the gate fired on ANY free text regardless
+    # of whether there was still a real proposal to remind about. A clearly
+    # classified request must win instead — same result as tapping
+    # OPERATION_CREATE: straight to the specialty list.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería agendar un turno",
+        button_payload=None,
+        pending_action_id="pa-dangling",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "create",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_with_no_pending_action_id_routes_a_fresh_request():
+    # Same as the dangling-id case above, but there was never any
+    # `pending_action_id` at all (e.g. a rotated workflow session that
+    # expired it outright) — must not be treated as "nothing to route by"
+    # and fall into the reminder either.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería agendar un turno",
+        button_payload=None,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_dangling_action_no_operation_falls_back_to_menu():
+    # No usable pending action AND no classified operation either (pure
+    # chatter) — still must not remind about a proposal that doesn't exist;
+    # falls back to the same operation menu a main-menu reset already uses
+    # (same distinct-message regression the button-tap version already
+    # guards, see `test_main_menu_button_mid_stage_resets_and_shows_a_
+    # distinct_message` — an exploding LLM forces the static fallback text
+    # so this asserts the deterministic wording, not the fake's own reply).
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ExplodingLLMProvider())
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="si dale",
+        button_payload=None,
+        pending_action_id="pa-dangling",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_live_proposal():
+    # Mid-confirmation of a CREATE, the patient clearly asks for something
+    # else ("mejor quiero reagendar") — a live, perfectly resolvable
+    # proposal is still outstanding, but the new request must win exactly
+    # like tapping OPERATION_RESCHEDULE would. The abandoned proposal is
+    # left untouched (never silently confirmed/rejected).
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="mejor quiero reagendar otro turno",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "reschedule",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert result["pending_action_id"] is None
+    async with repositories_provider() as repositories:
+        untouched = await repositories.pending_actions.get_by_id("pa-1")
+        assert untouched is not None
+        assert untouched.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_bare_cancelar_stays_a_reminder_not_a_cancel_operation():
+    # "cancelar" alone during CREATE's own confirmation must never be
+    # reread as the cancel-APPOINTMENT operation — that would silently
+    # abandon a live proposal instead of just declining it. Confirmar/
+    # Cancelar are this stage's own buttons: only an explicit decline
+    # phrase (`_is_free_text_decline`, covered elsewhere) or the Cancelar
+    # button itself may drop the proposal; a bare operation mention of
+    # "cancel" here stays exactly as ambiguous as before this change.
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="cancelar",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "cancel",
+        },
     )
 
     result = await node(state)
@@ -3064,8 +3234,7 @@ def test_should_use_appointment_decision_subgraph_excludes_no_availability_and_n
     # First-slice migration only owns specialty/professional/slot selection —
     # the no-availability/no-slot follow-up choice handlers stay legacy-owned.
     assert (
-        should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_AVAILABILITY_CHOICE, {})
-        is False
+        should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_AVAILABILITY_CHOICE, {}) is False
     )
     assert should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_SLOTS_CHOICE, {}) is False
 
