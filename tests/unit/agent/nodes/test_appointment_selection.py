@@ -301,6 +301,13 @@ def test_slot_rows_titles_never_exceed_twenty_characters():
 
     for row in rows:
         assert len(row.title) <= 20
+        # T4(b): a review suggestion on this same branch — Python's `len()`
+        # counts codepoints, but the 🕐 clock emoji (U+1F550, outside the
+        # BMP) is a UTF-16 surrogate PAIR, so it counts as 2 units in
+        # whatever WhatsApp's own title-length enforcement actually uses.
+        # A codepoint-only check could pass locally while still exceeding
+        # WhatsApp's real cap.
+        assert len(row.title.encode("utf-16-le")) // 2 <= 20
 
 
 def test_slot_rows_dedupes_slots_that_share_an_id_before_pagination():

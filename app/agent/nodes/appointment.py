@@ -3510,13 +3510,27 @@ def create_appointment_node(
         if operation == CREATE_APPOINTMENT_ACTION:
             create_context = {**collected_data, "operation": operation}
             if should_use_appointment_decision_subgraph(None, create_context):
-                return await _delegate_to_decision_subgraph(state, create_context)
-            return await _offer_specialties(
-                conversation_id,
-                create_context,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
+                result = await _delegate_to_decision_subgraph(state, create_context)
+            else:
+                result = await _offer_specialties(
+                    conversation_id,
+                    create_context,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            if returned_to_main_menu:
+                # A `pending_action_id` only ever means anything at
+                # `STAGE_AWAITING_CONFIRMATION` (the confirm/reject branch
+                # above) — the reset just above that dropped `stage`/
+                # `collected_data` already left this flow, so a stale id
+                # from whatever was abandoned must not silently ride along
+                # into the fresh booking (neither `_offer_specialties` nor
+                # `_delegate_to_decision_subgraph` touch this field on
+                # their own, since neither has any reason to under normal
+                # circumstances). Mirrors `MENU_MAIN_PAYLOAD`'s own
+                # explicit `"pending_action_id": None` a few lines above.
+                result = {**result, "pending_action_id": None}
+            return result
         if operation is not None:
             return await _begin_identification(
                 conversation_id,
