@@ -90,6 +90,35 @@ async def test_a_low_confidence_operation_mention_still_starts_the_flow_with_no_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "operation"),
+    [
+        ("quiero cancelar mi turno", "cancel"),
+        ("quiero reagendar", "reschedule"),
+        ("quiero sacar un turno", "create"),
+    ],
+)
+async def test_free_text_operation_requests_reach_the_appointment_flow(
+    message: str, operation: str
+) -> None:
+    # T3(b) of the fallback-menu-buttons change: cancel/reschedule/book have
+    # no dedicated buttons — the patient names the operation in plain text
+    # and `FakeLLMProvider.understand()`'s real keyword layer (not a stub)
+    # must carry it through as `operation_mention`, exactly like a real
+    # provider's structured extraction would. `appointment.py`'s "no stage
+    # yet" entry point already consumes `operation_mention` from here (see
+    # `test_a_stated_cancel_skips_to_identification`/
+    # `test_the_welcome_lists_create_row_skips_the_operation_menu` in
+    # `test_appointment_node.py`).
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"]["operation_mention"] == operation
+
+
+@pytest.mark.asyncio
 async def test_low_confidence_chatter_with_no_operation_mention_still_falls_back():
     # The fix above must not swallow genuinely ambiguous chatter — only a
     # concretely named operation earns the override.

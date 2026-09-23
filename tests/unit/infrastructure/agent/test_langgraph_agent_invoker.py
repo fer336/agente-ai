@@ -799,3 +799,34 @@ async def test_handle_does_not_seed_fresh_restart_when_the_flag_is_absent():
     # Normal turn: no welcome list was forced.
     assert messaging_gateway.sent_lists == []
     assert len(messaging_gateway.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_operation_create_payload_from_the_fallback_button_opens_the_specialty_list():
+    # T3(a) of the fallback-menu-buttons change: `fallback.py`'s new
+    # "📅 Agendar una cita" button carries `OPERATION_CREATE_PAYLOAD` — the
+    # exact payload sent here, with no prior `collected_data["stage"]` set,
+    # since the fallback node never sets one. Must reach the specialty
+    # list directly (`should_use_appointment_decision_subgraph` delegates
+    # here since `stage is None` and `operation == CREATE_APPOINTMENT_ACTION`
+    # — see `appointment.py`'s own docstring), never the (removed)
+    # 3-button operation menu.
+    invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        appointment_gateway=make_dentalink_gateway(
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")]
+        ),
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
+
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_lists) == 1
+    _, _, list_message = messaging_gateway.sent_lists[0]
+    assert "Ortodoncia" in list_message.rows[0].title
