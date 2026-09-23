@@ -1895,6 +1895,20 @@ def create_appointment_node(
                 # one place that decides what a decline looks like.
                 button_payload = REJECT_APPOINTMENT_PAYLOAD
 
+            if (
+                button_payload in (CONFIRM_APPOINTMENT_PAYLOAD, REJECT_APPOINTMENT_PAYLOAD)
+                and pending_action_id is None
+            ):
+                # T2b (review-c980054b8c626f90, R3-button-tap-without-
+                # pending-id-reminds): a Confirmar/Cancelar tap with nothing
+                # left to confirm must recover exactly like free text with
+                # no usable pending action does two branches below — never
+                # fall through the CONFIRM/REJECT `elif`s' own `pending_
+                # action_id is not None` guards into the final `else`,
+                # which used to give the SAME reminder back forever (the
+                # tap itself can never make a `pending_action_id` reappear).
+                button_payload = None
+
             if button_payload is None:
                 # A stale confirmation must never hijack free text forever:
                 # only remind when there is still something real to remind
@@ -1904,10 +1918,41 @@ def create_appointment_node(
                 # nothing (seen live, 2026-09-23 screenshot).
                 pending_action_usable = False
                 if pending_action_id is not None:
-                    async with proposal_repositories_provider() as repositories:
-                        existing_pending_action = await repositories.pending_actions.get_by_id(
-                            pending_action_id
+                    try:
+                        async with proposal_repositories_provider() as repositories:
+                            existing_pending_action = await repositories.pending_actions.get_by_id(
+                                pending_action_id
+                            )
+                    except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+                        # T2b (R3-new-db-lookup-unguarded): fail safe on a
+                        # lookup error — fall back to the SAME reminder this
+                        # gate always gave before T2 added the lookup at
+                        # all, instead of guessing the proposal is gone and
+                        # silently dropping possibly-live state.
+                        logger.warning(
+                            "pending action lookup failed while checking the "
+                            "confirmation gate; falling back to the reminder",
+                            exc_info=exc,
                         )
+                        confirmation_reminder_text = await generate_or_fallback(
+                            llm_provider,
+                            str(conversation_id),
+                            "confirmation_reminder",
+                            {
+                                "situacion": (
+                                    "El paciente escribió texto libre pero en este paso solo se "
+                                    "puede confirmar o cancelar tocando uno de los 2 botones."
+                                ),
+                            },
+                            _CONFIRMATION_REMINDER,
+                            state["recent_messages"],
+                            state["contact_memory_summary"],
+                        )
+                        return {
+                            "response_text": confirmation_reminder_text,
+                            "response_buttons": _CONFIRM_BUTTONS,
+                            "requires_handoff": False,
+                        }
                     pending_action_usable = (
                         existing_pending_action is not None
                         and existing_pending_action.status == "pending"
@@ -1931,6 +1976,24 @@ def create_appointment_node(
                 )
 
                 if not pending_action_usable or operation_switch:
+                    if pending_action_usable and operation_switch and pending_action_id is not None:
+                        # T2b (R3-switch-leaves-live-proposal-pending): the
+                        # proposal is genuinely still `pending` in the DB —
+                        # abandoning it here (falling through to the fresh
+                        # operation below) must not leave it dangling as
+                        # `pending` forever. Reject it through the exact
+                        # same use case a Cancelar tap already uses, so
+                        # there is still only one path that ever transitions
+                        # a pending action out of `pending` on this turn.
+                        async with proposal_repositories_provider() as repositories:
+                            try:
+                                await RejectPendingActionUseCase(
+                                    repositories.pending_actions
+                                ).execute(pending_action_id)
+                            except (InvalidConfirmationError, PendingActionExpiredError):
+                                pass
+                            else:
+                                await _cancel_follow_up(repositories, pending_action_id)
                     # Nothing usable left to confirm, or the patient
                     # clearly asked for something else mid-confirmation —
                     # drop the stale stage/pending action and let this turn
@@ -2323,10 +2386,12 @@ def create_appointment_node(
                 )
 
             else:
-                # An unrecognized/stale button while awaiting confirmation
-                # (including a real tap that somehow arrived with no
-                # `pending_action_id` at all — same defensive fallback the
-                # free-text branch above used to give every case).
+                # A genuinely unrecognized button while awaiting
+                # confirmation — a Confirmar/Cancelar tap with no
+                # `pending_action_id` never reaches here any more (T2b:
+                # normalized to `button_payload = None` above, so it takes
+                # the same recovery path free text with nothing to confirm
+                # already does).
                 stale_confirmation_text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),

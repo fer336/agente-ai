@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -54,6 +55,9 @@ from app.domain.value_objects.menu_payloads import (
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
+)
+from app.infrastructure.database.fake_pending_action_repository import (
+    FakePendingActionRepository,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
@@ -2213,8 +2217,10 @@ async def test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_
     # Mid-confirmation of a CREATE, the patient clearly asks for something
     # else ("mejor quiero reagendar") — a live, perfectly resolvable
     # proposal is still outstanding, but the new request must win exactly
-    # like tapping OPERATION_RESCHEDULE would. The abandoned proposal is
-    # left untouched (never silently confirmed/rejected).
+    # like tapping OPERATION_RESCHEDULE would. T2b (R3-switch-leaves-live-
+    # proposal-pending): the abandoned proposal must no longer be left
+    # dangling as `pending` in the DB forever — it is rejected through the
+    # same use case a Cancelar tap already uses.
     repositories_provider = make_proposal_repositories_provider()
     node, _, _ = await _make_node_and_conversation(
         proposal_repositories_provider=repositories_provider
@@ -2239,9 +2245,9 @@ async def test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_
     assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
     assert result["pending_action_id"] is None
     async with repositories_provider() as repositories:
-        untouched = await repositories.pending_actions.get_by_id("pa-1")
-        assert untouched is not None
-        assert untouched.status == "pending"
+        abandoned = await repositories.pending_actions.get_by_id("pa-1")
+        assert abandoned is not None
+        assert abandoned.status == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -2278,6 +2284,147 @@ async def test_confirmation_stage_bare_cancelar_stays_a_reminder_not_a_cancel_op
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     }
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_confirm_tap_with_no_pending_action_id_routes_a_fresh_request():
+    # T2b (review-c980054b8c626f90, R3-button-tap-without-pending-id-
+    # reminds): a real Confirmar TAP that somehow arrives with no
+    # `pending_action_id` at all must recover into a clean state — not
+    # fall through into the generic "unrecognized button" reminder and
+    # loop the same Confirmar/Cancelar buttons back at the patient forever
+    # (the tap itself can never make a `pending_action_id` reappear). A raw
+    # button tap carries no free-text operation mention to route by (unlike
+    # the dangling/expired-id tests above, which are free text), so this
+    # lands on the same operation menu a main-menu reset already uses —
+    # same distinct message as `test_confirmation_stage_dangling_action_
+    # no_operation_falls_back_to_menu`.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_cancelar_tap_with_no_pending_action_id_routes_a_fresh_request():
+    # Same as above, mirrored for the Cancelar button.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=REJECT_APPOINTMENT_PAYLOAD,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_free_text_decline_with_no_pending_id_routes_a_fresh_request():
+    # Same recovery, but via free text ("no quiero") instead of a button —
+    # covered explicitly per the T2b review, alongside the two button-tap
+    # cases above, so all three input shapes are proven consistent.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="no quiero",
+        button_payload=None,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_expired_pending_action_row_routes_a_fresh_request():
+    # T2b R3-expired-row-branch-untested: unlike a fully dangling id (never
+    # saved at all, covered above), this is exactly what T1's own
+    # workflow-session rotation leaves behind — a real row that DOES exist
+    # but is no longer `pending`. Must be treated exactly like dangling:
+    # not usable to remind about.
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="expired"))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería agendar un turno",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "create",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_falls_back_to_reminder_when_pending_action_lookup_fails(
+    caplog: pytest.LogCaptureFixture,
+):
+    # T2b R3-new-db-lookup-unguarded: the repository lookup this gate added
+    # in T2 can itself raise (DB blip). Fail safe — fall back to the SAME
+    # reminder this gate always gave before T2 added the lookup at all,
+    # instead of guessing the proposal is gone and silently dropping
+    # possibly-live state; log it per the project's own convention (see
+    # `_staffed_specialty_ids_safe`).
+    class _ExplodingPendingActionRepository(FakePendingActionRepository):
+        async def get_by_id(self, pending_action_id: str):
+            raise RuntimeError("db unavailable")
+
+    repositories_provider = make_proposal_repositories_provider(
+        pending_actions=_ExplodingPendingActionRepository()
+    )
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="si dale",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.agent.nodes.appointment"):
+        result = await node(state)
+
+    assert "collected_data" not in result
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+    assert any("pending action lookup failed" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
