@@ -1359,6 +1359,23 @@ def create_appointment_node(
             updates["pending_action_id"] = result.get("pending_action_id")
         return updates
 
+    async def _welcome_reset_response(conversation_id: ConversationId) -> dict[str, object]:
+        """`MENU_MAIN_PAYLOAD`'s own response shape — the ONE place that
+        builds it, so a real button tap, a mid-flow `navigation_target ==
+        "main"` request, and the same request from idle (T3: free-text
+        parity with the button) all go through the exact same code instead
+        of three copies drifting apart.
+        """
+        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+        return {
+            "response_text": WELCOME_TEXT,
+            "response_buttons": None,
+            "response_list": WELCOME_LIST,
+            "requires_handoff": False,
+            "pending_action_id": None,
+            "collected_data": {},
+        }
+
     async def _cancel_follow_up(repositories: ProposalRepositories, pending_action_id: str) -> None:
         scheduled_actions = repositories.scheduled_actions
         scheduled_action = await scheduled_actions.get_by_pending_action_id(pending_action_id)
@@ -1797,15 +1814,7 @@ def create_appointment_node(
                 key: value for key, value in collected_data.items() if key != "navigation_target"
             }
             if navigation_target == "main":
-                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                return {
-                    "response_text": WELCOME_TEXT,
-                    "response_buttons": None,
-                    "response_list": WELCOME_LIST,
-                    "requires_handoff": False,
-                    "pending_action_id": None,
-                    "collected_data": {},
-                }
+                return await _welcome_reset_response(conversation_id)
             if navigation_target in {"service", "specialty"}:
                 return await _offer_specialties(
                     conversation_id,
@@ -1858,17 +1867,19 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
+        elif stage is None and navigation_target == "main":
+            # T3: "volver al menú principal" with no active flow to
+            # navigate within (idle) — same MENU_MAIN_PAYLOAD-equivalent
+            # reset the button check right below already gives. Free text
+            # is trusted here exactly like it already is for the stages
+            # above: `STAGE_AWAITING_CONFIRMATION` stays deliberately
+            # excluded from `_NAVIGABLE_STAGES` (a live pending action must
+            # still only ever be rejected by its own explicit buttons),
+            # unaffected by this idle-only branch.
+            return await _welcome_reset_response(conversation_id)
 
         if state["button_payload"] == MENU_MAIN_PAYLOAD:
-            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            return {
-                "response_text": WELCOME_TEXT,
-                "response_buttons": None,
-                "response_list": WELCOME_LIST,
-                "requires_handoff": False,
-                "pending_action_id": None,
-                "collected_data": {},
-            }
+            return await _welcome_reset_response(conversation_id)
 
         returned_to_main_menu = False
         if stage is not None and state["button_payload"] in _MAIN_MENU_PAYLOADS:

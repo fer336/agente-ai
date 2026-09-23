@@ -4,8 +4,12 @@ from app.agent.nodes.resolve_interaction import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
+    MENU_LOCATION_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
+    OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
+    OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
     POST_ACTION_CLOSE_INTENT,
     create_resolve_interaction_node,
@@ -425,3 +429,88 @@ async def test_active_stage_still_escapes_to_handoff_on_the_prd_global_exception
     )
 
     assert result["intent"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_menu_main_free_text_reaches_the_same_intent_as_the_button():
+    # T3 (free-text menu-intents parity): "volver al menú principal" must
+    # reach the same `intent` a real `MENU_MAIN_PAYLOAD` tap does — the
+    # actual WELCOME_TEXT/WELCOME_LIST reply parity itself is proven at the
+    # `appointment.py` level (`test_navigation_target_main_from_idle_
+    # matches_the_menu_main_button` in `test_appointment_node.py`), since
+    # this router only ever forwards `navigation_target`, never builds the
+    # reply.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    button_result = await node(make_agent_state(button_payload=MENU_MAIN_PAYLOAD))
+    free_text_result = await node(make_agent_state(user_message="volver al menú principal"))
+
+    assert button_result["intent"] == "appointment"
+    assert free_text_result["intent"] == "appointment"
+    assert free_text_result["collected_data"]["navigation_target"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_location_free_text_llm_label_reaches_the_same_intent_as_the_button():
+    # Unlike "cómo llegar?" (already covered by
+    # `test_free_text_location_does_not_get_trapped_by_active_stage` in
+    # `test_resolve_interaction_v2.py`, resolved by the deterministic
+    # `asks_for_location` substring pre-check before the LLM is ever
+    # called), "cómo hago para llegar" deliberately evades that pre-check
+    # (extra words in between) — this proves the NEW "location"
+    # `understand()` label (T3) carries THIS phrasing to the same place
+    # the button goes, through the LLM path instead.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    button_result = await node(make_agent_state(button_payload=MENU_LOCATION_PAYLOAD))
+    free_text_result = await node(make_agent_state(user_message="cómo hago para llegar"))
+
+    assert button_result["intent"] == "location"
+    assert free_text_result["intent"] == "location"
+
+
+@pytest.mark.asyncio
+async def test_handoff_free_text_reaches_the_same_intent_as_the_admin_button():
+    # T3: parity test only — handoff free text already worked
+    # (`test_active_stage_still_escapes_to_handoff_on_the_prd_global_
+    # exception_phrases` above), this just proves it explicitly against
+    # the button's own intent instead of independently re-asserting
+    # "handoff".
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    button_result = await node(
+        make_agent_state(user_message="💬 Administración", button_payload=MENU_ADMIN_PAYLOAD)
+    )
+    free_text_result = await node(
+        make_agent_state(user_message="necesito hablar con administración")
+    )
+
+    assert button_result["intent"] == free_text_result["intent"] == "handoff"
+    assert button_result["interruption"] == free_text_result["interruption"] == "terminate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button_payload", "message", "operation"),
+    [
+        (OPERATION_CREATE_PAYLOAD, "quiero sacar un turno", "create"),
+        (OPERATION_CANCEL_PAYLOAD, "quiero cancelar mi turno", "cancel"),
+        (OPERATION_RESCHEDULE_PAYLOAD, "quiero reagendar", "reschedule"),
+        (OPERATION_VIEW_PAYLOAD, "qué turno tengo", "view"),
+    ],
+)
+async def test_operation_free_text_reaches_the_same_intent_as_its_button(
+    button_payload: str, message: str, operation: str
+) -> None:
+    # T3: parity test only — free-text operation requests already reached
+    # `appointment.py` (`test_free_text_operation_requests_reach_the_
+    # appointment_flow` above); this proves it explicitly against each
+    # matching button's own `intent`, one parametrized case per operation.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    button_result = await node(make_agent_state(button_payload=button_payload))
+    free_text_result = await node(make_agent_state(user_message=message))
+
+    assert button_result["intent"] == "appointment"
+    assert free_text_result["intent"] == "appointment"
+    assert free_text_result["collected_data"]["operation_mention"] == operation

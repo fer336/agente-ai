@@ -56,6 +56,7 @@ from app.domain.value_objects.menu_payloads import (
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
 )
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.database.fake_pending_action_repository import (
     FakePendingActionRepository,
 )
@@ -3465,3 +3466,68 @@ async def test_reschedule_slot_selection_stays_legacy_owned_end_to_end():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_navigation_target_main_from_idle_matches_the_menu_main_button():
+    # T3 (free-text menu-intents parity): "volver al menú principal" with
+    # no active flow (idle) must produce the EXACT same response a real
+    # MENU_MAIN_PAYLOAD tap does — both now go through the shared
+    # `_welcome_reset_response` helper, so this proves they stay identical
+    # rather than drifting apart as two separate copies.
+    node, _, _ = await _make_node_and_conversation()
+    button_state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=MENU_MAIN_PAYLOAD,
+        collected_data={},
+    )
+    free_text_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="volver al menú principal",
+        button_payload=None,
+        collected_data={"navigation_target": "main"},
+    )
+
+    button_result = await node(button_state)
+    free_text_result = await node(free_text_state)
+
+    assert free_text_result == button_result
+    assert button_result["response_text"] == WELCOME_TEXT
+    assert button_result["response_list"] == WELCOME_LIST
+    assert button_result["collected_data"] == {}
+    assert button_result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_navigation_target_main_mid_stage_matches_the_menu_main_button():
+    # Same parity, mid-flow: a patient stuck picking a specialty who says
+    # "volver al menú principal" must land exactly where tapping "Menú
+    # principal" mid-flow already does.
+    node, _, _ = await _make_node_and_conversation()
+    button_state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=MENU_MAIN_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+    free_text_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="volver al menú principal",
+        button_payload=None,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "navigation_target": "main",
+        },
+    )
+
+    button_result = await node(button_state)
+    free_text_result = await node(free_text_state)
+
+    assert free_text_result == button_result
+    assert button_result["response_text"] == WELCOME_TEXT
+    assert button_result["response_list"] == WELCOME_LIST
+    assert button_result["collected_data"] == {}
+    assert button_result["pending_action_id"] is None

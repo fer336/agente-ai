@@ -141,6 +141,31 @@ _VIEW_APPOINTMENT_KEYWORDS = (
 )
 _INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
+#: T3 (free-text menu-intents parity): phrasings the deterministic
+#: `asks_for_location` substring pre-check (`app.agent.nodes.location`)
+#: does NOT already catch on its own — e.g. it matches "cómo llegar" but
+#: not "cómo hago para llegar" (extra words in between). These exist so a
+#: parity test can exercise the LLM-`understand`-based "location" label
+#: end to end, distinct from the deterministic fast path.
+_LOCATION_UNDERSTANDING_KEYWORDS = (
+    "como hago para llegar",
+    "cómo hago para llegar",
+    "donde los encuentro",
+    "dónde los encuentro",
+)
+#: T3: "volver al menú principal"-shaped free text — the fake's own
+#: equivalent of the real `navigation_target` field ("main" case only; the
+#: other targets — specialty/professional/slot — aren't reachable from a
+#: bare keyword the way "main" is, since they need workflow context this
+#: fake doesn't model).
+_NAVIGATION_MAIN_KEYWORDS = (
+    "menu principal",
+    "menú principal",
+    "volver al menu",
+    "volver al menú",
+    "volver al inicio",
+    "empezar de nuevo",
+)
 #: PRD.md §22's automatic-handoff example phrases, lowercased substrings.
 _HANDOFF_KEYWORDS = (
     "llegar tarde",
@@ -174,6 +199,8 @@ class FakeLLMProvider:
             return IntentResult(intent="insurance", confidence=0.9)
         if any(keyword in lowered for keyword in _SPECIALTY_KEYWORDS):
             return IntentResult(intent="specialties", confidence=0.9)
+        if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
+            return IntentResult(intent="location", confidence=0.9)
         if any(keyword in lowered for keyword in _APPOINTMENT_KEYWORDS):
             return IntentResult(intent="appointment", confidence=0.9)
         return IntentResult(intent="unknown", confidence=0.0)
@@ -184,6 +211,8 @@ class FakeLLMProvider:
         without a live model."""
         lowered = message.lower()
         intent_result = await self.classify_intent(message, context)
+        intent = intent_result.intent
+        confidence = intent_result.confidence
 
         operation = None
         if any(word in lowered for word in ("cancelar", "anular")):
@@ -195,13 +224,28 @@ class FakeLLMProvider:
         elif any(word in lowered for word in _APPOINTMENT_KEYWORDS):
             operation = "create"
 
+        navigation_target = None
+        if any(keyword in lowered for keyword in _NAVIGATION_MAIN_KEYWORDS):
+            navigation_target = "main"
+            if confidence < 0.5:
+                # `resolve_interaction.py` only honours a navigation
+                # request from IDLE (no active stage) through the generic
+                # confidence-gated path below `_MIN_INTENT_CONFIDENCE` —
+                # mid-flow it's read unconditionally instead, straight off
+                # `result.navigation_target` — so this forced confidence
+                # only ever matters for the idle case; "appointment" is the
+                # same intent a real MENU_MAIN_PAYLOAD tap resolves to.
+                intent = "appointment"
+                confidence = 0.9
+
         return UnderstandingResult(
-            intent=intent_result.intent,
-            confidence=intent_result.confidence,
+            intent=intent,
+            confidence=confidence,
             answer=None,
             specialty_mention=None,
             professional_mention=None,
             operation_mention=operation,
+            navigation_target=navigation_target,
         )
 
     async def extract_information(
