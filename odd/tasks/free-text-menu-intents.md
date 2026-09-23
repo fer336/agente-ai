@@ -58,7 +58,7 @@ option, so behavior is identical whichever the patient uses.
 - [x] T1 — New-conversation welcome clears stale `stage` / `pending_action_id`
   (reproduce with a RED test first; reuse `RotateWorkflowSessionUseCase` or the
   fresh-restart path). Route: delegated direct (writer trigger: 2+ files).
-- [ ] T2 — Confirmation gate: when the pending action is missing/unresolvable, drop the
+- [x] T2 — Confirmation gate: when the pending action is missing/unresolvable, drop the
   stale stage and route by the classified intent instead of reminding to confirm.
   Mid-flow, a clearly different operation or menu option wins over the active stage.
   Route: delegated direct.
@@ -109,8 +109,78 @@ option, so behavior is identical whichever the patient uses.
   → all checks passed. `uv run ruff format --check .` → 77 files (down from
   79 pre-existing on base; the 2 files this task touched are clean).
   `uv run mypy app` → no issues (320 files).
-  Commits: 44f583e (code+tests), <doc commit to be added>.
+  Commits: 44f583e (code+tests), d50ed70 (docs).
+
+- T2 done. Residual gap from T1: `is_new_conversation` only rotates the
+  workflow session for a genuinely BRAND NEW `Conversation` row — a
+  conversation whose row already existed (e.g. a mid-flow abandon, or any
+  path that never re-triggers the welcome) never rotates, so a stale
+  `STAGE_AWAITING_CONFIRMATION` with a `pending_action_id` that no longer
+  resolves to a `pending` row (expired, confirmed/rejected elsewhere, or
+  simply gone) can still be live at generation 2+ regardless of T1's fix.
+  T2 makes the confirmation gate self-healing against that residual case
+  directly, independent of how the staleness got there: it no longer
+  trusts `pending_action_id`'s mere presence, it resolves it
+  (`PendingActionRepository.get_by_id`, `status == "pending"`) before ever
+  reminding.
+  Fix (`app/agent/nodes/appointment.py`, `STAGE_AWAITING_CONFIRMATION`
+  free-text branch, ~1898-1962): when `button_payload is None`, resolve
+  the pending action; if it isn't a usable `pending` row, OR the LLM's
+  `operation_mention` (already carried into `collected_data` by
+  `resolve_interaction.py`, unchanged) names a DIFFERENT operation than
+  `collected_data["operation"]`, drop `stage`/`pending_action_id` and let
+  the turn fall through the same `if stage == ...` dispatch chain a real
+  `MENU_MAIN_PAYLOAD`/`_MAIN_MENU_PAYLOADS` tap already uses below (one
+  path per operation, reusing `_offer_specialties`/`_begin_identification`/
+  the operation-menu fallback — no new routing). The REJECT/CONFIRM/
+  unrecognized-button branches (~1962-2350) were converted from three
+  independent `if`s with an implicit fallthrough catch-all into
+  `if/elif/elif/else`, since `state["button_payload"]` is never mutated
+  (its own documented contract) — only the local `button_payload`/`stage`
+  variables are, so the catch-all must no longer fire when the free-text
+  branch chose to fall through instead of returning. Extended the
+  existing `returned_to_main_menu` -> `pending_action_id: None` clearing
+  (already done for CREATE, ~3574-3585) to the reschedule/cancel/view
+  identification branch and the final operation-menu fallback too, for
+  the same reason the existing comment there gives.
+  Design choice — CONFIRM tap on a missing proposal: left the existing
+  `proposal_not_found` message/path (~2012-2032) untouched. It already
+  clears both `pending_action_id: None` and `collected_data["stage"]:
+  None` on `InvalidConfirmationError`, i.e. it already recovers into a
+  clean state today — T2's "prefer recovering into a clean state" is
+  already satisfied there, so keeping the explicit message is strictly
+  better (tells the patient what happened) with no correctness gap to fix.
+  Design choice — "cancelar" during CREATE's own confirmation: a bare
+  operation_mention of `"cancel"` is deliberately suppressed (treated as
+  no mention) at this exact stage only, never treated as a request to
+  switch to the cancel-appointment operation — Confirmar/Cancelar are
+  this stage's own buttons, and `_is_free_text_decline` doesn't cover
+  bare "cancelar" (only "cancelalo"/"cancela eso"/etc.), so this exact
+  input keeps its pre-T2 behavior (ambiguous -> reminder) rather than
+  silently abandoning a live proposal. Covered by
+  `test_confirmation_stage_bare_cancelar_stays_a_reminder_not_a_cancel_operation`.
+  RED: `test_confirmation_stage_with_a_dangling_pending_action_routes_a_fresh_create_request`
+  (replays the screenshot: `STAGE_AWAITING_CONFIRMATION` + dangling
+  `pending_action_id` + "Quería agendar un turno") — failed with
+  `KeyError: 'collected_data'` (still returning the confirmation reminder)
+  before the fix. Also RED: `..._with_no_pending_action_id_routes_a_fresh_request`,
+  `test_confirmation_stage_dangling_action_no_operation_falls_back_to_menu`,
+  `test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_live_proposal`
+  (all in `tests/unit/agent/nodes/test_appointment_node.py`). Also fixed a
+  latent gap in the pre-existing `test_confirmation_stage_reminds_instead_of_advancing_on_free_text`:
+  its own `pending_action_id="pa-1"` was never actually saved to the
+  repository, so it was accidentally exercising the dangling-id path
+  while asserting the OLD (now-changed) behavior; it now saves a real
+  `pending` row so it correctly asserts the reminder still fires when
+  there IS something live to confirm.
+  Verification: `uv run pytest -q` → 1572 passed, 82 skipped, 5 failed
+  (the 5 pre-declared known environmental failures only). `uv run ruff
+  check .` → all checks passed. `uv run ruff format --check` on both
+  touched files → already formatted (this also cleaned pre-existing
+  formatting drift within `appointment.py`, same as T1's touched files).
+  `uv run mypy app` → no issues (320 files).
+  Commits: d0ece5a (code+tests), <doc commit to be added>.
 
 ## Next step
 
-T2.
+T3.
