@@ -341,7 +341,7 @@ option, so behavior is identical whichever the patient uses.
   stash` — not introduced here, left as-is (same "already formatted for
   what this task touched" pattern T1/T2 recorded). `uv run mypy app` → no
   issues (320 files).
-  Commit: 4112a63 (code+tests), <doc commit to be added>.
+  Commit: 4112a63 (code+tests), 5f6e94c (docs).
 
 ## Next step
 
