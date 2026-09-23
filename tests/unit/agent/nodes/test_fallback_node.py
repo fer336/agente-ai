@@ -2,29 +2,24 @@ import pytest
 
 from app.agent.nodes.fallback import create_fallback_node
 from app.domain.repositories.llm_provider import ResponseContext
-from app.domain.value_objects.menu_payloads import (
-    MENU_ADMIN_PAYLOAD,
-    MENU_APPOINTMENT_PAYLOAD,
-    MENU_SPECIALTIES_PAYLOAD,
-)
+from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
 from app.infrastructure.llm.exceptions import LLMTimeoutError
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 
 
 @pytest.mark.asyncio
-async def test_fallback_node_shows_the_main_menu_as_buttons():
+async def test_fallback_node_shows_the_book_and_administracion_buttons():
     node = create_fallback_node(FakeLLMProvider())
 
     result = await node(make_agent_state(user_message="asdkjaslkdj"))
 
     buttons = result["response_buttons"]
     assert [button.id for button in buttons] == [
-        MENU_APPOINTMENT_PAYLOAD,
-        MENU_SPECIALTIES_PAYLOAD,
+        OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
     ]
-    assert [button.title for button in buttons] == ["Turnos", "Especialidades", "Administración"]
+    assert [button.title for button in buttons] == ["📅 Agendar una cita", "💬 Administración"]
     assert result["requires_handoff"] is False
 
 
@@ -100,8 +95,7 @@ async def test_fallback_node_falls_back_to_a_static_message_when_the_llm_provide
 
     assert result["response_text"]
     assert [button.id for button in result["response_buttons"]] == [
-        MENU_APPOINTMENT_PAYLOAD,
-        MENU_SPECIALTIES_PAYLOAD,
+        OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
     ]
 
@@ -138,8 +132,7 @@ async def test_a_pending_answer_is_delivered_instead_of_the_did_not_understand_t
 
     assert result["response_text"] == "Sí, atendemos los sábados a la mañana."
     assert [button.id for button in result["response_buttons"]] == [
-        MENU_APPOINTMENT_PAYLOAD,
-        MENU_SPECIALTIES_PAYLOAD,
+        OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
     ]
     # Answering a question is not a failed turn: it must not count towards
