@@ -76,7 +76,7 @@ The legacy "Turnos" / "Especialidades" / "Administración" buttons are removed.
     tests/unit/agent/test_appointment_decision_subgraph.py` -> All checks
     passed. `uv run mypy app/agent/appointment_decision_subgraph.py` ->
     Success.
-  - Commit: pending (recorded after this write).
+  - Commit: `168048f` (`fix(agent): use the chat-bubble administracion title in the subgraph escalation`).
 
 ## Next step
 T3: verification/regression tests for OPERATION_CREATE routing and free-text cancel/reschedule/book coverage.
