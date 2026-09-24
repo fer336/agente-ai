@@ -76,6 +76,14 @@ option, so behavior is identical whichever the patient uses.
   keep parity. One parity test per option (button vs text → same reply/node).
   Route: delegated direct.
 
+- [ ] T4 — Review follow-ups on the full branch (review-fc1d81209235acfb, approved,
+  advisory): a recreated conversation must start on a workflow generation no prior
+  incarnation used (R3-new-conversation-rotation-can-collide-with-prior-incarnation-generation);
+  guard the operation-switch reject against repository/provider errors
+  (R3-operation-switch-reject-unguarded); keep the fake provider's `classify_intent`
+  labels aligned with the real provider (R3-fake-classify-intent-diverges-from-real-labels).
+  Route: delegated direct.
+
 ## Acceptance criteria
 
 - The screenshot scenario replays to the specialty list, not a confirmation reminder.
