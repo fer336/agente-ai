@@ -91,6 +91,12 @@ option, so behavior is identical whichever the patient uses.
   repositories provider so `expire_all_pending_generations` is honored
   (R3-expire-all-flag-ignored-without-repositories-provider). Route: delegated direct.
 
+- [x] T6 — Review follow-ups (review-1e7d294f91f72964, approved, advisory): the
+  low-confidence active-stage branch forwards only the stale `operation_mention` clear,
+  never other carried fields (R3-low-confidence-branch-now-forwards-all-carried-fields);
+  cover the create-patient action type in the confirmation switch test
+  (R3-create-patient-action-type-mapping-untested). Route: direct inline (1 source file).
+
 ## Acceptance criteria
 
 - The screenshot scenario replays to the specialty list, not a confirmation reminder.
@@ -594,9 +600,15 @@ option, so behavior is identical whichever the patient uses.
   re-deriving it later; final run: no issues (320 files).
   Commit: b6b424c (code+tests).
 
+- T6 done (inline). RED: `test_low_confidence_active_stage_chatter_forwards_no_other_understanding`
+  failed (specialty/professional/operation mentions leaked into `collected_data`). The
+  create-patient case was proven by mutating `_OPERATION_BY_ACTION_TYPE` (1 failed) then
+  restoring. Verification: `uv run pytest -q` → 1599 passed, 82 skipped, 5 failed (known);
+  ruff check clean; ruff format clean on touched files; mypy clean. Commit: b0f5b68.
+
 ## Next step
 
-Feature complete (T1, T2, T2b, T3, T4, T5 all done). Optional follow-ups,
+Feature complete (T1, T2, T2b, T3, T4, T5, T6 all done). Optional follow-ups,
 neither blocking, both pre-existing and unrelated to this feature's own
 diff: the `ruff format` drift in `openai_compatible_llm_provider.py`'s
 `DEFAULT_GENERATE_RESPONSE_PROMPT` (T3's note) and in
