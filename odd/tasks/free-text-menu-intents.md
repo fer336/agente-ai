@@ -105,6 +105,15 @@ option, so behavior is identical whichever the patient uses.
   (R3-idle-navigation-main-only-proven-through-fake-confidence-override).
   Route: direct inline.
 
+- [ ] T8 — Product decision (2026-09-24, user chose option A after review-33bb80b5a933c040):
+  while a REAL pending proposal is awaiting confirmation, free text never abandons it —
+  it gets the Confirmar/Cancelar reminder; handoff and "volver al menú" escapes keep
+  working as before. Removes the free-text operation-switch/reject path
+  (R3-view-mention-rejects-live-proposal and its predecessors). A missing/non-pending
+  proposal still routes the message fresh (screenshot fix unchanged). Also tighten the
+  new-conversation rotation assertions (R3-new-conversation-rotation-assertion-vacuous).
+  Route: delegated direct.
+
 ## Acceptance criteria
 
 - The screenshot scenario replays to the specialty list, not a confirmation reminder.
