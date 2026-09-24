@@ -1996,15 +1996,33 @@ def create_appointment_node(
                         # same use case a Cancelar tap already uses, so
                         # there is still only one path that ever transitions
                         # a pending action out of `pending` on this turn.
-                        async with proposal_repositories_provider() as repositories:
-                            try:
-                                await RejectPendingActionUseCase(
-                                    repositories.pending_actions
-                                ).execute(pending_action_id)
-                            except (InvalidConfirmationError, PendingActionExpiredError):
-                                pass
-                            else:
-                                await _cancel_follow_up(repositories, pending_action_id)
+                        try:
+                            async with proposal_repositories_provider() as repositories:
+                                try:
+                                    await RejectPendingActionUseCase(
+                                        repositories.pending_actions
+                                    ).execute(pending_action_id)
+                                except (InvalidConfirmationError, PendingActionExpiredError):
+                                    pass
+                                else:
+                                    await _cancel_follow_up(repositories, pending_action_id)
+                        except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+                            # T4 (R3-operation-switch-reject-unguarded): a
+                            # repository/provider failure here is the
+                            # OPPOSITE fail-safe direction from the lookup
+                            # guard above — that one falls back to the
+                            # reminder (preserve state on doubt); this one
+                            # still lets the switch through. Rejecting the
+                            # OLD proposal is best-effort cleanup, never a
+                            # precondition for serving the patient's NEW,
+                            # already explicit request — a cleanup failure
+                            # must not trap them back in the old flow.
+                            logger.warning(
+                                "pending action reject failed while switching "
+                                "operation mid-confirmation; continuing the "
+                                "switch anyway",
+                                exc_info=exc,
+                            )
                     # Nothing usable left to confirm, or the patient
                     # clearly asked for something else mid-confirmation —
                     # drop the stale stage/pending action and let this turn

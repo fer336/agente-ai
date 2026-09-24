@@ -145,6 +145,60 @@ async def test_successful_rotation_expires_only_pending_actions_from_the_old_gen
 
 
 @pytest.mark.asyncio
+async def test_expire_all_pending_generations_clears_every_older_generation() -> None:
+    # T4 (R3-new-conversation-rotation-can-collide-with-prior-incarnation-
+    # generation): a recreated conversation's own seeded generation is
+    # unique-enough on its own (see `ingest_message.py`'s seeding helper),
+    # but any pending action still on record for that conversation id from
+    # BEFORE the row existed is stale no matter which generation number it
+    # recorded — `expected_generation`-only filtering (the default,
+    # exercised above) would miss every generation except the exact one
+    # passed in.
+    conversations = FakeConversationRepository()
+    pending_actions = FakePendingActionRepository()
+    scheduled_actions = FakeScheduledActionRepository()
+    conversation = Conversation(
+        id=ConversationId("conv-new-incarnation"),
+        contact_id="contact-1",
+        mode="agent",
+        created_at=datetime.now(UTC),
+        workflow_session_generation=1_700_000_000,
+    )
+    await conversations.save(conversation)
+    await pending_actions.save(
+        make_pending_action(
+            id_="gen-1-pending", conversation_id="conv-new-incarnation", workflow_generation=1
+        )
+    )
+    await pending_actions.save(
+        make_pending_action(
+            id_="gen-2-pending", conversation_id="conv-new-incarnation", workflow_generation=2
+        )
+    )
+    await pending_actions.save(
+        make_pending_action(
+            id_="gen-5-pending", conversation_id="conv-new-incarnation", workflow_generation=5
+        )
+    )
+
+    rotate = RotateWorkflowSessionUseCase(
+        _workflow_repositories_provider(conversations, pending_actions, scheduled_actions)
+    )
+
+    assert (
+        await rotate.execute(
+            conversation.id,
+            expected_generation=1_700_000_000,
+            expire_all_pending_generations=True,
+        )
+        is True
+    )
+    assert (await pending_actions.get_by_id("gen-1-pending")).status == "expired"
+    assert (await pending_actions.get_by_id("gen-2-pending")).status == "expired"
+    assert (await pending_actions.get_by_id("gen-5-pending")).status == "expired"
+
+
+@pytest.mark.asyncio
 async def test_confirmation_and_rotation_have_exactly_one_pending_action_winner() -> None:
     conversations = FakeConversationRepository()
     pending_actions = FakePendingActionRepository()

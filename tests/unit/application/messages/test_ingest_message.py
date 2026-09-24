@@ -400,6 +400,52 @@ async def test_new_conversation_welcome_rotates_workflow_session_and_expires_sta
 
 
 @pytest.mark.asyncio
+async def test_new_conversation_never_collides_with_a_higher_prior_incarnation_generation():
+    # T4 (R3-new-conversation-rotation-can-collide-with-prior-incarnation-
+    # generation): T1's own fix always rotates a brand-new row off its
+    # fixed starting generation, but a fixed starting point (the domain
+    # entity's own dataclass default, `1`) only ever moves it to `2` — if a
+    # PRIOR incarnation of this exact conversation id (row deleted and
+    # recreated, e.g. outside this application's own tooling) ever reached
+    # generation `2` itself (trivially true: this is exactly where every
+    # OTHER conversation's own T1 rotation already lands it), the new
+    # incarnation's checkpoint thread would revive that old generation's
+    # stage/pending-action state right back — the exact same collision T1
+    # fixed for generation `1`, just one generation later. Left at
+    # generation 1, 2, AND 5 here to prove no single fixed retry count
+    # would have been enough either.
+    pending_action_repository = make_pending_action_repository()
+    for stale_generation in (1, 2, 5):
+        await pending_action_repository.save(
+            make_pending_action(
+                id_=f"stale-pending-gen-{stale_generation}",
+                conversation_id="ycloud-+54900002222",
+                workflow_generation=stale_generation,
+            )
+        )
+    conversation_repository = make_conversation_repository()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        pending_action_repository=pending_action_repository,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+54900002222"))
+
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+54900002222"))
+    assert conversation is not None
+    # The new generation must never equal ANY generation a prior
+    # incarnation could plausibly have used — asserting `> 5` alone would
+    # pass by luck at the old fixed-default behavior for small numbers, so
+    # this also pins the mechanism: seeded from wall-clock time, the new
+    # generation is far beyond anything a handful of rotations could reach.
+    assert conversation.workflow_session_generation > 1_000_000
+    for stale_generation in (1, 2, 5):
+        stale = await pending_action_repository.get_by_id(f"stale-pending-gen-{stale_generation}")
+        assert stale is not None
+        assert stale.status == "expired"
+
+
+@pytest.mark.asyncio
 async def test_the_welcome_is_the_whole_reply_for_a_brand_new_conversation():
     # Seen live: a patient's first "Hola" got the welcome AND, seconds
     # later, the agent's own answer to that same "Hola" — which is the

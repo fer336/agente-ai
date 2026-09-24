@@ -2252,6 +2252,62 @@ async def test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_
 
 
 @pytest.mark.asyncio
+async def test_confirmation_stage_switch_continues_even_when_rejecting_the_live_proposal_fails(
+    caplog: pytest.LogCaptureFixture,
+):
+    # T4 R3-operation-switch-reject-unguarded: T2b's best-effort reject of
+    # the abandoned proposal only ever caught
+    # InvalidConfirmationError/PendingActionExpiredError — a repository/
+    # provider failure (DB blip on save) was unguarded and would blow up
+    # the whole turn instead of serving the patient's new request. Fail-safe
+    # direction here is the OPPOSITE of the T2b lookup guard: that one falls
+    # back to the reminder (preserve state on doubt); this one must still
+    # let the switch through, since the patient already made their intent
+    # to move on explicit — a cleanup failure on the OLD proposal is never
+    # a reason to block the NEW one.
+    class _ExplodingOnRejectPendingActionRepository(FakePendingActionRepository):
+        async def save(self, pending_action):
+            if pending_action.status == "cancelled":
+                raise RuntimeError("db unavailable")
+            await super().save(pending_action)
+
+    repositories_provider = make_proposal_repositories_provider(
+        pending_actions=_ExplodingOnRejectPendingActionRepository()
+    )
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="mejor quiero reagendar otro turno",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "reschedule",
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.agent.nodes.appointment"):
+        result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert result["pending_action_id"] is None
+    assert any("continuing the switch anyway" in record.message for record in caplog.records)
+    async with repositories_provider() as repositories:
+        # The reject itself failed — the proposal is left exactly where
+        # that failed attempt found it, never silently forced into a
+        # status the DB never actually recorded.
+        stuck = await repositories.pending_actions.get_by_id("pa-1")
+        assert stuck is not None
+        assert stuck.status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_confirmation_stage_bare_cancelar_stays_a_reminder_not_a_cancel_operation():
     # "cancelar" alone during CREATE's own confirmation must never be
     # reread as the cancel-APPOINTMENT operation — that would silently

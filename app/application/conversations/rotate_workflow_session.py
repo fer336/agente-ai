@@ -46,7 +46,26 @@ class RotateWorkflowSessionUseCase:
             hours=1
         )
 
-    async def execute(self, conversation_id: ConversationId, *, expected_generation: int) -> bool:
+    async def execute(
+        self,
+        conversation_id: ConversationId,
+        *,
+        expected_generation: int,
+        expire_all_pending_generations: bool = False,
+    ) -> bool:
+        """`expire_all_pending_generations`: T4 (R3-new-conversation-
+        rotation-can-collide-with-prior-incarnation-generation) — a
+        genuinely brand-new conversation row's seeded generation (see
+        `ingest_message.py`'s seeding helper) is already unique-enough on
+        its own, but any pending action still on record for that
+        conversation id from BEFORE the row existed is stale no matter
+        which generation number it recorded, not only the one exact
+        `expected_generation` this call happens to pass. The default
+        (`False`) keeps the narrower, exactly-this-generation behavior the
+        inactivity-rotation call site still relies on, where the
+        conversation continuously existed and only one generation is being
+        retired at a time.
+        """
         if self._repositories_provider is None:
             assert self._conversations is not None
             return await self._conversations.rotate_workflow_session(
@@ -61,7 +80,9 @@ class RotateWorkflowSessionUseCase:
                 return False
 
             stale_actions = (
-                await repositories.pending_actions.get_pending_for_conversation_generation(
+                await repositories.pending_actions.get_pending_for_conversation(conversation_id)
+                if expire_all_pending_generations
+                else await repositories.pending_actions.get_pending_for_conversation_generation(
                     conversation_id, expected_generation
                 )
             )

@@ -192,6 +192,14 @@ class FakeLLMProvider:
     """
 
     async def classify_intent(self, message: str, context: dict[str, object]) -> IntentResult:
+        # T4 (R3-fake-classify-intent-diverges-from-real-labels): "location"
+        # is deliberately NOT one of this method's possible outcomes — the
+        # real provider's `_INTENT_LABELS` (the narrow allowlist this
+        # method's own real-provider counterpart validates against) never
+        # includes it, only the separate, richer `_UNDERSTANDING_LABELS`
+        # does (T3). `understand()` below still recognizes the same
+        # keywords; this method must not diverge from what the real
+        # provider's `classify_intent` can actually return.
         lowered = message.lower()
         if any(keyword in lowered for keyword in _HANDOFF_KEYWORDS):
             return IntentResult(intent="handoff", confidence=0.9)
@@ -199,8 +207,6 @@ class FakeLLMProvider:
             return IntentResult(intent="insurance", confidence=0.9)
         if any(keyword in lowered for keyword in _SPECIALTY_KEYWORDS):
             return IntentResult(intent="specialties", confidence=0.9)
-        if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
-            return IntentResult(intent="location", confidence=0.9)
         if any(keyword in lowered for keyword in _APPOINTMENT_KEYWORDS):
             return IntentResult(intent="appointment", confidence=0.9)
         return IntentResult(intent="unknown", confidence=0.0)
@@ -210,9 +216,16 @@ class FakeLLMProvider:
         provider extracts — enough for the graph to be exercised end to end
         without a live model."""
         lowered = message.lower()
-        intent_result = await self.classify_intent(message, context)
-        intent = intent_result.intent
-        confidence = intent_result.confidence
+        # "location" is checked here, not inside `classify_intent` (see that
+        # method's own comment) — this is the ONLY place this fake ever
+        # reports it, matching the real provider's `understand`-only label.
+        if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
+            intent = "location"
+            confidence = 0.9
+        else:
+            intent_result = await self.classify_intent(message, context)
+            intent = intent_result.intent
+            confidence = intent_result.confidence
 
         operation = None
         if any(word in lowered for word in ("cancelar", "anular")):

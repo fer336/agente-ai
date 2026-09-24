@@ -64,6 +64,44 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 _HUMAN_MODE_REACTIVATION_TIMEOUT = timedelta(hours=1)
 
 
+def _new_conversation_workflow_generation_seed(created_at: datetime) -> int:
+    """Seeds a brand-new `Conversation` row's `workflow_session_generation`.
+
+    T4 (R3-new-conversation-rotation-can-collide-with-prior-incarnation-
+    generation): the domain entity's own dataclass default (a fixed `1`)
+    makes a RECREATED conversation's checkpoint thread id
+    (`f"{conversation_id}:session:N"`, computed below) fully deterministic
+    across incarnations. If this exact conversation id (`ycloud-{phone}`)
+    ever existed before — its row deleted and recreated, e.g. by tooling
+    outside this application's own `ResetConversationUseCase` (which never
+    deletes the row at all) — and a PRIOR incarnation ever reached that
+    same generation number itself, the very next real turn would revive
+    whatever checkpoint state (stage/pending_action_id) that old
+    generation's thread still holds (seen live for generation 1, T1's own
+    fix; the exact same collision remains possible one generation later,
+    for whichever fixed number a rotation would otherwise always land on).
+
+    `pending_actions` rows cannot carry this same risk on their own —
+    `PendingActionModel.conversation_id` is a hard FK to `conversations.id`,
+    so whatever deleted that row must already have cleared its pending
+    actions first (`RotateWorkflowSessionUseCase`'s own
+    `expire_all_pending_generations` still runs defensively for this exact
+    call site, in case that isn't so in a particular deployment). Only the
+    LangGraph checkpoint thread carries the real risk: this application has
+    no FK/query relationship to it at all, so there is no reachable prior
+    generation value to look up from data.
+
+    Seeding from the current epoch second instead of a fixed default makes
+    an accidental collision require the PRIOR incarnation to have rotated
+    into the high hundreds of millions of generations — never reachable
+    through this codebase's own rotation triggers (at most a handful of
+    times a day, per conversation). `workflow_session_generation` is
+    already a `BigInteger` column (`ConversationModel`), so this needs no
+    migration.
+    """
+    return int(created_at.timestamp())
+
+
 @dataclass(frozen=True)
 class MessageRepositories:
     """Bundles the repositories one `IngestMessageUseCase` unit of work needs."""
@@ -224,6 +262,17 @@ class IngestMessageUseCase:
                         rotated = await rotate_workflow.execute(
                             conversation.id,
                             expected_generation=conversation.workflow_session_generation,
+                            # T4 (R3-new-conversation-rotation-can-collide-
+                            # with-prior-incarnation-generation): a
+                            # genuinely brand-new row can have NO pending
+                            # actions of its own yet (nothing has run for it
+                            # before this exact turn) — any pending action
+                            # still on record for this conversation id is
+                            # therefore necessarily left over from a PRIOR
+                            # incarnation, whatever generation it happens to
+                            # carry, not only the one `expected_generation`
+                            # this call also passes.
+                            expire_all_pending_generations=is_new_conversation,
                         )
                         if rotated:
                             conversation.workflow_session_generation += 1
@@ -646,11 +695,13 @@ class IngestMessageUseCase:
         conversation = await conversation_repository.get_by_id(conversation_id)
         if conversation is not None:
             return conversation, False
+        created_at = datetime.now(UTC)
         conversation = Conversation(
             id=conversation_id,
             contact_id=contact_id,
             mode="agent",
-            created_at=datetime.now(UTC),
+            created_at=created_at,
+            workflow_session_generation=_new_conversation_workflow_generation_seed(created_at),
         )
         try:
             await conversation_repository.save(conversation)
