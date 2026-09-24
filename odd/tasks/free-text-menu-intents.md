@@ -114,7 +114,7 @@ option, so behavior is identical whichever the patient uses.
   new-conversation rotation assertions (R3-new-conversation-rotation-assertion-vacuous).
   Route: delegated direct.
 
-- [ ] T9 — Review follow-ups (review-bae960a902ead91b, approved, advisory): per-turn
+- [x] T9 — Review follow-ups (review-bae960a902ead91b, approved, advisory): per-turn
   understanding (`operation_mention`, `navigation_target`) must never outlive its turn —
   a Cancelar tap with nothing to confirm must not start a flow from a stale mention
   (R3-001), and a stale `navigation_target="main"` must not reset a later idle turn
@@ -712,9 +712,83 @@ option, so behavior is identical whichever the patient uses.
   (R3-new-conversation-generation-assertion-pins-fake-double-count). Now asserts the
   generation moved past the seed; proven to fail with the rotation disabled. Commit f9d7f7d.
 
+- T9 done. Shared root cause confirmed: `resolve_interaction.py`'s
+  `operation_mention`/`navigation_target` are documented as strictly
+  per-turn (`_carried_understanding`'s own contract, and
+  `specialties.py`'s `_has_booking_context` docstring) but
+  `AgentState.collected_data` is a plain (unannotated) `TypedDict` field —
+  LangGraph's default channel for that is `LastValue`, which REPLACES on
+  update and otherwise keeps the PRIOR value untouched. Several
+  `resolve_interaction` return paths forwarded no `collected_data` update
+  at all (a button tap mid-flow, the low-confidence active-stage branch,
+  …), so once either key landed in a checkpoint it survived every
+  following turn that didn't happen to overwrite it — one mechanism behind
+  all three findings.
+  Fix (single place, `app/agent/nodes/resolve_interaction.py`): new
+  `_strip_per_turn_understanding` (~152-178) drops `operation_mention`/
+  `navigation_target` from `collected_data` at the very start of every
+  turn (button AND free text), returning the SAME object when there was
+  nothing to strip. `create_resolve_interaction_node`'s `node()` (~207-219)
+  is now a thin wrapper: it strips first, delegates to the renamed inner
+  `_resolve(state, collected_data, llm_provider)` (the old `node` body,
+  ~222-383), then — if the branch that ran forwarded no `collected_data`
+  key AND something was actually stripped — adds the stripped dict itself,
+  so the strip is actually committed to state instead of staying purely
+  local. `_temporary_result` (~181-194) now takes the already-stripped
+  `collected_data` directly instead of re-reading `state["collected_data"]`
+  (a second, previously separate leak: it forwarded `{**state["collected_
+  data"], **carried}` on the info-intent/location temporary-interrupt
+  branches, bypassing the strip entirely). Removed as redundant: T5's
+  special-case `operation_mention` clearing in the LLM-understand branch
+  and the mirrored check in the low-confidence/active-stage branch — both
+  are subsumed by the general strip (collected_data no longer carries a
+  stale `operation_mention` key at all by the time either branch runs).
+  Defense in depth (`app/agent/nodes/appointment.py`,
+  `STAGE_AWAITING_CONFIRMATION` not-pending-action-usable branch,
+  ~1972-2006): `mentioned_operation` is now only ever computed from
+  `collected_data.get("operation_mention")` when `state["button_payload"]
+  is None` (this exact turn is genuine free text) — `state["button_
+  payload"]`'s own "never mutated by a node" contract makes it a reliable
+  signal a real Confirmar/Cancelar tap never goes through the LLM's
+  `understand()` call at all, so it can never itself justify a mention;
+  trusting `collected_data`'s copy there was the concrete R3-001 bug when
+  appointment.py is exercised directly (its own unit tests construct
+  `collected_data` by hand, bypassing `resolve_interaction`'s upstream fix).
+  R3-002/R3-003 needed no equivalent appointment.py-side guard: appointment.py
+  has no local signal to tell a stale `navigation_target` from a fresh one,
+  so the fix is entirely upstream, in `resolve_interaction.py`.
+  R3-003 verified as pre-existing-correct (no fix needed there): the idle
+  "volver al menú" branch already read `result.navigation_target` (THIS
+  turn's fresh value), never `collected_data`'s own — confirmed via
+  `git stash` on the source that the first assertion of its own pin test
+  passed even pre-fix; only the second assertion (about the general strip)
+  failed, correctly isolating what was genuinely new.
+  RED (5 tests, `git stash` on `app/agent/nodes/resolve_interaction.py` +
+  `app/agent/nodes/appointment.py` only, tests kept):
+  `test_a_stale_operation_mention_does_not_survive_a_button_tap_mid_flow`
+  failed (`{'intent': 'appointment'}` — no `collected_data` key at all);
+  `test_idle_navigation_reads_this_turns_result_not_a_stale_collected_
+  data_value` failed on its second assertion only (confirming R3-003's
+  own intent-routing claim was already true, only the general strip was
+  new); `test_low_confidence_active_stage_chatter_forwards_no_other_
+  understanding` failed (old code still returned an explicit `operation_
+  mention: None` key instead of omitting it entirely — expected test
+  update, not a regression); `test_confirmation_stage_cancelar_tap_
+  ignores_a_stale_operation_mention` failed (`{'operation_mention':
+  'create', 'stage': 'awaiting_operation_selection'}` — routed by the
+  stale mention); `test_a_stale_navigation_target_does_not_reset_a_
+  later_idle_turn` failed (`response_text` was the WELCOME_TEXT reset).
+  Verification: `uv run pytest -q` → 1616 passed, 82 skipped, 5 failed (the
+  5 pre-declared known environmental failures only, confirmed by name: 4 in
+  `test_gateway_dependency.py`, 1 in `test_internal_eval_wiring.py`).
+  `uv run ruff check .` → all checks passed (2 line-length errors fixed
+  during implementation). `uv run ruff format --check` on all 4 touched
+  files → already formatted. `uv run mypy app` → no issues (320 files).
+  Commit: 4374949 (code+tests), <doc hash> (docs).
+
 ## Next step
 
-Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7, T8 all done). Optional
+Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7, T8, T9 all done). Optional
 follow-ups, neither blocking, both pre-existing and unrelated to this
 feature's own diff: the `ruff format` drift in
 `openai_compatible_llm_provider.py`'s `DEFAULT_GENERATE_RESPONSE_PROMPT`
