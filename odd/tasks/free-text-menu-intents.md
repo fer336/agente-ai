@@ -105,7 +105,7 @@ option, so behavior is identical whichever the patient uses.
   (R3-idle-navigation-main-only-proven-through-fake-confidence-override).
   Route: direct inline.
 
-- [ ] T8 — Product decision (2026-09-24, user chose option A after review-33bb80b5a933c040):
+- [x] T8 — Product decision (2026-09-24, user chose option A after review-33bb80b5a933c040):
   while a REAL pending proposal is awaiting confirmation, free text never abandons it —
   it gets the Confirmar/Cancelar reminder; handoff and "volver al menú" escapes keep
   working as before. Removes the free-text operation-switch/reject path
@@ -628,10 +628,84 @@ option, so behavior is identical whichever the patient uses.
   failed with `'unknown' == 'appointment'`. Verification: `uv run pytest -q` → 1602 passed,
   82 skipped, 5 failed (known); ruff check clean; mypy clean. Commit: 9869e08.
 
+- T8 done. Product decision, option A: while a REAL pending proposal is
+  awaiting confirmation, free text never abandons it any more — it always
+  gets the Confirmar/Cancelar reminder back, whatever operation it
+  mentions. This removes the free-text operation-switch/reject path T2b
+  introduced and T4/T5/T7 hardened.
+  Fix (`app/agent/nodes/appointment.py`, `STAGE_AWAITING_CONFIRMATION`
+  free-text branch, ~1923-2000): the `if not pending_action_usable or
+  operation_switch:` gate is now just `if not pending_action_usable:` — a
+  live, resolvable `pending` row always falls to the `else` (the
+  reminder), regardless of `operation_mention`. Removed as dead code: the
+  `operation_switch` boolean and its `current_operation`/`mentioned_operation
+  != current_operation` computation; the whole T2b/T4 reject-on-switch
+  block (`RejectPendingActionUseCase` + `_cancel_follow_up` + its
+  broad-except guard); `_OPERATION_BY_ACTION_TYPE` (only ever fed
+  `current_operation`, now unreachable). Kept: the `mentioned_operation`
+  computation and its bare-"cancelar"-stays-ambiguous suppression, since
+  both also decide what `collected_data` the NOT-usable (dangling/expired/
+  missing) branch carries into the fresh routing below — that part of the
+  screenshot fix (T2) is unchanged, only the switch/reject on a genuinely
+  live proposal is gone. Checked imports: `RejectPendingActionUseCase`,
+  `InvalidConfirmationError`, `PendingActionExpiredError` are all still
+  used by the CONFIRM/REJECT branches further down the same function, so
+  none were removed.
+  Tests (`tests/unit/agent/nodes/test_appointment_node.py`): replaced
+  `test_confirmation_stage_operation_switch_ignored_when_operation_key_is_absent`
+  (parametrized), `test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_live_proposal`,
+  and `test_confirmation_stage_switch_continues_even_when_rejecting_the_live_proposal_fails`
+  with one doubly-parametrized test,
+  `test_confirmation_stage_live_proposal_is_never_abandoned_by_free_text`
+  (4 action types × 4 operation-mention free texts = 16 cases): a live
+  `pending` proposal of each action type (create_appointment,
+  create_patient, reschedule_appointment, cancel_appointment), free text
+  naming a DIFFERENT operation each time ("sí, confirmo el turno"/"qué
+  turno tengo"/"quiero reprogramar"/"quiero cancelar mi turno") — asserts
+  `response_buttons` is CONFIRM+REJECT, no `collected_data` key in the
+  result, and the row is still `pending` afterward. Kept unchanged: the
+  dangling/expired/no-pending-id → fresh-routing tests, the lookup-failure
+  guard test, the button-tap-without-pending-id recovery tests (T2b), the
+  free-text decline test, and the bare-"cancelar"-stays-a-reminder test
+  (still correct under the new rule, now for a simpler reason — ANY free
+  text on a live proposal reminds, not just an ambiguous mention).
+  RED: `test_confirmation_stage_live_proposal_is_never_abandoned_by_free_text`
+  added first (with the switch code still in place) — 6 of 16 parametrized
+  cases failed on current code (`assert 'collected_data' not in result`),
+  including the required "qué turno tengo" (view mention) case for every
+  action type where "view" differed from the live proposal's own
+  operation; the other 10 already passed (their mention happened to match
+  the live proposal's operation, or `mentioned_operation` was suppressed).
+  Verification: `uv run pytest -q` → 1612 passed, 82 skipped, 5 failed (the
+  5 pre-declared known environmental failures only). `uv run ruff check .`
+  → all checks passed. `uv run ruff format --check` on all 4 touched files
+  → already formatted. `uv run mypy app` → no issues (320 files).
+  R3-new-conversation-rotation-assertion-vacuous
+  (`tests/unit/application/messages/test_ingest_message.py`): both
+  `> 1`/`> 1_000_000` bounds pass purely from the epoch-second seed
+  (`_new_conversation_workflow_generation_seed`) even with rotation itself
+  disabled — replaced with an exact expected value computed the same way
+  the code does, from the row's own `created_at` read back after
+  `execute()`. Empirically the exact delta is seed **+2**, not +1: `Fake
+  ConversationRepository.rotate_workflow_session` mutates the SAME shared
+  `Conversation` object `ingest_message.py`'s own call site then also
+  increments (`conversation.workflow_session_generation += 1` after a
+  successful rotation) — a fake-only double-count artifact the original
+  T1 comment already named, confirmed still present via a throwaway probe
+  script before writing the assertion, not guessed. Proved non-vacuous by
+  temporarily changing `is_new_conversation or rotate_workflow.is_inactive(...)`
+  to `False and is_new_conversation or ...` at the call site
+  (`app/application/messages/ingest_message.py` ~line 259): both new
+  assertions failed with `assert seed == seed + 2` (rotation never ran),
+  confirming the old `>`-bound assertions would have stayed green through
+  the exact same break; reverted immediately after observing the failure.
+  Commits: 123a8e7 (code+tests), <doc commit to be added>.
+
 ## Next step
 
-Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7 all done). Optional follow-ups,
-neither blocking, both pre-existing and unrelated to this feature's own
-diff: the `ruff format` drift in `openai_compatible_llm_provider.py`'s
-`DEFAULT_GENERATE_RESPONSE_PROMPT` (T3's note) and in
-`test_fake_llm_provider.py`'s two untouched call sites (T4's note above).
+Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7, T8 all done). Optional
+follow-ups, neither blocking, both pre-existing and unrelated to this
+feature's own diff: the `ruff format` drift in
+`openai_compatible_llm_provider.py`'s `DEFAULT_GENERATE_RESPONSE_PROMPT`
+(T3's note) and in `test_fake_llm_provider.py`'s two untouched call sites
+(T4's note above).
