@@ -97,6 +97,14 @@ option, so behavior is identical whichever the patient uses.
   cover the create-patient action type in the confirmation switch test
   (R3-create-patient-action-type-mapping-untested). Route: direct inline (1 source file).
 
+- [x] T7 — Review follow-ups (review-ec2b79eafd9fd599, approved, advisory): a "create"
+  mention never counts as an operation switch at the confirmation stage, so a confirming
+  reply cannot abandon a live reschedule/cancel proposal
+  (R3-confirming-reply-on-reschedule-proposal-read-as-create-switch); idle navigation to
+  "main" routes to the reset whatever the classifier's intent/confidence
+  (R3-idle-navigation-main-only-proven-through-fake-confidence-override).
+  Route: direct inline.
+
 ## Acceptance criteria
 
 - The screenshot scenario replays to the specialty list, not a confirmation reminder.
@@ -606,9 +614,14 @@ option, so behavior is identical whichever the patient uses.
   restoring. Verification: `uv run pytest -q` → 1599 passed, 82 skipped, 5 failed (known);
   ruff check clean; ruff format clean on touched files; mypy clean. Commit: b0f5b68.
 
+- T7 done (inline). RED: the parametrized confirmation test failed for
+  `reschedule_appointment` and `cancel_appointment`; `test_idle_navigation_to_main_routes_to_appointment_whatever_the_intent`
+  failed with `'unknown' == 'appointment'`. Verification: `uv run pytest -q` → 1602 passed,
+  82 skipped, 5 failed (known); ruff check clean; mypy clean. Commit: 9869e08.
+
 ## Next step
 
-Feature complete (T1, T2, T2b, T3, T4, T5, T6 all done). Optional follow-ups,
+Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7 all done). Optional follow-ups,
 neither blocking, both pre-existing and unrelated to this feature's own
 diff: the `ruff format` drift in `openai_compatible_llm_provider.py`'s
 `DEFAULT_GENERATE_RESPONSE_PROMPT` (T3's note) and in
