@@ -396,22 +396,12 @@ async def test_new_conversation_welcome_rotates_workflow_session_and_expires_sta
     # disabled outright — the row's own `workflow_session_generation` is
     # already seeded from the epoch second
     # (`_new_conversation_workflow_generation_seed`), never the domain
-    # entity's fixed `1` default, so it clears `> 1` on the seed alone.
-    # Asserting the EXACT expected value (computed the same way the code
-    # does, from this same row's own `created_at`) only passes when the
-    # rotation itself actually ran — confirmed by temporarily commenting
-    # out `is_new_conversation or` at the call site and observing this
-    # exact assertion fail (`seed == seed`, not `seed + 2`), then
-    # restoring it. `+2`, not `+1`: `FakeConversationRepository.
-    # rotate_workflow_session` mutates the SAME shared `Conversation`
-    # object this test also reads back (unlike the real SQLAlchemy
-    # repository, which never touches the passed dataclass — it updates
-    # its own ORM row by a separate SQL statement), so it double-counts
-    # against `ingest_message.py`'s own (production-necessary) manual
-    # `+= 1` right after — a fake-only artifact, not what this test is
-    # about, but still exact and non-vacuous.
-    assert conversation.workflow_session_generation == (
-        _new_conversation_workflow_generation_seed(conversation.created_at) + 2
+    # entity's fixed `1` default. Only moving PAST that seed proves the
+    # rotation ran; the exact step is left to the repository (the fake
+    # double-counts against `ingest_message.py`'s own `+= 1`, SQLAlchemy
+    # does not).
+    assert conversation.workflow_session_generation > (
+        _new_conversation_workflow_generation_seed(conversation.created_at)
     )
 
 
@@ -455,14 +445,11 @@ async def test_new_conversation_never_collides_with_a_higher_prior_incarnation_g
     # it passes purely from the wall-clock seed
     # (`_new_conversation_workflow_generation_seed`), even with the
     # `is_new_conversation or` rotation trigger disabled outright.
-    # Asserting the EXACT expected value pins the mechanism instead: seeded
-    # from wall-clock time (far beyond anything a handful of rotations
-    # could reach) AND actually rotated. `+2`, not `+1` — see the sibling
-    # test above for why (`FakeConversationRepository.
-    # rotate_workflow_session` double-counts against this call site's own
-    # manual increment, a fake-only artifact).
-    assert conversation.workflow_session_generation == (
-        _new_conversation_workflow_generation_seed(conversation.created_at) + 2
+    # Moving PAST the seed pins the mechanism instead: seeded from
+    # wall-clock time AND actually rotated (see the sibling test above for
+    # why the exact step is not asserted).
+    assert conversation.workflow_session_generation > (
+        _new_conversation_workflow_generation_seed(conversation.created_at)
     )
     for stale_generation in (1, 2, 5):
         stale = await pending_action_repository.get_by_id(f"stale-pending-gen-{stale_generation}")
