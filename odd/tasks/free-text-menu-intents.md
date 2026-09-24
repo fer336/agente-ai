@@ -701,6 +701,11 @@ option, so behavior is identical whichever the patient uses.
   the exact same break; reverted immediately after observing the failure.
   Commits: 123a8e7 (code+tests), <doc commit to be added>.
 
+- T8 review (review-b85a5eae96d18e05, approved, acknowledged): the exact `seed + 2`
+  generation assertion pinned the fake repository's double count
+  (R3-new-conversation-generation-assertion-pins-fake-double-count). Now asserts the
+  generation moved past the seed; proven to fail with the rotation disabled. Commit f9d7f7d.
+
 ## Next step
 
 Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7, T8 all done). Optional
