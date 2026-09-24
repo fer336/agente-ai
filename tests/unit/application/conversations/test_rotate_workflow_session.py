@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,42 @@ async def test_rotate_uses_generation_compare_and_swap_and_resets_input_state() 
     assert stored is not None
     assert stored.workflow_session_generation == 4
     assert stored.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_expire_all_pending_generations_without_a_repositories_provider_warns_and_is_ignored(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # T5 (review-2358088d31f27658, R3-expire-all-flag-ignored-without-
+    # repositories-provider): constructed with only a bare
+    # `ConversationRepository` (no `repositories_provider`), this use case
+    # skips ALL pending-action expiry entirely — asking for
+    # `expire_all_pending_generations=True` here can never be honored.
+    # Production itself always wires a provider (see
+    # `test_get_ingest_message_use_case_wires_a_workflow_session_
+    # repositories_provider` in `test_use_case_dependency.py`); this covers
+    # the narrower bare-repository constructor shape directly, so a future
+    # caller built this way is told instead of silently losing the flag.
+    repository = FakeConversationRepository()
+    conversation = Conversation(
+        id=ConversationId("ycloud-54911"),
+        contact_id="contact-1",
+        mode="agent",
+        created_at=datetime.now(UTC),
+        workflow_session_generation=3,
+    )
+    await repository.save(conversation)
+    use_case = RotateWorkflowSessionUseCase(repository)
+
+    with caplog.at_level(
+        logging.WARNING, logger="app.application.conversations.rotate_workflow_session"
+    ):
+        rotated = await use_case.execute(
+            conversation.id, expected_generation=3, expire_all_pending_generations=True
+        )
+
+    assert rotated is True
+    assert any("expire_all_pending_generations" in record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize(

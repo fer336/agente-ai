@@ -217,6 +217,25 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
         }
         result = await llm_provider.understand(state["user_message"], context=context)
         carried = _carried_understanding(result)
+        if (
+            has_active_stage
+            and result.operation_mention is None
+            and collected_data.get("operation_mention") is not None
+        ):
+            # T5 (review-2358088d31f27658, R3-operation-switch-when-
+            # operation-key-absent): `operation_mention` must only ever
+            # reflect THIS turn's classification while an appointment stage
+            # is active — `appointment.py`'s confirmation gate and
+            # `specialties.py`'s own `_has_booking_context` docstring both
+            # read it that way ("the LLM's own understanding of THIS turn's
+            # free text"). `_carried_understanding` only ever ADDS a fresh
+            # mention, it never clears a stale one just because this turn's
+            # classification came back empty — a mention from an earlier,
+            # unrelated turn (e.g. an aside mid-slot-selection that was
+            # never acted on) would otherwise ride along in `collected_data`
+            # forever and later look like a fresh operation switch at
+            # confirmation time. Explicitly overwrite it to `None` instead.
+            carried = {**carried, "operation_mention": None}
 
         if post_action_context is not None and not _is_genuine_new_request(result):
             text = await generate_or_fallback(
@@ -267,7 +286,15 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
         if result.confidence < _MIN_INTENT_CONFIDENCE:
             if has_active_stage:
                 # Ambiguous chatter inside a workflow belongs to the
-                # current node.
+                # current node — but a stale `operation_mention` (T5, see
+                # above) must still be cleared here exactly like the other
+                # active-stage branches below, or this return path would be
+                # the one place that keeps letting it ride through untouched.
+                if carried:
+                    return {
+                        "intent": "appointment",
+                        "collected_data": {**collected_data, **carried},
+                    }
                 return {"intent": "appointment"}
             if result.operation_mention is not None:
                 # A short, unambiguous "quiero cancelar" can score low

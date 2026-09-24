@@ -396,6 +396,56 @@ async def test_active_stage_routes_back_to_appointment_for_ordinary_free_text():
 
 
 @pytest.mark.asyncio
+async def test_stale_operation_mention_is_cleared_when_this_turns_classification_has_none():
+    # T5 (review-2358088d31f27658, R3-operation-switch-when-operation-key-
+    # absent): `operation_mention` must only ever reflect THIS turn's
+    # classification while an appointment stage is active — `specialties.py`'s
+    # own `_has_booking_context` docstring already assumes exactly that
+    # contract ("the LLM's own understanding of THIS turn's free text").
+    # `_carried_understanding` only ever ADDS a fresh mention: without this
+    # fix, a mention set on an earlier, unrelated turn (e.g. an aside mid-
+    # slot-selection that was never acted on) rides along in
+    # `collected_data` forever and later looks like a fresh operation switch
+    # at `appointment.py`'s confirmation gate.
+    class _NoMentionLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="appointment", confidence=0.9)
+
+    node = create_resolve_interaction_node(_NoMentionLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="sí dale",
+            collected_data={"stage": "awaiting_confirmation", "operation_mention": "cancel"},
+        )
+    )
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"].get("operation_mention") is None
+
+
+@pytest.mark.asyncio
+async def test_stale_operation_mention_is_cleared_even_on_low_confidence_active_stage_chatter():
+    # Same fix, exercised through the separate low-confidence/active-stage
+    # return path, which used to forward no `collected_data` update at all.
+    class _LowConfidenceLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="appointment", confidence=0.1)
+
+    node = create_resolve_interaction_node(_LowConfidenceLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="mmm",
+            collected_data={"stage": "awaiting_confirmation", "operation_mention": "cancel"},
+        )
+    )
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"].get("operation_mention") is None
+
+
+@pytest.mark.asyncio
 async def test_active_stage_routes_back_to_appointment_for_a_button_regardless_of_payload():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def classify_intent(self, message, context):

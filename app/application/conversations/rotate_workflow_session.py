@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from app.domain.repositories.conversation_repository import ConversationReposito
 from app.domain.repositories.pending_action_repository import PendingActionRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,25 @@ class RotateWorkflowSessionUseCase:
         """
         if self._repositories_provider is None:
             assert self._conversations is not None
+            if expire_all_pending_generations:
+                # T5 (review-2358088d31f27658, R3-expire-all-flag-ignored-
+                # without-repositories-provider): this constructor shape has
+                # no `pending_actions`/`scheduled_actions` repositories at
+                # all — the flag can never be honored here, not even the
+                # narrower per-generation expiry the `repositories_provider`
+                # branch below always does. Silently ignoring an explicit
+                # request would hide a wiring bug instead of surfacing it;
+                # rotation itself is still best-effort/self-healing (see
+                # `ingest_message.py`'s own call site), so this warns rather
+                # than raising.
+                logger.warning(
+                    "expire_all_pending_generations=True requested for "
+                    "conversation %s but this RotateWorkflowSessionUseCase "
+                    "was built with only a bare ConversationRepository (no "
+                    "repositories_provider) — the flag has no effect and no "
+                    "pending action is expired on this path at all.",
+                    conversation_id,
+                )
             return await self._conversations.rotate_workflow_session(
                 conversation_id, expected_generation
             )

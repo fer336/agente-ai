@@ -2127,6 +2127,51 @@ async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
 
 
 @pytest.mark.asyncio
+async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is_absent():
+    # T5 (review-2358088d31f27658, R3-operation-switch-when-operation-key-
+    # absent): a live CREATE proposal never sets `collected_data["operation"]`
+    # at all — that key is only ever a PRE-proposal convenience (see this
+    # module's own `CREATE_APPOINTMENT_ACTION` docstring: "collected_data
+    # ['operation'] ... only drives the PRE-proposal turns"). Comparing a
+    # fresh "create" `operation_mention` against a MISSING `operation` key
+    # used to read as `None != "create"` and wrongly reject a genuinely live
+    # proposal on a plain confirming reply like "sí, quiero ese turno". The
+    # switch must be judged against the live proposal's own `action_type`
+    # (read from the repository row already loaded above), not
+    # `collected_data["operation"]`.
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(id_="pa-1", status="pending", action_type=CREATE_APPOINTMENT_ACTION)
+        )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="sí, quiero ese turno",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation_mention": "create",
+        },
+    )
+
+    result = await node(state)
+
+    assert "collected_data" not in result
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+    async with repositories_provider() as repositories:
+        untouched = await repositories.pending_actions.get_by_id("pa-1")
+        assert untouched is not None
+        assert untouched.status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_confirmation_stage_with_a_dangling_pending_action_routes_a_fresh_create_request():
     # Seen live (screenshot, 2026-09-23): a stale STAGE_AWAITING_CONFIRMATION
     # survived from an earlier incarnation of this conversation id, with a

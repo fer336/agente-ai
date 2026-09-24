@@ -243,6 +243,25 @@ _OPERATION_BY_MENTION = {
     "view": RESCHEDULE_APPOINTMENT_ACTION,
 }
 
+#: T5 (review-2358088d31f27658, R3-operation-switch-when-operation-key-
+#: absent): once a proposal exists, `collected_data["operation"]` is no
+#: longer reliable at all — it "only drives the PRE-proposal turns" (this
+#: module's own `CREATE_APPOINTMENT_ACTION` docstring above); a live CREATE
+#: proposal reached via the decision subgraph never sets it. The live
+#: `PendingAction.action_type` (read from the repository row the
+#: confirmation gate already loads) is the only reliable source of "what
+#: operation is this proposal actually for" once one exists. `CREATE_
+#: PATIENT_ACTION` is a CREATE-flow sub-step (only ever proposed while
+#: `operation == CREATE_APPOINTMENT_ACTION`, see its own docstring above),
+#: never a menu-level operation of its own — it maps back onto CREATE here
+#: so a "create" mention never wrongly reads as a switch away from it.
+_OPERATION_BY_ACTION_TYPE = {
+    CREATE_APPOINTMENT_ACTION: CREATE_APPOINTMENT_ACTION,
+    RESCHEDULE_APPOINTMENT_ACTION: RESCHEDULE_APPOINTMENT_ACTION,
+    CANCEL_APPOINTMENT_ACTION: CANCEL_APPOINTMENT_ACTION,
+    CREATE_PATIENT_ACTION: CREATE_APPOINTMENT_ACTION,
+}
+
 #: Shared by `STAGE_AWAITING_OPERATION_SELECTION` (tapped from that stage's
 #: own menu) and the "no stage yet" fallback (tapped directly from the
 #: welcome list, skipping that menu entirely) — one mapping, so both entry
@@ -1928,6 +1947,14 @@ def create_appointment_node(
                 # elsewhere row leaves a "dangling" id that resolves to
                 # nothing (seen live, 2026-09-23 screenshot).
                 pending_action_usable = False
+                #: T5 (R3-operation-switch-when-operation-key-absent):
+                #: captured alongside `pending_action_usable` (narrowed here,
+                #: while `existing_pending_action` is still known non-`None`)
+                #: instead of re-reading `existing_pending_action` below —
+                #: that name only exists inside this `if` block, and mypy
+                #: cannot infer from `pending_action_usable` alone that it is
+                #: still bound and non-`None` at the point of use.
+                current_operation: str | None = None
                 if pending_action_id is not None:
                     try:
                         async with proposal_repositories_provider() as repositories:
@@ -1968,6 +1995,10 @@ def create_appointment_node(
                         existing_pending_action is not None
                         and existing_pending_action.status == "pending"
                     )
+                    if existing_pending_action is not None and pending_action_usable:
+                        current_operation = _OPERATION_BY_ACTION_TYPE.get(
+                            existing_pending_action.action_type
+                        )
 
                 mentioned_operation = _OPERATION_BY_MENTION.get(
                     str(collected_data.get("operation_mention") or "")
@@ -1981,9 +2012,22 @@ def create_appointment_node(
                     # declining it (an explicit decline phrase, handled
                     # above, or the Cancelar button itself still work).
                     mentioned_operation = None
+                # T5 (R3-operation-switch-when-operation-key-absent):
+                # `current_operation` (captured above, from the LIVE
+                # proposal's own `action_type`) must decide this, never
+                # `collected_data.get("operation")` — that key is only ever
+                # a PRE-proposal convenience and is routinely absent once a
+                # real proposal exists (e.g. the decision subgraph's own
+                # CREATE flow never sets it), which used to read as `None !=
+                # "create"` and wrongly flag a switch on a plain confirming
+                # reply. When nothing usable is pending, `current_operation`
+                # stays `None` (unknown) — an unknown current operation must
+                # never count as a switch either, since there is nothing
+                # live to protect from being replaced in the first place.
                 operation_switch = (
                     mentioned_operation is not None
-                    and mentioned_operation != collected_data.get("operation")
+                    and current_operation is not None
+                    and mentioned_operation != current_operation
                 )
 
                 if not pending_action_usable or operation_switch:
