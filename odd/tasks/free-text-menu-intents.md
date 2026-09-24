@@ -84,6 +84,13 @@ option, so behavior is identical whichever the patient uses.
   labels aligned with the real provider (R3-fake-classify-intent-diverges-from-real-labels).
   Route: delegated direct.
 
+- [ ] T5 — Review follow-ups (review-2358088d31f27658, approved, advisory): an operation
+  switch at the confirmation stage must never reject a live proposal when the current
+  operation is unknown or the mention is stale/same (e.g. "sí, quiero ese turno")
+  (R3-operation-switch-when-operation-key-absent); prove production wiring passes a
+  repositories provider so `expire_all_pending_generations` is honored
+  (R3-expire-all-flag-ignored-without-repositories-provider). Route: delegated direct.
+
 ## Acceptance criteria
 
 - The screenshot scenario replays to the specialty list, not a confirmation reminder.
