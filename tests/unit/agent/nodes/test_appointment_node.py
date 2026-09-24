@@ -2136,20 +2136,28 @@ async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
         CANCEL_APPOINTMENT_ACTION,
     ],
 )
-async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is_absent(
-    action_type,
+@pytest.mark.parametrize(
+    "user_message,operation_mention",
+    [
+        ("sí, confirmo el turno", "create"),
+        ("qué turno tengo", "view"),
+        ("quiero reprogramar", "reschedule"),
+        ("quiero cancelar mi turno", "cancel"),
+    ],
+)
+async def test_confirmation_stage_live_proposal_is_never_abandoned_by_free_text(
+    user_message, operation_mention, action_type
 ):
-    # T5 (review-2358088d31f27658, R3-operation-switch-when-operation-key-
-    # absent): a live CREATE proposal never sets `collected_data["operation"]`
-    # at all — that key is only ever a PRE-proposal convenience (see this
-    # module's own `CREATE_APPOINTMENT_ACTION` docstring: "collected_data
-    # ['operation'] ... only drives the PRE-proposal turns"). Comparing a
-    # fresh "create" `operation_mention` against a MISSING `operation` key
-    # used to read as `None != "create"` and wrongly reject a genuinely live
-    # proposal on a plain confirming reply like "sí, quiero ese turno". The
-    # switch must be judged against the live proposal's own `action_type`
-    # (read from the repository row already loaded above), not
-    # `collected_data["operation"]`.
+    # T8 (product decision, option A, 2026-09-24: user chose option A after
+    # review-33bb80b5a933c040): a REAL pending proposal awaiting
+    # confirmation is never abandoned by free text any more, whatever
+    # operation it mentions — it always gets the Confirmar/Cancelar
+    # reminder back, and the proposal itself stays untouched (`pending`) in
+    # the DB. This replaces the old operation-switch/reject behavior
+    # (T2/T2b/T4/T5/T7) entirely: only a missing/dangling/expired proposal
+    # still routes fresh (see the dangling/expired/no-id tests below,
+    # unchanged), and only the existing free-text decline
+    # (`_is_free_text_decline`, covered elsewhere) still rejects a live one.
     repositories_provider = make_proposal_repositories_provider()
     node, _, _ = await _make_node_and_conversation(
         proposal_repositories_provider=repositories_provider
@@ -2160,12 +2168,12 @@ async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is
         )
     state = make_agent_state(
         conversation_id="conv-1",
-        user_message="sí, quiero ese turno",
+        user_message=user_message,
         button_payload=None,
         pending_action_id="pa-1",
         collected_data={
             "stage": STAGE_AWAITING_CONFIRMATION,
-            "operation_mention": "create",
+            "operation_mention": operation_mention,
         },
     )
 
@@ -2267,100 +2275,6 @@ async def test_confirmation_stage_dangling_action_no_operation_falls_back_to_men
     assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
     assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
     assert result["pending_action_id"] is None
-
-
-@pytest.mark.asyncio
-async def test_confirmation_stage_lets_a_clearly_different_operation_win_over_a_live_proposal():
-    # Mid-confirmation of a CREATE, the patient clearly asks for something
-    # else ("mejor quiero reagendar") — a live, perfectly resolvable
-    # proposal is still outstanding, but the new request must win exactly
-    # like tapping OPERATION_RESCHEDULE would. T2b (R3-switch-leaves-live-
-    # proposal-pending): the abandoned proposal must no longer be left
-    # dangling as `pending` in the DB forever — it is rejected through the
-    # same use case a Cancelar tap already uses.
-    repositories_provider = make_proposal_repositories_provider()
-    node, _, _ = await _make_node_and_conversation(
-        proposal_repositories_provider=repositories_provider
-    )
-    async with repositories_provider() as repositories:
-        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
-    state = make_agent_state(
-        conversation_id="conv-1",
-        user_message="mejor quiero reagendar otro turno",
-        button_payload=None,
-        pending_action_id="pa-1",
-        collected_data={
-            "stage": STAGE_AWAITING_CONFIRMATION,
-            "operation": CREATE_APPOINTMENT_ACTION,
-            "operation_mention": "reschedule",
-        },
-    )
-
-    result = await node(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
-    assert result["pending_action_id"] is None
-    async with repositories_provider() as repositories:
-        abandoned = await repositories.pending_actions.get_by_id("pa-1")
-        assert abandoned is not None
-        assert abandoned.status == "cancelled"
-
-
-@pytest.mark.asyncio
-async def test_confirmation_stage_switch_continues_even_when_rejecting_the_live_proposal_fails(
-    caplog: pytest.LogCaptureFixture,
-):
-    # T4 R3-operation-switch-reject-unguarded: T2b's best-effort reject of
-    # the abandoned proposal only ever caught
-    # InvalidConfirmationError/PendingActionExpiredError — a repository/
-    # provider failure (DB blip on save) was unguarded and would blow up
-    # the whole turn instead of serving the patient's new request. Fail-safe
-    # direction here is the OPPOSITE of the T2b lookup guard: that one falls
-    # back to the reminder (preserve state on doubt); this one must still
-    # let the switch through, since the patient already made their intent
-    # to move on explicit — a cleanup failure on the OLD proposal is never
-    # a reason to block the NEW one.
-    class _ExplodingOnRejectPendingActionRepository(FakePendingActionRepository):
-        async def save(self, pending_action):
-            if pending_action.status == "cancelled":
-                raise RuntimeError("db unavailable")
-            await super().save(pending_action)
-
-    repositories_provider = make_proposal_repositories_provider(
-        pending_actions=_ExplodingOnRejectPendingActionRepository()
-    )
-    node, _, _ = await _make_node_and_conversation(
-        proposal_repositories_provider=repositories_provider
-    )
-    async with repositories_provider() as repositories:
-        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
-    state = make_agent_state(
-        conversation_id="conv-1",
-        user_message="mejor quiero reagendar otro turno",
-        button_payload=None,
-        pending_action_id="pa-1",
-        collected_data={
-            "stage": STAGE_AWAITING_CONFIRMATION,
-            "operation": CREATE_APPOINTMENT_ACTION,
-            "operation_mention": "reschedule",
-        },
-    )
-
-    with caplog.at_level(logging.WARNING, logger="app.agent.nodes.appointment"):
-        result = await node(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
-    assert result["pending_action_id"] is None
-    assert any("continuing the switch anyway" in record.message for record in caplog.records)
-    async with repositories_provider() as repositories:
-        # The reject itself failed — the proposal is left exactly where
-        # that failed attempt found it, never silently forced into a
-        # status the DB never actually recorded.
-        stuck = await repositories.pending_actions.get_by_id("pa-1")
-        assert stuck is not None
-        assert stuck.status == "pending"
 
 
 @pytest.mark.asyncio
