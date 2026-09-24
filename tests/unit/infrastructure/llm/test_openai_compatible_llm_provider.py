@@ -122,6 +122,26 @@ async def test_understand_tolerates_a_response_with_only_the_required_fields() -
 
 
 @pytest.mark.asyncio
+async def test_understand_accepts_the_location_intent_label() -> None:
+    # T3 (free-text menu-intents parity): "location" was added to
+    # `_UNDERSTANDING_LABELS`/`DEFAULT_UNDERSTAND_PROMPT` so a phrasing the
+    # deterministic `asks_for_location` substring pre-check doesn't catch
+    # (e.g. "cómo hago para llegar") still reaches the same deterministic
+    # location card a `MENU_LOCATION_PAYLOAD` tap does — via the LLM this
+    # time, instead of falling to "question" and getting LLM prose.
+    client = _StubClient(
+        '{"intent": "location", "confidence": 0.92, "answer": null,'
+        ' "specialty_mention": null, "professional_mention": null,'
+        ' "operation_mention": null, "navigation_target": null}'
+    )
+    provider = _make_provider(client)
+
+    result = await provider.understand("cómo hago para llegar", context={})
+
+    assert result.intent == "location"
+
+
+@pytest.mark.asyncio
 async def test_understand_rejects_the_removed_treatment_catalog_intent_label() -> None:
     # The dedicated "treatment_catalog" intent (a fixed, hardcoded
     # treatment/price list) was removed — the clinic owner rejected it as

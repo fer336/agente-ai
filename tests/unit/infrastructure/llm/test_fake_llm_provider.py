@@ -164,6 +164,34 @@ async def test_understand_reads_a_cancel_request_as_cancel():
 
 
 @pytest.mark.asyncio
+async def test_classify_intent_never_returns_location():
+    # T4 R3-fake-classify-intent-diverges-from-real-labels: the real
+    # provider's `_INTENT_LABELS` (the narrow set `classify_intent` is
+    # validated against) never includes "location" — only its separate,
+    # richer `_UNDERSTANDING_LABELS` does (T3's own change). The fake must
+    # match: "location" is an `understand()`-only label, never something
+    # `classify_intent` can return, so a caller of the narrow classifier
+    # (the eval suite) never gets a label the real provider would reject.
+    provider = make_llm_provider()
+
+    result = await provider.classify_intent("cómo hago para llegar", context={})
+
+    assert result.intent != "location"
+
+
+@pytest.mark.asyncio
+async def test_understand_still_recognizes_location_after_classify_intent_narrowing():
+    # Companion to the above: moving "location" out of `classify_intent`
+    # must not also remove it from `understand()`, which is the actual
+    # label parity T3 added.
+    provider = make_llm_provider()
+
+    result = await provider.understand("cómo hago para llegar", context={})
+
+    assert result.intent == "location"
+
+
+@pytest.mark.asyncio
 async def test_understand_reads_a_reschedule_request_as_reschedule():
     # T3(b): same regression-coverage gap as the cancel case above, for
     # "reagendar" — this phrasing has no "turno"/"cita" in it at all, so

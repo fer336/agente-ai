@@ -17,11 +17,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
 from app.application.conversations.schedule_conversation_reset import (
     CONVERSATION_IDLE_RESET_ACTION,
 )
 from app.application.messages.inbound_message_dto import InboundMessageDTO
-from app.application.messages.ingest_message import IngestMessageUseCase, MessageRepositories
+from app.application.messages.ingest_message import (
+    IngestMessageUseCase,
+    MessageRepositories,
+    _new_conversation_workflow_generation_seed,
+)
 from app.domain.entities.contact import Contact
 from app.domain.exceptions.errors import ContactAlreadyExistsError, ConversationAlreadyExistsError
 from app.domain.value_objects.conversation_id import ConversationId
@@ -36,12 +41,13 @@ from tests.fixtures.gateways import (
     make_media_processing_job_repository,
     make_message_repository,
     make_mirror_to_chatwoot_use_case,
+    make_pending_action_repository,
     make_runtime_config_service,
     make_scheduled_action_repository,
     make_send_reply_use_case,
     make_ycloud_messaging_gateway,
 )
-from tests.fixtures.seed_objects import make_conversation, make_message
+from tests.fixtures.seed_objects import make_conversation, make_message, make_pending_action
 
 _DEBOUNCE_SECONDS = 6
 
@@ -85,6 +91,7 @@ def _build_use_case(
     conversation_repository=None,
     media_processing_job_repository=None,
     scheduled_action_repository=None,
+    pending_action_repository=None,
     redis_client=None,
     debounce_tracker=None,
     agent_invoker=None,
@@ -135,6 +142,23 @@ def _build_use_case(
             scheduled_actions=scheduled_action_repository,
         )
 
+    # Only wired when a test explicitly opts in with a
+    # `pending_action_repository` — keeps every other test on the same
+    # simple `conversations.rotate_workflow_session`-only fallback
+    # `IngestMessageUseCase` already falls back to, unchanged.
+    workflow_session_repositories_provider = None
+    if pending_action_repository is not None:
+
+        @asynccontextmanager
+        async def workflow_session_repositories_provider() -> AsyncIterator[
+            RotateWorkflowSessionUseCase.Repositories
+        ]:
+            yield RotateWorkflowSessionUseCase.Repositories(
+                conversations=conversation_repository,
+                pending_actions=pending_action_repository,
+                scheduled_actions=scheduled_action_repository,
+            )
+
     return IngestMessageUseCase(
         repositories_provider=repositories_provider,
         debounce_tracker=debounce_tracker,
@@ -144,6 +168,7 @@ def _build_use_case(
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
         welcome_image_url=welcome_image_url,
+        workflow_session_repositories_provider=workflow_session_repositories_provider,
         conversation_idle_reset_delay_seconds=conversation_idle_reset_delay_seconds,
         mirror_to_chatwoot=mirror_to_chatwoot,
     )
@@ -224,9 +249,7 @@ async def test_a_concurrent_contact_creation_race_is_recovered_not_duplicated():
     await use_case.execute(_make_dto(from_phone="+5491122334455"))
 
     matching = [
-        c
-        for c in racing_repository._contacts_by_id.values()
-        if str(c.phone) == "+5491122334455"
+        c for c in racing_repository._contacts_by_id.values() if str(c.phone) == "+5491122334455"
     ]
     assert matching == [winner]
 
@@ -331,6 +354,107 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
     # that silently grows past either gets rejected by WhatsApp itself,
     # not by us, so this must be caught here instead.
     assert all(len(row.title) <= 24 for row in list_message.rows)
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_welcome_rotates_workflow_session_and_expires_stale_pending_action():
+    # A brand-new `Conversation` row always starts at the SAME fixed
+    # `workflow_session_generation == 1` (`Conversation`'s own dataclass
+    # default), so its checkpoint thread id
+    # (`f"{conversation_id}:session:1"`) is fully deterministic. Seen
+    # live: a patient with a stale `awaiting_confirmation` stage and
+    # `pending_action_id` from an earlier flow sent "Hola buenas" and got
+    # the welcome menu, then their very next message landed straight back
+    # in the confirmation gate for a proposal that no longer existed —
+    # the old thread's stage/pending action had survived untouched. This
+    # reproduces that surviving state: a pending action already sitting
+    # at generation 1 for a conversation id that is about to be
+    # (re)created fresh must not still be live for the next agent turn.
+    pending_action_repository = make_pending_action_repository()
+    await pending_action_repository.save(
+        make_pending_action(
+            id_="stale-pending",
+            conversation_id="ycloud-+54900001111",
+            workflow_generation=1,
+        )
+    )
+    conversation_repository = make_conversation_repository()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        pending_action_repository=pending_action_repository,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+54900001111"))
+
+    stale = await pending_action_repository.get_by_id("stale-pending")
+    assert stale is not None
+    assert stale.status == "expired"
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+54900001111"))
+    assert conversation is not None
+    # T8 (R3-new-conversation-rotation-assertion-vacuous): a `> 1` bound
+    # passes even with the `is_new_conversation or` rotation trigger
+    # disabled outright — the row's own `workflow_session_generation` is
+    # already seeded from the epoch second
+    # (`_new_conversation_workflow_generation_seed`), never the domain
+    # entity's fixed `1` default. Only moving PAST that seed proves the
+    # rotation ran; the exact step is left to the repository (the fake
+    # double-counts against `ingest_message.py`'s own `+= 1`, SQLAlchemy
+    # does not).
+    assert conversation.workflow_session_generation > (
+        _new_conversation_workflow_generation_seed(conversation.created_at)
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_conversation_never_collides_with_a_higher_prior_incarnation_generation():
+    # T4 (R3-new-conversation-rotation-can-collide-with-prior-incarnation-
+    # generation): T1's own fix always rotates a brand-new row off its
+    # fixed starting generation, but a fixed starting point (the domain
+    # entity's own dataclass default, `1`) only ever moves it to `2` — if a
+    # PRIOR incarnation of this exact conversation id (row deleted and
+    # recreated, e.g. outside this application's own tooling) ever reached
+    # generation `2` itself (trivially true: this is exactly where every
+    # OTHER conversation's own T1 rotation already lands it), the new
+    # incarnation's checkpoint thread would revive that old generation's
+    # stage/pending-action state right back — the exact same collision T1
+    # fixed for generation `1`, just one generation later. Left at
+    # generation 1, 2, AND 5 here to prove no single fixed retry count
+    # would have been enough either.
+    pending_action_repository = make_pending_action_repository()
+    for stale_generation in (1, 2, 5):
+        await pending_action_repository.save(
+            make_pending_action(
+                id_=f"stale-pending-gen-{stale_generation}",
+                conversation_id="ycloud-+54900002222",
+                workflow_generation=stale_generation,
+            )
+        )
+    conversation_repository = make_conversation_repository()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        pending_action_repository=pending_action_repository,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+54900002222"))
+
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+54900002222"))
+    assert conversation is not None
+    # The new generation must never equal ANY generation a prior
+    # incarnation could plausibly have used. T8 (R3-new-conversation-
+    # rotation-assertion-vacuous): a `> 1_000_000` bound alone is vacuous —
+    # it passes purely from the wall-clock seed
+    # (`_new_conversation_workflow_generation_seed`), even with the
+    # `is_new_conversation or` rotation trigger disabled outright.
+    # Moving PAST the seed pins the mechanism instead: seeded from
+    # wall-clock time AND actually rotated (see the sibling test above for
+    # why the exact step is not asserted).
+    assert conversation.workflow_session_generation > (
+        _new_conversation_workflow_generation_seed(conversation.created_at)
+    )
+    for stale_generation in (1, 2, 5):
+        stale = await pending_action_repository.get_by_id(f"stale-pending-gen-{stale_generation}")
+        assert stale is not None
+        assert stale.status == "expired"
 
 
 @pytest.mark.asyncio
@@ -564,13 +688,8 @@ async def test_lazy_timeout_reactivation_rotates_workflow_session_and_marks_fres
     # (the CAS rotation applies from the NEXT turn's key) — but the OLD
     # session key carries the debounced turn, and the rotation already
     # bumped the persisted generation so the next turn uses a new thread.
-    assert (
-        await redis_client.get("debounce:conversation:ycloud-+54922224455:session:1")
-        is not None
-    )
-    refreshed = await conversation_repository.get_by_id(
-        ConversationId("ycloud-+54922224455")
-    )
+    assert await redis_client.get("debounce:conversation:ycloud-+54922224455:session:1") is not None
+    refreshed = await conversation_repository.get_by_id(ConversationId("ycloud-+54922224455"))
     assert refreshed is not None
     assert refreshed.workflow_session_generation == 2
 

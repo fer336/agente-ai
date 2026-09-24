@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -38,6 +39,42 @@ async def test_rotate_uses_generation_compare_and_swap_and_resets_input_state() 
     assert stored is not None
     assert stored.workflow_session_generation == 4
     assert stored.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_expire_all_pending_generations_without_a_repositories_provider_warns_and_is_ignored(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # T5 (review-2358088d31f27658, R3-expire-all-flag-ignored-without-
+    # repositories-provider): constructed with only a bare
+    # `ConversationRepository` (no `repositories_provider`), this use case
+    # skips ALL pending-action expiry entirely — asking for
+    # `expire_all_pending_generations=True` here can never be honored.
+    # Production itself always wires a provider (see
+    # `test_get_ingest_message_use_case_wires_a_workflow_session_
+    # repositories_provider` in `test_use_case_dependency.py`); this covers
+    # the narrower bare-repository constructor shape directly, so a future
+    # caller built this way is told instead of silently losing the flag.
+    repository = FakeConversationRepository()
+    conversation = Conversation(
+        id=ConversationId("ycloud-54911"),
+        contact_id="contact-1",
+        mode="agent",
+        created_at=datetime.now(UTC),
+        workflow_session_generation=3,
+    )
+    await repository.save(conversation)
+    use_case = RotateWorkflowSessionUseCase(repository)
+
+    with caplog.at_level(
+        logging.WARNING, logger="app.application.conversations.rotate_workflow_session"
+    ):
+        rotated = await use_case.execute(
+            conversation.id, expected_generation=3, expire_all_pending_generations=True
+        )
+
+    assert rotated is True
+    assert any("expire_all_pending_generations" in record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -142,6 +179,60 @@ async def test_successful_rotation_expires_only_pending_actions_from_the_old_gen
     assert (await scheduled_actions.get_by_id("terminal-completed")).status == "completed"
     assert (await pending_actions.get_by_id("new-pending")).status == "pending"
     assert (await scheduled_actions.get_by_id("new-scheduled")).status == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_expire_all_pending_generations_clears_every_older_generation() -> None:
+    # T4 (R3-new-conversation-rotation-can-collide-with-prior-incarnation-
+    # generation): a recreated conversation's own seeded generation is
+    # unique-enough on its own (see `ingest_message.py`'s seeding helper),
+    # but any pending action still on record for that conversation id from
+    # BEFORE the row existed is stale no matter which generation number it
+    # recorded — `expected_generation`-only filtering (the default,
+    # exercised above) would miss every generation except the exact one
+    # passed in.
+    conversations = FakeConversationRepository()
+    pending_actions = FakePendingActionRepository()
+    scheduled_actions = FakeScheduledActionRepository()
+    conversation = Conversation(
+        id=ConversationId("conv-new-incarnation"),
+        contact_id="contact-1",
+        mode="agent",
+        created_at=datetime.now(UTC),
+        workflow_session_generation=1_700_000_000,
+    )
+    await conversations.save(conversation)
+    await pending_actions.save(
+        make_pending_action(
+            id_="gen-1-pending", conversation_id="conv-new-incarnation", workflow_generation=1
+        )
+    )
+    await pending_actions.save(
+        make_pending_action(
+            id_="gen-2-pending", conversation_id="conv-new-incarnation", workflow_generation=2
+        )
+    )
+    await pending_actions.save(
+        make_pending_action(
+            id_="gen-5-pending", conversation_id="conv-new-incarnation", workflow_generation=5
+        )
+    )
+
+    rotate = RotateWorkflowSessionUseCase(
+        _workflow_repositories_provider(conversations, pending_actions, scheduled_actions)
+    )
+
+    assert (
+        await rotate.execute(
+            conversation.id,
+            expected_generation=1_700_000_000,
+            expire_all_pending_generations=True,
+        )
+        is True
+    )
+    assert (await pending_actions.get_by_id("gen-1-pending")).status == "expired"
+    assert (await pending_actions.get_by_id("gen-2-pending")).status == "expired"
+    assert (await pending_actions.get_by_id("gen-5-pending")).status == "expired"
 
 
 @pytest.mark.asyncio

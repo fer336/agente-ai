@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -54,6 +55,10 @@ from app.domain.value_objects.menu_payloads import (
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
+)
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
+from app.infrastructure.database.fake_pending_action_repository import (
+    FakePendingActionRepository,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
@@ -579,9 +584,7 @@ async def test_legacy_staffed_specialty_lookup_wrapper_times_out_and_completes_c
 @pytest.mark.asyncio
 async def test_actual_create_route_shows_all_specialties_when_staffed_lookup_fails(monkeypatch):
     safe_lookup = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
-    )
+    monkeypatch.setattr(appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup)
     specialties = [
         make_specialty(id_="cleaning", name="Ortodoncia"),
         make_specialty(id_="whitening", name="Endodoncia"),
@@ -2092,13 +2095,26 @@ async def test_slot_selection_stage_proposes_immediately_when_rescheduling():
 
 @pytest.mark.asyncio
 async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
-    node, _, _ = await _make_node_and_conversation()
+    # A genuinely live, resolvable proposal (`pa-1` is actually saved below)
+    # plus ambiguous free text with no classified operation: the reminder is
+    # still the right response here — only a missing/unresolvable pending
+    # action or a clearly different operation should ever skip it (see the
+    # dangling/operation-switch tests right below).
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
     state = make_agent_state(
         conversation_id="conv-1",
         user_message="si dale",
         button_payload=None,
         pending_action_id="pa-1",
-        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
     )
 
     result = await node(state)
@@ -2108,6 +2124,334 @@ async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_type",
+    [
+        CREATE_APPOINTMENT_ACTION,
+        CREATE_PATIENT_ACTION,
+        RESCHEDULE_APPOINTMENT_ACTION,
+        CANCEL_APPOINTMENT_ACTION,
+    ],
+)
+@pytest.mark.parametrize(
+    "user_message,operation_mention",
+    [
+        ("sí, confirmo el turno", "create"),
+        ("qué turno tengo", "view"),
+        ("quiero reprogramar", "reschedule"),
+        ("quiero cancelar mi turno", "cancel"),
+    ],
+)
+async def test_confirmation_stage_live_proposal_is_never_abandoned_by_free_text(
+    user_message, operation_mention, action_type
+):
+    # T8 (product decision, option A, 2026-09-24: user chose option A after
+    # review-33bb80b5a933c040): a REAL pending proposal awaiting
+    # confirmation is never abandoned by free text any more, whatever
+    # operation it mentions — it always gets the Confirmar/Cancelar
+    # reminder back, and the proposal itself stays untouched (`pending`) in
+    # the DB. This replaces the old operation-switch/reject behavior
+    # (T2/T2b/T4/T5/T7) entirely: only a missing/dangling/expired proposal
+    # still routes fresh (see the dangling/expired/no-id tests below,
+    # unchanged), and only the existing free-text decline
+    # (`_is_free_text_decline`, covered elsewhere) still rejects a live one.
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(id_="pa-1", status="pending", action_type=action_type)
+        )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message=user_message,
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation_mention": operation_mention,
+        },
+    )
+
+    result = await node(state)
+
+    assert "collected_data" not in result
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+    async with repositories_provider() as repositories:
+        untouched = await repositories.pending_actions.get_by_id("pa-1")
+        assert untouched is not None
+        assert untouched.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_with_a_dangling_pending_action_routes_a_fresh_create_request():
+    # Seen live (screenshot, 2026-09-23): a stale STAGE_AWAITING_CONFIRMATION
+    # survived from an earlier incarnation of this conversation id, with a
+    # `pending_action_id` that no longer resolves to anything real
+    # ("dangling" — never saved here, exactly like the screenshot's
+    # checkpoint). "Quería agendar un turno" used to get the confirm/cancel
+    # reminder forever, because the gate fired on ANY free text regardless
+    # of whether there was still a real proposal to remind about. A clearly
+    # classified request must win instead — same result as tapping
+    # OPERATION_CREATE: straight to the specialty list.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería agendar un turno",
+        button_payload=None,
+        pending_action_id="pa-dangling",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "create",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_with_no_pending_action_id_routes_a_fresh_request():
+    # Same as the dangling-id case above, but there was never any
+    # `pending_action_id` at all (e.g. a rotated workflow session that
+    # expired it outright) — must not be treated as "nothing to route by"
+    # and fall into the reminder either.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería agendar un turno",
+        button_payload=None,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_dangling_action_no_operation_falls_back_to_menu():
+    # No usable pending action AND no classified operation either (pure
+    # chatter) — still must not remind about a proposal that doesn't exist;
+    # falls back to the same operation menu a main-menu reset already uses
+    # (same distinct-message regression the button-tap version already
+    # guards, see `test_main_menu_button_mid_stage_resets_and_shows_a_
+    # distinct_message` — an exploding LLM forces the static fallback text
+    # so this asserts the deterministic wording, not the fake's own reply).
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ExplodingLLMProvider())
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="si dale",
+        button_payload=None,
+        pending_action_id="pa-dangling",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_bare_cancelar_stays_a_reminder_not_a_cancel_operation():
+    # "cancelar" alone during CREATE's own confirmation must never be
+    # reread as the cancel-APPOINTMENT operation — that would silently
+    # abandon a live proposal instead of just declining it. Confirmar/
+    # Cancelar are this stage's own buttons: only an explicit decline
+    # phrase (`_is_free_text_decline`, covered elsewhere) or the Cancelar
+    # button itself may drop the proposal; a bare operation mention of
+    # "cancel" here stays exactly as ambiguous as before this change.
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="cancelar",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "cancel",
+        },
+    )
+
+    result = await node(state)
+
+    assert "collected_data" not in result
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_confirm_tap_with_no_pending_action_id_routes_a_fresh_request():
+    # T2b (review-c980054b8c626f90, R3-button-tap-without-pending-id-
+    # reminds): a real Confirmar TAP that somehow arrives with no
+    # `pending_action_id` at all must recover into a clean state — not
+    # fall through into the generic "unrecognized button" reminder and
+    # loop the same Confirmar/Cancelar buttons back at the patient forever
+    # (the tap itself can never make a `pending_action_id` reappear). A raw
+    # button tap carries no free-text operation mention to route by (unlike
+    # the dangling/expired-id tests above, which are free text), so this
+    # lands on the same operation menu a main-menu reset already uses —
+    # same distinct message as `test_confirmation_stage_dangling_action_
+    # no_operation_falls_back_to_menu`.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_cancelar_tap_with_no_pending_action_id_routes_a_fresh_request():
+    # Same as above, mirrored for the Cancelar button.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=REJECT_APPOINTMENT_PAYLOAD,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_free_text_decline_with_no_pending_id_routes_a_fresh_request():
+    # Same recovery, but via free text ("no quiero") instead of a button —
+    # covered explicitly per the T2b review, alongside the two button-tap
+    # cases above, so all three input shapes are proven consistent.
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="no quiero",
+        button_payload=None,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_expired_pending_action_row_routes_a_fresh_request():
+    # T2b R3-expired-row-branch-untested: unlike a fully dangling id (never
+    # saved at all, covered above), this is exactly what T1's own
+    # workflow-session rotation leaves behind — a real row that DOES exist
+    # but is no longer `pending`. Must be treated exactly like dangling:
+    # not usable to remind about.
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="expired"))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería agendar un turno",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "operation_mention": "create",
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_falls_back_to_reminder_when_pending_action_lookup_fails(
+    caplog: pytest.LogCaptureFixture,
+):
+    # T2b R3-new-db-lookup-unguarded: the repository lookup this gate added
+    # in T2 can itself raise (DB blip). Fail safe — fall back to the SAME
+    # reminder this gate always gave before T2 added the lookup at all,
+    # instead of guessing the proposal is gone and silently dropping
+    # possibly-live state; log it per the project's own convention (see
+    # `_staffed_specialty_ids_safe`).
+    class _ExplodingPendingActionRepository(FakePendingActionRepository):
+        async def get_by_id(self, pending_action_id: str):
+            raise RuntimeError("db unavailable")
+
+    repositories_provider = make_proposal_repositories_provider(
+        pending_actions=_ExplodingPendingActionRepository()
+    )
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="si dale",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={
+            "stage": STAGE_AWAITING_CONFIRMATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.agent.nodes.appointment"):
+        result = await node(state)
+
+    assert "collected_data" not in result
+    assert {b.id for b in result["response_buttons"]} == {
+        CONFIRM_APPOINTMENT_PAYLOAD,
+        REJECT_APPOINTMENT_PAYLOAD,
+    }
+    assert any("pending action lookup failed" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -3064,8 +3408,7 @@ def test_should_use_appointment_decision_subgraph_excludes_no_availability_and_n
     # First-slice migration only owns specialty/professional/slot selection —
     # the no-availability/no-slot follow-up choice handlers stay legacy-owned.
     assert (
-        should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_AVAILABILITY_CHOICE, {})
-        is False
+        should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_AVAILABILITY_CHOICE, {}) is False
     )
     assert should_use_appointment_decision_subgraph(STAGE_AWAITING_NO_SLOTS_CHOICE, {}) is False
 
@@ -3149,3 +3492,143 @@ async def test_reschedule_slot_selection_stays_legacy_owned_end_to_end():
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_navigation_target_main_from_idle_matches_the_menu_main_button():
+    # T3 (free-text menu-intents parity): "volver al menú principal" with
+    # no active flow (idle) must produce the EXACT same response a real
+    # MENU_MAIN_PAYLOAD tap does — both now go through the shared
+    # `_welcome_reset_response` helper, so this proves they stay identical
+    # rather than drifting apart as two separate copies.
+    node, _, _ = await _make_node_and_conversation()
+    button_state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=MENU_MAIN_PAYLOAD,
+        collected_data={},
+    )
+    free_text_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="volver al menú principal",
+        button_payload=None,
+        collected_data={"navigation_target": "main"},
+    )
+
+    button_result = await node(button_state)
+    free_text_result = await node(free_text_state)
+
+    assert free_text_result == button_result
+    assert button_result["response_text"] == WELCOME_TEXT
+    assert button_result["response_list"] == WELCOME_LIST
+    assert button_result["collected_data"] == {}
+    assert button_result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_navigation_target_main_mid_stage_matches_the_menu_main_button():
+    # Same parity, mid-flow: a patient stuck picking a specialty who says
+    # "volver al menú principal" must land exactly where tapping "Menú
+    # principal" mid-flow already does.
+    node, _, _ = await _make_node_and_conversation()
+    button_state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=MENU_MAIN_PAYLOAD,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+    free_text_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="volver al menú principal",
+        button_payload=None,
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "navigation_target": "main",
+        },
+    )
+
+    button_result = await node(button_state)
+    free_text_result = await node(free_text_state)
+
+    assert free_text_result == button_result
+    assert button_result["response_text"] == WELCOME_TEXT
+    assert button_result["response_list"] == WELCOME_LIST
+    assert button_result["collected_data"] == {}
+    assert button_result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_cancelar_tap_ignores_a_stale_operation_mention():
+    # T9 (review-bae960a902ead91b, R3-001, defense in depth alongside
+    # resolve_interaction.py's own per-turn stripping — the single-place fix
+    # this finding shares with R3-002/R3-003): a real Cancelar TAP never
+    # goes through the LLM's `understand()` call, so it can never itself
+    # justify an `operation_mention` — any mention already sitting in
+    # `collected_data` at this point can only be a leftover from an
+    # earlier, unrelated turn. Before this fix, this stale mention silently
+    # routed into a create flow instead of the same clean menu recovery a
+    # bare Cancelar tap with nothing to confirm already gives (see
+    # `test_confirmation_stage_cancelar_tap_with_no_pending_action_id_
+    # routes_a_fresh_request` above).
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=REJECT_APPOINTMENT_PAYLOAD,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_navigation_target_does_not_reset_a_later_idle_turn():
+    # T9 (review-bae960a902ead91b, R3-002): `navigation_target="main"` set
+    # by resolve_interaction while a live proposal intercepted "volver al
+    # menú" (T8's own confirmation reminder never clears it — it forwards
+    # no `collected_data` update at all) must not survive to reset a LATER,
+    # unrelated idle turn once the proposal is resolved and the stage drops
+    # back to `None`. The fix lives in resolve_interaction.py (single
+    # place, per this task's own design) — a test isolated to appointment.py
+    # alone can't prove it, since appointment.py's own idle-navigation
+    # branch has no way to tell a stale value from a fresh one; this runs
+    # both nodes in sequence, exactly as the real graph does turn to turn.
+    from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
+
+    resolve_node = create_resolve_interaction_node(FakeLLMProvider())
+    node, _, _ = await _make_node_and_conversation()
+
+    # Simulates the checkpoint left behind by an earlier turn: idle now
+    # (the live proposal that intercepted "volver al menú" has since been
+    # resolved and the stage dropped), but `navigation_target` from that
+    # earlier turn was never cleared.
+    stale_collected_data = {"navigation_target": "main"}
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="qué especialidades tienen",
+        button_payload=None,
+        collected_data=stale_collected_data,
+    )
+
+    resolve_result = await resolve_node(state)
+    assert resolve_result["intent"] == "specialties"
+
+    next_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="qué especialidades tienen",
+        button_payload=None,
+        # Same replace-only-if-present semantics the real `collected_data`
+        # channel uses (AgentState's own docstring): a node that returns no
+        # `collected_data` key leaves the PRIOR turn's value untouched.
+        collected_data=resolve_result.get("collected_data", stale_collected_data),
+    )
+
+    result = await node(next_state)
+
+    assert result.get("response_text") != WELCOME_TEXT

@@ -295,6 +295,7 @@ def _is_free_text_decline(text: str) -> bool:
         return True
     return any(keyword in lowered for keyword in _DECLINE_KEYWORDS)
 
+
 #: No upper bound on digit count here — `Dni` (7-8 digits) is the real
 #: gatekeeper for validity. Capping this at 9 used to truncate a longer
 #: run (e.g. a 10-digit typo) and leak the leftover digit into the parsed
@@ -593,7 +594,6 @@ async def staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     return {p.specialty_id for p in professionals if p.specialty_id}
 
 
-
 async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] | None:
     """Wrapper that applies a timeout to the staffed-specialty lookup.
 
@@ -612,6 +612,7 @@ async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] |
             exc_info=exc,
         )
         return None
+
 
 async def match_named_professional(gateway: AppointmentGateway, text: str) -> Professional | None:
     """Finds a professional named directly in free text (e.g. "quiero un
@@ -1358,6 +1359,23 @@ def create_appointment_node(
             updates["pending_action_id"] = result.get("pending_action_id")
         return updates
 
+    async def _welcome_reset_response(conversation_id: ConversationId) -> dict[str, object]:
+        """`MENU_MAIN_PAYLOAD`'s own response shape — the ONE place that
+        builds it, so a real button tap, a mid-flow `navigation_target ==
+        "main"` request, and the same request from idle (T3: free-text
+        parity with the button) all go through the exact same code instead
+        of three copies drifting apart.
+        """
+        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+        return {
+            "response_text": WELCOME_TEXT,
+            "response_buttons": None,
+            "response_list": WELCOME_LIST,
+            "requires_handoff": False,
+            "pending_action_id": None,
+            "collected_data": {},
+        }
+
     async def _cancel_follow_up(repositories: ProposalRepositories, pending_action_id: str) -> None:
         scheduled_actions = repositories.scheduled_actions
         scheduled_action = await scheduled_actions.get_by_pending_action_id(pending_action_id)
@@ -1424,9 +1442,7 @@ def create_appointment_node(
         return {
             "response_text": text,
             "response_buttons": None,
-            "response_list": specialties_list_message(
-                specialties, page=page, include_back=True
-            ),
+            "response_list": specialties_list_message(specialties, page=page, include_back=True),
             "requires_handoff": False,
             "collected_data": {
                 **collected_data,
@@ -1798,15 +1814,7 @@ def create_appointment_node(
                 key: value for key, value in collected_data.items() if key != "navigation_target"
             }
             if navigation_target == "main":
-                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                return {
-                    "response_text": WELCOME_TEXT,
-                    "response_buttons": None,
-                    "response_list": WELCOME_LIST,
-                    "requires_handoff": False,
-                    "pending_action_id": None,
-                    "collected_data": {},
-                }
+                return await _welcome_reset_response(conversation_id)
             if navigation_target in {"service", "specialty"}:
                 return await _offer_specialties(
                     conversation_id,
@@ -1859,17 +1867,19 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
+        elif stage is None and navigation_target == "main":
+            # T3: "volver al menú principal" with no active flow to
+            # navigate within (idle) — same MENU_MAIN_PAYLOAD-equivalent
+            # reset the button check right below already gives. Free text
+            # is trusted here exactly like it already is for the stages
+            # above: `STAGE_AWAITING_CONFIRMATION` stays deliberately
+            # excluded from `_NAVIGABLE_STAGES` (a live pending action must
+            # still only ever be rejected by its own explicit buttons),
+            # unaffected by this idle-only branch.
+            return await _welcome_reset_response(conversation_id)
 
         if state["button_payload"] == MENU_MAIN_PAYLOAD:
-            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            return {
-                "response_text": WELCOME_TEXT,
-                "response_buttons": None,
-                "response_list": WELCOME_LIST,
-                "requires_handoff": False,
-                "pending_action_id": None,
-                "collected_data": {},
-            }
+            return await _welcome_reset_response(conversation_id)
 
         returned_to_main_menu = False
         if stage is not None and state["button_payload"] in _MAIN_MENU_PAYLOADS:
@@ -1896,28 +1906,134 @@ def create_appointment_node(
                 # one place that decides what a decline looks like.
                 button_payload = REJECT_APPOINTMENT_PAYLOAD
 
-            if button_payload is None or pending_action_id is None:
-                confirmation_reminder_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "confirmation_reminder",
-                    {
-                        "situacion": (
-                            "El paciente escribió texto libre pero en este paso solo se "
-                            "puede confirmar o cancelar tocando uno de los 2 botones."
-                        ),
-                    },
-                    _CONFIRMATION_REMINDER,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-                return {
-                    "response_text": confirmation_reminder_text,
-                    "response_buttons": _CONFIRM_BUTTONS,
-                    "requires_handoff": False,
-                }
+            if (
+                button_payload in (CONFIRM_APPOINTMENT_PAYLOAD, REJECT_APPOINTMENT_PAYLOAD)
+                and pending_action_id is None
+            ):
+                # T2b (review-c980054b8c626f90, R3-button-tap-without-
+                # pending-id-reminds): a Confirmar/Cancelar tap with nothing
+                # left to confirm must recover exactly like free text with
+                # no usable pending action does two branches below — never
+                # fall through the CONFIRM/REJECT `elif`s' own `pending_
+                # action_id is not None` guards into the final `else`,
+                # which used to give the SAME reminder back forever (the
+                # tap itself can never make a `pending_action_id` reappear).
+                button_payload = None
 
-            if button_payload == REJECT_APPOINTMENT_PAYLOAD:
+            if button_payload is None:
+                # A stale confirmation must never hijack free text forever:
+                # only remind when there is still something real to remind
+                # about. `pending_action_id` alone isn't proof of that — a
+                # recreated conversation (T1) or an expired/confirmed-
+                # elsewhere row leaves a "dangling" id that resolves to
+                # nothing (seen live, 2026-09-23 screenshot).
+                pending_action_usable = False
+                if pending_action_id is not None:
+                    try:
+                        async with proposal_repositories_provider() as repositories:
+                            existing_pending_action = await repositories.pending_actions.get_by_id(
+                                pending_action_id
+                            )
+                    except Exception as exc:  # noqa: BLE001 -- broad catch is intentional
+                        # T2b (R3-new-db-lookup-unguarded): fail safe on a
+                        # lookup error — fall back to the SAME reminder this
+                        # gate always gave before T2 added the lookup at
+                        # all, instead of guessing the proposal is gone and
+                        # silently dropping possibly-live state.
+                        logger.warning(
+                            "pending action lookup failed while checking the "
+                            "confirmation gate; falling back to the reminder",
+                            exc_info=exc,
+                        )
+                        confirmation_reminder_text = await generate_or_fallback(
+                            llm_provider,
+                            str(conversation_id),
+                            "confirmation_reminder",
+                            {
+                                "situacion": (
+                                    "El paciente escribió texto libre pero en este paso solo se "
+                                    "puede confirmar o cancelar tocando uno de los 2 botones."
+                                ),
+                            },
+                            _CONFIRMATION_REMINDER,
+                            state["recent_messages"],
+                            state["contact_memory_summary"],
+                        )
+                        return {
+                            "response_text": confirmation_reminder_text,
+                            "response_buttons": _CONFIRM_BUTTONS,
+                            "requires_handoff": False,
+                        }
+                    pending_action_usable = (
+                        existing_pending_action is not None
+                        and existing_pending_action.status == "pending"
+                    )
+
+                if not pending_action_usable:
+                    # T8 (product decision, option A, 2026-09-24: user chose
+                    # option A after review-33bb80b5a933c040): a REAL live
+                    # proposal is never abandoned by free text any more —
+                    # this branch only ever reaches here when there is
+                    # genuinely nothing usable to confirm (missing/dangling/
+                    # expired, the screenshot fix, T2, unchanged). Route by
+                    # whatever operation the patient already named, same as
+                    # a main-menu tap already does below (one path per
+                    # operation, never a duplicate branch).
+                    mentioned_operation = None
+                    if state["button_payload"] is None:
+                        # T9 (review-bae960a902ead91b, R3-001, defense in
+                        # depth alongside resolve_interaction.py's own
+                        # per-turn stripping): a genuine button tap (a real
+                        # Confirmar/Cancelar, per `state["button_payload"]`'s
+                        # own "never mutated by a node" contract — unlike the
+                        # local `button_payload` above, already normalized to
+                        # `None` by this point) never goes through the LLM's
+                        # `understand()` call at all, so it can never itself
+                        # justify an `operation_mention` — trusting
+                        # `collected_data`'s copy here would silently start
+                        # an operation flow the patient never asked for THIS
+                        # turn. Only genuine free text may name one.
+                        mentioned_operation = _OPERATION_BY_MENTION.get(
+                            str(collected_data.get("operation_mention") or "")
+                        )
+                        if mentioned_operation == CANCEL_APPOINTMENT_ACTION:
+                            # "cancelar" alone stays ambiguous even with
+                            # nothing live to confirm — bare "cancel" reads as
+                            # declining whatever's on screen, not as a
+                            # request for the cancel-appointment operation;
+                            # an explicit decline phrase
+                            # (`_is_free_text_decline`, handled above) or
+                            # naming the operation menu itself still work.
+                            mentioned_operation = None
+                    stage = None
+                    collected_data = (
+                        {"operation_mention": collected_data["operation_mention"]}
+                        if mentioned_operation is not None
+                        else {}
+                    )
+                    returned_to_main_menu = True
+                else:
+                    confirmation_reminder_text = await generate_or_fallback(
+                        llm_provider,
+                        str(conversation_id),
+                        "confirmation_reminder",
+                        {
+                            "situacion": (
+                                "El paciente escribió texto libre pero en este paso solo se "
+                                "puede confirmar o cancelar tocando uno de los 2 botones."
+                            ),
+                        },
+                        _CONFIRMATION_REMINDER,
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
+                    return {
+                        "response_text": confirmation_reminder_text,
+                        "response_buttons": _CONFIRM_BUTTONS,
+                        "requires_handoff": False,
+                    }
+
+            elif button_payload == REJECT_APPOINTMENT_PAYLOAD and pending_action_id is not None:
                 async with proposal_repositories_provider() as repositories:
                     try:
                         await RejectPendingActionUseCase(repositories.pending_actions).execute(
@@ -1945,7 +2061,7 @@ def create_appointment_node(
                     "collected_data": {**collected_data, "stage": None},
                 }
 
-            if button_payload == CONFIRM_APPOINTMENT_PAYLOAD:
+            elif button_payload == CONFIRM_APPOINTMENT_PAYLOAD and pending_action_id is not None:
                 confirm_error: Exception | None = None
                 confirmed_payload: dict[str, object] | None = None
                 confirmed_action_type: str | None = None
@@ -2168,9 +2284,7 @@ def create_appointment_node(
                         new_patient = recovered
 
                     if obra_social_name:
-                        agreement = await agreement_gateway.find_agreement_by_name(
-                            obra_social_name
-                        )
+                        agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                         if agreement is not None:
                             await agreement_gateway.link_patient_agreement(
                                 new_patient.id, agreement.id
@@ -2276,26 +2390,32 @@ def create_appointment_node(
                     f"unsupported action_type: {confirmed_action_type}"
                 )
 
-            # An unrecognized/stale button while awaiting confirmation.
-            stale_confirmation_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "confirmation_reminder",
-                {
-                    "situacion": (
-                        "El paciente tocó un botón que no es válido en este paso; solo se "
-                        "puede confirmar o cancelar tocando uno de los 2 botones vigentes."
-                    ),
-                },
-                _CONFIRMATION_REMINDER,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
-            return {
-                "response_text": stale_confirmation_text,
-                "response_buttons": _CONFIRM_BUTTONS,
-                "requires_handoff": False,
-            }
+            else:
+                # A genuinely unrecognized button while awaiting
+                # confirmation — a Confirmar/Cancelar tap with no
+                # `pending_action_id` never reaches here any more (T2b:
+                # normalized to `button_payload = None` above, so it takes
+                # the same recovery path free text with nothing to confirm
+                # already does).
+                stale_confirmation_text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "confirmation_reminder",
+                    {
+                        "situacion": (
+                            "El paciente tocó un botón que no es válido en este paso; solo se "
+                            "puede confirmar o cancelar tocando uno de los 2 botones vigentes."
+                        ),
+                    },
+                    _CONFIRMATION_REMINDER,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": stale_confirmation_text,
+                    "response_buttons": _CONFIRM_BUTTONS,
+                    "requires_handoff": False,
+                }
 
         if stage == STAGE_AWAITING_SLOT_SELECTION:
             if should_use_appointment_decision_subgraph(stage, collected_data):
@@ -3256,9 +3376,7 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_NEW_PATIENT_DETAILS:
-            remembered_obra_social = cast(
-                str | None, collected_data.get("new_patient_obra_social")
-            )
+            remembered_obra_social = cast(str | None, collected_data.get("new_patient_obra_social"))
             remembered_email = cast(str | None, collected_data.get("new_patient_email"))
             obra_social, email = _extract_new_patient_details(
                 state["user_message"], remembered_obra_social, remembered_email
@@ -3294,9 +3412,7 @@ def create_appointment_node(
                     str(conversation_id),
                     "new_patient_details_missing_obra_social",
                     {
-                        "situacion": (
-                            "El paciente ya dio su mail, todavía falta su obra social."
-                        ),
+                        "situacion": ("El paciente ya dio su mail, todavía falta su obra social."),
                         "formato_requerido": "Nombre de la obra social, ejemplo: OSDE.",
                     },
                     _ASK_NEW_PATIENT_OBRA_SOCIAL_ONLY_MESSAGE,
@@ -3315,9 +3431,7 @@ def create_appointment_node(
                     str(conversation_id),
                     "new_patient_details_missing_email",
                     {
-                        "situacion": (
-                            "El paciente ya dio su obra social, todavía falta su mail."
-                        ),
+                        "situacion": ("El paciente ya dio su obra social, todavía falta su mail."),
                         "formato_requerido": "Mail, ejemplo: rosa@gmail.com.",
                     },
                     _ASK_NEW_PATIENT_EMAIL_ONLY_MESSAGE,
@@ -3532,12 +3646,19 @@ def create_appointment_node(
                 result = {**result, "pending_action_id": None}
             return result
         if operation is not None:
-            return await _begin_identification(
+            identification_result = await _begin_identification(
                 conversation_id,
                 {**collected_data, "operation": operation},
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
+            if returned_to_main_menu:
+                # Mirrors the CREATE branch just above: abandoning
+                # whatever was active must never let a stale
+                # `pending_action_id` ride along into a different
+                # operation's own identification step.
+                identification_result = {**identification_result, "pending_action_id": None}
+            return identification_result
 
         situacion = (
             'El paciente tocó "Volver al Menú" para abandonar lo que estaba haciendo y '
@@ -3565,11 +3686,14 @@ def create_appointment_node(
             state["recent_messages"],
             state["contact_memory_summary"],
         )
-        return {
+        operation_menu_result: dict[str, object] = {
             "response_text": text,
             "response_buttons": _OPERATION_BUTTONS,
             "requires_handoff": False,
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_OPERATION_SELECTION},
         }
+        if returned_to_main_menu:
+            operation_menu_result["pending_action_id"] = None
+        return operation_menu_result
 
     return node
