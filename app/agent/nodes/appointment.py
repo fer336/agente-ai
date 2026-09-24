@@ -2024,8 +2024,15 @@ def create_appointment_node(
                 # stays `None` (unknown) — an unknown current operation must
                 # never count as a switch either, since there is nothing
                 # live to protect from being replaced in the first place.
+                # A confirming reply names the appointment ("sí, confirmo el
+                # turno") and is routinely read as "create", whatever the live
+                # proposal is. A "create" mention must never abandon a live
+                # proposal: only an explicit reschedule/view request counts as
+                # a switch here. (With nothing usable pending, "create" still
+                # routes as a fresh request below.)
                 operation_switch = (
                     mentioned_operation is not None
+                    and mentioned_operation != CREATE_APPOINTMENT_ACTION
                     and current_operation is not None
                     and mentioned_operation != current_operation
                 )

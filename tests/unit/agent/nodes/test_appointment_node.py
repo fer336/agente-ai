@@ -2127,7 +2127,15 @@ async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action_type", [CREATE_APPOINTMENT_ACTION, CREATE_PATIENT_ACTION])
+@pytest.mark.parametrize(
+    "action_type",
+    [
+        CREATE_APPOINTMENT_ACTION,
+        CREATE_PATIENT_ACTION,
+        RESCHEDULE_APPOINTMENT_ACTION,
+        CANCEL_APPOINTMENT_ACTION,
+    ],
+)
 async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is_absent(
     action_type,
 ):

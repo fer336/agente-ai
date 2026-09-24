@@ -283,6 +283,15 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
                 "collected_data": {**collected_data, **carried},
             }
 
+        if not has_active_stage and navigation_target == "main":
+            # Idle "volver al menú": same reset as MENU_MAIN_PAYLOAD, which
+            # appointment.py applies for a "main" navigation with no stage,
+            # whatever intent or confidence the classifier reported.
+            return {
+                "intent": "appointment",
+                "collected_data": {**collected_data, **carried},
+            }
+
         if result.confidence < _MIN_INTENT_CONFIDENCE:
             if has_active_stage:
                 # Ambiguous chatter inside a workflow belongs to the

@@ -470,6 +470,23 @@ async def test_low_confidence_active_stage_chatter_forwards_no_other_understandi
 
 
 @pytest.mark.asyncio
+async def test_idle_navigation_to_main_routes_to_appointment_whatever_the_intent():
+    # The real provider can report navigation_target="main" with an
+    # "unknown" intent and low confidence. Idle "volver al menú" must still
+    # reach appointment.py's MENU_MAIN-equivalent reset.
+    class _UnsureNavigatingLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="unknown", confidence=0.2, navigation_target="main")
+
+    node = create_resolve_interaction_node(_UnsureNavigatingLLMProvider())
+
+    result = await node(make_agent_state(user_message="volver al menú", collected_data={}))
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"]["navigation_target"] == "main"
+
+
+@pytest.mark.asyncio
 async def test_active_stage_routes_back_to_appointment_for_a_button_regardless_of_payload():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def classify_intent(self, message, context):
