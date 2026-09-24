@@ -468,7 +468,7 @@ option, so behavior is identical whichever the patient uses.
   confirmed present on the pre-T4 tree via `git stash` — same "already
   formatted for what this task touched" pattern T1/T3 recorded, left
   as-is). `uv run mypy app` → no issues (320 files).
-  Commit: 6c2ce48 (code+tests).
+  Commits: 6c2ce48 (code+tests), 4d13390 (docs).
 
 ## Next step
 
