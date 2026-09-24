@@ -76,7 +76,7 @@ option, so behavior is identical whichever the patient uses.
   keep parity. One parity test per option (button vs text → same reply/node).
   Route: delegated direct.
 
-- [ ] T4 — Review follow-ups on the full branch (review-fc1d81209235acfb, approved,
+- [x] T4 — Review follow-ups on the full branch (review-fc1d81209235acfb, approved,
   advisory): a recreated conversation must start on a workflow generation no prior
   incarnation used (R3-new-conversation-rotation-can-collide-with-prior-incarnation-generation);
   guard the operation-switch reject against repository/provider errors
@@ -351,9 +351,129 @@ option, so behavior is identical whichever the patient uses.
   issues (320 files).
   Commit: 4112a63 (code+tests), 5f6e94c (docs).
 
+- T4 done. All 3 review follow-ups from review-fc1d81209235acfb addressed:
+  1. R3-new-conversation-rotation-can-collide-with-prior-incarnation-
+     generation (`app/application/messages/ingest_message.py:634-676`
+     `_resolve_or_create_conversation`, new helper
+     `_new_conversation_workflow_generation_seed` ~lines 67-100; call site
+     ~lines 221-236). Root cause confirmed: a brand-new `Conversation` row
+     always started at the SAME fixed dataclass default
+     (`workflow_session_generation == 1`,
+     `app/domain/entities/conversation.py:34`); T1's own fix rotates it
+     exactly ONCE, unconditionally landing every recreated conversation on
+     generation `2` — so a prior incarnation of the SAME conversation id
+     that had ALSO reached generation 2 (trivial: every OTHER conversation's
+     T1 rotation lands there too) would have its checkpoint thread
+     (`{conversation_id}:session:2`) and any pending action still recorded
+     at that generation revived by the very next real turn — the identical
+     collision T1 fixed for generation 1, one generation later.
+     Design choice (option (a) from this task's own brief): seed the new
+     row's `workflow_session_generation` from the current epoch second
+     (`int(created_at.timestamp())`) instead of the fixed default, rather
+     than querying the max generation among existing pending actions for
+     that conversation id (option (b)) — because `pending_actions.
+     conversation_id` is a hard FK to `conversations.id`
+     (`app/infrastructure/database/models/pending_action.py:17-19`), so
+     whatever deleted the prior incarnation's row must already have cleared
+     its pending actions first; there is nothing left in that table to query
+     from in the collision scenario this fix targets. The real un-queryable
+     residual risk is the LangGraph checkpoint thread, which has no FK or
+     query relationship to this application's own tables at all — an
+     epoch-second seed instead makes an accidental collision require the
+     prior incarnation to have rotated into the hundreds of millions of
+     generations, unreachable through this codebase's own rotation triggers
+     (at most a handful of times a day per conversation). Checked: no schema
+     migration needed — `workflow_session_generation` is already a
+     `BigInteger` column (`ConversationModel`), Alembic is present
+     (`migrations/versions/`) but unused here since the seed is an
+     application-level default, not a DB-level one.
+     `RotateWorkflowSessionUseCase.execute`
+     (`app/application/conversations/rotate_workflow_session.py`) gained an
+     `expire_all_pending_generations: bool = False` parameter — when `True`
+     (only ever passed from `ingest_message.py`'s `is_new_conversation`
+     branch), it expires EVERY still-pending action for the conversation id
+     via `get_pending_for_conversation` instead of only the one exact
+     `expected_generation` `get_pending_for_conversation_generation`
+     filters on — defensive belt-and-suspenders for the FK argument above,
+     in case a particular deployment's delete path doesn't hold it. The
+     inactivity-rotation call site (still-existing row, genuinely one
+     generation retiring at a time) keeps the narrower default unchanged.
+     RED: `test_new_conversation_never_collides_with_a_higher_prior_
+     incarnation_generation` (`tests/unit/application/messages/
+     test_ingest_message.py`) — stale pending actions seeded at
+     generations 1, 2, AND 5 for a conversation id about to be created
+     fresh; failed with `assert 3 > 1000000` (old fixed-default behavior:
+     1 -> rotated to 2, only expiring generation-1, colliding with the
+     generation-2 stale row) before the fix. Also RED:
+     `test_expire_all_pending_generations_clears_every_older_generation`
+     (`tests/unit/application/conversations/
+     test_rotate_workflow_session.py`) — failed with `TypeError:
+     ...unexpected keyword argument 'expire_all_pending_generations'`
+     before the fix.
+  2. R3-operation-switch-reject-unguarded (`app/agent/nodes/appointment.py`
+     ~1999-2023): the T2b-added reject of a live proposal on operation
+     switch only ever caught `InvalidConfirmationError`/
+     `PendingActionExpiredError` — a repository/provider failure (on the
+     `proposal_repositories_provider()` context entry, the
+     `RejectPendingActionUseCase.execute` call, or `_cancel_follow_up`) was
+     completely unguarded and would blow up the whole turn. Wrapped the
+     whole block in `try/except Exception` (same
+     `# noqa: BLE001 -- broad catch is intentional` + `logger.warning(...,
+     exc_info=exc)` convention as the T2b lookup guard right above it), but
+     the OPPOSITE fail-safe direction: the lookup guard falls back to the
+     reminder (preserve state on doubt, since there's no explicit new
+     request yet to serve); this one still lets the switch through, since
+     the patient's new request is already explicit and a cleanup failure on
+     the OLD proposal must never trap them back in the old flow.
+     RED: `test_confirmation_stage_switch_continues_even_when_rejecting_
+     the_live_proposal_fails` (`tests/unit/agent/nodes/
+     test_appointment_node.py`) — a `FakePendingActionRepository` subclass
+     raising on `.save()` only when the incoming status is `"cancelled"`
+     (letting the initial `"pending"` save through), so only the REJECT's
+     own write fails, not the earlier usability lookup; failed with an
+     unguarded `RuntimeError: db unavailable` propagating out of `node()`
+     before the fix.
+  3. R3-fake-classify-intent-diverges-from-real-labels
+     (`app/infrastructure/llm/fake_llm_provider.py:194-238`): the fake's
+     `classify_intent` could return `"location"`, but the real provider's
+     `_INTENT_LABELS` (`openai_compatible_llm_provider.py:40-46` — the
+     narrow allowlist `classify_intent` validates against, confirmed via
+     `_parse_intent_result`'s `if intent not in _INTENT_LABELS` check at
+     line 447) never includes it; only the separate, richer
+     `_UNDERSTANDING_LABELS = (*_INTENT_LABELS, "question", "location")`
+     (line 79, T3's own addition) does. Moved the `_LOCATION_UNDERSTANDING_
+     KEYWORDS` check out of `classify_intent` entirely and into
+     `understand()` only (checked BEFORE delegating to `classify_intent`
+     for every other label), so `classify_intent` can never diverge from
+     what the real provider's own narrow classifier could return. Checked
+     both call sites: `classify_intent`'s own tests
+     (`tests/unit/infrastructure/llm/test_fake_llm_provider.py`) never
+     asserted a `"location"` result, and `resolve_interaction.py`'s
+     location parity test (`test_resolve_interaction.py`) already went
+     through `understand()`, not `classify_intent` — no other test needed
+     adjusting.
+     RED: `test_classify_intent_never_returns_location`
+     (`tests/unit/infrastructure/llm/test_fake_llm_provider.py`) — failed
+     with `AssertionError: assert 'location' != 'location'` before the fix.
+     Companion `test_understand_still_recognizes_location_after_classify_
+     intent_narrowing` already passed pre-fix (confirming `understand()`'s
+     own coverage was untouched by the narrowing) and pins the behavior
+     going forward.
+  Verification: `uv run pytest -q` → 1592 passed, 82 skipped, 5 failed (the
+  5 pre-declared known environmental failures only — confirmed by name:
+  4 in `test_gateway_dependency.py`, 1 in `test_internal_eval_wiring.py`).
+  `uv run ruff check .` → all checks passed. `uv run ruff format --check`
+  on all 8 touched files → 7 already formatted; `test_fake_llm_provider.py`
+  reports 2 pre-existing drift spots (lines untouched by this task,
+  confirmed present on the pre-T4 tree via `git stash` — same "already
+  formatted for what this task touched" pattern T1/T3 recorded, left
+  as-is). `uv run mypy app` → no issues (320 files).
+  Commit: 6c2ce48 (code+tests).
+
 ## Next step
 
-Feature complete (T1, T2, T2b, T3 all done). Optional follow-up: the
-pre-existing `ruff format` drift in `openai_compatible_llm_provider.py`'s
-`DEFAULT_GENERATE_RESPONSE_PROMPT` (unrelated to this feature) could be
-cleaned up separately if desired.
+Feature complete (T1, T2, T2b, T3, T4 all done). Optional follow-ups,
+neither blocking, both pre-existing and unrelated to this feature's own
+diff: the `ruff format` drift in `openai_compatible_llm_provider.py`'s
+`DEFAULT_GENERATE_RESPONSE_PROMPT` (T3's note) and in
+`test_fake_llm_provider.py`'s two untouched call sites (T4's note above).
