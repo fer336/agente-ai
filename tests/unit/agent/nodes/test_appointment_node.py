@@ -2127,7 +2127,10 @@ async def test_confirmation_stage_reminds_instead_of_advancing_on_free_text():
 
 
 @pytest.mark.asyncio
-async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is_absent():
+@pytest.mark.parametrize("action_type", [CREATE_APPOINTMENT_ACTION, CREATE_PATIENT_ACTION])
+async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is_absent(
+    action_type,
+):
     # T5 (review-2358088d31f27658, R3-operation-switch-when-operation-key-
     # absent): a live CREATE proposal never sets `collected_data["operation"]`
     # at all — that key is only ever a PRE-proposal convenience (see this
@@ -2145,7 +2148,7 @@ async def test_confirmation_stage_operation_switch_ignored_when_operation_key_is
     )
     async with repositories_provider() as repositories:
         await repositories.pending_actions.save(
-            make_pending_action(id_="pa-1", status="pending", action_type=CREATE_APPOINTMENT_ACTION)
+            make_pending_action(id_="pa-1", status="pending", action_type=action_type)
         )
     state = make_agent_state(
         conversation_id="conv-1",

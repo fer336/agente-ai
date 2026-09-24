@@ -286,14 +286,14 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
         if result.confidence < _MIN_INTENT_CONFIDENCE:
             if has_active_stage:
                 # Ambiguous chatter inside a workflow belongs to the
-                # current node — but a stale `operation_mention` (T5, see
-                # above) must still be cleared here exactly like the other
-                # active-stage branches below, or this return path would be
-                # the one place that keeps letting it ride through untouched.
-                if carried:
+                # current node, and nothing this unreliable classification
+                # produced is forwarded. Only a stale `operation_mention`
+                # (T5, see above) is cleared, since this turn named none
+                # the gate would trust.
+                if collected_data.get("operation_mention") is not None:
                     return {
                         "intent": "appointment",
-                        "collected_data": {**collected_data, **carried},
+                        "collected_data": {**collected_data, "operation_mention": None},
                     }
                 return {"intent": "appointment"}
             if result.operation_mention is not None:

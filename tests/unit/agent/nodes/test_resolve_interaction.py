@@ -446,6 +446,30 @@ async def test_stale_operation_mention_is_cleared_even_on_low_confidence_active_
 
 
 @pytest.mark.asyncio
+async def test_low_confidence_active_stage_chatter_forwards_no_other_understanding():
+    # A classification below the confidence gate is too unreliable to act
+    # on: only the stale `operation_mention` is cleared, every other field
+    # it produced must stay out of `collected_data`.
+    class _LowConfidenceMentioningLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(
+                intent="appointment",
+                confidence=0.1,
+                specialty_mention="ortodoncia",
+                professional_mention="Pérez",
+                operation_mention="reschedule",
+            )
+
+    node = create_resolve_interaction_node(_LowConfidenceMentioningLLMProvider())
+    collected_data = {"stage": "choose_slot", "operation_mention": "cancel"}
+
+    result = await node(make_agent_state(user_message="mmm", collected_data=collected_data))
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"] == {"stage": "choose_slot", "operation_mention": None}
+
+
+@pytest.mark.asyncio
 async def test_active_stage_routes_back_to_appointment_for_a_button_regardless_of_payload():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def classify_intent(self, message, context):
