@@ -139,10 +139,51 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
     }
 
 
+#: `operation_mention`/`navigation_target` are set ONLY from THIS turn's
+#: fresh `UnderstandingResult` (`_carried_understanding`, above) — they must
+#: never outlive the turn that set them. `specialty_mention`/
+#: `professional_mention` are deliberately NOT included here: unlike an
+#: operation or a navigation request, a specialty/professional the patient
+#: already named may still be legitimately relevant several turns later
+#: (mid-flow selection), so they stay out of this task's scope.
+_PER_TURN_UNDERSTANDING_KEYS = ("operation_mention", "navigation_target")
+
+
+def _strip_per_turn_understanding(collected_data: dict[str, object]) -> dict[str, object]:
+    """Drops any `operation_mention`/`navigation_target` left over from an
+    earlier turn before this turn's routing logic ever looks at them
+    (review-bae960a902ead91b, T9 — shared root cause of R3-001/R3-002/R3-003).
+
+    Because LangGraph's `collected_data` channel REPLACES rather than
+    merges (see `AgentState.collected_data`'s own docstring), once either key
+    lands in a checkpoint it survives forever unless a node explicitly
+    forwards a `collected_data` update that omits it. Several return paths
+    below forward no `collected_data` update at all (a button tap mid-flow,
+    the confirmation reminder, ambiguous low-confidence chatter, ...), so
+    without this a stale mention/navigation target could ride along turn
+    after turn — e.g. a Cancelar tap with nothing left to confirm reading a
+    `create` mention set several turns earlier and starting a create flow
+    instead of just dropping the proposal (R3-001); a "volver al menú" typed
+    while a live proposal intercepted it (T8) leaving `navigation_target`
+    stuck at `"main"` for a LATER, unrelated idle turn (R3-002).
+
+    Returns the SAME object when there is nothing to strip, so callers can
+    cheaply tell (via `is`) whether a `collected_data` update must now be
+    forwarded to actually commit the strip to state.
+    """
+    if not any(key in collected_data for key in _PER_TURN_UNDERSTANDING_KEYS):
+        return collected_data
+    return {
+        key: value
+        for key, value in collected_data.items()
+        if key not in _PER_TURN_UNDERSTANDING_KEYS
+    }
+
+
 def _temporary_result(
-    intent: str, state: AgentState, carried: dict[str, object] | None = None
+    intent: str, collected_data: dict[str, object], carried: dict[str, object] | None = None
 ) -> dict[str, object]:
-    stage = state["collected_data"].get("stage")
+    stage = collected_data.get("stage")
     result: dict[str, object] = {
         "intent": intent,
         "active_flow": "appointment",
@@ -151,7 +192,7 @@ def _temporary_result(
         "interruption": "temporary",
     }
     if carried:
-        result["collected_data"] = {**state["collected_data"], **carried}
+        result["collected_data"] = {**collected_data, **carried}
     return result
 
 
@@ -166,189 +207,183 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
     """
 
     async def node(state: AgentState) -> dict[str, object]:
-        collected_data = state["collected_data"]
-        stage = collected_data.get("stage")
-        has_active_stage = stage is not None
-        post_action_context = collected_data.get("post_action_context")
-        payload = state["button_payload"]
+        collected_data = _strip_per_turn_understanding(state["collected_data"])
+        result = await _resolve(state, collected_data, llm_provider)
+        if "collected_data" not in result and collected_data is not state["collected_data"]:
+            # Something WAS stripped this turn but the branch below forwarded
+            # no `collected_data` update of its own — without this, the
+            # strip above would be entirely local (never actually committed
+            # to state, since the `collected_data` channel only updates when
+            # a node's return value includes the key).
+            result = {**result, "collected_data": collected_data}
+        return result
 
-        if payload is not None:
-            global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
-            if global_intent is not None:
-                if global_intent == "handoff":
-                    return {"intent": "handoff", "interruption": "terminate"}
-                if has_active_stage and global_intent in _INFORMATION_INTENTS:
-                    return _temporary_result(global_intent, state)
-                if has_active_stage and payload in _OPERATION_PAYLOADS:
-                    return {
-                        "intent": "appointment",
-                        "active_flow": "appointment",
-                        "active_node": str(stage),
-                        "resume_node": None,
-                        "interruption": "replace",
-                    }
-                return {"intent": global_intent}
+    return node
 
-            if has_active_stage:
-                # Context-sensitive list rows, pagination, slot buttons and
-                # confirmation buttons belong to the appointment stage that
-                # rendered them. Never LLM-classify a machine payload.
-                return {"intent": "appointment"}
 
-            intent = _route_idle_button_payload(payload)
-            return {"intent": intent if intent is not None else "unknown"}
+async def _resolve(
+    state: AgentState, collected_data: dict[str, object], llm_provider: LLMProvider
+) -> dict[str, object]:
+    stage = collected_data.get("stage")
+    has_active_stage = stage is not None
+    post_action_context = collected_data.get("post_action_context")
+    payload = state["button_payload"]
 
-        # Verified location data is a deterministic global concern. Handle it
-        # before the LLM so an active stage cannot trap "dónde quedan?".
-        if asks_for_location(state["user_message"]):
-            if has_active_stage:
-                return _temporary_result("location", state)
-            return {"intent": "location"}
-
-        context: dict[str, object] = {
-            "recent_messages": state["recent_messages"],
-            "contact_memory": state["contact_memory_summary"],
-            "active_flow": "appointment" if has_active_stage else state.get("active_flow"),
-            "active_stage": stage,
-            # Raw workflow data is useful for references such as "ese horario"
-            # but the LLM still only extracts language; real IDs remain the
-            # graph/repository's responsibility.
-            "workflow_data": collected_data,
-        }
-        result = await llm_provider.understand(state["user_message"], context=context)
-        carried = _carried_understanding(result)
-        if (
-            has_active_stage
-            and result.operation_mention is None
-            and collected_data.get("operation_mention") is not None
-        ):
-            # T5 (review-2358088d31f27658, R3-operation-switch-when-
-            # operation-key-absent): `operation_mention` must only ever
-            # reflect THIS turn's classification while an appointment stage
-            # is active — `appointment.py`'s confirmation gate and
-            # `specialties.py`'s own `_has_booking_context` docstring both
-            # read it that way ("the LLM's own understanding of THIS turn's
-            # free text"). `_carried_understanding` only ever ADDS a fresh
-            # mention, it never clears a stale one just because this turn's
-            # classification came back empty — a mention from an earlier,
-            # unrelated turn (e.g. an aside mid-slot-selection that was
-            # never acted on) would otherwise ride along in `collected_data`
-            # forever and later look like a fresh operation switch at
-            # confirmation time. Explicitly overwrite it to `None` instead.
-            carried = {**carried, "operation_mention": None}
-
-        if post_action_context is not None and not _is_genuine_new_request(result):
-            text = await generate_or_fallback(
-                llm_provider,
-                state["conversation_id"],
-                POST_ACTION_CLOSE_INTENT,
-                {"accion_completada": post_action_context},
-                _POST_ACTION_CLOSE_STATIC_MESSAGES.get(
-                    str(post_action_context), _POST_ACTION_CLOSE_DEFAULT_MESSAGE
-                ),
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
-            return {
-                "intent": POST_ACTION_CLOSE_INTENT,
-                "response_text": text,
-                "response_buttons": None,
-                "requires_handoff": False,
-                "collected_data": {},
-            }
-
-        # A genuine new request always drops the now-consumed window,
-        # forwarded explicitly below even on the branches that would
-        # otherwise omit `collected_data` entirely (`has_active_stage` is
-        # always False whenever `post_action_context` was set, since it is
-        # only ever written alongside a full `collected_data` reset).
-        forward_stripped_collected_data = post_action_context is not None
-        if forward_stripped_collected_data:
-            collected_data = {
-                key: value for key, value in collected_data.items() if key != "post_action_context"
-            }
-
-        navigation_target = result.navigation_target
-        if (
-            has_active_stage
-            and navigation_target is not None
-            and navigation_target in _NAVIGATION_TARGETS
-        ):
-            return {
-                "intent": "appointment",
-                "active_flow": "appointment",
-                "active_node": str(stage),
-                "resume_node": None,
-                "interruption": "navigation",
-                "collected_data": {**collected_data, **carried},
-            }
-
-        if not has_active_stage and navigation_target == "main":
-            # Idle "volver al menú": same reset as MENU_MAIN_PAYLOAD, which
-            # appointment.py applies for a "main" navigation with no stage,
-            # whatever intent or confidence the classifier reported.
-            return {
-                "intent": "appointment",
-                "collected_data": {**collected_data, **carried},
-            }
-
-        if result.confidence < _MIN_INTENT_CONFIDENCE:
-            if has_active_stage:
-                # Ambiguous chatter inside a workflow belongs to the
-                # current node, and nothing this unreliable classification
-                # produced is forwarded. Only a stale `operation_mention`
-                # (T5, see above) is cleared, since this turn named none
-                # the gate would trust.
-                if collected_data.get("operation_mention") is not None:
-                    return {
-                        "intent": "appointment",
-                        "collected_data": {**collected_data, "operation_mention": None},
-                    }
-                return {"intent": "appointment"}
-            if result.operation_mention is not None:
-                # A short, unambiguous "quiero cancelar" can score low
-                # OVERALL confidence (little else in the utterance to
-                # anchor on) while still cleanly naming an operation — that
-                # specific signal must not be discarded just because the
-                # rest of the classification was uncertain. Seen live: a
-                # fresh "Quiero cancelar" with no active stage fell
-                # straight to the generic "no entendí" fallback instead of
-                # starting the cancel flow, which `appointment.py`'s own
-                # "no stage yet" entry point already knows how to read
-                # `collected_data["operation_mention"]` for.
+    if payload is not None:
+        global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
+        if global_intent is not None:
+            if global_intent == "handoff":
+                return {"intent": "handoff", "interruption": "terminate"}
+            if has_active_stage and global_intent in _INFORMATION_INTENTS:
+                return _temporary_result(global_intent, collected_data)
+            if has_active_stage and payload in _OPERATION_PAYLOADS:
                 return {
                     "intent": "appointment",
-                    "collected_data": {**collected_data, **carried},
+                    "active_flow": "appointment",
+                    "active_node": str(stage),
+                    "resume_node": None,
+                    "interruption": "replace",
                 }
-            return {"intent": "unknown"}
-
-        if result.intent == "handoff":
-            if forward_stripped_collected_data:
-                return {
-                    "intent": "handoff",
-                    "interruption": "terminate",
-                    "collected_data": collected_data,
-                }
-            return {"intent": "handoff", "interruption": "terminate"}
-
-        if has_active_stage and result.intent in _INFORMATION_INTENTS:
-            return _temporary_result(result.intent, state, carried)
+            return {"intent": global_intent}
 
         if has_active_stage:
-            if carried:
-                return {
-                    "intent": "appointment",
-                    "collected_data": {**collected_data, **carried},
-                }
+            # Context-sensitive list rows, pagination, slot buttons and
+            # confirmation buttons belong to the appointment stage that
+            # rendered them. Never LLM-classify a machine payload.
             return {"intent": "appointment"}
 
-        if not carried:
-            if forward_stripped_collected_data:
-                return {"intent": result.intent, "collected_data": collected_data}
-            return {"intent": result.intent}
+        intent = _route_idle_button_payload(payload)
+        return {"intent": intent if intent is not None else "unknown"}
+
+    # Verified location data is a deterministic global concern. Handle it
+    # before the LLM so an active stage cannot trap "dónde quedan?".
+    if asks_for_location(state["user_message"]):
+        if has_active_stage:
+            return _temporary_result("location", collected_data)
+        return {"intent": "location"}
+
+    context: dict[str, object] = {
+        "recent_messages": state["recent_messages"],
+        "contact_memory": state["contact_memory_summary"],
+        "active_flow": "appointment" if has_active_stage else state.get("active_flow"),
+        "active_stage": stage,
+        # Raw workflow data is useful for references such as "ese horario"
+        # but the LLM still only extracts language; real IDs remain the
+        # graph/repository's responsibility.
+        "workflow_data": collected_data,
+    }
+    result = await llm_provider.understand(state["user_message"], context=context)
+    carried = _carried_understanding(result)
+
+    if post_action_context is not None and not _is_genuine_new_request(result):
+        text = await generate_or_fallback(
+            llm_provider,
+            state["conversation_id"],
+            POST_ACTION_CLOSE_INTENT,
+            {"accion_completada": post_action_context},
+            _POST_ACTION_CLOSE_STATIC_MESSAGES.get(
+                str(post_action_context), _POST_ACTION_CLOSE_DEFAULT_MESSAGE
+            ),
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
         return {
-            "intent": result.intent,
+            "intent": POST_ACTION_CLOSE_INTENT,
+            "response_text": text,
+            "response_buttons": None,
+            "requires_handoff": False,
+            "collected_data": {},
+        }
+
+    # A genuine new request always drops the now-consumed window,
+    # forwarded explicitly below even on the branches that would
+    # otherwise omit `collected_data` entirely (`has_active_stage` is
+    # always False whenever `post_action_context` was set, since it is
+    # only ever written alongside a full `collected_data` reset).
+    forward_stripped_collected_data = post_action_context is not None
+    if forward_stripped_collected_data:
+        collected_data = {
+            key: value for key, value in collected_data.items() if key != "post_action_context"
+        }
+
+    navigation_target = result.navigation_target
+    if (
+        has_active_stage
+        and navigation_target is not None
+        and navigation_target in _NAVIGATION_TARGETS
+    ):
+        return {
+            "intent": "appointment",
+            "active_flow": "appointment",
+            "active_node": str(stage),
+            "resume_node": None,
+            "interruption": "navigation",
             "collected_data": {**collected_data, **carried},
         }
 
-    return node
+    if not has_active_stage and navigation_target == "main":
+        # Idle "volver al menú": same reset as MENU_MAIN_PAYLOAD, which
+        # appointment.py applies for a "main" navigation with no stage,
+        # whatever intent or confidence the classifier reported. Reads
+        # THIS turn's fresh `result.navigation_target` (via the local
+        # `navigation_target` above), never `collected_data`'s own —
+        # a stale `navigation_target` surviving from an earlier turn
+        # (T9, R3-002/R3-003) must never itself trigger this reset.
+        return {
+            "intent": "appointment",
+            "collected_data": {**collected_data, **carried},
+        }
+
+    if result.confidence < _MIN_INTENT_CONFIDENCE:
+        if has_active_stage:
+            # Ambiguous chatter inside a workflow belongs to the current
+            # node, and nothing this unreliable classification produced
+            # is forwarded — `collected_data` is already stripped of any
+            # stale operation_mention/navigation_target (T9, the wrapper
+            # in `create_resolve_interaction_node.node` forwards it).
+            return {"intent": "appointment"}
+        if result.operation_mention is not None:
+            # A short, unambiguous "quiero cancelar" can score low
+            # OVERALL confidence (little else in the utterance to
+            # anchor on) while still cleanly naming an operation — that
+            # specific signal must not be discarded just because the
+            # rest of the classification was uncertain. Seen live: a
+            # fresh "Quiero cancelar" with no active stage fell
+            # straight to the generic "no entendí" fallback instead of
+            # starting the cancel flow, which `appointment.py`'s own
+            # "no stage yet" entry point already knows how to read
+            # `collected_data["operation_mention"]` for.
+            return {
+                "intent": "appointment",
+                "collected_data": {**collected_data, **carried},
+            }
+        return {"intent": "unknown"}
+
+    if result.intent == "handoff":
+        if forward_stripped_collected_data:
+            return {
+                "intent": "handoff",
+                "interruption": "terminate",
+                "collected_data": collected_data,
+            }
+        return {"intent": "handoff", "interruption": "terminate"}
+
+    if has_active_stage and result.intent in _INFORMATION_INTENTS:
+        return _temporary_result(result.intent, collected_data, carried)
+
+    if has_active_stage:
+        if carried:
+            return {
+                "intent": "appointment",
+                "collected_data": {**collected_data, **carried},
+            }
+        return {"intent": "appointment"}
+
+    if not carried:
+        if forward_stripped_collected_data:
+            return {"intent": result.intent, "collected_data": collected_data}
+        return {"intent": result.intent}
+    return {
+        "intent": result.intent,
+        "collected_data": {**collected_data, **carried},
+    }

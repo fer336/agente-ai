@@ -3557,3 +3557,78 @@ async def test_navigation_target_main_mid_stage_matches_the_menu_main_button():
     assert button_result["response_list"] == WELCOME_LIST
     assert button_result["collected_data"] == {}
     assert button_result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_stage_cancelar_tap_ignores_a_stale_operation_mention():
+    # T9 (review-bae960a902ead91b, R3-001, defense in depth alongside
+    # resolve_interaction.py's own per-turn stripping — the single-place fix
+    # this finding shares with R3-002/R3-003): a real Cancelar TAP never
+    # goes through the LLM's `understand()` call, so it can never itself
+    # justify an `operation_mention` — any mention already sitting in
+    # `collected_data` at this point can only be a leftover from an
+    # earlier, unrelated turn. Before this fix, this stale mention silently
+    # routed into a create flow instead of the same clean menu recovery a
+    # bare Cancelar tap with nothing to confirm already gives (see
+    # `test_confirmation_stage_cancelar_tap_with_no_pending_action_id_
+    # routes_a_fresh_request` above).
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=REJECT_APPOINTMENT_PAYLOAD,
+        pending_action_id=None,
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "operation_mention": "create"},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
+    assert result["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_navigation_target_does_not_reset_a_later_idle_turn():
+    # T9 (review-bae960a902ead91b, R3-002): `navigation_target="main"` set
+    # by resolve_interaction while a live proposal intercepted "volver al
+    # menú" (T8's own confirmation reminder never clears it — it forwards
+    # no `collected_data` update at all) must not survive to reset a LATER,
+    # unrelated idle turn once the proposal is resolved and the stage drops
+    # back to `None`. The fix lives in resolve_interaction.py (single
+    # place, per this task's own design) — a test isolated to appointment.py
+    # alone can't prove it, since appointment.py's own idle-navigation
+    # branch has no way to tell a stale value from a fresh one; this runs
+    # both nodes in sequence, exactly as the real graph does turn to turn.
+    from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
+
+    resolve_node = create_resolve_interaction_node(FakeLLMProvider())
+    node, _, _ = await _make_node_and_conversation()
+
+    # Simulates the checkpoint left behind by an earlier turn: idle now
+    # (the live proposal that intercepted "volver al menú" has since been
+    # resolved and the stage dropped), but `navigation_target` from that
+    # earlier turn was never cleared.
+    stale_collected_data = {"navigation_target": "main"}
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="qué especialidades tienen",
+        button_payload=None,
+        collected_data=stale_collected_data,
+    )
+
+    resolve_result = await resolve_node(state)
+    assert resolve_result["intent"] == "specialties"
+
+    next_state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="qué especialidades tienen",
+        button_payload=None,
+        # Same replace-only-if-present semantics the real `collected_data`
+        # channel uses (AgentState's own docstring): a node that returns no
+        # `collected_data` key leaves the PRIOR turn's value untouched.
+        collected_data=resolve_result.get("collected_data", stale_collected_data),
+    )
+
+    result = await node(next_state)
+
+    assert result.get("response_text") != WELCOME_TEXT

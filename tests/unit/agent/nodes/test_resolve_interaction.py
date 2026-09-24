@@ -466,7 +466,10 @@ async def test_low_confidence_active_stage_chatter_forwards_no_other_understandi
     result = await node(make_agent_state(user_message="mmm", collected_data=collected_data))
 
     assert result["intent"] == "appointment"
-    assert result["collected_data"] == {"stage": "choose_slot", "operation_mention": None}
+    # T9 (review-bae960a902ead91b): the stale `operation_mention` is now
+    # dropped entirely at the start of the turn (never even reaches this
+    # branch to begin with), rather than explicitly overwritten to `None`.
+    assert result["collected_data"] == {"stage": "choose_slot"}
 
 
 @pytest.mark.asyncio
@@ -605,3 +608,47 @@ async def test_operation_free_text_reaches_the_same_intent_as_its_button(
     assert button_result["intent"] == "appointment"
     assert free_text_result["intent"] == "appointment"
     assert free_text_result["collected_data"]["operation_mention"] == operation
+
+
+@pytest.mark.asyncio
+async def test_a_stale_operation_mention_does_not_survive_a_button_tap_mid_flow():
+    # T9 (review-bae960a902ead91b, R3-001's shared root cause): a button tap
+    # never goes through the LLM's `understand()` call at all, so it can
+    # never itself set a fresh `operation_mention` — any mention already
+    # sitting in `collected_data` at this point can only be a leftover from
+    # an earlier, unrelated turn and must not survive into this one (before
+    # this fix, this branch forwarded no `collected_data` update at all, so
+    # the stale mention rode along unchanged — see R3-001 in
+    # `test_appointment_node.py` for the resulting live bug: a Cancelar tap
+    # with nothing left to confirm silently starting a create flow).
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            button_payload="CONFIRM_APPOINTMENT",
+            collected_data={"stage": "awaiting_confirmation", "operation_mention": "create"},
+        )
+    )
+
+    assert result == {"intent": "appointment", "collected_data": {"stage": "awaiting_confirmation"}}
+
+
+@pytest.mark.asyncio
+async def test_idle_navigation_reads_this_turns_result_not_a_stale_collected_data_value():
+    # T9 (review-bae960a902ead91b, R3-003): pins existing, already-correct
+    # behavior — the idle "volver al menú" branch keys off THIS turn's
+    # fresh `result.navigation_target`, never `collected_data`'s own
+    # (potentially stale) value. A `navigation_target="main"` left over
+    # from an earlier turn must not itself force the main-menu intent when
+    # this turn's own classification names something else entirely.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="qué especialidades tienen",
+            collected_data={"navigation_target": "main"},
+        )
+    )
+
+    assert result["intent"] == "specialties"
+    assert "navigation_target" not in result.get("collected_data", {"navigation_target": "main"})

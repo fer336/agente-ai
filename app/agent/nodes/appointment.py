@@ -1979,17 +1979,32 @@ def create_appointment_node(
                     # whatever operation the patient already named, same as
                     # a main-menu tap already does below (one path per
                     # operation, never a duplicate branch).
-                    mentioned_operation = _OPERATION_BY_MENTION.get(
-                        str(collected_data.get("operation_mention") or "")
-                    )
-                    if mentioned_operation == CANCEL_APPOINTMENT_ACTION:
-                        # "cancelar" alone stays ambiguous even with nothing
-                        # live to confirm — bare "cancel" reads as declining
-                        # whatever's on screen, not as a request for the
-                        # cancel-appointment operation; an explicit decline
-                        # phrase (`_is_free_text_decline`, handled above) or
-                        # naming the operation menu itself still work.
-                        mentioned_operation = None
+                    mentioned_operation = None
+                    if state["button_payload"] is None:
+                        # T9 (review-bae960a902ead91b, R3-001, defense in
+                        # depth alongside resolve_interaction.py's own
+                        # per-turn stripping): a genuine button tap (a real
+                        # Confirmar/Cancelar, per `state["button_payload"]`'s
+                        # own "never mutated by a node" contract — unlike the
+                        # local `button_payload` above, already normalized to
+                        # `None` by this point) never goes through the LLM's
+                        # `understand()` call at all, so it can never itself
+                        # justify an `operation_mention` — trusting
+                        # `collected_data`'s copy here would silently start
+                        # an operation flow the patient never asked for THIS
+                        # turn. Only genuine free text may name one.
+                        mentioned_operation = _OPERATION_BY_MENTION.get(
+                            str(collected_data.get("operation_mention") or "")
+                        )
+                        if mentioned_operation == CANCEL_APPOINTMENT_ACTION:
+                            # "cancelar" alone stays ambiguous even with
+                            # nothing live to confirm — bare "cancel" reads as
+                            # declining whatever's on screen, not as a
+                            # request for the cancel-appointment operation;
+                            # an explicit decline phrase
+                            # (`_is_free_text_decline`, handled above) or
+                            # naming the operation menu itself still work.
+                            mentioned_operation = None
                     stage = None
                     collected_data = (
                         {"operation_mention": collected_data["operation_mention"]}
