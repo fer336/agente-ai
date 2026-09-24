@@ -114,6 +114,12 @@ option, so behavior is identical whichever the patient uses.
   new-conversation rotation assertions (R3-new-conversation-rotation-assertion-vacuous).
   Route: delegated direct.
 
+- [ ] T9 — Review follow-ups (review-bae960a902ead91b, approved, advisory): per-turn
+  understanding (`operation_mention`, `navigation_target`) must never outlive its turn —
+  a Cancelar tap with nothing to confirm must not start a flow from a stale mention
+  (R3-001), and a stale `navigation_target="main"` must not reset a later idle turn
+  (R3-002, R3-003). Route: delegated direct.
+
 ## Acceptance criteria
 
 - The screenshot scenario replays to the specialty list, not a confirmation reminder.
