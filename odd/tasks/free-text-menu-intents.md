@@ -84,7 +84,7 @@ option, so behavior is identical whichever the patient uses.
   labels aligned with the real provider (R3-fake-classify-intent-diverges-from-real-labels).
   Route: delegated direct.
 
-- [ ] T5 — Review follow-ups (review-2358088d31f27658, approved, advisory): an operation
+- [x] T5 — Review follow-ups (review-2358088d31f27658, approved, advisory): an operation
   switch at the confirmation stage must never reject a live proposal when the current
   operation is unknown or the mention is stale/same (e.g. "sí, quiero ese turno")
   (R3-operation-switch-when-operation-key-absent); prove production wiring passes a
@@ -477,9 +477,126 @@ option, so behavior is identical whichever the patient uses.
   as-is). `uv run mypy app` → no issues (320 files).
   Commits: 6c2ce48 (code+tests), 4d13390 (docs).
 
+- T5 done. Both review follow-ups from review-2358088d31f27658 addressed.
+  1. R3-operation-switch-when-operation-key-absent
+     (`app/agent/nodes/appointment.py`, `STAGE_AWAITING_CONFIRMATION`
+     free-text branch, ~1949-2036; new `_OPERATION_BY_ACTION_TYPE` mapping
+     ~239-256; `app/agent/nodes/resolve_interaction.py` ~219-238, ~267-278).
+     Root cause confirmed via this module's own docstring
+     (`CREATE_APPOINTMENT_ACTION`, ~212-217): `collected_data["operation"]`
+     "only drives the PRE-proposal turns" — once a real `PendingAction`
+     exists (e.g. the decision subgraph's own CREATE flow), that key is
+     routinely absent, so `mentioned_operation != collected_data.get(
+     "operation")` read as `"create" != None` and wrongly flagged a switch
+     on a plain confirming reply like "sí, quiero ese turno". Separately,
+     `operation_mention` itself could be stale: `resolve_interaction.py`'s
+     `_carried_understanding` only ever ADDS a fresh mention into
+     `collected_data`, it never clears one from an earlier, unrelated turn
+     (e.g. an aside mid-slot-selection, "en realidad mejor cancelo", never
+     acted on) when the current turn's classification reports none — the
+     mention then rode along unconsumed until confirmation, where it read
+     as a switch. This violated a contract already documented elsewhere in
+     this codebase: `specialties.py`'s own `_has_booking_context` docstring
+     already assumes `operation_mention` is "the LLM's own understanding of
+     THIS turn's free text" — `resolve_interaction.py` just never actually
+     enforced that everywhere it forwards `collected_data`.
+     Fix, two parts:
+     (a) `appointment.py`: added `_OPERATION_BY_ACTION_TYPE` (maps
+     `PendingAction.action_type` — including `CREATE_PATIENT_ACTION`,
+     folded back onto `CREATE_APPOINTMENT_ACTION` since it's a CREATE-flow
+     sub-step, never its own menu-level operation — to the same operation
+     tokens `_OPERATION_BY_MENTION` produces). `current_operation` is now
+     captured once, right where `existing_pending_action`/
+     `pending_action_usable` are already computed (from the real repository
+     row's own `action_type`, never `collected_data.get("operation")`), and
+     stays `None` (unknown) whenever nothing usable is pending.
+     `operation_switch` now requires `current_operation is not None` too —
+     an unknown current operation can never count as a switch, since there
+     is nothing live to protect from being replaced.
+     (b) `resolve_interaction.py`: right after computing `carried`, if an
+     active stage is on and this turn's `result.operation_mention is None`
+     while `collected_data` already carries a truthy `operation_mention`,
+     explicitly overwrite it to `None` in `carried` — every branch that
+     merges `{**collected_data, **carried}` under an active stage
+     (navigation, info-intent detour, the general appointment branch)
+     automatically picks this up. The one branch that returned bare
+     `{"intent": "appointment"}` without ever touching `carried` at all
+     (low-confidence + active-stage ambiguous chatter) was changed to use
+     the same `if carried: ... else: ...` shape the general branch already
+     uses, so it can no longer be the one path that keeps a stale mention
+     alive. Confirmed no existing test relies on `operation_mention`
+     surviving more than the turn it was set on: the one exact-equality
+     test that would have broken from an unconditional `collected_data`
+     addition (`test_active_stage_routes_back_to_appointment_for_ordinary_
+     free_text`, asserting `result == {"intent": "appointment"}`) has no
+     `operation_mention` key in its input at all, so the new clearing
+     condition (`collected_data.get("operation_mention") is not None`)
+     never triggers for it — verified green, unchanged.
+     RED: `test_confirmation_stage_operation_switch_ignored_when_operation_
+     key_is_absent` (`tests/unit/agent/nodes/test_appointment_node.py`) — a
+     live `pending` CREATE proposal with NO `"operation"` key in
+     `collected_data`, confirmed via free text read as `operation_mention=
+     "create"`; failed (proposal wrongly rejected, `collected_data` present
+     in the result instead of the expected bare reminder) before the fix.
+     Also RED: `test_stale_operation_mention_is_cleared_when_this_turns_
+     classification_has_none` and `..._even_on_low_confidence_active_stage_
+     chatter` (`tests/unit/agent/nodes/test_resolve_interaction.py`) — both
+     failed with `KeyError: 'collected_data'` (the stale value was never
+     even reachable to clear — no `collected_data` key was returned at all)
+     before the fix.
+  2. R3-expire-all-flag-ignored-without-repositories-provider
+     (`app/application/conversations/rotate_workflow_session.py` ~69-90;
+     `app/api/dependencies/use_cases.py` — verified only, unchanged).
+     Verified production wiring first: `get_ingest_message_use_case()`
+     (the real, `@lru_cache`d FastAPI dependency) already passes
+     `workflow_session_repositories_provider=open_sqlalchemy_workflow_
+     session_repositories` — a real committing provider
+     (`app/api/dependencies/repositories.py:155-166`) — so
+     `ingest_message.py`'s `RotateWorkflowSessionUseCase(self._workflow_
+     session_repositories_provider or repositories.conversations)` always
+     takes the provider branch in production today; `expire_all_pending_
+     generations=True` (T4's own new-conversation call) is genuinely
+     honored already. No wiring fix was needed — added
+     `test_get_ingest_message_use_case_wires_a_workflow_session_
+     repositories_provider` (`tests/unit/api/dependencies/
+     test_use_case_dependency.py`) to prove it and guard against
+     regression; this one was GREEN immediately (not a RED/GREEN pair —
+     an already-correct-wiring proof, exactly as the task's own "(or wire
+     it if missing)" anticipated).
+     Fix for the flag-drop itself: the OTHER constructor shape (a bare
+     `ConversationRepository`, no provider — used by
+     `follow_up_worker.py`/`appointment.py`'s own rotation call sites, which
+     never pass `expire_all_pending_generations=True`) silently ignored the
+     flag with no signal at all if it ever were requested there. Added a
+     `logger.warning` in that exact branch when `expire_all_pending_
+     generations` is `True` — matching this fix's own "surface a wiring bug
+     instead of hiding it" direction and this codebase's established
+     warn-don't-raise convention for rotation (already documented as
+     best-effort/self-healing in `ingest_message.py`'s own call site
+     comment) rather than raising, which would risk breaking either
+     existing bare-repository caller if one ever passed the flag by
+     mistake.
+     RED: `test_expire_all_pending_generations_without_a_repositories_
+     provider_warns_and_is_ignored` (`tests/unit/application/conversations/
+     test_rotate_workflow_session.py`) — failed on `assert False` (no
+     warning logged) before the fix.
+  Verification: `uv run pytest -q` → 1597 passed, 82 skipped, 5 failed (the
+  5 pre-declared known environmental failures only, confirmed by name: 4 in
+  `test_gateway_dependency.py`, 1 in `test_internal_eval_wiring.py`).
+  `uv run ruff check .` → all checks passed. `uv run ruff format --check`
+  on all 7 touched files → all formatted (one test file needed a
+  `ruff format` pass after the initial edit, reformatted and reverified).
+  `uv run mypy app` → one `union-attr` error surfaced mid-implementation
+  (referencing `existing_pending_action.action_type` through a ternary
+  mypy couldn't narrow from `pending_action_usable` alone) — fixed by
+  capturing `current_operation` once, inside the same `if` block where
+  `existing_pending_action` is still known non-`None`, instead of
+  re-deriving it later; final run: no issues (320 files).
+  Commit: b6b424c (code+tests).
+
 ## Next step
 
-Feature complete (T1, T2, T2b, T3, T4 all done). Optional follow-ups,
+Feature complete (T1, T2, T2b, T3, T4, T5 all done). Optional follow-ups,
 neither blocking, both pre-existing and unrelated to this feature's own
 diff: the `ruff format` drift in `openai_compatible_llm_provider.py`'s
 `DEFAULT_GENERATE_RESPONSE_PROMPT` (T3's note) and in
