@@ -786,6 +786,15 @@ option, so behavior is identical whichever the patient uses.
   files → already formatted. `uv run mypy app` → no issues (320 files).
   Commit: 4374949 (code+tests), <doc hash> (docs).
 
+- T9 review (review-212e691955e4a55a, approved, acknowledged). Recorded, not changed:
+  R3-new-conversation-rotation-unproven-across-units-of-work — in production the
+  rotation on the creating turn may not see the uncommitted new row and return False.
+  Harmless by design: the new row's generation is already seeded from the epoch second
+  (fresh checkpoint thread), and `pending_actions.conversation_id` is a hard FK without
+  cascade, so a recreated conversation cannot inherit prior pending actions. The
+  rotation stays as defense in depth. R3-stale-navigation-cross-node-test-assertion-weak
+  (suggestion) left as follow-up.
+
 ## Next step
 
 Feature complete (T1, T2, T2b, T3, T4, T5, T6, T7, T8, T9 all done). Optional
