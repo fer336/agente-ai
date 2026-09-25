@@ -94,6 +94,40 @@ async def test_staff_reply_is_forwarded_to_whatsapp(_fakes):
 
 
 @pytest.mark.asyncio
+async def test_staff_reply_pauses_the_bot_before_forwarding_and_syncs_the_label(_fakes):
+    messaging_gateway, chatwoot_gateway, conversation_repository = _fakes
+    conversation = await conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert conversation is not None
+    conversation.mode = "agent"
+    conversation.input_state = "FREE_INPUT"
+    await conversation_repository.save(conversation)
+
+    response = await _post_webhook(
+        {
+            "event": "message_created",
+            "message_type": "outgoing",
+            "content": "Te atiendo personalmente",
+            "conversation": {"id": 99},
+            "sender": {"id": 5, "type": "user"},
+        }
+    )
+
+    assert response.status_code == 200
+    updated = await conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert updated is not None
+    assert updated.mode == "human"
+    assert updated.input_state == "HUMAN"
+    assert chatwoot_gateway.labels_by_conversation == {"99": "administracion"}
+    assert messaging_gateway.sent_messages == [
+        (PhoneNumber("+5491122334455"), "Te atiendo personalmente")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bots_own_mirrored_message_is_ignored_not_forwarded(_fakes):
     messaging_gateway, _, _ = _fakes
 
@@ -145,6 +179,88 @@ async def test_non_resolved_status_change_is_ignored(_fakes):
     )
     assert conversation is not None
     assert conversation.mode == "human"
+
+
+@pytest.mark.asyncio
+async def test_administracion_label_pauses_the_bot(_fakes):
+    _, _, conversation_repository = _fakes
+    conversation = await conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert conversation is not None
+    conversation.mode = "agent"
+    conversation.input_state = "FREE_INPUT"
+    await conversation_repository.save(conversation)
+
+    response = await _post_webhook(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "label_list": {
+                        "previous_value": ["agente"],
+                        "current_value": ["administracion"],
+                    }
+                }
+            ],
+        }
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    updated = await conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert updated is not None
+    assert updated.mode == "human"
+    assert updated.input_state == "HUMAN"
+
+
+@pytest.mark.asyncio
+async def test_agente_label_reactivates_the_bot(_fakes):
+    _, chatwoot_gateway, conversation_repository = _fakes
+
+    response = await _post_webhook(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "label_list": {
+                        "previous_value": ["administracion"],
+                        "current_value": ["agente"],
+                    }
+                }
+            ],
+        }
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    updated = await conversation_repository.get_by_id(
+        ConversationId("ycloud-+5491122334455")
+    )
+    assert updated is not None
+    assert updated.mode == "agent"
+    assert updated.input_state == "FREE_INPUT"
+    assert chatwoot_gateway.labels_by_conversation == {"99": "agente"}
+
+
+@pytest.mark.asyncio
+async def test_unrelated_conversation_update_is_ignored(_fakes):
+    response = await _post_webhook(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {"assignee_id": {"previous_value": None, "current_value": 5}}
+            ],
+        }
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored"}
 
 
 @pytest.mark.asyncio

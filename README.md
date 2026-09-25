@@ -95,11 +95,42 @@ cp dotenv_example_template.txt .env
 `dotenv_example_template.txt` documents discrete settings — `APP_HOST`/`APP_PORT`
 (the FastAPI bind address, since the app can run on your own server, not only
 via docker-compose), `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_USER`/
-`POSTGRES_PASSWORD`/`POSTGRES_DB`, `REDIS_HOST`/`REDIS_PORT`, and
-`YCLOUD_API_URL`/`YCLOUD_API_KEY`/`YCLOUD_WEBHOOK_SECRET`/`YCLOUD_WHATSAPP_NUMBER`.
+`POSTGRES_PASSWORD`/`POSTGRES_DB`, `REDIS_HOST`/`REDIS_PORT`, the `YCLOUD_*`
+channel settings, and the optional `CHATWOOT_*` staff-inbox mirror settings.
 `DATABASE_URL` and `REDIS_URL` are derived automatically from those fields by
 `app.config.settings` — you don't need to set them directly. Edit `.env` if
 your Postgres/Redis run somewhere other than `localhost`.
+
+## Connect Chatwoot
+
+YCloud remains the patient-facing WhatsApp channel and source of truth. Chatwoot
+is a staff inbox mirror: it receives copies of patient and bot messages, forwards
+human replies back through YCloud, and controls handoff with conversation labels.
+
+1. Create or select a Chatwoot inbox and attach an Agent Bot.
+2. Create the labels `agente` and `administracion` in the Chatwoot account.
+3. Set every `CHATWOOT_*` value documented in `dotenv_example_template.txt`:
+   use a personal admin/agent API token for contact, conversation, and label
+   operations, and the separate Agent Bot token for bot-authored outgoing
+   messages.
+4. Create an **account-level** Chatwoot webhook for `message_created`,
+   `conversation_updated`, and `conversation_status_changed`, targeting:
+
+   ```text
+   https://<public-agent-host>/webhooks/chatwoot/<CHATWOOT_WEBHOOK_SECRET>
+   ```
+
+5. Run `alembic upgrade head` so the Chatwoot conversation mapping table exists,
+   then restart the application.
+
+When the agent hands off, the conversation switches to `administracion` while
+unrelated labels are preserved. Staff can also apply `administracion` manually
+before replying; that pauses the bot immediately. As a safety net, any public
+staff reply pauses the bot and synchronizes `administracion` before forwarding
+the message to WhatsApp. Resolving the Chatwoot conversation or applying `agente`
+reactivates the bot. Keep the webhook behind HTTPS; the route currently
+authenticates with the unguessable path secret and does not yet enforce
+`X-Chatwoot-Signature`.
 
 ## Start local services
 
