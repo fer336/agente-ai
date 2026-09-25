@@ -1,11 +1,14 @@
 from app.infrastructure.chatwoot.schemas import (
     ChatwootConversationStatusChangedEventPayload,
+    ChatwootConversationUpdatedEventPayload,
     ChatwootMessageCreatedEventPayload,
 )
 from app.infrastructure.chatwoot.webhook_parser import (
+    extract_control_label_change,
     extract_resolved_conversation_id,
     extract_staff_reply,
     is_conversation_status_changed_event,
+    is_conversation_updated_event,
     is_message_created_event,
 )
 
@@ -30,6 +33,11 @@ def test_is_message_created_event():
 def test_is_conversation_status_changed_event():
     assert is_conversation_status_changed_event("conversation_status_changed") is True
     assert is_conversation_status_changed_event("message_created") is False
+
+
+def test_is_conversation_updated_event():
+    assert is_conversation_updated_event("conversation_updated") is True
+    assert is_conversation_updated_event("message_created") is False
 
 
 def test_extract_staff_reply_returns_conversation_id_and_content_for_a_human_agent():
@@ -81,3 +89,57 @@ def test_extract_resolved_conversation_id_ignores_other_statuses():
     )
 
     assert extract_resolved_conversation_id(payload) is None
+
+
+def _updated_payload(labels: list[str]) -> ChatwootConversationUpdatedEventPayload:
+    return ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "label_list": {
+                        "previous_value": [],
+                        "current_value": labels,
+                    }
+                }
+            ],
+        }
+    )
+
+
+def test_extract_control_label_change_pauses_for_administracion():
+    assert extract_control_label_change(_updated_payload(["vip", "administracion"])) == (
+        "99",
+        "human",
+    )
+
+
+def test_extract_control_label_change_reactivates_for_agente():
+    assert extract_control_label_change(_updated_payload(["vip", "agente"])) == (
+        "99",
+        "agent",
+    )
+
+
+def test_extract_control_label_change_gives_administracion_precedence():
+    assert extract_control_label_change(_updated_payload(["agente", "administracion"])) == (
+        "99",
+        "human",
+    )
+
+
+def test_extract_control_label_change_ignores_unrelated_labels():
+    assert extract_control_label_change(_updated_payload(["vip"])) is None
+
+
+def test_extract_control_label_change_ignores_updates_without_label_changes():
+    payload = ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [{"status": {"current_value": "open"}}],
+        }
+    )
+
+    assert extract_control_label_change(payload) is None
