@@ -57,13 +57,18 @@ jobs:
           # higher bump.
           bump="none"
           while IFS= read -r subject; do
-            case "$subject" in
-              *"BREAKING CHANGE"*) bump="major" ;;
+            # Squash merges use the PR title as the commit subject. Normalize
+            # case and also accept GitHub's common branch-style PR titles
+            # (`Feat/...`, `Fix/...`) so a cosmetic title format cannot
+            # silently suppress a release.
+            normalized_subject=$(printf '%s' "$subject" | tr '[:upper:]' '[:lower:]')
+            case "$normalized_subject" in
+              *"breaking change"*) bump="major" ;;
               *"!:"*) bump="major" ;;
-              feat:*|feat\(*\):*)
+              feat:*|feat\(*\):*|feat/*)
                 if [ "$bump" != "major" ]; then bump="minor"; fi
                 ;;
-              fix:*|fix\(*\):*|perf:*|perf\(*\):*)
+              fix:*|fix\(*\):*|fix/*|perf:*|perf\(*\):*|perf/*)
                 if [ "$bump" = "none" ]; then bump="patch"; fi
                 ;;
             esac
