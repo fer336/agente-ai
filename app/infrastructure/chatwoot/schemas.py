@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # `sender.type` values (`"contact"`/`"agent_bot"`/`"user"`) are confirmed
 # live against this session's own real Chatwoot instance — see
@@ -43,3 +43,27 @@ class ChatwootConversationStatusChangedEventPayload(BaseModel):
     event: str = ""
     id: int = 0
     status: str = ""
+
+
+class ChatwootLabelListChange(BaseModel):
+    previous_value: list[str] = Field(default_factory=list)
+    current_value: list[str] = Field(default_factory=list)
+
+
+class ChatwootConversationChangedAttribute(BaseModel):
+    label_list: ChatwootLabelListChange | None = None
+
+
+class ChatwootConversationUpdatedEventPayload(BaseModel):
+    """Conversation-shaped update carrying the fields that changed.
+
+    Chatwoot represents label changes as one `changed_attributes` entry with
+    `label_list.previous_value` and `label_list.current_value`. Other update
+    keys are deliberately ignored by this narrow schema.
+    """
+
+    event: str = ""
+    id: int = 0
+    changed_attributes: list[ChatwootConversationChangedAttribute] = Field(
+        default_factory=list
+    )
