@@ -14,7 +14,10 @@ class ChatwootClient:
     `POST /conversations/{id}/labels` all confirmed against a running
     account, including the exact `sender.type` values Chatwoot returns
     (`"contact"`/`"agent_bot"`/`"user"`) and the 422 shape on a duplicate
-    `identifier`.
+    `identifier`. `GET /conversations/{id}/labels` is confirmed instead
+    against Chatwoot's published OpenAPI spec (`conversation_labels`
+    schema — `{"payload": [<label>, ...]}`), not against the live
+    instance.
 
     Two credentials are used for different calls — confirmed empirically,
     not assumed: `api_access_token` (a real agent/admin's personal token)
@@ -107,9 +110,23 @@ class ChatwootClient:
             {"content": content, "message_type": message_type},
         )
 
+    async def get_conversation_labels(self, conversation_id: str) -> list[str]:
+        """`GET /conversations/{id}/labels` — confirmed against Chatwoot's
+        published OpenAPI spec (`conversation_labels` schema, application
+        API group, `chatwoot/chatwoot` `develop` branch): returns
+        `{"payload": [<label>, ...]}`, the conversation's current label
+        set. Same `api_access_token` auth as `set_conversation_labels`."""
+        data = await self._request(
+            "GET", f"/conversations/{conversation_id}/labels", self._api_access_token
+        )
+        payload = data.get("payload") or []
+        return [str(label) for label in payload] if isinstance(payload, list) else []
+
     async def set_conversation_labels(self, conversation_id: str, labels: list[str]) -> None:
         """Overwrites the conversation's ENTIRE label set — confirmed:
-        Chatwoot's labels API is not additive."""
+        Chatwoot's labels API is not additive. Callers must pass the full
+        desired set (see `ChatwootConversationGateway`'s read-modify-write
+        around `get_conversation_labels`), not just the label being added."""
         await self._request(
             "POST",
             f"/conversations/{conversation_id}/labels",
@@ -118,7 +135,7 @@ class ChatwootClient:
         )
 
     async def _request(
-        self, method: str, path: str, token: str, json: dict[str, object]
+        self, method: str, path: str, token: str, json: dict[str, object] | None = None
     ) -> dict[str, object]:
         url = f"{self._base_url}/api/v1/accounts/{self._account_id}{path}"
         async with httpx.AsyncClient() as client:

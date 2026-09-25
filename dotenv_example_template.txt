@@ -24,6 +24,22 @@ YCLOUD_API_KEY=changeme
 YCLOUD_WEBHOOK_SECRET=changeme
 YCLOUD_WHATSAPP_NUMBER=
 
+# Chatwoot — staff inbox mirrored from the YCloud WhatsApp conversation.
+# CHATWOOT_API_ACCESS_TOKEN is a personal admin/agent token used for contacts,
+# conversations, incoming mirrors, and labels. CHATWOOT_AGENT_BOT_TOKEN is the
+# Agent Bot token used only for bot-authored outgoing mirror messages.
+CHATWOOT_BASE_URL=https://chatwoot.example.com
+CHATWOOT_ACCOUNT_ID=
+CHATWOOT_INBOX_ID=
+CHATWOOT_API_ACCESS_TOKEN=
+CHATWOOT_AGENT_BOT_TOKEN=
+# Random path secret used in /webhooks/chatwoot/{secret}.
+CHATWOOT_WEBHOOK_SECRET=changeme
+# Reserved for X-Chatwoot-Signature verification. The current route does not
+# enforce this header yet, so keep the account-level webhook protected by the
+# path secret and HTTPS.
+CHATWOOT_WEBHOOK_SIGNING_SECRET=
+
 # Publicly reachable image URL attached as a header on the welcome menu —
 # leave empty to send the welcome menu without one.
 WELCOME_IMAGE_URL=
