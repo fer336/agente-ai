@@ -16,12 +16,15 @@ class _StubChatwootClient:
         self,
         create_contact_raises: ChatwootAPIError | None = None,
         existing_contact: dict[str, object] | None = None,
+        labels_by_conversation: dict[str, list[str]] | None = None,
     ) -> None:
         self._create_contact_raises = create_contact_raises
         self._existing_contact = existing_contact
+        self._labels_by_conversation = labels_by_conversation or {}
         self.create_contact_calls: list[tuple[str, str, str]] = []
         self.find_contact_calls: list[str] = []
         self.labels_set: list[tuple[str, list[str]]] = []
+        self.get_labels_calls: list[str] = []
 
     async def create_contact(self, identifier: str, phone: str, name: str) -> dict[str, object]:
         self.create_contact_calls.append((identifier, phone, name))
@@ -41,6 +44,10 @@ class _StubChatwootClient:
 
     async def create_message(self, conversation_id: str, content: str, message_type: str) -> None:
         pass
+
+    async def get_conversation_labels(self, conversation_id: str) -> list[str]:
+        self.get_labels_calls.append(conversation_id)
+        return list(self._labels_by_conversation.get(conversation_id, []))
 
     async def set_conversation_labels(self, conversation_id: str, labels: list[str]) -> None:
         self.labels_set.append((conversation_id, labels))
@@ -103,20 +110,82 @@ async def test_find_or_create_contact_reraises_a_422_when_the_fallback_lookup_fi
 
 
 @pytest.mark.asyncio
-async def test_assign_administracion_sets_only_the_administracion_label():
+async def test_assign_administracion_sets_the_administracion_label_when_none_exists():
     client = _StubChatwootClient()
     gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
 
     await gateway.assign_administracion("chatwoot-conv-1")
 
+    assert client.get_labels_calls == ["chatwoot-conv-1"]
     assert client.labels_set == [("chatwoot-conv-1", ["administracion"])]
 
 
 @pytest.mark.asyncio
-async def test_assign_bot_sets_only_the_agente_label():
+async def test_assign_bot_sets_the_agente_label_when_none_exists():
     client = _StubChatwootClient()
     gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
 
     await gateway.assign_bot("chatwoot-conv-1")
 
+    assert client.get_labels_calls == ["chatwoot-conv-1"]
     assert client.labels_set == [("chatwoot-conv-1", ["agente"])]
+
+
+@pytest.mark.asyncio
+async def test_assign_administracion_preserves_unrelated_labels_and_drops_agente():
+    client = _StubChatwootClient(
+        labels_by_conversation={"chatwoot-conv-1": ["vip", "agente", "urgent"]}
+    )
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.assign_administracion("chatwoot-conv-1")
+
+    assert client.labels_set == [("chatwoot-conv-1", ["vip", "urgent", "administracion"])]
+
+
+@pytest.mark.asyncio
+async def test_assign_bot_preserves_unrelated_labels_and_drops_administracion():
+    client = _StubChatwootClient(
+        labels_by_conversation={"chatwoot-conv-1": ["vip", "administracion", "urgent"]}
+    )
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.assign_bot("chatwoot-conv-1")
+
+    assert client.labels_set == [("chatwoot-conv-1", ["vip", "urgent", "agente"])]
+
+
+@pytest.mark.asyncio
+async def test_assign_administracion_skips_the_write_when_already_the_current_state():
+    client = _StubChatwootClient(
+        labels_by_conversation={"chatwoot-conv-1": ["vip", "administracion"]}
+    )
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.assign_administracion("chatwoot-conv-1")
+
+    assert client.labels_set == []
+
+
+@pytest.mark.asyncio
+async def test_assign_bot_skips_the_write_when_already_the_current_state():
+    client = _StubChatwootClient(labels_by_conversation={"chatwoot-conv-1": ["vip", "agente"]})
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.assign_bot("chatwoot-conv-1")
+
+    assert client.labels_set == []
+
+
+@pytest.mark.asyncio
+async def test_assign_bot_removes_duplicate_labels_while_switching_control():
+    client = _StubChatwootClient(
+        labels_by_conversation={
+            "chatwoot-conv-1": ["vip", "vip", "administracion", "administracion"]
+        }
+    )
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.assign_bot("chatwoot-conv-1")
+
+    assert client.labels_set == [("chatwoot-conv-1", ["vip", "agente"])]

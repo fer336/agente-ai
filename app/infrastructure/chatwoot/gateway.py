@@ -7,9 +7,11 @@ from app.infrastructure.chatwoot.exceptions import ChatwootAPIError
 #: Label names already created on the real Chatwoot account this session
 #: (confirmed via the API, not guessed) — reused as-is rather than
 #: creating new ones. "agente" = bot control, "administracion" = escalated
-#: to a human. Both are the conversation's ENTIRE label set (Chatwoot's
-#: labels API replaces, not appends), so each assignment below is the
-#: complete desired state, not a delta.
+#: to a human. Chatwoot's labels API replaces the whole set rather than
+#: appending, so `assign_administracion`/`assign_bot` below read the
+#: conversation's current labels first and write back that same set with
+#: only the bot/administracion pair swapped — every other staff-applied
+#: label (e.g. "vip") survives the switch.
 _BOT_LABEL = "agente"
 _ADMINISTRACION_LABEL = "administracion"
 
@@ -59,9 +61,25 @@ class ChatwootConversationGateway:
         await self._client.create_message(chatwoot_conversation_id, text, "outgoing")
 
     async def assign_administracion(self, chatwoot_conversation_id: str) -> None:
-        await self._client.set_conversation_labels(
-            chatwoot_conversation_id, [_ADMINISTRACION_LABEL]
-        )
+        await self._replace_control_label(chatwoot_conversation_id, _ADMINISTRACION_LABEL)
 
     async def assign_bot(self, chatwoot_conversation_id: str) -> None:
-        await self._client.set_conversation_labels(chatwoot_conversation_id, [_BOT_LABEL])
+        await self._replace_control_label(chatwoot_conversation_id, _BOT_LABEL)
+
+    async def _replace_control_label(
+        self, chatwoot_conversation_id: str, desired_label: str
+    ) -> None:
+        current_labels = await self._client.get_conversation_labels(chatwoot_conversation_id)
+        control_labels = {_BOT_LABEL, _ADMINISTRACION_LABEL}
+
+        next_labels: list[str] = []
+        seen: set[str] = set()
+        for label in current_labels:
+            if label in control_labels or label in seen:
+                continue
+            next_labels.append(label)
+            seen.add(label)
+        next_labels.append(desired_label)
+
+        if next_labels != current_labels:
+            await self._client.set_conversation_labels(chatwoot_conversation_id, next_labels)
