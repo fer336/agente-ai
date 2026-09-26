@@ -116,7 +116,7 @@ async def receive_chatwoot_webhook(
             # operator forgot to apply `administracion` first.
             await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
             outgoing_content = (
-                f"Administracion\n| {content}" if is_administracion else content
+                f"`Administracion`\n`|` {content}" if is_administracion else content
             )
             await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
         except Exception:

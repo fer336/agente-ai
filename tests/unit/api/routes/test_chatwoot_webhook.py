@@ -111,7 +111,7 @@ async def test_administracion_reply_is_formatted_before_forwarding(_fakes):
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert messaging_gateway.sent_messages == [
-        (PhoneNumber("+5491122334455"), "Administracion\n| Te atiendo personalmente")
+        (PhoneNumber("+5491122334455"), "`Administracion`\n`|` Te atiendo personalmente")
     ]
 
 
