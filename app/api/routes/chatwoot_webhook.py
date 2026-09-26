@@ -106,10 +106,19 @@ async def receive_chatwoot_webhook(
         )
         forward_reply = ForwardChatwootReplyUseCase(messaging_gateway, mapping_repository)
         try:
+            # Read the control label before the safety-net handoff below. A
+            # reply written without `administracion` still pauses the bot, but
+            # must not be presented to the patient as an administrator reply.
+            is_administracion = await chatwoot_gateway.has_administracion_label(
+                chatwoot_conversation_id
+            )
             # Safety net: a genuine staff reply takes control even when the
             # operator forgot to apply `administracion` first.
             await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
-            await forward_reply.execute(chatwoot_conversation_id, content)
+            outgoing_content = (
+                f"Administracion\n| {content}" if is_administracion else content
+            )
+            await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
         except Exception:
             # Best-effort, same ack-and-drop stance as every branch in
             # `app.api.routes.webhook` — a lookup/send failure here must

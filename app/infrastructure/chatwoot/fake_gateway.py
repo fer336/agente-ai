@@ -45,6 +45,11 @@ class FakeChatwootGateway:
             raise RuntimeError("FakeChatwootGateway configured to fail")
         self.sent_outgoing.append((chatwoot_conversation_id, text))
 
+    async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:
+        if self._fail:
+            raise RuntimeError("FakeChatwootGateway configured to fail")
+        return self.labels_by_conversation.get(chatwoot_conversation_id) == "administracion"
+
     async def assign_administracion(self, chatwoot_conversation_id: str) -> None:
         if self._fail:
             raise RuntimeError("FakeChatwootGateway configured to fail")

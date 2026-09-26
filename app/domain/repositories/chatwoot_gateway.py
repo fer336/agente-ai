@@ -38,6 +38,11 @@ class ChatwootGateway(Protocol):
         agent's identity."""
         ...
 
+    async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:
+        """Returns whether this conversation is currently assigned to
+        `administracion`, without changing its labels."""
+        ...
+
     async def assign_administracion(self, chatwoot_conversation_id: str) -> None:
         """Labels the conversation "administracion" (escalated to a
         human) — replaces the conversation's whole label set."""

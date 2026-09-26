@@ -94,6 +94,28 @@ async def test_staff_reply_is_forwarded_to_whatsapp(_fakes):
 
 
 @pytest.mark.asyncio
+async def test_administracion_reply_is_formatted_before_forwarding(_fakes):
+    messaging_gateway, chatwoot_gateway, _ = _fakes
+    await chatwoot_gateway.assign_administracion("99")
+
+    response = await _post_webhook(
+        {
+            "event": "message_created",
+            "message_type": "outgoing",
+            "content": "Te atiendo personalmente",
+            "conversation": {"id": 99},
+            "sender": {"id": 5, "type": "user"},
+        }
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert messaging_gateway.sent_messages == [
+        (PhoneNumber("+5491122334455"), "Administracion\n| Te atiendo personalmente")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_staff_reply_pauses_the_bot_before_forwarding_and_syncs_the_label(_fakes):
     messaging_gateway, chatwoot_gateway, conversation_repository = _fakes
     conversation = await conversation_repository.get_by_id(
@@ -122,6 +144,8 @@ async def test_staff_reply_pauses_the_bot_before_forwarding_and_syncs_the_label(
     assert updated.mode == "human"
     assert updated.input_state == "HUMAN"
     assert chatwoot_gateway.labels_by_conversation == {"99": "administracion"}
+    # This reply did not carry `administracion` before the safety handoff;
+    # it pauses the bot but must retain its original patient-facing content.
     assert messaging_gateway.sent_messages == [
         (PhoneNumber("+5491122334455"), "Te atiendo personalmente")
     ]

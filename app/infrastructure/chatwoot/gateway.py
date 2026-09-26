@@ -60,6 +60,11 @@ class ChatwootConversationGateway:
     async def post_outgoing_message(self, chatwoot_conversation_id: str, text: str) -> None:
         await self._client.create_message(chatwoot_conversation_id, text, "outgoing")
 
+    async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:
+        return _ADMINISTRACION_LABEL in await self._client.get_conversation_labels(
+            chatwoot_conversation_id
+        )
+
     async def assign_administracion(self, chatwoot_conversation_id: str) -> None:
         await self._replace_control_label(chatwoot_conversation_id, _ADMINISTRACION_LABEL)
 

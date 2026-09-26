@@ -110,6 +110,18 @@ async def test_find_or_create_contact_reraises_a_422_when_the_fallback_lookup_fi
 
 
 @pytest.mark.asyncio
+async def test_has_administracion_label_reads_the_current_label_set():
+    client = _StubChatwootClient(
+        labels_by_conversation={"chatwoot-conv-1": ["vip", "administracion"]}
+    )
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    assert await gateway.has_administracion_label("chatwoot-conv-1") is True
+    assert await gateway.has_administracion_label("other-conversation") is False
+    assert client.get_labels_calls == ["chatwoot-conv-1", "other-conversation"]
+
+
+@pytest.mark.asyncio
 async def test_assign_administracion_sets_the_administracion_label_when_none_exists():
     client = _StubChatwootClient()
     gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
