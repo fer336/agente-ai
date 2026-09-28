@@ -7,6 +7,10 @@ import pytest
 
 import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
 import app.agent.nodes.appointment as appointment
+from app.agent.first_visit_intake_subgraph import (
+    FIRST_VISIT_CONFIRM_PAYLOAD,
+    FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+)
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
     _MAIN_MENU_RESET_MESSAGE,
@@ -27,6 +31,7 @@ from app.agent.nodes.appointment import (
     SELECT_SLOT_PAYLOAD_PREFIX,
     STAGE_AWAITING_APPOINTMENT_SELECTION,
     STAGE_AWAITING_CONFIRMATION,
+    STAGE_AWAITING_FIRST_VISIT_INTAKE,
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_NEW_PATIENT_DETAILS,
     STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
@@ -165,6 +170,60 @@ async def test_first_turn_shows_the_operation_menu():
 
 
 @pytest.mark.asyncio
+async def test_create_operation_enters_first_visit_intake_before_specialties():
+    node, _, _ = await _make_node_and_conversation()
+
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+
+    assert intake["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert {button.id for button in intake["response_buttons"]} == {
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    }
+
+    specialties = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
+
+    assert specialties["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert specialties["collected_data"]["first_visit_completed"] is True
+
+
+@pytest.mark.asyncio
+async def test_new_first_visit_stays_in_intake_while_collecting_required_data():
+    node, _, _ = await _make_node_and_conversation()
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+
+    collecting = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_CONFIRM_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
+
+    assert collecting["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert collecting["collected_data"]["first_visit_intake"]["stage"] == "collect"
+    assert "nombre y apellido" in collecting["response_text"].casefold()
+
+
+@pytest.mark.asyncio
 async def test_main_menu_button_mid_stage_resets_and_shows_a_distinct_message():
     # Regression: this used to be indistinguishable from the very first
     # message's generic "Qué querés hacer?" — the patient just abandoned a
@@ -221,7 +280,7 @@ async def test_a_welcome_list_operation_row_abandons_a_stale_stage_for_a_differe
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
 
 
@@ -280,7 +339,14 @@ async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
         collected_data={"specialty_mention": "ortodoncia", "operation_mention": "create"},
     )
 
-    result = await node(state)
+    intake = await node(state)
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
@@ -306,7 +372,14 @@ async def test_a_named_professional_skips_the_specialty_question_too():
         collected_data={"professional_mention": "Carlos Adahenao"},
     )
 
-    result = await node(state)
+    intake = await node(state)
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
@@ -344,7 +417,14 @@ async def test_offering_professionals_tells_the_llm_not_to_repeat_the_names():
         collected_data={"professional_mention": "Carlos Adahenao"},
     )
 
-    await node(state)
+    intake = await node(state)
+    await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
 
     assert any(context.intent == "choose_professional" for context in captured)
     choose_professional_context = next(c for c in captured if c.intent == "choose_professional")
@@ -362,7 +442,7 @@ async def test_a_stated_operation_skips_the_operation_menu():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
 
 
@@ -402,7 +482,7 @@ async def test_the_welcome_lists_create_row_skips_the_operation_menu():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
 
 
@@ -471,7 +551,7 @@ async def test_an_unmatched_specialty_mention_still_shows_the_menu():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_OPERATION_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
 
 
 @pytest.mark.asyncio
@@ -527,7 +607,14 @@ async def test_operation_menu_create_shows_the_numbered_specialty_list():
         collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
     )
 
-    result = await node(state)
+    intake = await node(state)
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
@@ -593,11 +680,18 @@ async def test_actual_create_route_shows_all_specialties_when_staffed_lookup_fai
         specialties=specialties, professionals=[]
     )
 
-    result = await node(
+    intake = await node(
         make_agent_state(
             conversation_id="conv-1",
             button_payload=OPERATION_CREATE_PAYLOAD,
             collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
         )
     )
 
@@ -765,7 +859,7 @@ async def test_stale_button_during_specialty_selection_is_treated_as_unrecognize
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(
         conversation_id="conv-1",
-        button_payload=OPERATION_CREATE_PAYLOAD,
+        button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
         collected_data={
             "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
             "operation": CREATE_APPOINTMENT_ACTION,
@@ -993,7 +1087,14 @@ async def test_specialty_and_professional_stages_leave_free_input():
         collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
     )
 
-    await node(state)
+    intake = await node(state)
+    await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+            collected_data=intake["collected_data"],
+        )
+    )
 
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
@@ -2216,8 +2317,8 @@ async def test_confirmation_stage_with_a_dangling_pending_action_routes_a_fresh_
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert result["response_list"] is not None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["response_buttons"] is not None
     assert result["pending_action_id"] is None
 
 
@@ -2238,8 +2339,8 @@ async def test_confirmation_stage_with_no_pending_action_id_routes_a_fresh_reque
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert result["response_list"] is not None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["response_buttons"] is not None
     assert result["pending_action_id"] is None
 
 
@@ -2375,8 +2476,8 @@ async def test_confirmation_stage_free_text_decline_with_no_pending_id_routes_a_
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert result["response_list"] is not None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["response_buttons"] is not None
     assert result["pending_action_id"] is None
 
 
@@ -2407,8 +2508,8 @@ async def test_confirmation_stage_expired_pending_action_row_routes_a_fresh_requ
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert result["response_list"] is not None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["response_buttons"] is not None
     assert result["pending_action_id"] is None
 
 
