@@ -11,6 +11,10 @@ from app.agent.appointment_decision_subgraph import (
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
+from app.agent.first_visit_intake_subgraph import (
+    FirstVisitIntakeState,
+    build_first_visit_intake_graph,
+)
 
 #: Re-exported for backward compatibility: `specialties.py`/tests import
 #: `SELECT_SLOT_PAYLOAD_PREFIX` from this module. The `as`-self-alias is
@@ -143,6 +147,7 @@ _STAFFED_SPECIALTY_TIMEOUT = timedelta(seconds=8)
 #: stage is set at all (routing any button/free-text turn straight back
 #: here, PRD.md §24.2); this node alone interprets which one.
 STAGE_AWAITING_OPERATION_SELECTION = "awaiting_operation_selection"
+STAGE_AWAITING_FIRST_VISIT_INTAKE = "awaiting_first_visit_intake"
 #: Booking a NEW appointment starts here (this session's brief): the
 #: patient picks a specialty, then one of that specialty's professionals,
 #: and only then sees real availability. Both are numbered TEXT lists,
@@ -1158,6 +1163,7 @@ def create_appointment_node(
         conversation_repository=conversation_repository,
         llm_provider=llm_provider,
     )
+    first_visit_intake_graph = build_first_visit_intake_graph()
 
     async def _ask_identification_message(
         conversation_id: ConversationId,
@@ -1451,6 +1457,82 @@ def create_appointment_node(
                 "specialties_page": page,
             },
         }
+
+    async def _delegate_to_first_visit_intake(
+        state: AgentState, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Run one intake turn through a narrow, persistence-free projection."""
+        intake_data = cast(dict[str, object], collected_data.get("first_visit_intake", {}))
+        intake_state = cast(
+            FirstVisitIntakeState,
+            {
+                "user_message": state["user_message"],
+                "button_payload": state["button_payload"],
+                "stage": intake_data.get("stage", "offer"),
+                "details": intake_data.get("details", {}),
+                "editing_field": intake_data.get("editing_field"),
+            },
+        )
+        result = await first_visit_intake_graph.ainvoke(intake_state)
+        conversation_id = ConversationId(state["conversation_id"])
+
+        if result.get("next_action") == "specialties":
+            resumed_data = {
+                key: value
+                for key, value in collected_data.items()
+                if key not in {"first_visit_intake", "stage"}
+            }
+            resumed_state = cast(
+                AgentState,
+                {
+                    **state,
+                    "button_payload": None,
+                    "collected_data": {
+                        **resumed_data,
+                        "operation": CREATE_APPOINTMENT_ACTION,
+                        "operation_mention": "create",
+                        "first_visit_completed": True,
+                    },
+                },
+            )
+            return await node(resumed_state)
+
+        if result.get("next_action") == "persist":
+            result = {
+                **result,
+                "stage": "review",
+                "next_action": "none",
+                "ready_to_persist": False,
+                "response_text": (
+                    "Tus datos quedaron confirmados. El alta se completará antes de "
+                    "mostrarte las especialidades."
+                ),
+                "response_buttons": None,
+            }
+
+        response_buttons = result.get("response_buttons")
+        await set_conversation_input_state.execute(
+            conversation_id,
+            INTERACTIVE_SELECTION if response_buttons else FREE_INPUT,
+        )
+        persisted_intake = {
+            key: value
+            for key, value in result.items()
+            if key not in {"response_text", "response_buttons"}
+        }
+        updates: dict[str, object] = {
+            "response_text": result.get("response_text"),
+            "response_buttons": response_buttons,
+            "requires_handoff": False,
+            "pending_action_id": None,
+            "collected_data": {
+                **collected_data,
+                "operation": CREATE_APPOINTMENT_ACTION,
+                "stage": STAGE_AWAITING_FIRST_VISIT_INTAKE,
+                "first_visit_intake": persisted_intake,
+            },
+        }
+        return updates
 
     async def _offer_professionals(
         conversation_id: ConversationId,
@@ -3472,6 +3554,9 @@ def create_appointment_node(
                 "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
             }
 
+        if stage == STAGE_AWAITING_FIRST_VISIT_INTAKE:
+            return await _delegate_to_first_visit_intake(state, collected_data)
+
         if stage == STAGE_AWAITING_SPECIALTY_SELECTION:
             # Fully owned by `app.agent.appointment_decision_subgraph` (PR 2)
             # — offering, pagination (`LIST_MORE`/`LIST_BACK`), valid/invalid/
@@ -3518,16 +3603,11 @@ def create_appointment_node(
                     "requires_handoff": False,
                 }
             if operation == CREATE_APPOINTMENT_ACTION:
-                # Booking a new appointment now starts from the specialty
-                # (this session's brief). Reschedule/cancel keep asking
-                # for identification first: both begin by listing THIS
-                # patient's own appointments, and Dentalink has no way to
-                # do that without knowing who the patient is.
-                return await _offer_specialties(
-                    conversation_id,
-                    {**collected_data, "operation": operation},
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                # New bookings must decide first-visit status before any
+                # specialty selection. Reschedule/cancel keep their existing
+                # identification-first behavior unchanged.
+                return await _delegate_to_first_visit_intake(
+                    state, {**collected_data, "operation": operation}
                 )
             return await _begin_identification(
                 conversation_id,
@@ -3550,6 +3630,16 @@ def create_appointment_node(
             else _OPERATION_BY_MENTION.get(str(collected_data.get("operation_mention") or ""))
         )
         specialty_mention = collected_data.get("specialty_mention")
+        professional_mention = collected_data.get("professional_mention")
+
+        if not collected_data.get("first_visit_completed") and (
+            operation == CREATE_APPOINTMENT_ACTION
+            or specialty_mention is not None
+            or professional_mention is not None
+        ):
+            return await _delegate_to_first_visit_intake(
+                state, {**collected_data, "operation": CREATE_APPOINTMENT_ACTION}
+            )
 
         if specialty_mention is not None:
             specialties = await list_specialties.execute()
@@ -3567,7 +3657,6 @@ def create_appointment_node(
                     state["contact_memory_summary"],
                 )
 
-        professional_mention = collected_data.get("professional_mention")
         if professional_mention is not None:
             # A patient who names a professional directly ("quiero un
             # turno con el doctor Carlos Adahenao") knows exactly who they
@@ -3623,15 +3712,10 @@ def create_appointment_node(
 
         if operation == CREATE_APPOINTMENT_ACTION:
             create_context = {**collected_data, "operation": operation}
-            if should_use_appointment_decision_subgraph(None, create_context):
+            if collected_data.get("first_visit_completed"):
                 result = await _delegate_to_decision_subgraph(state, create_context)
             else:
-                result = await _offer_specialties(
-                    conversation_id,
-                    create_context,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                result = await _delegate_to_first_visit_intake(state, create_context)
             if returned_to_main_menu:
                 # A `pending_action_id` only ever means anything at
                 # `STAGE_AWAITING_CONFIRMATION` (the confirm/reject branch
