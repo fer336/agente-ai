@@ -12,6 +12,9 @@ from app.agent.appointment_decision_subgraph import (
     build_appointment_decision_graph,
 )
 from app.agent.first_visit_intake_subgraph import (
+    FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
+    FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+    FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
     FirstVisitIntakeState,
     build_first_visit_intake_graph,
 )
@@ -71,6 +74,7 @@ from app.application.patients.identify_patient import IdentifyPatientUseCase
 from app.application.pending_actions.confirm_pending_action import ConfirmPendingActionUseCase
 from app.application.pending_actions.reject_pending_action import RejectPendingActionUseCase
 from app.application.specialties.list_specialties import ListSpecialtiesUseCase
+from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
@@ -533,6 +537,34 @@ async def _extract_identification_pieces(
     if not stripped:
         return None, None
     return await _extract_full_name(llm_provider, stripped), None
+
+
+def _match_intake_agreement(
+    coverage: str, agreements: list[Agreement]
+) -> tuple[Agreement | None, str]:
+    """Match the longest insurer-name prefix and keep the remaining plan local."""
+    normalized_coverage = " ".join(coverage.strip().casefold().split())
+    matches = [
+        agreement
+        for agreement in agreements
+        if normalized_coverage == " ".join(agreement.name.strip().casefold().split())
+        or normalized_coverage.startswith(
+            f"{' '.join(agreement.name.strip().casefold().split())} "
+        )
+    ]
+    if not matches:
+        return None, ""
+    agreement = max(matches, key=lambda candidate: len(candidate.name.strip()))
+    plan = coverage.strip()[len(agreement.name.strip()) :].strip(" ,-|")
+    return agreement, plan
+
+
+def _intake_phone(value: str) -> PhoneNumber:
+    """Normalize an explicitly entered Argentine phone to the E.164 value object."""
+    digits = "".join(character for character in value if character.isdigit())
+    if value.strip().startswith("+") or digits.startswith("54"):
+        return PhoneNumber(f"+{digits}")
+    return PhoneNumber(f"+54{digits}")
 
 
 def _extract_new_patient_details(
@@ -1338,9 +1370,19 @@ def create_appointment_node(
         result = await appointment_decision_graph.ainvoke(decision_state)
 
         if result.get("exit_reason") == "begin_identification":
+            result_data = cast(dict[str, object], result["collected_data"])
+            intake_patient = cast(dict[str, object] | None, result_data.get("patient"))
+            if result_data.get("first_visit_completed") and intake_patient is not None:
+                return await _propose_selected_slot(
+                    conversation_id,
+                    intake_patient,
+                    result_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
             return await _begin_identification(
                 conversation_id,
-                cast(dict[str, object], result["collected_data"]),
+                result_data,
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
@@ -1461,7 +1503,7 @@ def create_appointment_node(
     async def _delegate_to_first_visit_intake(
         state: AgentState, collected_data: dict[str, object]
     ) -> dict[str, object]:
-        """Run one intake turn through a narrow, persistence-free projection."""
+        """Run one intake turn and persist only after complete explicit confirmation."""
         intake_data = cast(dict[str, object], collected_data.get("first_visit_intake", {}))
         intake_state = cast(
             FirstVisitIntakeState,
@@ -1498,17 +1540,158 @@ def create_appointment_node(
             return await node(resumed_state)
 
         if result.get("next_action") == "persist":
-            result = {
-                **result,
-                "stage": "review",
-                "next_action": "none",
-                "ready_to_persist": False,
-                "response_text": (
-                    "Tus datos quedaron confirmados. El alta se completará antes de "
-                    "mostrarte las especialidades."
-                ),
-                "response_buttons": None,
-            }
+            details = cast(dict[str, str], result.get("details", {}))
+            coverage = details["coverage"]
+            try:
+                agreements = await agreement_gateway.list_agreements()
+            except Exception as exc:  # noqa: BLE001 -- external gateway boundary
+                logger.warning("first-visit agreement lookup failed", exc_info=exc)
+                result = {
+                    **result,
+                    "stage": "review",
+                    "next_action": "none",
+                    "ready_to_persist": False,
+                    "response_text": (
+                        "No pudimos validar tu obra social en este momento. "
+                        "Podés volver a intentar o modificar ese dato."
+                    ),
+                    "response_buttons": [
+                        InteractiveButton(
+                            id=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD, title="✅ Reintentar"
+                        ),
+                        InteractiveButton(
+                            id=FIRST_VISIT_REVIEW_MODIFY_PAYLOAD, title="✏️ Modificar"
+                        ),
+                        InteractiveButton(
+                            id=FIRST_VISIT_REVIEW_CANCEL_PAYLOAD, title="❌ Cancelar"
+                        ),
+                    ],
+                }
+            else:
+                agreement, plan = _match_intake_agreement(coverage, agreements)
+                if agreement is None:
+                    result = {
+                        **result,
+                        "stage": "collect",
+                        "editing_field": "coverage",
+                        "next_action": "none",
+                        "ready_to_persist": False,
+                        "response_text": (
+                            "No encontramos esa obra social. Escribila nuevamente junto con "
+                            "el plan, por ejemplo: OSDE 210."
+                        ),
+                        "response_buttons": None,
+                    }
+                else:
+                    try:
+                        new_patient = await patient_gateway.create_patient(
+                            details["full_name"],
+                            details["dni"],
+                            _intake_phone(details["phone"]),
+                        )
+                    except PatientAlreadyExistsError:
+                        recovered = await identify_patient.execute(
+                            details["full_name"], details["dni"]
+                        )
+                        if recovered is None:
+                            result = {
+                                **result,
+                                "stage": "collect",
+                                "editing_field": "dni",
+                                "next_action": "none",
+                                "ready_to_persist": False,
+                                "response_text": (
+                                    "Ese DNI ya está registrado con otros datos. "
+                                    "Por favor, ingresalo nuevamente."
+                                ),
+                                "response_buttons": None,
+                            }
+                            new_patient = None
+                        else:
+                            new_patient = recovered
+                    except Exception as exc:  # noqa: BLE001 -- external gateway boundary
+                        logger.warning("first-visit patient creation failed", exc_info=exc)
+                        result = {
+                            **result,
+                            "stage": "review",
+                            "next_action": "none",
+                            "ready_to_persist": False,
+                            "response_text": (
+                                "No pudimos completar el alta en este momento. "
+                                "Tus datos siguen guardados para que vuelvas a intentar."
+                            ),
+                            "response_buttons": [
+                                InteractiveButton(
+                                    id=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+                                    title="✅ Reintentar",
+                                ),
+                                InteractiveButton(
+                                    id=FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
+                                    title="✏️ Modificar",
+                                ),
+                                InteractiveButton(
+                                    id=FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
+                                    title="❌ Cancelar",
+                                ),
+                            ],
+                        }
+                        new_patient = None
+
+                    if new_patient is not None:
+                        try:
+                            await agreement_gateway.link_patient_agreement(
+                                new_patient.id, agreement.id
+                            )
+                        except Exception as exc:  # noqa: BLE001 -- external gateway boundary
+                            logger.warning("first-visit agreement linking failed", exc_info=exc)
+                            result = {
+                                **result,
+                                "stage": "review",
+                                "next_action": "none",
+                                "ready_to_persist": False,
+                                "response_text": (
+                                    "El alta quedó pendiente porque no pudimos vincular tu obra "
+                                    "social. Podés volver a intentar sin cargar todo otra vez."
+                                ),
+                                "response_buttons": [
+                                    InteractiveButton(
+                                        id=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+                                        title="✅ Reintentar",
+                                    ),
+                                    InteractiveButton(
+                                        id=FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
+                                        title="✏️ Modificar",
+                                    ),
+                                    InteractiveButton(
+                                        id=FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
+                                        title="❌ Cancelar",
+                                    ),
+                                ],
+                            }
+                        else:
+                            resumed_data = {
+                                key: value
+                                for key, value in collected_data.items()
+                                if key not in {"first_visit_intake", "stage"}
+                            }
+                            resumed_state = cast(
+                                AgentState,
+                                {
+                                    **state,
+                                    "button_payload": None,
+                                    "collected_data": {
+                                        **resumed_data,
+                                        "operation": CREATE_APPOINTMENT_ACTION,
+                                        "operation_mention": "create",
+                                        "first_visit_completed": True,
+                                        "first_visit_details": details,
+                                        "insurance_provider": agreement.name,
+                                        "insurance_plan": plan,
+                                        "patient": _patient_to_primitives(new_patient),
+                                    },
+                                },
+                            )
+                            return await node(resumed_state)
 
         response_buttons = result.get("response_buttons")
         await set_conversation_input_state.execute(
