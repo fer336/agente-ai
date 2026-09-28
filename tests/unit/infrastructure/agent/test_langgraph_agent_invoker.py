@@ -5,6 +5,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
+from app.agent.first_visit_intake_subgraph import (
+    FIRST_VISIT_CONFIRM_PAYLOAD,
+    FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+)
 from app.agent.graph import compile_graph
 from app.agent.nodes.appointment import (
     CANCEL_APPOINTMENT_ACTION,
@@ -13,9 +17,9 @@ from app.agent.nodes.appointment import (
     RESCHEDULE_APPOINTMENT_ACTION,
     STAGE_AWAITING_APPOINTMENT_SELECTION,
     STAGE_AWAITING_CONFIRMATION,
+    STAGE_AWAITING_FIRST_VISIT_INTAKE,
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_SLOT_SELECTION,
-    STAGE_AWAITING_SPECIALTY_SELECTION,
 )
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF
@@ -446,6 +450,12 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
     await invoker.handle(
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
     )
+    await invoker.handle(
+        ConversationId("conv-1"),
+        ["msg-2b"],
+        "",
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -511,6 +521,12 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
     await invoker.handle(
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
+    )
+    await invoker.handle(
+        ConversationId("conv-1"),
+        ["msg-2b"],
+        "",
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
     )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
@@ -587,6 +603,12 @@ async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
     await invoker.handle(
         ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
+    )
+    await invoker.handle(
+        ConversationId("conv-1"),
+        ["msg-2b"],
+        "",
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
     )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
@@ -812,7 +834,7 @@ async def test_handle_does_not_seed_fresh_restart_when_the_flag_is_absent():
 
 
 @pytest.mark.asyncio
-async def test_operation_create_payload_from_the_fallback_button_opens_the_specialty_list():
+async def test_operation_create_payload_from_fallback_opens_first_visit_intake():
     # T3(a) of the fallback-menu-buttons change: `fallback.py`'s new
     # "📅 Agendar una cita" button carries `OPERATION_CREATE_PAYLOAD` — the
     # exact payload sent here, with no prior `collected_data["stage"]` set,
@@ -836,10 +858,13 @@ async def test_operation_create_payload_from_the_fallback_button_opens_the_speci
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert messaging_gateway.sent_buttons == []
-    assert len(messaging_gateway.sent_lists) == 1
-    _, _, list_message = messaging_gateway.sent_lists[0]
-    assert "Ortodoncia" in list_message.rows[0].title
+    assert len(messaging_gateway.sent_buttons) == 1
+    _, _, buttons, _ = messaging_gateway.sent_buttons[0]
+    assert {button.id for button in buttons} == {
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    }
+    assert messaging_gateway.sent_lists == []
 
 
 @pytest.mark.asyncio
@@ -866,7 +891,7 @@ async def test_operation_create_payload_from_the_fallback_button_opens_the_speci
     ],
     ids=["slot_selection", "identification", "appointment_selection_cancel"],
 )
-async def test_operation_create_from_a_lingering_stage_still_opens_the_specialty_list(
+async def test_operation_create_from_a_lingering_stage_opens_first_visit_intake(
     stale_stage: str, stale_collected_data: dict[str, object]
 ) -> None:
     # T4(a): a review finding on this same branch — `fallback.py` preserves
@@ -927,12 +952,15 @@ async def test_operation_create_from_a_lingering_stage_still_opens_the_specialty
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert messaging_gateway.sent_buttons == []
-    assert len(messaging_gateway.sent_lists) == 1
-    _, _, list_message = messaging_gateway.sent_lists[0]
-    assert "Ortodoncia" in list_message.rows[0].title
+    assert len(messaging_gateway.sent_buttons) == 1
+    _, _, buttons, _ = messaging_gateway.sent_buttons[0]
+    assert {button.id for button in buttons} == {
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    }
+    assert messaging_gateway.sent_lists == []
     snapshot = await seeding_graph.aget_state(thread_config)
-    assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert snapshot.values["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
 
 
@@ -996,8 +1024,13 @@ async def test_operation_create_from_a_lingering_confirmation_drops_the_stale_pe
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert messaging_gateway.sent_buttons == []
-    assert len(messaging_gateway.sent_lists) == 1
+    assert len(messaging_gateway.sent_buttons) == 1
+    _, _, buttons, _ = messaging_gateway.sent_buttons[0]
+    assert {button.id for button in buttons} == {
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    }
+    assert messaging_gateway.sent_lists == []
     snapshot = await seeding_graph.aget_state(thread_config)
-    assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert snapshot.values["pending_action_id"] is None
