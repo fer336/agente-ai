@@ -115,7 +115,7 @@ async def receive_chatwoot_webhook(
             # Safety net: a genuine staff reply takes control even when the
             # operator forgot to apply `administracion` first.
             await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
-            outgoing_content = f"`| Administración:` {content}" if is_administracion else content
+            outgoing_content = f"> Administración\n{content}" if is_administracion else content
             await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
         except Exception:
             # Best-effort, same ack-and-drop stance as every branch in
