@@ -10,6 +10,9 @@ import app.agent.nodes.appointment as appointment
 from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CONFIRM_PAYLOAD,
     FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
+    FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+    FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
 )
 from app.agent.nodes.appointment import (
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
@@ -116,6 +119,8 @@ async def _make_node_and_conversation(
     llm_provider=None,
     specialties=None,
     agreements=None,
+    patient_gateway=None,
+    agreement_gateway=None,
     verification_flow_id="",
     registration_flow_id="",
 ):
@@ -129,7 +134,8 @@ async def _make_node_and_conversation(
     )
     node = create_appointment_node(
         appointment_gateway=appointment_gateway,
-        patient_gateway=make_patient_gateway(
+        patient_gateway=patient_gateway
+        or make_patient_gateway(
             patients=patients
             if patients is not None
             else [make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
@@ -146,7 +152,7 @@ async def _make_node_and_conversation(
             if specialties is not None
             else [make_specialty(id_="cleaning", name="Ortodoncia")]
         ),
-        agreement_gateway=make_agreement_gateway(agreements=agreements),
+        agreement_gateway=agreement_gateway or make_agreement_gateway(agreements=agreements),
         verification_flow_id=verification_flow_id,
         registration_flow_id=registration_flow_id,
     )
@@ -221,6 +227,106 @@ async def test_new_first_visit_stays_in_intake_while_collecting_required_data():
     assert collecting["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert collecting["collected_data"]["first_visit_intake"]["stage"] == "collect"
     assert "nombre y apellido" in collecting["response_text"].casefold()
+
+
+async def _complete_new_patient_intake(node, coverage: str = "OSDE 210"):
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_CONFIRM_PAYLOAD,
+            collected_data=result["collected_data"],
+        )
+    )
+    for value in ("Ana Pérez", "30123457", "+54 9 11 9876 5432", coverage):
+        result = await node(
+            make_agent_state(
+                conversation_id="conv-1",
+                user_message=value,
+                collected_data=result["collected_data"],
+            )
+        )
+    return await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+            collected_data=result["collected_data"],
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirmed_first_visit_creates_patient_links_insurer_then_offers_specialties():
+    patient_gateway = make_patient_gateway(patients=[])
+    agreement = make_agreement(id_="osde", name="OSDE")
+    agreement_gateway = make_agreement_gateway(agreements=[agreement])
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=agreement_gateway,
+    )
+
+    result = await _complete_new_patient_intake(node)
+
+    patient = await patient_gateway.find_patient("Ana Pérez", "30123457")
+    assert patient is not None
+    assert patient.phone.value == "+5491198765432"
+    assert await agreement_gateway.get_patient_agreements(patient.id) == [agreement]
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["insurance_provider"] == "OSDE"
+    assert result["collected_data"]["insurance_plan"] == "210"
+    assert result["collected_data"]["patient"]["id"] == patient.id
+
+
+@pytest.mark.asyncio
+async def test_unmatched_first_visit_insurer_does_not_create_patient_or_advance():
+    patient_gateway = make_patient_gateway(patients=[])
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=make_agreement_gateway(agreements=[]),
+    )
+
+    result = await _complete_new_patient_intake(node, coverage="Unknown Health 42")
+
+    assert await patient_gateway.find_patient("Ana Pérez", "30123457") is None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    intake = result["collected_data"]["first_visit_intake"]
+    assert intake["stage"] == "collect"
+    assert intake["editing_field"] == "coverage"
+    assert "No encontramos esa obra social" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_agreement_link_failure_keeps_confirmed_intake_retryable():
+    patient_gateway = make_patient_gateway(patients=[])
+    agreement_gateway = make_agreement_gateway(
+        agreements=[make_agreement(id_="osde", name="OSDE")]
+    )
+    agreement_gateway.link_patient_agreement = AsyncMock(side_effect=RuntimeError("unavailable"))
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=agreement_gateway,
+    )
+
+    result = await _complete_new_patient_intake(node)
+
+    assert await patient_gateway.find_patient("Ana Pérez", "30123457") is not None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["collected_data"]["first_visit_intake"]["stage"] == "review"
+    assert "no pudimos vincular" in result["response_text"].casefold()
+    assert {button.id for button in result["response_buttons"]} == {
+        FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+        FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
+        FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
+    }
 
 
 @pytest.mark.asyncio
