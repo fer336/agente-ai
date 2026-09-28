@@ -47,7 +47,10 @@ async def test_specialty_offering_sends_a_paginated_list_message():
     state = make_agent_state(
         conversation_id="conv-1",
         button_payload="OPERATION_CREATE",
-        collected_data={"operation": CREATE_APPOINTMENT_ACTION},
+        collected_data={
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "first_visit_completed": True,
+        },
     )
 
     result = await node(state)
@@ -124,7 +127,10 @@ async def test_single_page_specialty_list_has_no_ver_mas():
     state = make_agent_state(
         conversation_id="conv-1",
         button_payload="OPERATION_CREATE",
-        collected_data={"operation": CREATE_APPOINTMENT_ACTION},
+        collected_data={
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "first_visit_completed": True,
+        },
     )
 
     result = await node(state)
