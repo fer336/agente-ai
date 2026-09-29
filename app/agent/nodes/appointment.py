@@ -559,6 +559,20 @@ def _match_intake_agreement(
     return agreement, plan
 
 
+def _known_intake_details(collected_data: dict[str, object]) -> dict[str, str]:
+    """Full name and DNI already known from an identified patient (or a
+    partial identification), so the first-visit intake never asks for them."""
+    patient = cast(dict[str, object] | None, collected_data.get("patient"))
+    full_name = (patient or {}).get("full_name") or collected_data.get("identification_full_name")
+    dni = (patient or {}).get("dni") or collected_data.get("identification_dni")
+    known: dict[str, str] = {}
+    if isinstance(full_name, str) and full_name.strip():
+        known["full_name"] = full_name.strip()
+    if isinstance(dni, str) and dni.strip():
+        known["dni"] = dni.strip()
+    return known
+
+
 def _intake_phone(value: str) -> PhoneNumber:
     """Normalize an explicitly entered Argentine phone to the E.164 value object."""
     digits = "".join(character for character in value if character.isdigit())
@@ -1511,7 +1525,10 @@ def create_appointment_node(
                 "user_message": state["user_message"],
                 "button_payload": state["button_payload"],
                 "stage": intake_data.get("stage", "offer"),
-                "details": intake_data.get("details", {}),
+                "details": {
+                    **_known_intake_details(collected_data),
+                    **cast(dict[str, str], intake_data.get("details", {})),
+                },
                 "editing_field": intake_data.get("editing_field"),
             },
         )
@@ -2002,7 +2019,10 @@ def create_appointment_node(
                 "response_buttons": None,
                 "requires_handoff": False,
                 "pending_action_id": None,
-                "collected_data": {},
+                # Only the stale operation stage is dropped: the identified
+                # patient stays so a follow-up "quiero sacar uno" never asks
+                # again for the name/DNI that were just verified.
+                "collected_data": {"patient": patient},
             }
 
         professionals = await appointment_gateway.list_professionals()

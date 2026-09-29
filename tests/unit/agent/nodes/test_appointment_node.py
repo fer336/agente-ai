@@ -2893,11 +2893,53 @@ async def test_identification_stage_reports_no_appointments_for_cancel():
 
     result = await node(state)
 
-    assert result["collected_data"] == {}
+    assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES}
     assert result["response_text"] == "[fake-response for intent=no_appointments]"
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "FREE_INPUT"
+
+
+@pytest.mark.asyncio
+async def test_no_appointments_keeps_identity_and_clears_the_stale_operation_stage():
+    node, _, _ = await _make_node_and_conversation()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Juan Perez, 30123456",
+            collected_data={
+                "stage": STAGE_AWAITING_IDENTIFICATION,
+                "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            },
+        )
+    )
+
+    kept = result["collected_data"]
+    assert kept["patient"]["full_name"] == "Juan Perez"
+    assert kept["patient"]["dni"] == "30123456"
+    assert "stage" not in kept
+    assert "operation" not in kept
+
+
+@pytest.mark.asyncio
+async def test_first_visit_intake_is_prefilled_from_the_identified_patient():
+    node, _, _ = await _make_node_and_conversation()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Puedo sacar uno ?",
+            collected_data={
+                "patient": _PATIENT_PRIMITIVES,
+                "operation_mention": "create",
+            },
+        )
+    )
+
+    intake = result["collected_data"]["first_visit_intake"]
+    assert intake["details"]["full_name"] == "Juan Perez"
+    assert intake["details"]["dni"] == "30123456"
 
 
 @pytest.mark.asyncio
