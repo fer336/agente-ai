@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 from uuid import uuid4
 
 from app.domain.entities.agent_run import AgentRun
@@ -30,6 +31,27 @@ EVAL_CONTACT_ID = "eval-contact"
 EVAL_PHONE = PhoneNumber("+5490000000000")
 
 
+@dataclass(frozen=True)
+class EvalOption:
+    """One tappable option of an interactive reply: a reply button or a list row."""
+
+    id: str
+    title: str
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class EvalFlow:
+    """Marker for a WhatsApp Flow reply."""
+
+    flow_id: str
+    screen_id: str
+    cta: str
+
+
+ReplyKind = Literal["text", "buttons", "list", "flow"]
+
+
 @dataclass
 class ChatTurnResult:
     """One evaluated turn's observable outcome — what Promptfoo's custom
@@ -42,6 +64,20 @@ class ChatTurnResult:
     agent_run: AgentRun | None
     node_executions: list[NodeExecution]
     tool_executions: list[ToolExecution]
+    #: What the patient saw: plain text or one of the interactive kinds.
+    reply_kind: ReplyKind | None = None
+    buttons: list[EvalOption] = field(default_factory=list)
+    list_rows: list[EvalOption] = field(default_factory=list)
+    flow: EvalFlow | None = None
+
+
+@dataclass
+class _Reply:
+    text: str | None = None
+    kind: ReplyKind | None = None
+    buttons: list[EvalOption] = field(default_factory=list)
+    list_rows: list[EvalOption] = field(default_factory=list)
+    flow: EvalFlow | None = None
 
 
 class EvaluateChatTurnUseCase:
@@ -76,7 +112,11 @@ class EvaluateChatTurnUseCase:
         self._messaging_gateway = messaging_gateway
 
     async def execute(
-        self, conversation_id: ConversationId, message: str, now: datetime
+        self,
+        conversation_id: ConversationId,
+        message: str,
+        now: datetime,
+        button_payload: str | None = None,
     ) -> ChatTurnResult:
         await self._ensure_eval_contact()
         await self._ensure_conversation(conversation_id, now)
@@ -91,7 +131,7 @@ class EvaluateChatTurnUseCase:
         )
         await self._messages.save(inbound)
 
-        await self._agent_invoker.handle(conversation_id, [inbound.id], message, None)
+        await self._agent_invoker.handle(conversation_id, [inbound.id], message, button_payload)
 
         agent_run = await self._agent_runs.get_latest_by_conversation_id(conversation_id)
         node_executions: list[NodeExecution] = []
@@ -100,28 +140,56 @@ class EvaluateChatTurnUseCase:
             node_executions = await self._node_executions.get_by_agent_run_id(agent_run.id)
             tool_executions = await self._tool_executions.get_by_agent_run_id(agent_run.id)
 
-        # The fake gateway is freshly built per eval request, so at most one
-        # outbound collection contains this turn's reply. Interactive buttons,
-        # flows, and lists all carry text too; looking only at plain messages
-        # incorrectly reports a successful interactive turn as reply-less.
-        reply_text = None
-        for collection_name in (
-            "sent_messages",
-            "sent_buttons",
-            "sent_flows",
-            "sent_lists",
-        ):
-            sent = getattr(self._messaging_gateway, collection_name, [])
-            if sent:
-                reply_text = sent[-1][1]
-                break
+        reply = self._read_reply()
 
         return ChatTurnResult(
-            reply_text=reply_text,
+            reply_text=reply.text,
             agent_run=agent_run,
             node_executions=node_executions,
             tool_executions=tool_executions,
+            reply_kind=reply.kind,
+            buttons=reply.buttons,
+            list_rows=reply.list_rows,
+            flow=reply.flow,
         )
+
+    def _read_reply(self) -> "_Reply":
+        """Reads what the fake gateway captured. Interactive replies win over
+        plain text (a summary text followed by buttons is one reply to the
+        patient, and its options are what an assertion needs); each option
+        family is exposed from its own collection.
+        """
+        gateway = self._messaging_gateway
+        sent_buttons = getattr(gateway, "sent_buttons", [])
+        sent_lists = getattr(gateway, "sent_lists", [])
+        sent_flows = getattr(gateway, "sent_flows", [])
+        sent_messages = getattr(gateway, "sent_messages", [])
+
+        reply = _Reply()
+        if sent_buttons:
+            reply.buttons = [EvalOption(id=b.id, title=b.title) for b in sent_buttons[-1][2]]
+        if sent_lists:
+            reply.list_rows = [
+                EvalOption(id=r.id, title=r.title, description=r.description)
+                for r in sent_lists[-1][2].rows
+            ]
+        if sent_flows:
+            request = sent_flows[-1][2]
+            reply.flow = EvalFlow(
+                flow_id=request.flow_id, screen_id=request.flow_screen_id, cta=request.flow_cta
+            )
+
+        for kind, sent in (
+            ("buttons", sent_buttons),
+            ("list", sent_lists),
+            ("flow", sent_flows),
+            ("text", sent_messages),
+        ):
+            if sent:
+                reply.kind = kind  # type: ignore[assignment]
+                reply.text = sent[-1][1]
+                break
+        return reply
 
     async def _ensure_eval_contact(self) -> None:
         if await self._contacts.get_by_id(EVAL_CONTACT_ID) is None:

@@ -8,7 +8,7 @@ from app.api.dependencies.internal_eval import (
     get_evaluate_chat_turn_use_case,
     require_internal_eval_enabled,
 )
-from app.application.admin.evaluate_chat_turn import EvaluateChatTurnUseCase
+from app.application.admin.evaluate_chat_turn import EvalFlow, EvalOption, EvaluateChatTurnUseCase
 from app.domain.entities.admin_user import ROLES
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
@@ -21,6 +21,26 @@ _ANY_AUTHENTICATED_ROLE = tuple(ROLES)
 class EvalChatRequest(BaseModel):
     conversation_id: str
     message: str
+    #: Machine-readable id of a tapped reply button / list row (what the real
+    #: webhook parses into `button_payload`); `message` then carries its title.
+    button_payload: str | None = None
+
+
+class EvalOptionOut(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+
+
+class EvalButtonOut(BaseModel):
+    id: str
+    title: str
+
+
+class EvalFlowOut(BaseModel):
+    flow_id: str
+    screen_id: str
+    cta: str
 
 
 class EvalChatResponse(BaseModel):
@@ -37,6 +57,21 @@ class EvalChatResponse(BaseModel):
     agent_run_status: str | None
     node_names: list[str]
     tool_names: list[str]
+    #: "text" | "buttons" | "list" | "flow" | null (nothing sent).
+    reply_kind: str | None = None
+    buttons: list[EvalButtonOut] = []
+    list_rows: list[EvalOptionOut] = []
+    flow: EvalFlowOut | None = None
+
+
+def _option_out(option: EvalOption) -> EvalOptionOut:
+    return EvalOptionOut(id=option.id, title=option.title, description=option.description)
+
+
+def _flow_out(flow: EvalFlow | None) -> EvalFlowOut | None:
+    if flow is None:
+        return None
+    return EvalFlowOut(flow_id=flow.flow_id, screen_id=flow.screen_id, cta=flow.cta)
 
 
 @router.post("/chat", response_model=EvalChatResponse)
@@ -52,7 +87,10 @@ async def eval_chat(
     real patient data, never a real external call.
     """
     result = await use_case.execute(
-        ConversationId(body.conversation_id), body.message, now=datetime.now(UTC)
+        ConversationId(body.conversation_id),
+        body.message,
+        now=datetime.now(UTC),
+        button_payload=body.button_payload,
     )
     return EvalChatResponse(
         reply_text=result.reply_text,
@@ -60,4 +98,8 @@ async def eval_chat(
         agent_run_status=result.agent_run.status if result.agent_run else None,
         node_names=[n.node_name for n in result.node_executions],
         tool_names=[t.tool_name for t in result.tool_executions],
+        reply_kind=result.reply_kind,
+        buttons=[EvalButtonOut(id=b.id, title=b.title) for b in result.buttons],
+        list_rows=[_option_out(r) for r in result.list_rows],
+        flow=_flow_out(result.flow),
     )

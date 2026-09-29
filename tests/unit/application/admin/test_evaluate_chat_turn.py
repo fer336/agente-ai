@@ -4,9 +4,14 @@ import pytest
 
 from app.application.admin.evaluate_chat_turn import (
     EVAL_CONTACT_ID,
+    EvalFlow,
+    EvalOption,
     EvaluateChatTurnUseCase,
 )
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.flow_request import FlowRequest
+from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
@@ -145,12 +150,20 @@ async def test_execute_returns_the_latest_agent_run_trace_and_the_last_sent_repl
         ),
         (
             "sent_flows",
-            (PhoneNumber("+5490000000000"), "Completá tus datos", object()),
+            (
+                PhoneNumber("+5490000000000"),
+                "Completá tus datos",
+                FlowRequest(flow_id="f", flow_screen_id="s", flow_cta="c", flow_token="t"),
+            ),
             "Completá tus datos",
         ),
         (
             "sent_lists",
-            (PhoneNumber("+5490000000000"), "Seleccioná una alternativa", object()),
+            (
+                PhoneNumber("+5490000000000"),
+                "Seleccioná una alternativa",
+                ListMessage(button_label="Ver", rows=[ListRow(id="r", title="t")]),
+            ),
             "Seleccioná una alternativa",
         ),
     ],
@@ -178,3 +191,131 @@ async def test_execute_returns_no_reply_and_empty_trace_when_the_invoker_produce
     assert result.agent_run is None
     assert result.node_executions == []
     assert result.tool_executions == []
+
+
+_PHONE = PhoneNumber("+5490000000000")
+
+
+@pytest.mark.asyncio
+async def test_execute_exposes_reply_buttons_with_their_ids_and_titles():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_buttons(
+        _PHONE,
+        "¿Es tu primera cita?",
+        [
+            InteractiveButton(id="FIRST_VISIT_CONFIRM", title="✅ Confirmar"),
+            InteractiveButton(id="FIRST_VISIT_CANCEL", title="❌ Cancelar"),
+        ],
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-buttons"), "hola", now=_NOW)
+
+    assert result.reply_kind == "buttons"
+    assert result.buttons == [
+        EvalOption(id="FIRST_VISIT_CONFIRM", title="✅ Confirmar"),
+        EvalOption(id="FIRST_VISIT_CANCEL", title="❌ Cancelar"),
+    ]
+    assert result.list_rows == []
+    assert result.flow is None
+
+
+@pytest.mark.asyncio
+async def test_execute_exposes_list_rows_flattened_across_sections():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_list(
+        _PHONE,
+        "Elegí una especialidad",
+        ListMessage(
+            button_label="Ver opciones",
+            rows=[
+                ListRow(id="SPECIALTY:1", title="Ortodoncia", description="Brackets"),
+                ListRow(id="SPECIALTY:2", title="Endodoncia"),
+            ],
+        ),
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-list"), "hola", now=_NOW)
+
+    assert result.reply_kind == "list"
+    assert result.list_rows == [
+        EvalOption(id="SPECIALTY:1", title="Ortodoncia", description="Brackets"),
+        EvalOption(id="SPECIALTY:2", title="Endodoncia"),
+    ]
+    assert result.buttons == []
+
+
+@pytest.mark.asyncio
+async def test_execute_exposes_the_flow_marker():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_flow(
+        _PHONE,
+        "Completá tus datos",
+        FlowRequest(
+            flow_id="flow-123", flow_screen_id="SCREEN_A", flow_cta="Completar", flow_token="t"
+        ),
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-flow"), "hola", now=_NOW)
+
+    assert result.reply_kind == "flow"
+    assert result.flow == EvalFlow(flow_id="flow-123", screen_id="SCREEN_A", cta="Completar")
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_a_plain_text_reply_kind_without_options():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_text_message(_PHONE, "Hola")
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-text"), "hola", now=_NOW)
+
+    assert result.reply_kind == "text"
+    assert result.buttons == []
+    assert result.list_rows == []
+    assert result.flow is None
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_no_reply_kind_when_nothing_was_sent():
+    result = await _use_case().execute(ConversationId("eval-none"), "hola", now=_NOW)
+
+    assert result.reply_kind is None
+
+
+@pytest.mark.asyncio
+async def test_execute_prefers_the_interactive_reply_over_a_preceding_text():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_text_message(_PHONE, "Resumen")
+    await messaging_gateway.send_buttons(
+        _PHONE, "¿Qué hacemos?", [InteractiveButton(id="MENU_MAIN", title="Menú principal")]
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-mixed"), "hola", now=_NOW)
+
+    assert result.reply_kind == "buttons"
+    assert result.reply_text == "¿Qué hacemos?"
+
+
+@pytest.mark.asyncio
+async def test_execute_forwards_the_button_payload_to_the_agent_invoker():
+    invoker = FakeAgentInvoker()
+    use_case = EvaluateChatTurnUseCase(
+        conversations=make_conversation_repository(),
+        contacts=make_contact_repository(),
+        messages=make_message_repository(),
+        agent_runs=make_agent_run_repository(),
+        node_executions=make_node_execution_repository(),
+        tool_executions=make_tool_execution_repository(),
+        agent_invoker=invoker,
+        messaging_gateway=FakeYCloudMessagingGateway(),
+    )
+
+    await use_case.execute(
+        ConversationId("eval-tap"), "✅ Confirmar", now=_NOW, button_payload="FIRST_VISIT_CONFIRM"
+    )
+
+    assert invoker.calls[0][2:] == ("✅ Confirmar", "FIRST_VISIT_CONFIRM")
