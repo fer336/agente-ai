@@ -38,7 +38,12 @@ from app.agent.first_visit_intake_wording import (
     previous_intake_intro,
     repeats_opening,
 )
-from app.agent.handoff_offer import is_main_menu_request
+from app.agent.handoff_offer import (
+    HANDOFF_OFFER_BUTTONS,
+    HANDOFF_OFFER_KEY,
+    is_main_menu_request,
+    offers_administration_handoff,
+)
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX as SELECT_SLOT_PAYLOAD_PREFIX,
 )
@@ -2295,15 +2300,19 @@ def create_appointment_node(
                 recent_messages,
                 contact_memory,
             )
+            no_appointments_data: dict[str, object] = {"patient": patient}
+            offers_handoff = offers_administration_handoff(text)
+            if offers_handoff:
+                no_appointments_data[HANDOFF_OFFER_KEY] = True
             return {
                 "response_text": text,
-                "response_buttons": None,
+                "response_buttons": HANDOFF_OFFER_BUTTONS if offers_handoff else None,
                 "requires_handoff": False,
                 "pending_action_id": None,
                 # Only the stale operation stage is dropped: the identified
                 # patient stays so a follow-up "quiero sacar uno" never asks
                 # again for the name/DNI that were just verified.
-                "collected_data": {"patient": patient},
+                "collected_data": no_appointments_data,
             }
 
         professionals = await appointment_gateway.list_professionals()

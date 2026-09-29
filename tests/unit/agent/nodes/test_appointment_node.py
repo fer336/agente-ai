@@ -4667,3 +4667,30 @@ async def test_static_fallback_intros_of_consecutive_re_asks_differ():
 
     assert first_re_ask.split("\n\n")[0] != second_re_ask.split("\n\n")[0]
 
+
+@pytest.mark.asyncio
+async def test_no_appointments_reply_offers_administration_with_buttons():
+    from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS
+
+    class _OfferingLLM(_IntakeLLM):
+        async def generate_response(self, context):
+            if context.intent == "no_appointments":
+                return "No encontramos turnos. Querés que te comunique con administración?"
+            return await super().generate_response(context)
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_OfferingLLM())
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Juan Perez, 30123456",
+            collected_data={
+                "stage": STAGE_AWAITING_IDENTIFICATION,
+                "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            },
+        )
+    )
+
+    assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
+    assert result["collected_data"]["handoff_offer_pending"] is True
+    assert result["collected_data"]["patient"]["dni"] == "30123456"
