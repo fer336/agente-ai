@@ -2741,6 +2741,7 @@ def create_appointment_node(
                         "requires_handoff": False,
                         "pending_action_id": None,
                         "collected_data": {"post_action_context": CANCEL_APPOINTMENT_ACTION},
+                        "carry_identity_to": workflow_generation + 1,
                     }
 
                 if confirmed_action_type == CREATE_APPOINTMENT_ACTION:
@@ -2793,6 +2794,7 @@ def create_appointment_node(
                         "requires_handoff": False,
                         "pending_action_id": None,
                         "collected_data": {"post_action_context": CREATE_APPOINTMENT_ACTION},
+                        "carry_identity_to": workflow_generation + 1,
                     }
 
                 if confirmed_action_type == CREATE_PATIENT_ACTION:
@@ -2955,6 +2957,7 @@ def create_appointment_node(
                         "requires_handoff": False,
                         "pending_action_id": None,
                         "collected_data": {"post_action_context": RESCHEDULE_APPOINTMENT_ACTION},
+                        "carry_identity_to": workflow_generation + 1,
                     }
 
                 raise AssertionError(  # pragma: no cover - impossible by construction

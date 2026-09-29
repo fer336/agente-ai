@@ -49,6 +49,10 @@ class AgentState(TypedDict):
     #: patient stays known until the conversation itself ends (idle rotation or
     #: admin reset both start a fresh checkpoint thread).
     patient_identity: NotRequired[dict[str, object] | None]
+    #: Set by a booking/cancel/reschedule success right before it rotates the workflow
+    #: session: the generation that should inherit `patient_identity`. An idle or admin
+    #: rotation never sets it, so those start with nobody remembered.
+    carry_identity_to: NotRequired[int | None]
     collected_data: dict[str, object]
     missing_fields: list[str]
     pending_action_id: str | None

@@ -93,6 +93,11 @@ class ResetConversationUseCase:
         await self._message_repository.delete_by_conversation_id(conversation_id)
         await self._memory_service.reset(conversation.contact_id)
         await self._checkpointer.adelete_thread(str(conversation_id))
+        # Checkpoint threads are keyed by workflow generation: moving to a new one
+        # abandons the old thread's state, including the remembered patient.
+        await self._conversation_repository.rotate_workflow_session(
+            conversation_id, conversation.workflow_session_generation
+        )
         await self._set_conversation_mode.execute(conversation_id, _DEFAULT_MODE)
         await self._set_conversation_input_state.execute(conversation_id, FREE_INPUT)
         await self._debounce_tracker.clear(str(conversation_id))

@@ -45,6 +45,7 @@ def test_agent_state_field_set_matches_prd_section_31_plus_repo_specific_fields(
         "interruption",
         "appointment_action",
         "patient_identity",
+        "carry_identity_to",
         "collected_data",
         "missing_fields",
         "pending_action_id",
