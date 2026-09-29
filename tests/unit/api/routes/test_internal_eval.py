@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.dependencies.internal_eval import get_evaluate_chat_turn_use_case
+from app.api.dependencies.internal_eval import get_eval_use_case_provider
 from app.application.admin.evaluate_chat_turn import ChatTurnResult, EvalFlow, EvalOption
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL
@@ -75,7 +75,7 @@ async def test_disabled_by_default_returns_404_even_for_an_authenticated_caller(
     stub_use_case: _StubUseCase,
 ):
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=False)
-    app.dependency_overrides[get_evaluate_chat_turn_use_case] = lambda: stub_use_case
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
     try:
         response = await _post_eval_chat(cookies=_session_cookies())
     finally:
@@ -87,7 +87,7 @@ async def test_disabled_by_default_returns_404_even_for_an_authenticated_caller(
 @pytest.mark.asyncio
 async def test_disabled_returns_404_even_when_unauthenticated(stub_use_case: _StubUseCase):
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=False)
-    app.dependency_overrides[get_evaluate_chat_turn_use_case] = lambda: stub_use_case
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
     try:
         response = await _post_eval_chat(cookies=None)
     finally:
@@ -99,7 +99,7 @@ async def test_disabled_returns_404_even_when_unauthenticated(stub_use_case: _St
 @pytest.mark.asyncio
 async def test_enabled_but_unauthenticated_is_rejected(stub_use_case: _StubUseCase):
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
-    app.dependency_overrides[get_evaluate_chat_turn_use_case] = lambda: stub_use_case
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
     try:
         response = await _post_eval_chat(cookies=None)
     finally:
@@ -111,7 +111,7 @@ async def test_enabled_but_unauthenticated_is_rejected(stub_use_case: _StubUseCa
 @pytest.mark.asyncio
 async def test_enabled_and_authenticated_evaluates_the_turn(stub_use_case: _StubUseCase):
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
-    app.dependency_overrides[get_evaluate_chat_turn_use_case] = lambda: stub_use_case
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
     try:
         response = await _post_eval_chat(cookies=_session_cookies())
     finally:
@@ -132,7 +132,7 @@ async def test_enabled_and_authenticated_evaluates_the_turn(stub_use_case: _Stub
 @pytest.mark.asyncio
 async def test_button_payload_is_threaded_into_the_use_case(stub_use_case: _StubUseCase):
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
-    app.dependency_overrides[get_evaluate_chat_turn_use_case] = lambda: stub_use_case
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
     try:
         response = await _post_eval_chat(
             cookies=_session_cookies(), extra={"button_payload": "FIRST_VISIT_CONFIRM"}
@@ -159,7 +159,7 @@ async def test_response_exposes_interactive_options():
         )
     )
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
-    app.dependency_overrides[get_evaluate_chat_turn_use_case] = lambda: stub
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub
     try:
         response = await _post_eval_chat(cookies=_session_cookies())
     finally:

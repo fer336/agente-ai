@@ -44,6 +44,11 @@ flows fixed recently, so every PR can be audited before deploy.
   Route: direct inline (already written and tested).
 - [x] T2 — Expose buttons, list rows and the flow marker in the eval response, plus an
   optional `button_payload` request field so a test can tap a button. Route: direct inline.
+- [x] T2b — (discovered) Keep conversation state across eval turns. The endpoint built a whole
+  new stack (fake repos, `MemorySaver()` per turn, patient fakes) on every request, so turn 2
+  never saw turn 1 and multi-turn scenarios were impossible. Added `EvalSessionRegistry`
+  (per-conversation, LRU 256) + `get_eval_use_case_provider`, one shared `MemorySaver` per stack,
+  and the use case now consumes the gateway's captured replies after each turn. Route: direct inline.
 - [ ] T3 — Multi-turn datasets and assertions for recent flows.
 - [ ] T4 — First local promptfoo run and findings report.
 
@@ -64,6 +69,11 @@ flows fixed recently, so every PR can be audited before deploy.
   interactive-reply tests used `object()` placeholders; now real `FlowRequest`/`ListMessage`.
 - Response shape: `reply_kind`, `buttons[{id,title}]`, `list_rows[{id,title,description?}]`,
   `flow{flow_id,screen_id,cta}|null`; interactive replies win over a preceding plain text.
+- T2b: RED = ImportError `EvalSessionRegistry`. Tests: registry reuse/LRU/provider in
+  `test_internal_eval_dependency.py`, `test_a_button_tap_on_turn_two_continues_the_conversation_of_turn_one`
+  (real graph, `InMemoryFakeRedis`), drain test in `test_evaluate_chat_turn.py`. Full
+  `uv run pytest`: 1881 passed, 83 skipped, only the 3 excused redis_debounce failures.
+- Commits: T1 045a646, T2 fed36cc.
 
 ## Next step
 

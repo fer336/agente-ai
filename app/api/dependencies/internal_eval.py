@@ -1,4 +1,5 @@
-from collections.abc import AsyncIterator
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, HTTPException, status
@@ -10,6 +11,7 @@ from app.application.appointments.propose_appointment import ProposalRepositorie
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositories
 from app.config.settings import Settings, get_settings
+from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
     LangGraphAgentInvoker,
@@ -124,8 +126,12 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
             outbox=outbox,
         )
 
+    # One saver per isolated stack: a fresh one per turn would forget the
+    # conversation between turns.
+    checkpointer = MemorySaver()
+
     async def checkpointer_provider() -> MemorySaver:
-        return MemorySaver()
+        return checkpointer
 
     settings = get_settings()
     agent_invoker = LangGraphAgentInvoker(
@@ -164,4 +170,50 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
         tool_executions=tool_executions,
         agent_invoker=agent_invoker,
         messaging_gateway=messaging_gateway,
+    )
+
+
+#: Bounds the in-process memory a long-running dev server spends on eval
+#: conversations; the least recently used one is dropped first.
+_MAX_EVAL_SESSIONS = 256
+
+
+class EvalSessionRegistry:
+    """Keeps each eval conversation's isolated stack alive between requests.
+
+    Every `conversation_id` gets its own use case (fake repositories, checkpointer,
+    patient/appointment fakes), so the turns of one multi-turn scenario share state
+    while different conversations still never see each other's.
+    """
+
+    def __init__(self, max_sessions: int = _MAX_EVAL_SESSIONS) -> None:
+        self._max_sessions = max_sessions
+        self._sessions: OrderedDict[str, EvaluateChatTurnUseCase] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._sessions)
+
+    def get_or_create(
+        self, conversation_id: ConversationId, factory: Callable[[], EvaluateChatTurnUseCase]
+    ) -> EvaluateChatTurnUseCase:
+        key = str(conversation_id)
+        session = self._sessions.get(key)
+        if session is None:
+            session = factory()
+            self._sessions[key] = session
+        self._sessions.move_to_end(key)
+        while len(self._sessions) > self._max_sessions:
+            self._sessions.popitem(last=False)
+        return session
+
+
+EvalUseCaseProvider = Callable[[ConversationId], EvaluateChatTurnUseCase]
+
+_registry = EvalSessionRegistry()
+
+
+def get_eval_use_case_provider() -> EvalUseCaseProvider:
+    """FastAPI dependency: resolves the (per-conversation, reused) eval use case."""
+    return lambda conversation_id: _registry.get_or_create(
+        conversation_id, get_evaluate_chat_turn_use_case
     )

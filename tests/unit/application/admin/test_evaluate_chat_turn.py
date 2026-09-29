@@ -319,3 +319,20 @@ async def test_execute_forwards_the_button_payload_to_the_agent_invoker():
     )
 
     assert invoker.calls[0][2:] == ("✅ Confirmar", "FIRST_VISIT_CONFIRM")
+
+
+@pytest.mark.asyncio
+async def test_execute_consumes_the_captured_reply_so_the_next_turn_starts_clean():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_buttons(
+        _PHONE, "¿Qué hacemos?", [InteractiveButton(id="MENU_MAIN", title="Menú principal")]
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    first = await use_case.execute(ConversationId("eval-drain"), "hola", now=_NOW)
+    second = await use_case.execute(ConversationId("eval-drain"), "chau", now=_NOW)
+
+    assert first.reply_text == "¿Qué hacemos?"
+    assert second.reply_text is None
+    assert second.reply_kind is None
+    assert second.buttons == []

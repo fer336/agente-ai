@@ -141,6 +141,7 @@ class EvaluateChatTurnUseCase:
             tool_executions = await self._tool_executions.get_by_agent_run_id(agent_run.id)
 
         reply = self._read_reply()
+        self._consume_captured_replies()
 
         return ChatTurnResult(
             reply_text=reply.text,
@@ -152,6 +153,16 @@ class EvaluateChatTurnUseCase:
             list_rows=reply.list_rows,
             flow=reply.flow,
         )
+
+    def _consume_captured_replies(self) -> None:
+        """The gateway now outlives a single turn (the stack is reused per
+        conversation), so drop what this turn sent: the next turn must only
+        ever see its own reply.
+        """
+        for name in ("sent_messages", "sent_buttons", "sent_flows", "sent_lists", "sent_locations"):
+            sent = getattr(self._messaging_gateway, name, None)
+            if isinstance(sent, list):
+                sent.clear()
 
     def _read_reply(self) -> "_Reply":
         """Reads what the fake gateway captured. Interactive replies win over

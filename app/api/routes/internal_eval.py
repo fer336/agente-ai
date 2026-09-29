@@ -5,10 +5,11 @@ from pydantic import BaseModel
 
 from app.api.dependencies.auth import require_role
 from app.api.dependencies.internal_eval import (
-    get_evaluate_chat_turn_use_case,
+    EvalUseCaseProvider,
+    get_eval_use_case_provider,
     require_internal_eval_enabled,
 )
-from app.application.admin.evaluate_chat_turn import EvalFlow, EvalOption, EvaluateChatTurnUseCase
+from app.application.admin.evaluate_chat_turn import EvalFlow, EvalOption
 from app.domain.entities.admin_user import ROLES
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
@@ -79,15 +80,16 @@ async def eval_chat(
     body: EvalChatRequest,
     _enabled: None = Depends(require_internal_eval_enabled),
     _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
-    use_case: EvaluateChatTurnUseCase = Depends(get_evaluate_chat_turn_use_case),
+    use_case_for: EvalUseCaseProvider = Depends(get_eval_use_case_provider),
 ) -> EvalChatResponse:
     """PRD.md §61's isolated agent-behavior evaluation endpoint. Runs the
     real LangGraph agent against an entirely fake Dentalink/YCloud/LLM
     stack (see `app.api.dependencies.internal_eval`'s own docstring) — never
     real patient data, never a real external call.
     """
-    result = await use_case.execute(
-        ConversationId(body.conversation_id),
+    conversation_id = ConversationId(body.conversation_id)
+    result = await use_case_for(conversation_id).execute(
+        conversation_id,
         body.message,
         now=datetime.now(UTC),
         button_payload=body.button_payload,
