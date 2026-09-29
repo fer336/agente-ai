@@ -31,9 +31,12 @@ _NEGATED_EXISTING_PATTERN = re.compile(
     r"\b(?:(?:todav[ií]a\s+)?no\s+soy\s+paciente(?:\s+todav[ií]a)?|nunca\s+fui)\b",
     re.IGNORECASE,
 )
-_NEW_PATIENT_PATTERN = re.compile(r"\bprimera\s+vez\b", re.IGNORECASE)
-_BARE_NO = frozenset({"no", "nop", "nope"})
-_BARE_YES = frozenset({"si", "sí", "sip", "claro", "dale"})
+_NEW_PATIENT_PATTERN = re.compile(
+    r"\b(?:primera\s+(?:vez|cita|consulta)|es\s+(?:mi|la)\s+primera)\b", re.IGNORECASE
+)
+#: Bare replies, including the words of the question's own buttons.
+_BARE_NO = frozenset({"no", "nop", "nope", "cancelar", "cancelo"})
+_BARE_YES = frozenset({"si", "sí", "sip", "claro", "dale", "confirmar", "confirmo"})
 
 #: Intake field -> name handed to `LLMProvider.extract_information`.
 _LLM_FIELD_NAMES = {
@@ -129,3 +132,8 @@ async def _extract_free_text(
         if value is not None and str(value).strip():
             extracted[name] = str(value).strip()
     return extracted
+
+
+def detect_first_visit_answer(text: str) -> Literal["new", "existing"] | None:
+    """Read a reply to the first-visit question ("new" = first visit)."""
+    return _first_visit_answer(text)[0]

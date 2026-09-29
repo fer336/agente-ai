@@ -11,9 +11,13 @@ from app.agent.appointment_decision_subgraph import (
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
-from app.agent.first_visit_intake_extraction import extract_intake_reply
+from app.agent.first_visit_intake_extraction import (
+    detect_first_visit_answer,
+    extract_intake_reply,
+)
 from app.agent.first_visit_intake_subgraph import (
     FIRST_ASK_INTRO,
+    FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -1523,15 +1527,13 @@ def create_appointment_node(
         """
         if first:
             situacion = (
-                "El paciente quiere sacar un turno. Hay que preguntarle si es su primera "
-                "vez en la clínica y avisarle que para dejarlo registrado necesitamos "
-                "algunos datos."
+                "El paciente confirmó que es su primera vez en la clínica. Para dejarlo "
+                "registrado necesitamos algunos datos."
             )
             instruccion = (
-                "Preguntá si es su primera vez en la clínica y decile que necesitás unos "
-                "datos para registrarlo. NO listes los datos ni nombres de campos: la lista "
-                "se agrega aparte, después de tu mensaje. Sin saludo, en una o dos "
-                "oraciones cortas."
+                "Decile que necesitás unos datos para registrarlo. NO listes los datos ni "
+                "nombres de campos: la lista se agrega aparte, después de tu mensaje. No "
+                "vuelvas a preguntar si es su primera vez. Sin saludo, en una oración corta."
             )
             fallback = FIRST_ASK_INTRO
         else:
@@ -1553,6 +1555,114 @@ def create_appointment_node(
             contact_memory,
         )
         return f"{intro}\n\n{format_field_bullets(missing_fields)}"
+
+    async def _first_visit_question_message(
+        conversation_id: ConversationId,
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> str:
+        """LLM-worded first-visit question; the two buttons come from the intake graph."""
+        return await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "first_visit_question",
+            {
+                "situacion": (
+                    "El paciente quiere sacar un turno. Antes hay que saber si es su primera "
+                    "cita en Smiling Pilar."
+                ),
+                "instruccion": (
+                    "Preguntá si es su primera cita en Smiling Pilar. Van a aparecer 2 botones "
+                    "debajo de tu mensaje (Confirmar, Cancelar): pedile que toque Confirmar si "
+                    "es su primera vez, así lo registrás, o Cancelar si ya es paciente. NO "
+                    "listes datos ni nombres de campos. Sin saludo, en una o dos oraciones "
+                    "cortas."
+                ),
+            },
+            FIRST_VISIT_QUESTION,
+            recent_messages,
+            contact_memory,
+        )
+
+    async def _identify_existing_patient(
+        state: AgentState, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Verify a patient who is not a first visit, before any specialty is shown.
+
+        Name and DNI already known from the conversation (e.g. a reschedule
+        attempt) are verified straight away; otherwise the regular
+        identification step asks for them.
+        """
+        conversation_id = ConversationId(state["conversation_id"])
+        identification_data = {
+            key: value
+            for key, value in collected_data.items()
+            if key not in {"first_visit_intake", "stage"}
+        }
+        known = _known_intake_details(collected_data)
+        if "full_name" in known and "dni" in known:
+            return await node(
+                cast(
+                    AgentState,
+                    {
+                        **state,
+                        "user_message": "",
+                        "button_payload": None,
+                        "collected_data": {
+                            **identification_data,
+                            "stage": STAGE_AWAITING_IDENTIFICATION,
+                            "identification_full_name": known["full_name"],
+                            "identification_dni": known["dni"],
+                        },
+                    },
+                )
+            )
+        return await _begin_identification(
+            conversation_id,
+            identification_data,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+
+    async def _continue_booking_with_patient(
+        state: AgentState,
+        collected_data: dict[str, object],
+        patient: dict[str, object],
+    ) -> dict[str, object]:
+        """Carry a booking on once the patient is known.
+
+        With a slot already picked it is proposed for confirmation; otherwise
+        (identification came first) booking resumes at the specialty step.
+        """
+        if collected_data.get("pending_selected_slot") is not None:
+            return await _propose_selected_slot(
+                ConversationId(state["conversation_id"]),
+                patient,
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+        resumed_data = {
+            key: value
+            for key, value in collected_data.items()
+            if key not in {"first_visit_intake", "stage"}
+        }
+        return await node(
+            cast(
+                AgentState,
+                {
+                    **state,
+                    "button_payload": None,
+                    "collected_data": {
+                        **resumed_data,
+                        "operation": CREATE_APPOINTMENT_ACTION,
+                        "operation_mention": "create",
+                        "first_visit_completed": True,
+                        "patient": patient,
+                    },
+                },
+            )
+        )
 
     async def _delegate_to_first_visit_intake(
         state: AgentState, collected_data: dict[str, object]
@@ -1579,6 +1689,15 @@ def create_appointment_node(
             },
         )
         if (
+            intake_state["stage"] == "question"
+            and intake_state["button_payload"] is None
+            and intake_state["user_message"].strip()
+        ):
+            # A typed answer to the first-visit question stands in for its buttons.
+            intake_state["first_visit_answer"] = detect_first_visit_answer(
+                intake_state["user_message"]
+            )
+        elif (
             intake_state["stage"] == "collect"
             and intake_state["button_payload"] is None
             and intake_state["editing_field"] is None
@@ -1596,7 +1715,14 @@ def create_appointment_node(
         result = await first_visit_intake_graph.ainvoke(intake_state)
         conversation_id = ConversationId(state["conversation_id"])
         ask_fields = cast(list[str] | None, result.get("ask_fields"))
-        if ask_fields:
+        if result.get("ask_kind") == "question" and result.get("stage") == "question":
+            result = {
+                **result,
+                "response_text": await _first_visit_question_message(
+                    conversation_id, state["recent_messages"], state["contact_memory_summary"]
+                ),
+            }
+        elif ask_fields:
             result = {
                 **result,
                 "response_text": await _first_visit_ask_message(
@@ -1608,26 +1734,8 @@ def create_appointment_node(
                 ),
             }
 
-        if result.get("next_action") == "specialties":
-            resumed_data = {
-                key: value
-                for key, value in collected_data.items()
-                if key not in {"first_visit_intake", "stage"}
-            }
-            resumed_state = cast(
-                AgentState,
-                {
-                    **state,
-                    "button_payload": None,
-                    "collected_data": {
-                        **resumed_data,
-                        "operation": CREATE_APPOINTMENT_ACTION,
-                        "operation_mention": "create",
-                        "first_visit_completed": True,
-                    },
-                },
-            )
-            return await node(resumed_state)
+        if result.get("next_action") == "identify":
+            return await _identify_existing_patient(state, collected_data)
 
         still_missing = missing_intake_fields(cast(dict[str, str], result.get("details", {})))
         if result.get("next_action") == "persist" and still_missing:
@@ -2672,6 +2780,7 @@ def create_appointment_node(
                             {
                                 **collected_data,
                                 "operation": CREATE_APPOINTMENT_ACTION,
+                                "first_visit_completed": True,
                                 "patient": _patient_to_primitives(new_patient),
                             },
                             state["recent_messages"],
@@ -3354,12 +3463,8 @@ def create_appointment_node(
                 patient_primitives = cast(dict[str, object], collected_data.get("patient", {}))
                 patient_id = cast(str, collected_data.get("verified_patient_id", ""))
                 if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
-                    return await _propose_selected_slot(
-                        conversation_id,
-                        patient_primitives,
-                        collected_data,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
+                    return await _continue_booking_with_patient(
+                        state, collected_data, patient_primitives
                     )
                 return await _offer_appointments(
                     conversation_id,
@@ -3459,12 +3564,8 @@ def create_appointment_node(
                     await agreement_gateway.link_patient_agreement(new_patient.id, agreement.id)
             patient_primitives = _patient_to_primitives(new_patient)
             if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
-                return await _propose_selected_slot(
-                    conversation_id,
-                    patient_primitives,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                return await _continue_booking_with_patient(
+                    state, collected_data, patient_primitives
                 )
             return await _offer_appointments(
                 conversation_id,
@@ -3731,12 +3832,8 @@ def create_appointment_node(
                 }
             patient_primitives = _patient_to_primitives(identified_patient)
             if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
-                return await _propose_selected_slot(
-                    conversation_id,
-                    patient_primitives,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                return await _continue_booking_with_patient(
+                    state, collected_data, patient_primitives
                 )
             return await _offer_appointments(
                 conversation_id,

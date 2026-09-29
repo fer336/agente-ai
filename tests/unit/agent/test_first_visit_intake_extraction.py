@@ -1,6 +1,9 @@
 import pytest
 
-from app.agent.first_visit_intake_extraction import extract_intake_reply
+from app.agent.first_visit_intake_extraction import (
+    detect_first_visit_answer,
+    extract_intake_reply,
+)
 from app.domain.repositories.llm_provider import ExtractionResult
 from app.infrastructure.llm.exceptions import LLMTimeoutError
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -144,3 +147,20 @@ async def test_incidental_soy_paciente_de_an_insurer_is_not_an_existing_patient(
     reply = await extract_intake_reply(_ScriptedExtractionLLM({}), text, ["email"])
 
     assert reply.first_visit is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("sí, es la primera", "new"),
+        ("no soy paciente", "new"),
+        ("Confirmar", "new"),
+        ("no, ya soy paciente", "existing"),
+        ("no", "existing"),
+        ("Cancelar", "existing"),
+        ("quizás más tarde", None),
+        ("", None),
+    ],
+)
+def test_detect_first_visit_answer_reads_the_question_reply(text, expected):
+    assert detect_first_visit_answer(text) == expected

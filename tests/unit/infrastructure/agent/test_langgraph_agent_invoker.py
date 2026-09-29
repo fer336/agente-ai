@@ -6,7 +6,8 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.first_visit_intake_subgraph import (
-    FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    FIRST_VISIT_CANCEL_PAYLOAD,
+    FIRST_VISIT_CONFIRM_PAYLOAD,
 )
 from app.agent.graph import compile_graph
 from app.agent.nodes.appointment import (
@@ -453,8 +454,10 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
         ConversationId("conv-1"),
         ["msg-2b"],
         "",
-        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
     )
+    # Already a patient: verified by name + DNI before any specialty is shown.
+    await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -525,8 +528,10 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
         ConversationId("conv-1"),
         ["msg-2b"],
         "",
-        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
     )
+    # Already a patient: verified by name + DNI before any specialty is shown.
+    await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -537,9 +542,8 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
     # Turn 5: pick the offered slot — the subgraph's `choose_slot` stores
     # `pending_selected_slot` and exits to legacy `_begin_identification`.
     await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
-    # Turn 6: identify — legacy `_propose_selected_slot` proposes the
-    # already-picked slot without re-searching availability.
-    await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+    # The patient was already verified before the specialties, so picking the
+    # slot proposes it for confirmation without re-searching availability.
 
     compiled_graph = compile_graph(
         appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
@@ -607,8 +611,10 @@ async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_
         ConversationId("conv-1"),
         ["msg-2b"],
         "",
-        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
     )
+    # Already a patient: verified by name + DNI before any specialty is shown.
+    await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -837,11 +843,9 @@ async def test_operation_create_payload_from_fallback_opens_first_visit_intake()
     # T3(a) of the fallback-menu-buttons change: `fallback.py`'s new
     # "📅 Agendar una cita" button carries `OPERATION_CREATE_PAYLOAD` — the
     # exact payload sent here, with no prior `collected_data["stage"]` set,
-    # since the fallback node never sets one. Must reach the specialty
-    # list directly (`should_use_appointment_decision_subgraph` delegates
-    # here since `stage is None` and `operation == CREATE_APPOINTMENT_ACTION`
-    # — see `appointment.py`'s own docstring), never the (removed)
-    # 3-button operation menu.
+    # since the fallback node never sets one. Must open the first-visit
+    # question (never the removed 3-button operation menu, and never the
+    # specialty list before the patient's data step).
     invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
         specialty_gateway=make_specialty_gateway(
             specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
@@ -857,11 +861,15 @@ async def test_operation_create_payload_from_fallback_opens_first_visit_intake()
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert messaging_gateway.sent_buttons == []
-    assert len(messaging_gateway.sent_messages) == 1
-    assert messaging_gateway.sent_messages[0][1].endswith(
-        "- Nombre completo\n- DNI\n- Correo electrónico\n- Obra social\n- Plan"
-    )
+    # The first-visit question comes first: confirm / cancel buttons, no data
+    # bullets and no specialty list.
+    assert messaging_gateway.sent_messages == []
+    assert len(messaging_gateway.sent_buttons) == 1
+    assert [b.id for b in messaging_gateway.sent_buttons[0][2]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in messaging_gateway.sent_buttons[0][1]
     assert messaging_gateway.sent_lists == []
 
 
@@ -950,11 +958,15 @@ async def test_operation_create_from_a_lingering_stage_opens_first_visit_intake(
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert messaging_gateway.sent_buttons == []
-    assert len(messaging_gateway.sent_messages) == 1
-    assert messaging_gateway.sent_messages[0][1].endswith(
-        "- Nombre completo\n- DNI\n- Correo electrónico\n- Obra social\n- Plan"
-    )
+    # The first-visit question comes first: confirm / cancel buttons, no data
+    # bullets and no specialty list.
+    assert messaging_gateway.sent_messages == []
+    assert len(messaging_gateway.sent_buttons) == 1
+    assert [b.id for b in messaging_gateway.sent_buttons[0][2]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in messaging_gateway.sent_buttons[0][1]
     assert messaging_gateway.sent_lists == []
     snapshot = await seeding_graph.aget_state(thread_config)
     assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
@@ -1021,11 +1033,15 @@ async def test_operation_create_from_a_lingering_confirmation_drops_the_stale_pe
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert messaging_gateway.sent_buttons == []
-    assert len(messaging_gateway.sent_messages) == 1
-    assert messaging_gateway.sent_messages[0][1].endswith(
-        "- Nombre completo\n- DNI\n- Correo electrónico\n- Obra social\n- Plan"
-    )
+    # The first-visit question comes first: confirm / cancel buttons, no data
+    # bullets and no specialty list.
+    assert messaging_gateway.sent_messages == []
+    assert len(messaging_gateway.sent_buttons) == 1
+    assert [b.id for b in messaging_gateway.sent_buttons[0][2]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in messaging_gateway.sent_buttons[0][1]
     assert messaging_gateway.sent_lists == []
     snapshot = await seeding_graph.aget_state(thread_config)
     assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
