@@ -58,7 +58,7 @@ Root causes (origin/main e9d1c08):
 
 - [x] T1 — Preserve identity on empty reschedule/cancel results and prefill the intake
   from known `collected_data`. Route: delegated direct (writer trigger: 2+ files).
-- [ ] T2 — Intake rewrite: 5 fields, multi-field extraction, LLM-built single ask and
+- [x] T2 — Intake rewrite: 5 fields, multi-field extraction, LLM-built single ask and
   re-ask with static fallback, review with 5 fields. Route: delegated direct.
 - [ ] T3 — Persistence adapts to `obra_social` / `plan` / `email` and the contact phone.
   Route: delegated direct.
@@ -79,6 +79,9 @@ Root causes (origin/main e9d1c08):
 
 ## Next step
 
-T2.
+T3.
 
 - Note: `uv run ruff format --check .` already reports 82 files on the untouched base (installed ruff 0.16.1 drift); changed hunks were checked with `ruff format --diff` and add no new drift. Repo-wide format is not applied to avoid unrelated churn.
+- T1 commit: 6cc4019.
+- T2 done. Approach: subgraph stays pure (validates/merges `extracted_details`, returns `ask_fields` + static fallback text); new `app/agent/first_visit_intake_extraction.py` extracts email/DNI/first-visit answer deterministically and full name/obra social/plan via the existing `LLMProvider.extract_information` (no new provider capability; lone obra social/plan answer taken verbatim only if the LLM errors; a name is never guessed). Ask wording: `generate_or_fallback` with new intent `first_visit_intake_ask` (intro only) + "- " bullets appended verbatim, so field list/order cannot drift. Bridge kept for T3: coverage string = obra social + plan; phone = WhatsApp contact.
+  RED: 8 subgraph tests failed, extraction module ImportError, 7 node tests + 5 invoker tests failed before implementation (e.g. `test_asking_to_book_after_a_reschedule_without_appointments_reuses_name_and_dni`). GREEN: `uv run pytest` 1675 passed, only the baseline environmental failures remain; ruff check and mypy clean.
