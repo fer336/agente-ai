@@ -49,8 +49,10 @@ flows fixed recently, so every PR can be audited before deploy.
   never saw turn 1 and multi-turn scenarios were impossible. Added `EvalSessionRegistry`
   (per-conversation, LRU 256) + `get_eval_use_case_provider`, one shared `MemorySaver` per stack,
   and the use case now consumes the gateway's captured replies after each turn. Route: direct inline.
-- [ ] T3 — Multi-turn datasets and assertions for recent flows.
-- [ ] T4 — First local promptfoo run and findings report.
+- [x] T3 — Multi-turn datasets and assertions for recent flows. Route: direct inline
+  (evals-only files; no app code).
+- [ ] T4 — First local promptfoo run and findings report. Prepared only: runbook in
+  `evals/README.md`; the run itself is pending the user's go-ahead.
 
 ## Progress
 
@@ -76,7 +78,21 @@ flows fixed recently, so every PR can be audited before deploy.
 - Commits: T1 045a646, T2 fed36cc, T2b 7e9b04c.
 - Empty `button_payload` (promptfoo renders an unset var as "") is treated as no tap. RED:
   `test_an_empty_button_payload_is_treated_as_no_tap` (`'' is None`).
+- T3: `evaluateOptions.maxConcurrency: 1` + `cache: false`; provider body appends `EVAL_RUN_ID`
+  to `conversation_id` and sends `button_payload`. Test paths changed to `file://datasets/...`
+  (resolved from the config dir; `evals/datasets/...` would resolve to `evals/evals/...`).
+  New `evals/datasets/flows.yaml` (5 scenarios, 12 turns) and `flows_view_appointment.yaml`
+  (scenario 6, not enabled: the eval stack seeds no patient/appointments). New helpers in
+  `assertions/custom.js`. Scaffold test: `uv run pytest tests/unit/evals` 35 passed
+  (RED first: 12 failed before the datasets/config existed).
+- Offline replay of `flows.yaml` against the real graph (in-process, fake LLM, `InMemoryFakeRedis`):
+  all deterministic asserts pass; the `requires_real_llm: true` ones fail on the
+  `[fake-response ...]` placeholder by design.
+- Stale expectations fixed: `appointments` 01 (now opens with the first-visit question) and 05
+  (now a 3-turn flow: Agendar, Cancelar, then name + DNI). Others listed in the final report.
+- Finding: the eval endpoint always uses `FakeLLMProvider`; LLM wording cannot be audited until
+  the endpoint can opt in to the real LLM (decision pending).
 
 ## Next step
 
-T1 commit, then T2.
+T4: user decides on a real-LLM opt-in and the seeded patient, then the local run.

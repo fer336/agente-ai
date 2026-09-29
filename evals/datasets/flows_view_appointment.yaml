@@ -1,0 +1,55 @@
+# Scenario: "📋 Ver mi cita" shows a summary of the upcoming appointments (not a
+# rescheduling flow) with Reagendar / Cancelar / Menú principal.
+#
+# NOT referenced from promptfooconfig.yaml yet: it needs a patient with upcoming
+# appointments, and the eval stack (`get_evaluate_chat_turn_use_case`) seeds none
+# (`FakePatientGateway()` and `FakeDentalinkGateway()` are both empty). Once a
+# patient with DNI 30111222 and at least one appointment is seeded, enable it in
+# the config's `tests:` list.
+tests:
+  - description: "Ver mi cita: resumen con acciones — turn 1"
+    vars:
+      conversation_id: "flows-view-appointment"
+      message: "📋 Ver mi cita"
+      button_payload: "OPERATION_VIEW"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:replyKindIs
+        config:
+          kind: "text"
+      - type: javascript
+        value: file://assertions/custom.js:noListRows
+    metadata:
+      requires_real_llm: false
+
+  - description: "Ver mi cita: resumen con acciones — turn 2"
+    vars:
+      conversation_id: "flows-view-appointment"
+      message: "Paciente Prueba, DNI 30111222"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasBulletLines
+        config:
+          min: 1
+      - type: javascript
+        value: file://assertions/custom.js:hasButtons
+        config:
+          titles: ["🔄 Reagendar", "❌ Cancelar", "Menú principal"]
+          exact: true
+      - type: javascript
+        value: file://assertions/custom.js:noLeadingGreeting
+    metadata:
+      requires_real_llm: true
+
+  - description: "Ver mi cita: resumen con acciones — turn 3"
+    vars:
+      conversation_id: "flows-view-appointment"
+      message: "Menú principal"
+      button_payload: "MENU_MAIN"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:nodeNotVisited
+        config:
+          node: "handoff"
+    metadata:
+      requires_real_llm: false

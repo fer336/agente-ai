@@ -10,6 +10,7 @@ valid Node and behaves correctly against sample payloads.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,7 +26,14 @@ _DATASET_NAMES = [
     "safety",
     "adversarial",
     "audio",
+    "flows",
 ]
+#: Same multi-turn format as `flows`, kept out of the config until the eval stack
+#: seeds a patient with appointments (see the file's own header).
+_UNREFERENCED_DATASET_NAMES = ["flows_view_appointment"]
+_ALL_DATASET_NAMES = _DATASET_NAMES + _UNREFERENCED_DATASET_NAMES
+_CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
+_HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
 
 
 def _load_yaml(path: Path) -> dict:
@@ -36,8 +44,9 @@ def test_scaffold_has_the_prd_58_documented_directory_tree():
     assert (_EVALS_DIR / "promptfooconfig.yaml").is_file()
     assert (_EVALS_DIR / "prompts" / "agent_system_prompt.txt").is_file()
     assert (_EVALS_DIR / "assertions" / "custom.js").is_file()
-    for name in _DATASET_NAMES:
+    for name in _ALL_DATASET_NAMES:
         assert (_EVALS_DIR / "datasets" / f"{name}.yaml").is_file()
+    assert (_EVALS_DIR / "README.md").is_file()
 
 
 def test_promptfooconfig_parses_and_references_every_dataset_file():
@@ -45,8 +54,29 @@ def test_promptfooconfig_parses_and_references_every_dataset_file():
 
     assert config["prompts"] == ["file://prompts/agent_system_prompt.txt"]
     referenced = config["tests"]
+    # `file://` paths resolve from the config file's own directory.
     for name in _DATASET_NAMES:
-        assert f"evals/datasets/{name}.yaml" in referenced
+        assert f"file://datasets/{name}.yaml" in referenced
+    for name in _UNREFERENCED_DATASET_NAMES:
+        assert f"file://datasets/{name}.yaml" not in referenced
+
+
+def test_promptfooconfig_runs_turns_in_order_without_serving_cached_replies():
+    config = _load_yaml(_EVALS_DIR / "promptfooconfig.yaml")
+
+    # Turns of a conversation are separate tests: they only work sequentially, and a
+    # cached reply would skip the server call that builds the conversation's state.
+    assert config["evaluateOptions"]["maxConcurrency"] == 1
+    assert config["evaluateOptions"]["cache"] is False
+
+
+def test_promptfooconfig_sends_button_taps_and_a_run_scoped_conversation_id():
+    config = _load_yaml(_EVALS_DIR / "promptfooconfig.yaml")
+
+    body = config["providers"][0]["config"]["body"]
+    assert "button_payload" in body
+    assert "env.EVAL_RUN_ID" in body["conversation_id"]
+    assert "{{conversation_id}}" in body["conversation_id"]
 
 
 def test_system_prompt_is_non_empty_and_covers_the_non_negotiable_rules():
@@ -58,22 +88,28 @@ def test_system_prompt_is_non_empty_and_covers_the_non_negotiable_rules():
         assert required_phrase in text.lower()
 
 
-@pytest.mark.parametrize("name", _DATASET_NAMES)
+@pytest.mark.parametrize("name", _ALL_DATASET_NAMES)
 def test_dataset_file_has_well_formed_test_cases(name: str):
     dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
 
     assert "tests" in dataset
     assert len(dataset["tests"]) > 0
 
-    seen_conversation_ids = set()
+    # A conversation's turns are consecutive tests sharing one conversation_id; a
+    # conversation_id must never come back after another conversation started.
+    finished_conversation_ids = set()
+    current_conversation_id = None
     for test_case in dataset["tests"]:
         assert isinstance(test_case["description"], str) and test_case["description"]
         assert "message" in test_case["vars"]
         conversation_id = test_case["vars"]["conversation_id"]
-        assert conversation_id not in seen_conversation_ids, (
-            f"duplicate conversation_id {conversation_id!r} in {name}.yaml"
-        )
-        seen_conversation_ids.add(conversation_id)
+        if conversation_id != current_conversation_id:
+            assert conversation_id not in finished_conversation_ids, (
+                f"conversation_id {conversation_id!r} in {name}.yaml is not contiguous"
+            )
+            if current_conversation_id is not None:
+                finished_conversation_ids.add(current_conversation_id)
+            current_conversation_id = conversation_id
         assert len(test_case["assert"]) > 0
 
         metadata = test_case.get("metadata")
@@ -126,7 +162,204 @@ def test_custom_assertions_js_exports_the_expected_functions():
 
     assert result.returncode == 0, result.stderr
     exported = json.loads(result.stdout)
-    assert set(exported) == {"noSensitiveActionBeforeConfirmation", "noSensitiveValuesInReply"}
+    assert set(exported) == {
+        "noSensitiveActionBeforeConfirmation",
+        "noSensitiveValuesInReply",
+        "replyKindIs",
+        "hasButtons",
+        "noListRows",
+        "noBulletList",
+        "hasBulletLines",
+        "bulletsExactly",
+        "noLeadingGreeting",
+        "mentionsAll",
+        "nodeNotVisited",
+        "nodeVisited",
+        "introDiffersFromPreviousAsk",
+    }
+
+
+def _run_helper(helper: str, output: dict, config: dict | None = None, vars_: dict | None = None):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js not available to validate assertions/custom.js")
+
+    context = {"config": config or {}, "vars": vars_ or {}}
+    # The provider hands `output` over as a JSON string; `context` is a plain object.
+    script = (
+        f"const m = require({str(_CUSTOM_JS)!r});"
+        f"const output = {json.dumps(json.dumps(output))}; const context = {json.dumps(context)};"
+        f"console.log(JSON.stringify(m.{helper}(output, context)))"
+    )
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+_QUESTION_REPLY = {
+    "reply_text": "¿Es tu primera cita en Smiling Pilar?",
+    "reply_kind": "buttons",
+    "buttons": [
+        {"id": "FIRST_VISIT_CONFIRM", "title": "✅ Confirmar"},
+        {"id": "FIRST_VISIT_CANCEL", "title": "❌ Cancelar"},
+    ],
+    "list_rows": [],
+    "node_names": ["appointment"],
+}
+_ASK_REPLY = {
+    "reply_text": "Para dejarte registrado necesito estos datos:\n\n- Nombre completo\n- DNI",
+    "reply_kind": "text",
+    "buttons": [],
+    "list_rows": [],
+    "node_names": ["appointment"],
+}
+
+
+def test_has_buttons_requires_an_interactive_reply_with_every_title():
+    config = {"titles": ["✅ Confirmar", "❌ Cancelar"]}
+
+    assert _run_helper("hasButtons", _QUESTION_REPLY, config)["pass"] is True
+    assert (
+        _run_helper("hasButtons", _QUESTION_REPLY, {"titles": ["Menú principal"]})["pass"] is False
+    )
+    assert _run_helper("hasButtons", _ASK_REPLY, config)["pass"] is False
+    assert (
+        _run_helper(
+            "hasButtons", _QUESTION_REPLY, {**config, "titles": ["✅ Confirmar"], "exact": True}
+        )["pass"]
+        is False
+    )
+
+
+def test_bullet_helpers_distinguish_a_bullet_list_from_a_plain_question():
+    items = {"items": ["Nombre completo", "DNI"]}
+
+    assert _run_helper("noBulletList", _QUESTION_REPLY)["pass"] is True
+    assert _run_helper("noBulletList", _ASK_REPLY)["pass"] is False
+    assert _run_helper("hasBulletLines", _ASK_REPLY, {"min": 2})["pass"] is True
+    assert _run_helper("hasBulletLines", _ASK_REPLY, {"min": 3})["pass"] is False
+    assert _run_helper("hasBulletLines", _QUESTION_REPLY)["pass"] is False
+    assert _run_helper("bulletsExactly", _ASK_REPLY, items)["pass"] is True
+    assert _run_helper("bulletsExactly", _ASK_REPLY, {"items": ["DNI"]})["pass"] is False
+    assert (
+        _run_helper("bulletsExactly", _ASK_REPLY, {"items": ["DNI", "Nombre completo"]})["pass"]
+        is False
+    )
+
+
+def test_no_leading_greeting_flags_a_greeting_and_a_fake_llm_placeholder():
+    greeting = {"reply_text": "¡Hola! Sí, atendemos particulares."}
+    plain = {"reply_text": "Sí, atendemos pacientes particulares."}
+    placeholder = {"reply_text": "[fake-response for intent=question]"}
+
+    assert _run_helper("noLeadingGreeting", plain)["pass"] is True
+    assert _run_helper("noLeadingGreeting", greeting)["pass"] is False
+    assert (
+        _run_helper("noLeadingGreeting", {"reply_text": "Buenas tardes, te cuento"})["pass"]
+        is False
+    )
+    assert (
+        _run_helper("noLeadingGreeting", {"reply_text": "Holístico es otra cosa."})["pass"] is True
+    )
+    assert "FakeLLMProvider" in _run_helper("noLeadingGreeting", placeholder)["reason"]
+
+
+def test_reply_shape_helpers_check_kind_list_rows_and_nodes():
+    assert _run_helper("replyKindIs", _ASK_REPLY, {"kind": "text"})["pass"] is True
+    assert _run_helper("replyKindIs", _ASK_REPLY, {"kind": "buttons"})["pass"] is False
+    assert _run_helper("noListRows", _ASK_REPLY)["pass"] is True
+    with_rows = {
+        **_ASK_REPLY,
+        "reply_kind": "list",
+        "list_rows": [{"id": "SPECIALTY:1", "title": "X"}],
+    }
+    assert _run_helper("noListRows", with_rows)["pass"] is False
+    assert _run_helper("nodeNotVisited", _ASK_REPLY, {"node": "handoff"})["pass"] is True
+    assert _run_helper("nodeNotVisited", _ASK_REPLY, {"node": "appointment"})["pass"] is False
+    assert _run_helper("nodeVisited", _ASK_REPLY, {"node": "appointment"})["pass"] is True
+    assert _run_helper("mentionsAll", _ASK_REPLY, {"terms": ["datos", "necesito"]})["pass"] is True
+    assert _run_helper("mentionsAll", _ASK_REPLY, {"terms": ["obra social"]})["pass"] is False
+
+
+def test_intro_helper_flags_a_repeated_intro_within_one_conversation():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js not available to validate assertions/custom.js")
+
+    def ask(intro: str) -> dict:
+        return {"reply_text": f"{intro}\n\n- DNI\n- Plan"}
+
+    script = (
+        f"const m = require({str(_CUSTOM_JS)!r});"
+        "const ctx = {vars: {conversation_id: 'c1'}};"
+        f"const same = {json.dumps(json.dumps(ask('Gracias. Me faltan:')))};"
+        f"const other = {json.dumps(json.dumps(ask('Ya casi estamos:')))};"
+        "const a = m.introDiffersFromPreviousAsk(same, ctx);"
+        "const b = m.introDiffersFromPreviousAsk(same, ctx);"
+        "const c = m.introDiffersFromPreviousAsk(other, ctx);"
+        "console.log(JSON.stringify([a.pass, b.pass, c.pass]))"
+    )
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [True, False, True]
+
+
+def _dataset_asserts(name: str):
+    dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
+    for test_case in dataset["tests"]:
+        for assertion in test_case["assert"]:
+            yield test_case, assertion
+
+
+@pytest.mark.parametrize("name", _ALL_DATASET_NAMES)
+def test_dataset_javascript_asserts_reference_exported_helpers(name: str):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js not available to validate assertions/custom.js")
+    script = f"console.log(JSON.stringify(Object.keys(require({str(_CUSTOM_JS)!r}))))"
+    exported = set(
+        json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True).stdout)
+    )
+
+    for test_case, assertion in _dataset_asserts(name):
+        if assertion["type"] != "javascript":
+            continue
+        match = _HELPER_REFERENCE.fullmatch(assertion["value"])
+        assert match, (
+            f"{test_case['description']!r}: unexpected javascript value {assertion['value']!r}"
+        )
+        assert match.group(1) in exported, f"{match.group(1)} is not exported by custom.js"
+
+
+@pytest.mark.parametrize("name", ["flows", "flows_view_appointment"])
+def test_flow_datasets_are_ordered_multi_turn_scenarios(name: str):
+    dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
+
+    turns_by_conversation: dict[str, list[int]] = {}
+    for test_case in dataset["tests"]:
+        match = re.fullmatch(r".+ — turn (\d+)", test_case["description"])
+        assert match, f"{test_case['description']!r} must end with ' — turn N'"
+        turns_by_conversation.setdefault(test_case["vars"]["conversation_id"], []).append(
+            int(match[1])
+        )
+        # A tap sends the payload id; the message then carries the button title.
+        payload = test_case["vars"].get("button_payload")
+        assert payload is None or re.fullmatch(r"[A-Z_]+(:\w+)?", payload)
+
+    assert len(turns_by_conversation) >= 1
+    for conversation_id, turns in turns_by_conversation.items():
+        assert turns == list(range(1, len(turns) + 1)), f"{conversation_id}: turns {turns}"
+
+
+def test_flows_dataset_covers_the_recent_flows():
+    dataset = _load_yaml(_EVALS_DIR / "datasets" / "flows.yaml")
+    descriptions = " | ".join(t["description"] for t in dataset["tests"]).lower()
+    payloads = {t["vars"].get("button_payload") for t in dataset["tests"]}
+
+    for scenario in ["primera visita", "datos de alta", "ya soy paciente", "sin saludo", "handoff"]:
+        assert scenario in descriptions
+    assert {"OPERATION_CREATE", "FIRST_VISIT_CONFIRM", "FIRST_VISIT_CANCEL"} <= payloads
 
 
 def test_no_sensitive_action_before_confirmation_flags_cancel_without_confirmation():

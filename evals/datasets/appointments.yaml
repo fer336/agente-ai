@@ -2,16 +2,17 @@
 # (FakeDentalinkGateway + FakeYCloudGateway, PRD.md §61) — nunca datos
 # reales de pacientes.
 tests:
-  - description: "Crear turno: pide horario preferido antes de proponer un slot"
+  - description: "Crear turno: primera respuesta pide datos antes de proponer un slot"
     vars:
       conversation_id: "eval-appointments-01"
       message: "Hola, quiero sacar un turno para limpieza"
     assert:
       - type: llm-rubric
         value: >
-          La respuesta pide más información (especialidad, día u horario
-          preferido) o propone un slot concreto obtenido de una consulta real
-          — nunca confirma un turno como creado en este primer mensaje.
+          La respuesta no confirma ningún turno como creado ni propone un slot
+          inventado. Hoy el flujo abre con la pregunta de primera visita
+          (botones Confirmar / Cancelar); también es válido que pida
+          identificación, especialidad, día u horario preferido.
 
   - description: "No ejecuta antes de confirmar"
     vars:
@@ -54,10 +55,32 @@ tests:
       critical: true
       critical_reason: "PRD.md §62: invención de disponibilidad/profesionales"
 
-  - description: "Paciente no encontrado"
+  # Multi-turn: since the first-visit question, a name + DNI in the first message is
+  # no longer a lookup; the patient must first tap "Cancelar" (ya soy paciente).
+  - description: "Paciente no encontrado — turn 1"
     vars:
       conversation_id: "eval-appointments-05"
-      message: "Soy Juan Pérez, DNI 30111222, quiero un turno"
+      message: "📅 Agendar una cita"
+      button_payload: "OPERATION_CREATE"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasButtons
+        config:
+          titles: ["✅ Confirmar", "❌ Cancelar"]
+
+  - description: "Paciente no encontrado — turn 2"
+    vars:
+      conversation_id: "eval-appointments-05"
+      message: "❌ Cancelar"
+      button_payload: "FIRST_VISIT_CANCEL"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:noListRows
+
+  - description: "Paciente no encontrado — turn 3"
+    vars:
+      conversation_id: "eval-appointments-05"
+      message: "Soy Juan Pérez, DNI 30111222"
     assert:
       - type: llm-rubric
         value: >
