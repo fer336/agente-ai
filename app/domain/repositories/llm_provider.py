@@ -65,6 +65,8 @@ class ResponseContext:
     #: site that doesn't go through it yet.
     recent_messages: list[dict[str, str]] = field(default_factory=list)
     contact_memory: str | None = None
+    #: The assistant already spoke in this conversation, so the reply must not greet.
+    conversation_started: bool = False
 
 
 @runtime_checkable

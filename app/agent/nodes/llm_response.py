@@ -1,5 +1,53 @@
+import re
+
+from app.domain.entities.message import ROLE_ASSISTANT
 from app.domain.repositories.llm_provider import LLMProvider, ResponseContext
 from app.infrastructure.llm.exceptions import LLMProviderError
+
+#: A greeting at the very start of a reply ("¡Hola!", "Buenas tardes,", "Hola Fernando!").
+#: The optional name is a capitalised word (or "che") that ends in punctuation, so
+#: "Hola, sí atendemos" keeps its "sí" and "Buenas noticias:" is not a greeting.
+_LEADING_GREETING = re.compile(
+    r"^\s*[¡!]*\s*"
+    r"(?:hola|holi|holis|hey"
+    r"|buenas\s+(?:tardes|noches|d[ií]as)"
+    r"|buen(?:os)?\s+d[ií]as?"
+    r"|buenas(?=\s*(?:[,!.¡]|$)))"
+    r"(?![\wáéíóúñ])"
+    r"(?:\s+(?:che|(?-i:[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+))(?=\s*[,!.¡]))?"
+    r"[\s,!.¡:;-]*",
+    re.IGNORECASE,
+)
+
+
+def conversation_started(recent_messages: list[dict[str, str]]) -> bool:
+    """True once the assistant already spoke in this conversation.
+
+    Only the first reply of a conversation may greet; every later one continues a
+    chat that is already running.
+    """
+    return any(message.get("role") == ROLE_ASSISTANT for message in recent_messages)
+
+
+def strip_leading_greeting(text: str) -> str:
+    """Drops a greeting the text opens with; the rest is capitalised.
+
+    A text that is nothing but a greeting is returned untouched.
+    """
+    match = _LEADING_GREETING.match(text)
+    if match is None:
+        return text
+    remainder = text[match.end() :]
+    if not remainder.strip():
+        return text
+    return remainder[0].upper() + remainder[1:]
+
+
+def without_mid_conversation_greeting(text: str, recent_messages: list[dict[str, str]]) -> str:
+    """Deterministic safety net behind the prompts: no greeting after the first reply."""
+    if conversation_started(recent_messages):
+        return strip_leading_greeting(text)
+    return text
 
 
 async def generate_or_fallback(
@@ -33,14 +81,16 @@ async def generate_or_fallback(
     opened with "Hola").
     """
     try:
-        return await llm_provider.generate_response(
+        text = await llm_provider.generate_response(
             ResponseContext(
                 conversation_id=conversation_id,
                 intent=intent,
                 collected_data=collected_data,
                 recent_messages=recent_messages,
                 contact_memory=contact_memory,
+                conversation_started=conversation_started(recent_messages),
             )
         )
+        return without_mid_conversation_greeting(text, recent_messages)
     except LLMProviderError:
         return static_text

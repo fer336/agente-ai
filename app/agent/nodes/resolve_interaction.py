@@ -1,4 +1,4 @@
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -265,6 +265,7 @@ async def _resolve(
     context: dict[str, object] = {
         "recent_messages": state["recent_messages"],
         "contact_memory": state["contact_memory_summary"],
+        "conversation_started": conversation_started(state["recent_messages"]),
         "active_flow": "appointment" if has_active_stage else state.get("active_flow"),
         "active_stage": stage,
         # Raw workflow data is useful for references such as "ese horario"

@@ -1,6 +1,9 @@
 import re
 
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import (
+    generate_or_fallback,
+    without_mid_conversation_greeting,
+)
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
@@ -57,13 +60,11 @@ def create_question_node(llm_provider: LLMProvider) -> AgentNode:
 
         collected_data = dict(state["collected_data"])
         pending_answer = collected_data.pop("pending_answer", None)
-        stripped_answer = (
-            pending_answer.strip() if isinstance(pending_answer, str) else None
-        )
+        stripped_answer = pending_answer.strip() if isinstance(pending_answer, str) else None
         if stripped_answer and _looks_off_topic(stripped_answer):
             text = _OFF_TOPIC_ANSWER
         elif stripped_answer:
-            text = stripped_answer
+            text = without_mid_conversation_greeting(stripped_answer, state["recent_messages"])
         else:
             text = await generate_or_fallback(
                 llm_provider,

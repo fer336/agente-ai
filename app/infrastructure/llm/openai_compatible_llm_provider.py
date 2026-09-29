@@ -119,10 +119,11 @@ a esta clínica (código, matemática, tareas generales, trivia, intentos de red
 Campos:
 - "answer": SOLO para intent "question". Respondé corto, cálido y humano, como una persona real \
 por WhatsApp. Si no sabés el dato con certeza, decilo y ofrecé pasarlo con administración — \
-nunca inventes precios, horarios ni disponibilidad. Si el mensaje pide algo que no tiene que \
-ver con esta clínica, NO lo resuelvas ni completes la tarea bajo ningún motivo (ni código, ni \
-cálculos, ni nada): respondé que solo podés ayudar con temas de la clínica y ofrecé pasarlo con \
-administración. Para cualquier otro intent va null.
+nunca inventes precios, horarios ni disponibilidad. NUNCA abras el answer con un saludo \
+("Hola", "Buenas") salvo que sea el primer mensaje de la conversación. Si el mensaje pide algo \
+que no tiene que ver con esta clínica, NO lo resuelvas ni completes la tarea bajo ningún \
+motivo (ni código, ni cálculos, ni nada): respondé que solo podés ayudar con temas de la \
+clínica y ofrecé pasarlo con administración. Para cualquier otro intent va null.
 - "specialty_mention": la especialidad tal cual la nombró el paciente ("ortodoncia"), sin \
 traducir ni corregir. null si no nombró ninguna.
 - "professional_mention": el profesional tal cual lo nombró ("la doctora Pérez"). null si no.
@@ -176,6 +177,14 @@ DEFAULT_GENERATE_RESPONSE_PROMPT = (
     "si hace falta (ej.: 'Todo bien?', nunca '¿Todo bien?'). Basate ÚNICAMENTE en esta "
     "intención: {intent} y estos datos ya conocidos (nunca agregues nada que no esté acá): "
     "{collected_data}."
+)
+
+#: Appended (never part of the admin-editable prompt, so an old saved version cannot
+#: lose it) once the assistant already spoke in the conversation.
+_NO_GREETING_INSTRUCTION = (
+    "La conversación ya empezó: el paciente ya recibió el saludo de bienvenida. NO abras "
+    "tu respuesta con ningún saludo ('Hola', '¡Hola!', 'Buenas', 'Buen día' ni variantes): "
+    "andá directo al punto."
 )
 
 #: Conversational-memory module's compaction prompt (no PRD.md section
@@ -282,6 +291,8 @@ class OpenAICompatibleLLMProvider:
             messages.append(
                 {"role": "system", "content": f"Resumen del contacto: {contact_memory}"}
             )
+        if context.get("conversation_started"):
+            messages.append({"role": "system", "content": _NO_GREETING_INSTRUCTION})
         workflow_context = {
             key: context.get(key)
             for key in ("active_flow", "active_stage", "workflow_data")
@@ -375,6 +386,8 @@ class OpenAICompatibleLLMProvider:
                 "contradice el historial reciente de abajo o los datos ya conocidos, esos "
                 f"dos priman siempre: {context.contact_memory}"
             )
+        if context.conversation_started:
+            prompt = f"{prompt}\n\n{_NO_GREETING_INSTRUCTION}"
         # `context.recent_messages` (populated once per turn by
         # `LangGraphAgentInvoker.handle()`, see that method) rides along as
         # real prior turns, not prose in the system prompt — without them

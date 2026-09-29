@@ -64,3 +64,39 @@ async def test_question_fails_closed_through_the_llm_when_no_answer_is_available
 
     assert result["response_text"] == "[fake-response for intent=question_unknown_answer]"
     assert result["response_buttons"] is None
+
+
+_STARTED = [
+    {"role": "user", "content": "Hola"},
+    {"role": "assistant", "content": "Hola! Soy el asistente de Smiling Pilar."},
+    {"role": "user", "content": "¿atienden particulares?"},
+]
+
+
+@pytest.mark.asyncio
+async def test_question_answer_never_greets_mid_conversation():
+    # Chat A regression (live): "Para un tratamiento particular" got
+    # "¡Hola! Sí, atendemos pacientes particulares. Si querés, puedo pasarte con
+    # administración…" in the middle of a conversation.
+    node = create_question_node(FakeLLMProvider())
+    state = make_agent_state(
+        recent_messages=_STARTED,
+        collected_data={"pending_answer": "¡Hola! Sí, atendemos pacientes particulares."},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "Sí, atendemos pacientes particulares."
+
+
+@pytest.mark.asyncio
+async def test_question_answer_may_greet_on_the_first_turn():
+    node = create_question_node(FakeLLMProvider())
+    state = make_agent_state(
+        recent_messages=[{"role": "user", "content": "Hola, ¿atienden particulares?"}],
+        collected_data={"pending_answer": "¡Hola! Sí, atendemos pacientes particulares."},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "¡Hola! Sí, atendemos pacientes particulares."

@@ -652,3 +652,22 @@ async def test_idle_navigation_reads_this_turns_result_not_a_stale_collected_dat
 
     assert result["intent"] == "specialties"
     assert "navigation_target" not in result.get("collected_data", {"navigation_target": "main"})
+
+
+@pytest.mark.asyncio
+async def test_understand_is_told_whether_the_conversation_already_started():
+    contexts: list[dict] = []
+
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            contexts.append(context)
+            return await super().understand(message, context)
+
+    node = create_resolve_interaction_node(_CapturingLLMProvider())
+    first_turn = [{"role": "user", "content": "Hola"}]
+    later = [*first_turn, {"role": "assistant", "content": "Hola!"}]
+
+    await node(make_agent_state(user_message="Hola", recent_messages=first_turn))
+    await node(make_agent_state(user_message="Quiero un turno", recent_messages=later))
+
+    assert [context["conversation_started"] for context in contexts] == [False, True]

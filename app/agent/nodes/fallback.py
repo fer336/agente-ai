@@ -1,6 +1,9 @@
 from typing import cast
 
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import (
+    generate_or_fallback,
+    without_mid_conversation_greeting,
+)
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
@@ -115,7 +118,9 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             # turn as a failed one.
             remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
             return {
-                "response_text": pending_answer,
+                "response_text": without_mid_conversation_greeting(
+                    pending_answer, state["recent_messages"]
+                ),
                 "response_buttons": _CONFUSED_PATIENT_BUTTONS,
                 "requires_handoff": False,
                 "collected_data": remaining,

@@ -399,3 +399,47 @@ async def test_generate_response_omits_contact_memory_line_when_absent() -> None
 )
 def test_error_type_of_maps_each_llm_exception(exc: Exception, expected: str) -> None:
     assert _error_type_of(exc) == expected
+
+
+@pytest.mark.asyncio
+async def test_generate_response_forbids_greeting_once_the_conversation_started() -> None:
+    client = _StubClient("ok")
+    provider = _make_provider(client)
+
+    await provider.generate_response(
+        ResponseContext(
+            conversation_id="conv-1",
+            intent="question",
+            collected_data={},
+            conversation_started=True,
+        )
+    )
+    await provider.generate_response(
+        ResponseContext(
+            conversation_id="conv-1",
+            intent="question",
+            collected_data={},
+            conversation_started=False,
+        )
+    )
+
+    started_prompt = client.calls[0][1][0]["content"]
+    first_turn_prompt = client.calls[1][1][0]["content"]
+    assert "La conversación ya empezó:" in started_prompt
+    assert "La conversación ya empezó:" not in first_turn_prompt
+
+
+@pytest.mark.asyncio
+async def test_understand_forbids_greeting_in_the_answer_once_the_conversation_started() -> None:
+    client = _StubClient('{"intent": "question", "confidence": 0.9, "answer": "Sí."}')
+    provider = _make_provider(client)
+
+    await provider.understand("¿atienden particulares?", context={"conversation_started": True})
+    await provider.understand("¿atienden particulares?", context={"conversation_started": False})
+
+    started_messages = client.calls[0][1]
+    first_turn_messages = client.calls[1][1]
+    assert any("La conversación ya empezó:" in message["content"] for message in started_messages)
+    assert not any(
+        "La conversación ya empezó:" in message["content"] for message in first_turn_messages
+    )
