@@ -1,3 +1,8 @@
+from app.agent.handoff_offer import (
+    HANDOFF_OFFER_KEY,
+    is_handoff_offer_acceptance,
+    is_main_menu_request,
+)
 from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
@@ -139,6 +144,8 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
     }
 
 
+#: (`HANDOFF_OFFER_KEY` follows the same one-turn rule: an agreement word only ever
+#: accepts the offer made on the turn right before it.)
 #: `operation_mention`/`navigation_target` are set ONLY from THIS turn's
 #: fresh `UnderstandingResult` (`_carried_understanding`, above) — they must
 #: never outlive the turn that set them. `specialty_mention`/
@@ -146,7 +153,7 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
 #: operation or a navigation request, a specialty/professional the patient
 #: already named may still be legitimately relevant several turns later
 #: (mid-flow selection), so they stay out of this task's scope.
-_PER_TURN_UNDERSTANDING_KEYS = ("operation_mention", "navigation_target")
+_PER_TURN_UNDERSTANDING_KEYS = ("operation_mention", "navigation_target", HANDOFF_OFFER_KEY)
 
 
 def _strip_per_turn_understanding(collected_data: dict[str, object]) -> dict[str, object]:
@@ -208,6 +215,18 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
 
     async def node(state: AgentState) -> dict[str, object]:
         collected_data = _strip_per_turn_understanding(state["collected_data"])
+        if (
+            state["button_payload"] is None
+            and state["collected_data"].get(HANDOFF_OFFER_KEY)
+            and is_handoff_offer_acceptance(state["user_message"])
+        ):
+            # A short "bueno"/"dale"/"sí" right after the assistant offered
+            # administration is the same request as tapping its button.
+            return {
+                "intent": "handoff",
+                "interruption": "terminate",
+                "collected_data": collected_data,
+            }
         result = await _resolve(state, collected_data, llm_provider)
         if "collected_data" not in result and collected_data is not state["collected_data"]:
             # Something WAS stripped this turn but the branch below forwarded
@@ -254,6 +273,14 @@ async def _resolve(
 
         intent = _route_idle_button_payload(payload)
         return {"intent": intent if intent is not None else "unknown"}
+
+    # Typing "menú principal" is the same request as tapping that button:
+    # appointment.py resets the workflow for either.
+    if is_main_menu_request(state["user_message"]):
+        return {
+            "intent": "appointment",
+            "collected_data": {**collected_data, "navigation_target": "main"},
+        }
 
     # Verified location data is a deterministic global concern. Handle it
     # before the LLM so an active stage cannot trap "dónde quedan?".

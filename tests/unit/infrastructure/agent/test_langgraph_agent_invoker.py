@@ -1088,3 +1088,101 @@ async def test_a_verified_patient_is_remembered_across_a_main_menu_reset_until_t
 
     assert messaging_gateway.sent_buttons == []
     assert len(messaging_gateway.sent_lists) == lists_before + 1
+
+
+class _ParticularesLLM(make_llm_provider().__class__):
+    """Answers the particulares question the way the live model did in Chat A."""
+
+    async def understand(self, message, context):
+        from app.domain.repositories.llm_provider import UnderstandingResult
+
+        if "particular" in message.lower():
+            return UnderstandingResult(
+                intent="question",
+                confidence=0.95,
+                answer=(
+                    "¡Hola! Sí, atendemos pacientes particulares. Si querés, puedo pasarte "
+                    "con administración para que te confirmen los valores. ¿Te parece bien?"
+                ),
+            )
+        return await super().understand(message, context)
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_offer_has_buttons_and_a_free_text_yes_hands_over_to_administration():
+    # Chat A regression (live): the offer came without buttons and "Bueno" fell into
+    # "Perdón, no te entendí".
+    from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD
+
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    message_repository = make_message_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    await message_repository.save(
+        make_message(id_="m0", conversation_id="conv-1", direction="outbound")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        message_repository=message_repository,
+        llm_provider=_ParticularesLLM(),
+    )
+    conversation_id = ConversationId("conv-1")
+
+    await invoker.handle(conversation_id, ["m1"], "Para un tratamiento particular", None)
+
+    _, text, buttons, _ = messaging_gateway.sent_buttons[0]
+    assert not text.startswith("¡Hola")
+    assert [button.id for button in buttons] == [MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD]
+
+    await invoker.handle(conversation_id, ["m2"], "Bueno", None)
+
+    conversation = await conversation_repository.get_by_id(conversation_id)
+    assert conversation is not None
+    assert conversation.mode == "human"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["button", "typed"])
+async def test_the_main_menu_restarts_the_flow_keeping_the_patient_however_it_is_requested(via):
+    from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD
+
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[_future_slot()],
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        ),
+        patient_gateway=make_patient_gateway(
+            patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
+        ),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+    )
+    conversation_id = ConversationId("conv-1")
+    await invoker.handle(conversation_id, ["m1"], "", OPERATION_CREATE_PAYLOAD)
+    await invoker.handle(conversation_id, ["m2"], "", FIRST_VISIT_CANCEL_PAYLOAD)
+    await invoker.handle(conversation_id, ["m3"], "Juan Perez, 30123456", None)
+    lists_before = len(messaging_gateway.sent_lists)
+
+    if via == "button":
+        await invoker.handle(conversation_id, ["m4"], "", MENU_MAIN_PAYLOAD)
+    else:
+        await invoker.handle(conversation_id, ["m4"], "Menú principal", None)
+
+    assert len(messaging_gateway.sent_lists) == lists_before + 1  # the welcome list
+    messaging_gateway.sent_buttons.clear()
+    await invoker.handle(conversation_id, ["m5"], "", OPERATION_CREATE_PAYLOAD)
+    assert messaging_gateway.sent_buttons == []  # no first-visit question again
+    assert len(messaging_gateway.sent_lists) == lists_before + 2  # specialties list

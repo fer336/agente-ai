@@ -33,6 +33,7 @@ from app.agent.first_visit_intake_subgraph import (
 #: `SELECT_SLOT_PAYLOAD_PREFIX` from this module. The `as`-self-alias is
 #: the standard idiom for telling ruff/pyflakes this is an intentional
 #: re-export, not dead code.
+from app.agent.handoff_offer import is_main_menu_request
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX as SELECT_SLOT_PAYLOAD_PREFIX,
 )
@@ -2416,7 +2417,11 @@ def create_appointment_node(
             # unaffected by this idle-only branch.
             return await _welcome_reset_response(conversation_id)
 
-        if state["button_payload"] == MENU_MAIN_PAYLOAD:
+        if state["button_payload"] == MENU_MAIN_PAYLOAD or (
+            state["button_payload"] is None and is_main_menu_request(state["user_message"])
+        ):
+            # Typed "menú principal" is the button's twin: same reset, and the
+            # remembered patient (outside `collected_data`) stays known.
             return await _welcome_reset_response(conversation_id)
 
         returned_to_main_menu = False

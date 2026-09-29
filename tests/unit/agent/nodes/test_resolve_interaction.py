@@ -671,3 +671,59 @@ async def test_understand_is_told_whether_the_conversation_already_started():
     await node(make_agent_state(user_message="Quiero un turno", recent_messages=later))
 
     assert [context["conversation_started"] for context in contexts] == [False, True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", ["Bueno", "dale", "Sí", "ok"])
+async def test_accepting_a_handoff_offer_in_free_text_behaves_like_the_administracion_button(reply):
+    # Chat A regression (live): "Bueno" after "Si querés, puedo pasarte con
+    # administración…" fell into the "Perdón, no te entendí" fallback.
+    node = create_resolve_interaction_node(FakeLLMProvider())
+    button_result = await node(make_agent_state(button_payload=MENU_ADMIN_PAYLOAD))
+
+    result = await node(
+        make_agent_state(user_message=reply, collected_data={"handoff_offer_pending": True})
+    )
+
+    assert result["intent"] == button_result["intent"] == "handoff"
+    assert result["interruption"] == button_result["interruption"] == "terminate"
+
+
+@pytest.mark.asyncio
+async def test_agreement_words_without_a_pending_handoff_offer_are_not_a_handoff():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="Bueno", collected_data={}))
+
+    assert result["intent"] != "handoff"
+
+
+@pytest.mark.asyncio
+async def test_the_handoff_offer_only_lives_for_one_turn():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="quiero un turno",
+            collected_data={"handoff_offer_pending": True, "stage": "awaiting_slot_selection"},
+        )
+    )
+
+    assert result["intent"] == "appointment"
+    assert "handoff_offer_pending" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", [None, "awaiting_slot_selection"])
+async def test_a_typed_main_menu_request_routes_like_the_main_menu_button(stage):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+    collected_data = {"stage": stage} if stage else {}
+    button_result = await node(
+        make_agent_state(button_payload=MENU_MAIN_PAYLOAD, collected_data=collected_data)
+    )
+
+    result = await node(
+        make_agent_state(user_message="Menú principal", collected_data=collected_data)
+    )
+
+    assert result["intent"] == button_result["intent"] == "appointment"

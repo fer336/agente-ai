@@ -59,7 +59,7 @@ faltan…" on consecutive turns.
 
 - [x] T1 — Keep the create operation and identity through identification after a slot pick.
 - [x] T2 — No greetings mid conversation in LLM answers.
-- [ ] T3 — Handoff offer with Administración / Menú principal buttons; main menu resets
+- [x] T3 — Handoff offer with Administración / Menú principal buttons; main menu resets
   workflow state but keeps identity.
 - [ ] T4 — Varied LLM-built intake re-ask intros.
 
@@ -80,6 +80,9 @@ faltan…" on consecutive turns.
 - T2 done. Origin of the live greeting: the question answer comes from `understand()`'s free-text `answer` field (`pending_answer`, delivered verbatim by the question/fallback nodes), whose prompt had no anti-greeting rule; `generate_response` already forbade greetings. Fix: `ResponseContext.conversation_started` (assistant already spoke, from `recent_messages`) drives an appended "La conversación ya empezó" instruction in `generate_response` and in `understand` (context key set by `resolve_interaction`), the `answer` field rule now forbids greeting, and `strip_leading_greeting`/`without_mid_conversation_greeting` (`app/agent/nodes/llm_response.py`) strip a leading greeting from every `generate_or_fallback` result and from `pending_answer` in the question/fallback nodes. The first reply of a conversation may still greet.
   RED: `test_llm_response.py` (ImportError), `test_question_answer_never_greets_mid_conversation`, `test_fallback_delivers_a_pending_answer_without_a_mid_conversation_greeting`, provider prompt tests, `test_understand_is_told_whether_the_conversation_already_started`. GREEN: `uv run pytest` 1763 passed + baseline environmental failures; ruff check and mypy clean.
 
+- T3 done. No structured signal exists for the offer (`understand()` returns prose only), so `app/agent/handoff_offer.py` detects it deterministically (administración + an offer verb). Question node (LLM answer and the "no confirmed answer" reply) and the fallback node's `pending_answer` now send `HANDOFF_OFFER_BUTTONS` (💬 Administración = `MENU_ADMIN_PAYLOAD`, Menú principal = `MENU_MAIN_PAYLOAD`) and set the one-turn `handoff_offer_pending` flag; `resolve_interaction` turns a short agreement ("bueno", "dale", "sí", "ok"...) with that flag into the same `handoff`/`terminate` result as the button, and strips the flag every turn. Typed "menú principal" (and "volver al menú"...) is recognised deterministically in `resolve_interaction` (carries `navigation_target=main`) and in the appointment node, which resets via the same `_welcome_reset_response` as the button; `collected_data` (stage, operation, pending action id, intake, slots) is cleared while `AgentState["patient_identity"]` (T1) keeps the patient until the thread ends (idle rotation or admin reset). Not applied: the reschedule/cancel "no appointments" reply still has no buttons (open question).
+  RED: `test_handoff_offer.py` (ModuleNotFoundError), question/fallback button tests, the 4 acceptance tests + `test_the_handoff_offer_only_lives_for_one_turn`, `test_the_main_menu_resets_the_workflow_state_however_it_is_requested[typed]`. GREEN: `uv run pytest` 1801 unit passed; ruff check and mypy clean.
+
 ## Next step
 
-T3.
+T4.

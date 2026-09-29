@@ -4542,3 +4542,43 @@ async def test_a_patient_awaiting_verification_confirmation_is_not_remembered_ye
     )
 
     assert result.get("patient_identity") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["button", "typed"])
+async def test_the_main_menu_resets_the_workflow_state_however_it_is_requested(via):
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot])
+    in_flight = {
+        "stage": STAGE_AWAITING_CONFIRMATION,
+        "operation": CREATE_APPOINTMENT_ACTION,
+        "pending_selected_slot": slot,
+        "patient": _PATIENT_PRIMITIVES,
+        "first_visit_completed": True,
+        "first_visit_intake": {"stage": "collect"},
+        "chosen_specialty_id": "cleaning",
+    }
+    request = (
+        {"button_payload": MENU_MAIN_PAYLOAD}
+        if via == "button"
+        else {"user_message": "Menú principal"}
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            collected_data=in_flight,
+            pending_action_id="pending-1",
+            patient_identity=_PATIENT_PRIMITIVES,
+            **request,
+        )
+    )
+
+    assert result["response_text"] == WELCOME_TEXT
+    assert result["response_list"] == WELCOME_LIST
+    assert result["collected_data"] == {}
+    assert result["pending_action_id"] is None
+    # The reset clears the workflow only; the remembered patient stays known.
+    assert (
+        result.get("patient_identity") is None or result["patient_identity"] == _PATIENT_PRIMITIVES
+    )

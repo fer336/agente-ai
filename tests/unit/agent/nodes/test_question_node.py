@@ -100,3 +100,50 @@ async def test_question_answer_may_greet_on_the_first_turn():
     result = await node(state)
 
     assert result["response_text"] == "¡Hola! Sí, atendemos pacientes particulares."
+
+
+_PARTICULARES_ANSWER = (
+    "Sí, atendemos pacientes particulares. Si querés, puedo pasarte con administración "
+    "para que te confirmen los valores. ¿Te parece bien?"
+)
+
+
+@pytest.mark.asyncio
+async def test_an_answer_that_offers_administration_carries_the_two_handoff_buttons():
+    from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD
+
+    node = create_question_node(FakeLLMProvider())
+    state = make_agent_state(collected_data={"pending_answer": _PARTICULARES_ANSWER})
+
+    result = await node(state)
+
+    assert [(b.id, b.title) for b in result["response_buttons"]] == [
+        (MENU_ADMIN_PAYLOAD, "💬 Administración"),
+        (MENU_MAIN_PAYLOAD, "Menú principal"),
+    ]
+    assert result["collected_data"]["handoff_offer_pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_answer_without_a_handoff_offer_has_no_buttons():
+    node = create_question_node(FakeLLMProvider())
+    state = make_agent_state(collected_data={"pending_answer": "Atendemos de lunes a viernes."})
+
+    result = await node(state)
+
+    assert result["response_buttons"] is None
+    assert "handoff_offer_pending" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_the_unknown_answer_offering_administration_carries_the_handoff_buttons():
+    class _OfferingLLM(FakeLLMProvider):
+        async def generate_response(self, context):
+            return "Ese dato no lo tengo. Si querés, te paso con administración."
+
+    node = create_question_node(_OfferingLLM())
+
+    result = await node(make_agent_state(collected_data={}))
+
+    assert result["response_buttons"] is not None
+    assert result["collected_data"]["handoff_offer_pending"] is True
