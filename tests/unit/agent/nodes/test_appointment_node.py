@@ -4579,9 +4579,8 @@ async def test_the_main_menu_resets_the_workflow_state_however_it_is_requested(v
     assert result["collected_data"] == {}
     assert result["pending_action_id"] is None
     # The reset clears the workflow only; the remembered patient stays known.
-    assert (
-        result.get("patient_identity") is None or result["patient_identity"] == _PATIENT_PRIMITIVES
-    )
+    # The reset never overwrites the remembered patient (state keeps it untouched).
+    assert "patient_identity" not in result
 
 
 _REPEATED_INTRO = "Buenísimo, gracias por la info. Todavía me faltan estos datos:"
@@ -4694,3 +4693,24 @@ async def test_no_appointments_reply_offers_administration_with_buttons():
     assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
     assert result["collected_data"]["handoff_offer_pending"] is True
     assert result["collected_data"]["patient"]["dni"] == "30123456"
+
+
+@pytest.mark.asyncio
+async def test_a_patient_found_by_the_verification_flow_is_not_remembered_until_confirmed():
+    node, _, _ = await _make_node_and_conversation()
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Juan Perez", "dni": "30123456"}}'
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=payload,
+            collected_data={
+                "stage": STAGE_AWAITING_VERIFICATION_FLOW,
+                "operation": CREATE_APPOINTMENT_ACTION,
+            },
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_VERIFICATION_CONFIRMATION
+    assert result["collected_data"]["patient"]["dni"] == "30123456"
+    assert "patient_identity" not in result

@@ -91,6 +91,12 @@ faltan…" on consecutive turns.
 
 - T5 done. A booking/cancel/reschedule success (`appointment.py` success branches) now returns `carry_identity_to: generation + 1` just before rotating; `langgraph_agent_invoker.py` (turn start, after reading the new thread) inherits `patient_identity` from thread `session:{generation-1}` only when that marker equals the current generation. Idle rotation (`IngestMessageUseCase`) never sets the marker, so it forgets the patient; `ResetConversationUseCase` now also rotates the generation (previously it only deleted the un-suffixed thread, so session threads survived). RED: `test_the_patient_is_remembered_across_the_rotation_after_a_booking`, `test_execute_starts_a_fresh_workflow_session_so_no_remembered_patient_survives`; guard `test_an_idle_rotation_after_a_booking_forgets_the_patient`. GREEN: unit suite passes; ruff check and mypy clean.
 - T6 done. `_offer_appointments` no-appointments reply sends `HANDOFF_OFFER_BUTTONS` and sets `handoff_offer_pending` when the text offers administration. RED: `test_no_appointments_reply_offers_administration_with_buttons`.
+- [x] T7 — Native review findings: tighter handoff offer detection and acceptance.
+- T7 done. `offers_administration_handoff` now needs an offer construction from the agent ("puedo/podemos pasarte|comunicarte|derivarte…", "querés que te pase|comunique…", "te comunico|paso… con") instead of a bare verb stem, so "Podés pasar por administración…" and "datos de contacto de administración…" no longer get buttons. "gracias" and "listo" are no longer agreement words, so "ok gracias"/"listo, gracias" fall through. The main-menu identity assertion now checks the real behavior (result never overwrites `patient_identity`), plus a verification-flow test for the unconfirmed-patient guard. RED: 5 negative offer cases, 4 acceptance cases (`ok gracias`, `bueno gracias`, `Listo, gracias`, `listo`). GREEN: 1835 unit passed; ruff check and mypy clean.
+
+## Progress addendum
+
+- Native review (medium, 1636 lines): consent granted, review-reliability approved and acknowledged (lineage review-7233a3e4e08e02aa); findings fixed in T7.
 
 ## Next step
 

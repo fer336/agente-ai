@@ -25,7 +25,16 @@ HANDOFF_OFFER_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
 
-_OFFER_VERB = re.compile(r"\b(?:pas\w+|comuni[cq]\w*|deriv\w+|conect\w+|hablar|contact\w+)\b")
+#: An offer addressed to the patient by the agent, on accent-free lowercase text:
+#: "puedo pasarte con", "querés que te comunique", "te paso con". A bare verb stem is
+#: not enough ("podés pasar por administración", "datos de contacto").
+_OFFER = re.compile(
+    r"\b(?:puedo|podemos|podria|podriamos)\s+(?:\w+\s+){0,2}"
+    r"(?:pasarte|comunicarte|derivarte|contactarte|conectarte|transferirte)\b"
+    r"|\b(?:queres|quiere|preferis)\s+que\s+te\s+"
+    r"(?:pase|comunique|derive|contacte|conecte|transfiera)\b"
+    r"|\bte\s+(?:comunico|paso|derivo|contacto|conecto|transfiero)\s+con\b"
+)
 
 _AGREEMENT_CORE = frozenset(
     {
@@ -35,7 +44,6 @@ _AGREEMENT_CORE = frozenset(
         "ok",
         "okey",
         "oka",
-        "listo",
         "claro",
         "perfecto",
         "genial",
@@ -48,7 +56,7 @@ _AGREEMENT_CORE = frozenset(
         "bien",
     }
 )
-_AGREEMENT_FILLER = frozenset({"por", "favor", "gracias", "de", "acuerdo", "que", "si"})
+_AGREEMENT_FILLER = frozenset({"por", "favor", "de", "acuerdo", "que", "si"})
 
 _MAIN_MENU_REQUESTS = frozenset(
     {
@@ -72,7 +80,7 @@ def _normalize(text: str) -> str:
 def offers_administration_handoff(text: str) -> bool:
     """True when the text offers to hand the patient over to administration."""
     normalized = _normalize(text)
-    return "administracion" in normalized and _OFFER_VERB.search(normalized) is not None
+    return "administracion" in normalized and _OFFER.search(normalized) is not None
 
 
 def is_handoff_offer_acceptance(text: str) -> bool:

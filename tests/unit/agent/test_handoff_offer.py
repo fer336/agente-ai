@@ -24,6 +24,10 @@ def test_the_handoff_offer_buttons_are_administracion_and_the_main_menu():
         "Ese dato no lo tengo confirmado. Si querés, te comunico con administración.",
         "Puedo derivarte con Administración si preferís.",
         "No encontramos turnos próximos a tu nombre. Querés que te comunique con administración?",
+        "Puedo comunicarte con administración si querés.",
+        "Si querés, te paso con administración.",
+        "¿Querés que te pase con administración?",
+        "Podemos contactarte con Administración para confirmarlo.",
     ],
 )
 def test_an_offer_to_hand_over_to_administration_is_detected(text):
@@ -36,6 +40,11 @@ def test_an_offer_to_hand_over_to_administration_is_detected(text):
         "Atendemos de lunes a viernes de 9 a 18.",
         "Administración atiende de lunes a viernes.",
         "Sí, atendemos particulares.",
+        "Podés pasar por administración a retirar el comprobante.",
+        "Los datos de contacto de administración son los del chat.",
+        "Para eso tenés que hablar con administración en persona.",
+        "Administración se comunica de lunes a viernes.",
+        "Pasá por administración cuando vengas.",
     ],
 )
 def test_plain_answers_are_not_handoff_offers(text):
@@ -43,14 +52,26 @@ def test_plain_answers_are_not_handoff_offers(text):
 
 
 @pytest.mark.parametrize(
-    "text", ["Bueno", "bueno!", "Dale", "sí", "Si", "ok", "Ok, dale", "Sí, por favor", "Listo"]
+    "text", ["Bueno", "bueno!", "Dale", "sí", "Si", "ok", "Ok, dale", "Sí, por favor"]
 )
 def test_short_agreements_accept_the_offer(text):
     assert is_handoff_offer_acceptance(text) is True
 
 
 @pytest.mark.parametrize(
-    "text", ["no", "No gracias", "quiero un turno", "bueno pero quiero cancelar un turno", ""]
+    "text",
+    [
+        "no",
+        "No gracias",
+        "quiero un turno",
+        "bueno pero quiero cancelar un turno",
+        "",
+        "ok gracias",
+        "bueno gracias",
+        "Listo, gracias",
+        "listo",
+        "Gracias",
+    ],
 )
 def test_anything_else_does_not_accept_the_offer(text):
     assert is_handoff_offer_acceptance(text) is False
