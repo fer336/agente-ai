@@ -43,6 +43,12 @@ class AgentState(TypedDict):
     resume_node: NotRequired[str | None]
     interruption: NotRequired[str | None]
     appointment_action: str | None
+    #: The patient verified or registered earlier in this conversation (id, full
+    #: name, DNI, phone). Lives outside `collected_data` on purpose: resetting the
+    #: workflow (main menu, abandoned flow) replaces `collected_data`, but the
+    #: patient stays known until the conversation itself ends (idle rotation or
+    #: admin reset both start a fresh checkpoint thread).
+    patient_identity: NotRequired[dict[str, object] | None]
     collected_data: dict[str, object]
     missing_fields: list[str]
     pending_action_id: str | None

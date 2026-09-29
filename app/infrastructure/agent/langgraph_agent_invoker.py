@@ -321,6 +321,7 @@ class LangGraphAgentInvoker:
                     "resume_node": None,
                     "interruption": None,
                     "appointment_action": previous_values.get("appointment_action"),
+                    "patient_identity": previous_values.get("patient_identity"),
                     "collected_data": {
                         **(previous_values.get("collected_data", {})),
                         # Seed the fresh-restart flag into the graph state so

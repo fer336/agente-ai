@@ -1065,6 +1065,19 @@ def _cancel_proposal_payload(appointment: Appointment) -> dict[str, object]:
     }
 
 
+def _is_create_flow(collected_data: dict[str, object]) -> bool:
+    """True when the in-flight operation is a new booking.
+
+    A picked slot (`pending_selected_slot`) only ever exists in the create flow, so it
+    counts even when the `operation` key itself was not carried: identification must
+    never turn a booking into the reschedule/cancel/view lookup.
+    """
+    return (
+        collected_data.get("operation") == CREATE_APPOINTMENT_ACTION
+        or collected_data.get("pending_selected_slot") is not None
+    )
+
+
 def should_use_appointment_decision_subgraph(
     stage: str | None, collected_data: dict[str, object]
 ) -> bool:
@@ -1354,6 +1367,31 @@ def create_appointment_node(
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_REGISTRATION_FLOW},
         }
 
+    async def _identify_for_operation(
+        state: AgentState, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Start a reschedule/cancel/view: identify the patient unless already known.
+
+        A patient verified or registered earlier in the conversation is never asked
+        for name and DNI again.
+        """
+        patient = cast(dict[str, object] | None, collected_data.get("patient"))
+        if patient is not None and patient.get("id"):
+            return await _offer_appointments(
+                ConversationId(state["conversation_id"]),
+                patient,
+                str(patient["id"]),
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+        return await _begin_identification(
+            ConversationId(state["conversation_id"]),
+            collected_data,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+
     async def _delegate_to_decision_subgraph(
         state: AgentState, collected_data: dict[str, object]
     ) -> dict[str, object]:
@@ -1380,7 +1418,11 @@ def create_appointment_node(
         result = await appointment_decision_graph.ainvoke(decision_state)
 
         if result.get("exit_reason") == "begin_identification":
-            result_data = cast(dict[str, object], result["collected_data"])
+            result_data = {
+                **cast(dict[str, object], result["collected_data"]),
+                # Picking a slot is a booking whatever the operation key said.
+                "operation": CREATE_APPOINTMENT_ACTION,
+            }
             intake_patient = cast(dict[str, object] | None, result_data.get("patient"))
             if result_data.get("first_visit_completed") and intake_patient is not None:
                 return await _propose_selected_slot(
@@ -2290,7 +2332,7 @@ def create_appointment_node(
             },
         }
 
-    async def node(state: AgentState) -> dict[str, object]:
+    async def _turn(state: AgentState) -> dict[str, object]:
         conversation_id = ConversationId(state["conversation_id"])
         workflow_conversation = await conversation_repository.get_by_id(conversation_id)
         workflow_generation = (
@@ -3101,9 +3143,22 @@ def create_appointment_node(
                 # this is the moment to ask who they are — the reordering
                 # this session's brief asked for. The chosen slot is
                 # carried forward so identification never re-searches.
+                picked_data = {
+                    **collected_data,
+                    "operation": CREATE_APPOINTMENT_ACTION,
+                    "pending_selected_slot": selected,
+                }
+                if patient is not None:
+                    return await _propose_selected_slot(
+                        conversation_id,
+                        patient,
+                        picked_data,
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
                 return await _begin_identification(
                     conversation_id,
-                    {**collected_data, "pending_selected_slot": selected},
+                    picked_data,
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
@@ -3478,7 +3533,7 @@ def create_appointment_node(
             if button_payload == CONFIRM_APPOINTMENT_PAYLOAD:
                 patient_primitives = cast(dict[str, object], collected_data.get("patient", {}))
                 patient_id = cast(str, collected_data.get("verified_patient_id", ""))
-                if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+                if _is_create_flow(collected_data):
                     return await _continue_booking_with_patient(
                         state, collected_data, patient_primitives
                     )
@@ -3493,10 +3548,15 @@ def create_appointment_node(
             if button_payload == REJECT_APPOINTMENT_PAYLOAD:
                 # "That's not me" — the found record isn't whoever is
                 # messaging; collect fresh data instead of risking someone
-                # else's identity.
+                # else's identity. The rejected record must not linger as "the
+                # patient" either: it would be remembered for the conversation.
                 return await _begin_registration(
                     conversation_id,
-                    collected_data,
+                    {
+                        key: value
+                        for key, value in collected_data.items()
+                        if key not in {"patient", "verified_patient_id"}
+                    },
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
@@ -3579,7 +3639,7 @@ def create_appointment_node(
                 if agreement is not None:
                     await agreement_gateway.link_patient_agreement(new_patient.id, agreement.id)
             patient_primitives = _patient_to_primitives(new_patient)
-            if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+            if _is_create_flow(collected_data):
                 return await _continue_booking_with_patient(
                     state, collected_data, patient_primitives
                 )
@@ -3847,7 +3907,7 @@ def create_appointment_node(
                     },
                 }
             patient_primitives = _patient_to_primitives(identified_patient)
-            if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+            if _is_create_flow(collected_data):
                 return await _continue_booking_with_patient(
                     state, collected_data, patient_primitives
                 )
@@ -4012,12 +4072,7 @@ def create_appointment_node(
                 return await _delegate_to_first_visit_intake(
                     state, {**collected_data, "operation": operation}
                 )
-            return await _begin_identification(
-                conversation_id,
-                {**collected_data, "operation": operation},
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
+            return await _identify_for_operation(state, {**collected_data, "operation": operation})
 
         # No stage yet. A button tap wins outright (PRD.md §6: deterministic
         # over guessed) — the welcome list's booking rows carry these exact
@@ -4133,11 +4188,8 @@ def create_appointment_node(
                 result = {**result, "pending_action_id": None}
             return result
         if operation is not None:
-            identification_result = await _begin_identification(
-                conversation_id,
-                {**collected_data, "operation": operation},
-                state["recent_messages"],
-                state["contact_memory_summary"],
+            identification_result = await _identify_for_operation(
+                state, {**collected_data, "operation": operation}
             )
             if returned_to_main_menu:
                 # Mirrors the CREATE branch just above: abandoning
@@ -4182,5 +4234,37 @@ def create_appointment_node(
         if returned_to_main_menu:
             operation_menu_result["pending_action_id"] = None
         return operation_menu_result
+
+    async def node(state: AgentState) -> dict[str, object]:
+        """One turn, with the conversation's remembered patient wired in and out.
+
+        The identity lives in `AgentState["patient_identity"]`, outside `collected_data`,
+        so a workflow reset (main menu, abandoned flow) never makes the patient
+        introduce themselves again. It is handed to the stage machine as an already
+        identified patient and refreshed from whatever patient a turn resolved.
+        """
+        remembered = state.get("patient_identity")
+        collected_data = state["collected_data"]
+        if remembered is not None and collected_data.get("patient") is None:
+            state = cast(
+                AgentState,
+                {
+                    **state,
+                    "collected_data": {
+                        **collected_data,
+                        "patient": remembered,
+                        "first_visit_completed": True,
+                    },
+                },
+            )
+        result = await _turn(state)
+        result_data = result.get("collected_data")
+        if isinstance(result_data, dict) and (
+            result_data.get("stage") != STAGE_AWAITING_VERIFICATION_CONFIRMATION
+        ):
+            patient = result_data.get("patient")
+            if isinstance(patient, dict) and patient.get("id"):
+                return {**result, "patient_identity": patient}
+        return result
 
     return node

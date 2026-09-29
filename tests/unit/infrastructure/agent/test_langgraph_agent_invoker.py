@@ -1046,3 +1046,45 @@ async def test_operation_create_from_a_lingering_confirmation_drops_the_stale_pe
     snapshot = await seeding_graph.aget_state(thread_config)
     assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert snapshot.values["pending_action_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_verified_patient_is_remembered_across_a_main_menu_reset_until_the_thread_ends():
+    # Chat A regression: identity given earlier in the conversation must survive a
+    # workflow reset, so booking again never asks for the first-visit question or for
+    # name + DNI a second time.
+    from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD
+
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[_future_slot()],
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        ),
+        patient_gateway=make_patient_gateway(
+            patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
+        ),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+    )
+    conversation_id = ConversationId("conv-1")
+
+    await invoker.handle(conversation_id, ["m1"], "", OPERATION_CREATE_PAYLOAD)
+    await invoker.handle(conversation_id, ["m2"], "", FIRST_VISIT_CANCEL_PAYLOAD)
+    await invoker.handle(conversation_id, ["m3"], "Juan Perez, 30123456", None)
+    await invoker.handle(conversation_id, ["m4"], "", MENU_MAIN_PAYLOAD)
+    messaging_gateway.sent_buttons.clear()
+    lists_before = len(messaging_gateway.sent_lists)
+
+    await invoker.handle(conversation_id, ["m5"], "", OPERATION_CREATE_PAYLOAD)
+
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_lists) == lists_before + 1
