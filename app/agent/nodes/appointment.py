@@ -52,6 +52,7 @@ from app.agent.nodes.appointment_selection import (
     next_page,
     slot_by_id,
     slot_payload_id,
+    spanish_weekday,
     text_leaks_a_name,
 )
 from app.agent.nodes.appointment_selection import (
@@ -209,6 +210,9 @@ STAGE_AWAITING_VERIFICATION_FLOW = "awaiting_verification_flow"
 STAGE_AWAITING_VERIFICATION_CONFIRMATION = "awaiting_verification_confirmation"
 STAGE_AWAITING_REGISTRATION_FLOW = "awaiting_registration_flow"
 STAGE_AWAITING_APPOINTMENT_SELECTION = "awaiting_appointment_selection"
+#: "Ver mi cita": the summary of upcoming appointments is on screen and the
+#: patient picks Reagendar / Cancelar / Menú principal.
+STAGE_AWAITING_VIEW_ACTION = "awaiting_view_action"
 STAGE_AWAITING_SLOT_SELECTION = "awaiting_slot_selection"
 STAGE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 #: No slots for the chosen professional: offer other professionals of the
@@ -249,6 +253,13 @@ CREATE_APPOINTMENT_ACTION = "create_appointment"
 RESCHEDULE_APPOINTMENT_ACTION = "reschedule_appointment"
 CANCEL_APPOINTMENT_ACTION = "cancel_appointment"
 
+#: "Ver mi cita" — read-only: shows the upcoming appointments and offers the
+#: reschedule/cancel actions. Never a `PendingAction.action_type` (nothing
+#: is proposed or confirmed by viewing), only `collected_data["operation"]`.
+VIEW_APPOINTMENTS_ACTION = "view_appointments"
+VIEW_RESCHEDULE_PAYLOAD = "VIEW_RESCHEDULE"
+VIEW_CANCEL_PAYLOAD = "VIEW_CANCEL"
+
 #: A fourth `PendingAction.action_type`, alongside the three above — only
 #: ever proposed from `STAGE_AWAITING_IDENTIFICATION` when the patient
 #: could not be found AND the in-flight operation is
@@ -270,7 +281,7 @@ _OPERATION_BY_MENTION = {
     "create": CREATE_APPOINTMENT_ACTION,
     "reschedule": RESCHEDULE_APPOINTMENT_ACTION,
     "cancel": CANCEL_APPOINTMENT_ACTION,
-    "view": RESCHEDULE_APPOINTMENT_ACTION,
+    "view": VIEW_APPOINTMENTS_ACTION,
 }
 
 #: Shared by `STAGE_AWAITING_OPERATION_SELECTION` (tapped from that stage's
@@ -281,7 +292,7 @@ _OPERATION_BY_PAYLOAD = {
     OPERATION_CREATE_PAYLOAD: CREATE_APPOINTMENT_ACTION,
     OPERATION_RESCHEDULE_PAYLOAD: RESCHEDULE_APPOINTMENT_ACTION,
     OPERATION_CANCEL_PAYLOAD: CANCEL_APPOINTMENT_ACTION,
-    OPERATION_VIEW_PAYLOAD: RESCHEDULE_APPOINTMENT_ACTION,
+    OPERATION_VIEW_PAYLOAD: VIEW_APPOINTMENTS_ACTION,
 }
 SELECT_APPOINTMENT_PAYLOAD_PREFIX = "SELECT_APPOINTMENT:"
 #: `SELECT_SLOT_PAYLOAD_PREFIX` now lives in `appointment_selection.py`
@@ -432,6 +443,21 @@ _CHOOSE_APPOINTMENT_PROMPT = "Elegí el turno tocando uno de los botones:"
 _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT = (
     "Elegí cuál turno querés cancelar tocando uno de los botones:"
 )
+_VIEW_SUMMARY_INTRO = "Estos son tus próximos turnos:"
+_VIEW_ACTION_REMINDER = (
+    "Tocá uno de los botones para reagendar o cancelar un turno, o volver al menú principal."
+)
+#: Reschedule/cancel selection sends one button per appointment and WhatsApp
+#: allows three, so the summary lists no more than that.
+_VIEW_SUMMARY_MAX_APPOINTMENTS = 3
+_VIEW_ACTION_BUTTONS = [
+    InteractiveButton(id=VIEW_RESCHEDULE_PAYLOAD, title="🔄 Reagendar"),
+    InteractiveButton(id=VIEW_CANCEL_PAYLOAD, title="❌ Cancelar"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
+]
+_VIEW_ACTION_PAYLOADS = frozenset({VIEW_RESCHEDULE_PAYLOAD, VIEW_CANCEL_PAYLOAD})
+_VIEW_RESCHEDULE_TEXT = re.compile(r"\b(?:reagend|reprogram)", re.IGNORECASE)
+_VIEW_CANCEL_TEXT = re.compile(r"\bcancel", re.IGNORECASE)
 _APPOINTMENT_SELECTION_REMINDER = (
     "Por favor, elegí uno de tus turnos tocando un botón — todavía no puedo "
     "tomar la selección por texto."
@@ -730,6 +756,29 @@ def _appointment_button(appointment: Appointment) -> InteractiveButton:
         id=f"{SELECT_APPOINTMENT_PAYLOAD_PREFIX}{appointment.id}",
         title=appointment.slot.time_range.start.strftime("%d/%m %H:%M"),
     )
+
+
+def _view_summary_line(
+    appointment: Appointment, professional_name: str, specialty_name: str | None
+) -> str:
+    """'- Viernes 02/10, 11:15 — Dra. X (Ortodoncia)' — built by code, never by the model."""
+    start = appointment.slot.time_range.start
+    line = (
+        f"- {spanish_weekday(start)} {start.strftime('%d/%m')}, "
+        f"{start.strftime('%H:%M')} — {professional_name}"
+    )
+    return f"{line} ({specialty_name})" if specialty_name else line
+
+
+def _view_action_from_input(button_payload: str | None, text: str) -> str | None:
+    """The tapped button's payload, or its typed twin ("reagendar", "cancelar")."""
+    if button_payload is not None:
+        return button_payload if button_payload in _VIEW_ACTION_PAYLOADS else None
+    reschedule = _VIEW_RESCHEDULE_TEXT.search(text) is not None
+    cancel = _VIEW_CANCEL_TEXT.search(text) is not None
+    if reschedule == cancel:
+        return None
+    return VIEW_RESCHEDULE_PAYLOAD if reschedule else VIEW_CANCEL_PAYLOAD
 
 
 #: Every LLM-framed message below that carries a real booking's date/time
@@ -2319,8 +2368,38 @@ def create_appointment_node(
         professional_names = {
             professional.id: professional.full_name for professional in professionals
         }
+        if collected_data.get("operation") == VIEW_APPOINTMENTS_ACTION:
+            return await _offer_view_summary(
+                conversation_id,
+                patient,
+                appointments,
+                professionals,
+                professional_names,
+                collected_data,
+                recent_messages,
+                contact_memory,
+            )
+        return await _offer_appointment_selection(
+            conversation_id,
+            patient,
+            appointments,
+            professional_names,
+            collected_data,
+            recent_messages,
+            contact_memory,
+        )
+
+    async def _offer_appointment_selection(
+        conversation_id: ConversationId,
+        patient: dict[str, object],
+        appointments: list[Appointment],
+        professional_names: dict[str, str],
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> dict[str, object]:
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        # Operation-specific framing — CANCEL, RESCHEDULE and VIEW all reach
+        # Operation-specific framing — CANCEL and RESCHEDULE both reach
         # this same "pick which appointment" screen, but the tone must not
         # be interchangeable: seen live, a generic "invitá a elegir uno"
         # situacion left the model free to default to upbeat booking
@@ -2335,9 +2414,7 @@ def create_appointment_node(
             fallback = _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT
         else:
             intent = "choose_appointment_to_reschedule"
-            situacion = (
-                "El paciente quiere ver o reprogramar un turno — hay que pedirle que elija cuál."
-            )
+            situacion = "El paciente quiere reprogramar un turno — hay que pedirle que elija cuál."
             fallback = _CHOOSE_APPOINTMENT_PROMPT
         text = await generate_or_fallback(
             llm_provider,
@@ -2366,6 +2443,137 @@ def create_appointment_node(
                 "patient": patient,
                 "patient_appointments": appointments,
                 "professional_names": professional_names,
+            },
+        }
+
+    async def _offer_view_summary(
+        conversation_id: ConversationId,
+        patient: dict[str, object],
+        appointments: list[Appointment],
+        professionals: list[Professional],
+        professional_names: dict[str, str],
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> dict[str, object]:
+        """One message: an LLM-written intro plus a code-built line per appointment.
+
+        Same split as `_confirmation_message`: the model never writes the
+        dates, times or names, so a paraphrase cannot mangle them. The list is
+        capped at what the reschedule/cancel selection can offer as buttons.
+        """
+        listed = sorted(appointments, key=lambda a: a.slot.time_range.start)[
+            :_VIEW_SUMMARY_MAX_APPOINTMENTS
+        ]
+        specialties = {s.id: s.name for s in await list_specialties.execute()}
+        specialty_by_professional = {
+            professional.id: specialties.get(professional.specialty_id)
+            for professional in professionals
+            if professional.specialty_id is not None
+        }
+        await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        intro = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "view_appointments_summary",
+            {
+                "situacion": (
+                    "El paciente quiere ver sus turnos próximos. Debajo de tu mensaje va el "
+                    "detalle de cada turno y después los botones Reagendar, Cancelar y "
+                    "Menú principal."
+                ),
+                "instruccion": (
+                    "Escribí una sola frase corta que presente el detalle. NO saludes, NO "
+                    "menciones fechas, horarios ni profesionales, y NO ofrezcas reservar "
+                    "nada nuevo."
+                ),
+            },
+            _VIEW_SUMMARY_INTRO,
+            recent_messages,
+            contact_memory,
+        )
+        lines = [
+            _view_summary_line(
+                appointment,
+                professional_names.get(appointment.slot.professional_id, "Profesional"),
+                specialty_by_professional.get(appointment.slot.professional_id),
+            )
+            for appointment in listed
+        ]
+        text = f"{intro}\n\n" + "\n".join(lines)
+        hidden = len(appointments) - len(listed)
+        if hidden > 0:
+            text += f"\n\nY {hidden} turno{'s' if hidden > 1 else ''} más."
+        return {
+            "response_text": text,
+            "response_buttons": _VIEW_ACTION_BUTTONS,
+            "requires_handoff": False,
+            "pending_action_id": None,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_VIEW_ACTION,
+                "patient": patient,
+                "patient_appointments": listed,
+                "professional_names": professional_names,
+            },
+        }
+
+    async def _begin_cancel(
+        state: AgentState,
+        collected_data: dict[str, object],
+        appointment: Appointment,
+    ) -> dict[str, object]:
+        """Propose cancelling `appointment` and ask for the explicit confirmation."""
+        conversation_id = ConversationId(state["conversation_id"])
+        professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
+        pending_action = await propose_appointment.execute(
+            conversation_id,
+            CANCEL_APPOINTMENT_ACTION,
+            _cancel_proposal_payload(appointment),
+        )
+        await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+        cancel_patient = cast(dict[str, object] | None, collected_data.get("patient"))
+        cancel_confirmation_text = await _cancel_confirmation_message(
+            llm_provider,
+            conversation_id,
+            appointment,
+            professional_names,
+            str(cancel_patient["full_name"]) if cancel_patient else None,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+        return {
+            "response_text": cancel_confirmation_text,
+            "response_buttons": _CONFIRM_BUTTONS,
+            "requires_handoff": False,
+            "pending_action_id": pending_action.id,
+            "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
+        }
+
+    async def _begin_reschedule(
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        appointment: Appointment,
+    ) -> dict[str, object]:
+        """Ask whether to keep the appointment's professional when rescheduling it."""
+        professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
+        rescheduling_professional_id = appointment.slot.professional_id
+        professional_name = professional_names.get(
+            rescheduling_professional_id, "tu profesional actual"
+        )
+        await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        return {
+            "response_text": (
+                f"Tu turno es con {professional_name}. ¿Querés mantener el mismo "
+                "profesional o elegir otro?"
+            ),
+            "response_buttons": _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS,
+            "requires_handoff": False,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
+                "rescheduling_appointment_id": str(appointment.id),
+                "rescheduling_professional_id": rescheduling_professional_id,
             },
         }
 
@@ -3230,6 +3438,72 @@ def create_appointment_node(
                 "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
             }
 
+        if stage == STAGE_AWAITING_VIEW_ACTION:
+            view_appointments = cast(
+                list[Appointment], collected_data.get("patient_appointments", [])
+            )
+            if not view_appointments or collected_data.get("patient") is None:
+                view_session_lost_text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "session_lost",
+                    {"situacion": "Se perdió el contexto de la conversación."},
+                    _SESSION_LOST_MESSAGE,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": view_session_lost_text,
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {},
+                }
+            view_action = _view_action_from_input(state["button_payload"], state["user_message"])
+            if view_action is None:
+                view_reminder_text = await generate_or_fallback(
+                    llm_provider,
+                    str(conversation_id),
+                    "view_action_reminder",
+                    {
+                        "situacion": (
+                            "El paciente está viendo sus turnos y no eligió qué hacer: solo "
+                            "puede reagendar, cancelar o volver al menú principal."
+                        ),
+                        "instruccion": (
+                            "Los botones se muestran de nuevo debajo de tu mensaje — NO "
+                            "repitas los turnos, solo invitá a elegir una opción."
+                        ),
+                    },
+                    _VIEW_ACTION_REMINDER,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+                return {
+                    "response_text": view_reminder_text,
+                    "response_buttons": _VIEW_ACTION_BUTTONS,
+                    "requires_handoff": False,
+                }
+            cancelling = view_action == VIEW_CANCEL_PAYLOAD
+            operation_data = {
+                **collected_data,
+                "operation": (
+                    CANCEL_APPOINTMENT_ACTION if cancelling else RESCHEDULE_APPOINTMENT_ACTION
+                ),
+            }
+            if len(view_appointments) > 1:
+                return await _offer_appointment_selection(
+                    conversation_id,
+                    cast(dict[str, object], collected_data["patient"]),
+                    view_appointments,
+                    cast(dict[str, str], collected_data.get("professional_names", {})),
+                    operation_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            if cancelling:
+                return await _begin_cancel(state, operation_data, view_appointments[0])
+            return await _begin_reschedule(conversation_id, operation_data, view_appointments[0])
+
         if stage == STAGE_AWAITING_APPOINTMENT_SELECTION:
             button_payload = state["button_payload"]
             patient_appointments = cast(
@@ -3330,50 +3604,12 @@ def create_appointment_node(
                 }
 
             if operation == CANCEL_APPOINTMENT_ACTION:
-                pending_action = await propose_appointment.execute(
-                    conversation_id,
-                    CANCEL_APPOINTMENT_ACTION,
-                    _cancel_proposal_payload(selected_appointment),
-                )
-                await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-                cancel_patient = cast(dict[str, object] | None, collected_data.get("patient"))
-                cancel_confirmation_text = await _cancel_confirmation_message(
-                    llm_provider,
-                    conversation_id,
-                    selected_appointment,
-                    professional_names,
-                    str(cancel_patient["full_name"]) if cancel_patient else None,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-                return {
-                    "response_text": cancel_confirmation_text,
-                    "response_buttons": _CONFIRM_BUTTONS,
-                    "requires_handoff": False,
-                    "pending_action_id": pending_action.id,
-                    "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
-                }
+                return await _begin_cancel(state, collected_data, selected_appointment)
 
             if operation == RESCHEDULE_APPOINTMENT_ACTION:
-                rescheduling_professional_id = selected_appointment.slot.professional_id
-                professional_name = professional_names.get(
-                    rescheduling_professional_id, "tu profesional actual"
+                return await _begin_reschedule(
+                    conversation_id, collected_data, selected_appointment
                 )
-                await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-                return {
-                    "response_text": (
-                        f"Tu turno es con {professional_name}. ¿Querés mantener el mismo "
-                        "profesional o elegir otro?"
-                    ),
-                    "response_buttons": _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS,
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **collected_data,
-                        "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
-                        "rescheduling_appointment_id": str(selected_appointment.id),
-                        "rescheduling_professional_id": rescheduling_professional_id,
-                    },
-                }
 
             raise AssertionError(  # pragma: no cover - impossible by construction
                 f"unsupported operation: {operation}"

@@ -48,6 +48,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_SPECIALTY_SELECTION,
     STAGE_AWAITING_VERIFICATION_CONFIRMATION,
     STAGE_AWAITING_VERIFICATION_FLOW,
+    VIEW_APPOINTMENTS_ACTION,
     _appointment_button,
     create_appointment_node,
     should_use_appointment_decision_subgraph,
@@ -1098,10 +1099,9 @@ async def test_the_welcome_lists_create_row_skips_the_operation_menu():
 
 
 @pytest.mark.asyncio
-async def test_the_welcome_lists_view_row_reaches_identification_like_reschedule():
-    # "Ver mi cita" has no dedicated operation yet (client hasn't defined
-    # a real read-only view) — provisionally routed through the same
-    # identification step RESCHEDULE already reaches.
+async def test_the_welcome_lists_view_row_reaches_identification_as_its_own_operation():
+    # "Ver mi cita" is a read-only view with its own operation (it shows a
+    # summary first), sharing only the identification step with RESCHEDULE.
     node, _, _ = await _make_node_and_conversation()
     state = make_agent_state(
         conversation_id="conv-1",
@@ -1112,7 +1112,7 @@ async def test_the_welcome_lists_view_row_reaches_identification_like_reschedule
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert result["collected_data"]["operation"] == VIEW_APPOINTMENTS_ACTION
 
 
 @pytest.mark.asyncio
@@ -1146,7 +1146,7 @@ async def test_a_stated_view_request_skips_to_identification_instead_of_specialt
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert result["collected_data"]["operation"] == VIEW_APPOINTMENTS_ACTION
 
 
 @pytest.mark.asyncio

@@ -39,12 +39,10 @@ MENU_LOCATION_PAYLOAD = "MENU_LOCATION"
 OPERATION_CREATE_PAYLOAD = "OPERATION_CREATE"
 OPERATION_RESCHEDULE_PAYLOAD = "OPERATION_RESCHEDULE"
 OPERATION_CANCEL_PAYLOAD = "OPERATION_CANCEL"
-#: Welcome list's "Ver mi cita" row (this session's own brief — the
-#: client hasn't defined a genuine read-only view yet). `appointment.py`
-#: provisionally routes this through the same "list my appointments" step
-#: RESCHEDULE already reaches — a distinct payload id (WhatsApp list rows
-#: must be unique) mapped to the same operation, not a new one, until the
-#: client decides what "just viewing" should actually do differently.
+#: Welcome list's "Ver mi cita" row. `appointment.py` routes it to its own
+#: read-only view operation: a summary of the upcoming appointments with
+#: Reagendar / Cancelar / Menú principal actions. A distinct payload id
+#: because WhatsApp list rows must be unique.
 OPERATION_VIEW_PAYLOAD = "OPERATION_VIEW"
 
 #: Interactive-list navigation payloads (this change). `LIST_MORE` pages a
