@@ -92,7 +92,7 @@ async def eval_chat(
         conversation_id,
         body.message,
         now=datetime.now(UTC),
-        button_payload=body.button_payload,
+        button_payload=body.button_payload or None,
     )
     return EvalChatResponse(
         reply_text=result.reply_text,

@@ -73,7 +73,9 @@ flows fixed recently, so every PR can be audited before deploy.
   `test_internal_eval_dependency.py`, `test_a_button_tap_on_turn_two_continues_the_conversation_of_turn_one`
   (real graph, `InMemoryFakeRedis`), drain test in `test_evaluate_chat_turn.py`. Full
   `uv run pytest`: 1881 passed, 83 skipped, only the 3 excused redis_debounce failures.
-- Commits: T1 045a646, T2 fed36cc.
+- Commits: T1 045a646, T2 fed36cc, T2b 7e9b04c.
+- Empty `button_payload` (promptfoo renders an unset var as "") is treated as no tap. RED:
+  `test_an_empty_button_payload_is_treated_as_no_tap` (`'' is None`).
 
 ## Next step
 
