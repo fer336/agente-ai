@@ -6,7 +6,6 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.first_visit_intake_subgraph import (
-    FIRST_VISIT_CONFIRM_PAYLOAD,
     FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
 )
 from app.agent.graph import compile_graph
@@ -858,12 +857,11 @@ async def test_operation_create_payload_from_fallback_opens_first_visit_intake()
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert len(messaging_gateway.sent_buttons) == 1
-    _, _, buttons, _ = messaging_gateway.sent_buttons[0]
-    assert {button.id for button in buttons} == {
-        FIRST_VISIT_CONFIRM_PAYLOAD,
-        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-    }
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_messages) == 1
+    assert messaging_gateway.sent_messages[0][1].endswith(
+        "- Nombre completo\n- DNI\n- Correo electrónico\n- Obra social\n- Plan"
+    )
     assert messaging_gateway.sent_lists == []
 
 
@@ -952,12 +950,11 @@ async def test_operation_create_from_a_lingering_stage_opens_first_visit_intake(
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert len(messaging_gateway.sent_buttons) == 1
-    _, _, buttons, _ = messaging_gateway.sent_buttons[0]
-    assert {button.id for button in buttons} == {
-        FIRST_VISIT_CONFIRM_PAYLOAD,
-        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-    }
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_messages) == 1
+    assert messaging_gateway.sent_messages[0][1].endswith(
+        "- Nombre completo\n- DNI\n- Correo electrónico\n- Obra social\n- Plan"
+    )
     assert messaging_gateway.sent_lists == []
     snapshot = await seeding_graph.aget_state(thread_config)
     assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
@@ -1024,12 +1021,11 @@ async def test_operation_create_from_a_lingering_confirmation_drops_the_stale_pe
 
     await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
-    assert len(messaging_gateway.sent_buttons) == 1
-    _, _, buttons, _ = messaging_gateway.sent_buttons[0]
-    assert {button.id for button in buttons} == {
-        FIRST_VISIT_CONFIRM_PAYLOAD,
-        FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-    }
+    assert messaging_gateway.sent_buttons == []
+    assert len(messaging_gateway.sent_messages) == 1
+    assert messaging_gateway.sent_messages[0][1].endswith(
+        "- Nombre completo\n- DNI\n- Correo electrónico\n- Obra social\n- Plan"
+    )
     assert messaging_gateway.sent_lists == []
     snapshot = await seeding_graph.aget_state(thread_config)
     assert snapshot.values["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE

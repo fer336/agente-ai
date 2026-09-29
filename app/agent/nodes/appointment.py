@@ -11,12 +11,18 @@ from app.agent.appointment_decision_subgraph import (
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
+from app.agent.first_visit_intake_extraction import extract_intake_reply
 from app.agent.first_visit_intake_subgraph import (
+    FIRST_ASK_INTRO,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
+    INTAKE_FIELDS,
+    RETRY_ASK_INTRO,
     FirstVisitIntakeState,
     build_first_visit_intake_graph,
+    format_field_bullets,
+    missing_intake_fields,
 )
 
 #: Re-exported for backward compatibility: `specialties.py`/tests import
@@ -539,32 +545,32 @@ async def _extract_identification_pieces(
     return await _extract_full_name(llm_provider, stripped), None
 
 
-def _match_intake_agreement(
-    coverage: str, agreements: list[Agreement]
-) -> tuple[Agreement | None, str]:
-    """Match the longest insurer-name prefix and keep the remaining plan local."""
-    normalized_coverage = " ".join(coverage.strip().casefold().split())
-    matches = [
-        agreement
-        for agreement in agreements
-        if normalized_coverage == " ".join(agreement.name.strip().casefold().split())
-        or normalized_coverage.startswith(
-            f"{' '.join(agreement.name.strip().casefold().split())} "
-        )
-    ]
-    if not matches:
-        return None, ""
-    agreement = max(matches, key=lambda candidate: len(candidate.name.strip()))
-    plan = coverage.strip()[len(agreement.name.strip()) :].strip(" ,-|")
-    return agreement, plan
+def _match_intake_agreement(obra_social: str, agreements: list[Agreement]) -> Agreement | None:
+    """Match the patient's obra social against the insurer names on file.
+
+    Only the obra social takes part in the match (case- and spacing-insensitive,
+    exact): the plan is a separate, local-only detail, so it can never turn
+    "OSDE" + "Binario 210" into the "OSDE Binario" insurer.
+    """
+    normalized = " ".join(obra_social.strip().casefold().split())
+    for agreement in agreements:
+        if normalized == " ".join(agreement.name.strip().casefold().split()):
+            return agreement
+    return None
 
 
-def _intake_phone(value: str) -> PhoneNumber:
-    """Normalize an explicitly entered Argentine phone to the E.164 value object."""
-    digits = "".join(character for character in value if character.isdigit())
-    if value.strip().startswith("+") or digits.startswith("54"):
-        return PhoneNumber(f"+{digits}")
-    return PhoneNumber(f"+54{digits}")
+def _known_intake_details(collected_data: dict[str, object]) -> dict[str, str]:
+    """Full name and DNI already known from an identified patient (or a
+    partial identification), so the first-visit intake never asks for them."""
+    patient = cast(dict[str, object] | None, collected_data.get("patient"))
+    full_name = (patient or {}).get("full_name") or collected_data.get("identification_full_name")
+    dni = (patient or {}).get("dni") or collected_data.get("identification_dni")
+    known: dict[str, str] = {}
+    if isinstance(full_name, str) and full_name.strip():
+        known["full_name"] = full_name.strip()
+    if isinstance(dni, str) and dni.strip():
+        known["dni"] = dni.strip()
+    return known
 
 
 def _extract_new_patient_details(
@@ -1500,23 +1506,107 @@ def create_appointment_node(
             },
         }
 
+    async def _first_visit_ask_message(
+        conversation_id: ConversationId,
+        missing_fields: list[str],
+        *,
+        first: bool,
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> str:
+        """LLM-worded intro plus the missing fields as "- " bullets.
+
+        The bullets are appended verbatim, never generated: the model only
+        words the question, so the field list and its fixed order cannot drift
+        (same split as `_confirmation_message`). On any provider failure the
+        static intro takes its place, bullets unchanged.
+        """
+        if first:
+            situacion = (
+                "El paciente quiere sacar un turno. Hay que preguntarle si es su primera "
+                "vez en la clínica y avisarle que para dejarlo registrado necesitamos "
+                "algunos datos."
+            )
+            instruccion = (
+                "Preguntá si es su primera vez en la clínica y decile que necesitás unos "
+                "datos para registrarlo. NO listes los datos ni nombres de campos: la lista "
+                "se agrega aparte, después de tu mensaje. Sin saludo, en una o dos "
+                "oraciones cortas."
+            )
+            fallback = FIRST_ASK_INTRO
+        else:
+            situacion = "El paciente ya pasó parte de sus datos de registro y todavía faltan otros."
+            instruccion = (
+                "Agradecé brevemente y decile que todavía faltan algunos datos. NO listes "
+                "los datos ni nombres de campos: la lista se agrega aparte, después de tu "
+                "mensaje. No vuelvas a preguntar si es su primera vez. Sin saludo, una "
+                "oración corta."
+            )
+            fallback = RETRY_ASK_INTRO
+        intro = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "first_visit_intake_ask",
+            {"situacion": situacion, "instruccion": instruccion},
+            fallback,
+            recent_messages,
+            contact_memory,
+        )
+        return f"{intro}\n\n{format_field_bullets(missing_fields)}"
+
     async def _delegate_to_first_visit_intake(
         state: AgentState, collected_data: dict[str, object]
     ) -> dict[str, object]:
         """Run one intake turn and persist only after complete explicit confirmation."""
         intake_data = cast(dict[str, object], collected_data.get("first_visit_intake", {}))
+        # A checkpoint from the old intake schema may name a field that no longer
+        # exists (phone, coverage): treat it as "not editing" so the reply is
+        # extracted like any other collect turn.
+        editing_field = intake_data.get("editing_field")
+        if editing_field not in INTAKE_FIELDS:
+            editing_field = None
         intake_state = cast(
             FirstVisitIntakeState,
             {
                 "user_message": state["user_message"],
                 "button_payload": state["button_payload"],
                 "stage": intake_data.get("stage", "offer"),
-                "details": intake_data.get("details", {}),
-                "editing_field": intake_data.get("editing_field"),
+                "details": {
+                    **_known_intake_details(collected_data),
+                    **cast(dict[str, str], intake_data.get("details", {})),
+                },
+                "editing_field": editing_field,
             },
         )
+        if (
+            intake_state["stage"] == "collect"
+            and intake_state["button_payload"] is None
+            and intake_state["editing_field"] is None
+            and intake_state["user_message"].strip()
+        ):
+            # One free-text reply may carry several fields and the first-visit
+            # answer; a single-field edit is taken as typed by the subgraph.
+            reply = await extract_intake_reply(
+                llm_provider,
+                intake_state["user_message"],
+                missing_intake_fields(intake_state["details"]),
+            )
+            intake_state["extracted_details"] = reply.details
+            intake_state["first_visit_answer"] = reply.first_visit
         result = await first_visit_intake_graph.ainvoke(intake_state)
         conversation_id = ConversationId(state["conversation_id"])
+        ask_fields = cast(list[str] | None, result.get("ask_fields"))
+        if ask_fields:
+            result = {
+                **result,
+                "response_text": await _first_visit_ask_message(
+                    conversation_id,
+                    ask_fields,
+                    first=result.get("ask_kind") == "first",
+                    recent_messages=state["recent_messages"],
+                    contact_memory=state["contact_memory_summary"],
+                ),
+            }
 
         if result.get("next_action") == "specialties":
             resumed_data = {
@@ -1539,9 +1629,22 @@ def create_appointment_node(
             )
             return await node(resumed_state)
 
+        still_missing = missing_intake_fields(cast(dict[str, str], result.get("details", {})))
+        if result.get("next_action") == "persist" and still_missing:
+            # Defensive: the subgraph never asks to persist an incomplete
+            # record, but a partial one must never reach the gateways.
+            result = {
+                **result,
+                "stage": "collect",
+                "editing_field": None,
+                "next_action": "none",
+                "ready_to_persist": False,
+                "response_text": f"{RETRY_ASK_INTRO}\n\n{format_field_bullets(still_missing)}",
+                "response_buttons": None,
+            }
+
         if result.get("next_action") == "persist":
             details = cast(dict[str, str], result.get("details", {}))
-            coverage = details["coverage"]
             try:
                 agreements = await agreement_gateway.list_agreements()
             except Exception as exc:  # noqa: BLE001 -- external gateway boundary
@@ -1568,17 +1671,17 @@ def create_appointment_node(
                     ],
                 }
             else:
-                agreement, plan = _match_intake_agreement(coverage, agreements)
+                agreement = _match_intake_agreement(details["obra_social"], agreements)
                 if agreement is None:
                     result = {
                         **result,
                         "stage": "collect",
-                        "editing_field": "coverage",
+                        "editing_field": "obra_social",
                         "next_action": "none",
                         "ready_to_persist": False,
                         "response_text": (
-                            "No encontramos esa obra social. Escribila nuevamente junto con "
-                            "el plan, por ejemplo: OSDE 210."
+                            "No encontramos esa obra social. Escribila nuevamente, por "
+                            "ejemplo: OSDE."
                         ),
                         "response_buttons": None,
                     }
@@ -1587,7 +1690,8 @@ def create_appointment_node(
                         new_patient = await patient_gateway.create_patient(
                             details["full_name"],
                             details["dni"],
-                            _intake_phone(details["phone"]),
+                            PhoneNumber(str(conversation_id).removeprefix("ycloud-")),
+                            email=details["email"],
                         )
                     except PatientAlreadyExistsError:
                         recovered = await identify_patient.execute(
@@ -1686,7 +1790,7 @@ def create_appointment_node(
                                         "first_visit_completed": True,
                                         "first_visit_details": details,
                                         "insurance_provider": agreement.name,
-                                        "insurance_plan": plan,
+                                        "insurance_plan": details["plan"],
                                         "patient": _patient_to_primitives(new_patient),
                                     },
                                 },
@@ -2002,7 +2106,10 @@ def create_appointment_node(
                 "response_buttons": None,
                 "requires_handoff": False,
                 "pending_action_id": None,
-                "collected_data": {},
+                # Only the stale operation stage is dropped: the identified
+                # patient stays so a follow-up "quiero sacar uno" never asks
+                # again for the name/DNI that were just verified.
+                "collected_data": {"patient": patient},
             }
 
         professionals = await appointment_gateway.list_professionals()
