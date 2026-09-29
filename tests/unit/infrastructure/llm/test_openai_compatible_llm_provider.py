@@ -443,3 +443,18 @@ async def test_understand_forbids_greeting_in_the_answer_once_the_conversation_s
     assert not any(
         "La conversación ya empezó:" in message["content"] for message in first_turn_messages
     )
+
+
+@pytest.mark.asyncio
+async def test_generate_response_honours_a_per_call_temperature() -> None:
+    client = _StubClient("ok")
+    provider = _make_provider(client, temperature=0.2)
+
+    await provider.generate_response(
+        ResponseContext(conversation_id="conv-1", intent="x", collected_data={}, temperature=0.9)
+    )
+    await provider.generate_response(
+        ResponseContext(conversation_id="conv-1", intent="x", collected_data={})
+    )
+
+    assert [call[2] for call in client.calls] == [0.9, 0.2]

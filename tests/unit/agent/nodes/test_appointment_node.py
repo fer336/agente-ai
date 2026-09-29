@@ -4582,3 +4582,87 @@ async def test_the_main_menu_resets_the_workflow_state_however_it_is_requested(v
     assert (
         result.get("patient_identity") is None or result["patient_identity"] == _PATIENT_PRIMITIVES
     )
+
+
+_REPEATED_INTRO = "Buenísimo, gracias por la info. Todavía me faltan estos datos:"
+
+
+class _RepeatingIntroLLM(_IntakeLLM):
+    """The live model, which opened every re-ask with the same sentence."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ask_contexts = []
+
+    async def generate_response(self, context):
+        if context.intent == "first_visit_intake_ask":
+            self.intents.append(context.intent)
+            self.ask_contexts.append(context)
+            # The first ask reads differently; every re-ask then opens the same way.
+            return _REPEATED_INTRO if len(self.ask_contexts) > 1 else "Necesito unos datos:"
+        return await super().generate_response(context)
+
+
+async def _two_consecutive_re_asks(llm):
+    """Confirm the first visit, then send two replies that each leave fields missing."""
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    recent: list[dict[str, str]] = []
+
+    def remember(user_text, result):
+        if user_text:
+            recent.append({"role": "user", "content": user_text})
+        recent.append({"role": "assistant", "content": result["response_text"]})
+
+    result = await _confirm_first_visit(node, await _start_create(node))
+    remember("", result)
+    replies = []
+    for text in ("Soy Ana Pérez", "ana@example.com"):
+        result = await node(
+            make_agent_state(
+                conversation_id="conv-1",
+                user_message=text,
+                collected_data=result["collected_data"],
+                recent_messages=list(recent),
+            )
+        )
+        remember(text, result)
+        replies.append(result["response_text"])
+    return replies, llm
+
+
+@pytest.mark.asyncio
+async def test_consecutive_re_asks_do_not_repeat_the_intro_even_if_the_llm_does():
+    # Chat B regression (live): "Buenísimo, gracias por la info. Todavía me faltan…"
+    # opened consecutive re-asks. That sentence came from the LLM (the static fallback
+    # reads differently), so the repeat must be caught after generation too.
+    (first_re_ask, second_re_ask), _ = await _two_consecutive_re_asks(_RepeatingIntroLLM())
+
+    first_intro = first_re_ask.split("\n\n")[0]
+    second_intro = second_re_ask.split("\n\n")[0]
+    assert first_intro == _REPEATED_INTRO
+    assert second_intro != first_intro
+    assert second_re_ask.split("\n\n")[1].startswith("- ")
+
+
+@pytest.mark.asyncio
+async def test_the_intake_ask_tells_the_llm_the_previous_intro_and_asks_for_variety():
+    llm = _RepeatingIntroLLM()
+    await _two_consecutive_re_asks(llm)
+
+    second_ask = llm.ask_contexts[-1]
+    assert second_ask.collected_data["intro_anterior"] == _REPEATED_INTRO
+    assert "No repitas" in str(second_ask.collected_data["instruccion"])
+    assert second_ask.temperature is not None and second_ask.temperature >= 0.8
+
+
+@pytest.mark.asyncio
+async def test_static_fallback_intros_of_consecutive_re_asks_differ():
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLM(_IntakeLLM):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    (first_re_ask, second_re_ask), _ = await _two_consecutive_re_asks(_ExplodingLLM())
+
+    assert first_re_ask.split("\n\n")[0] != second_re_ask.split("\n\n")[0]

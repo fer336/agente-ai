@@ -61,7 +61,7 @@ faltan…" on consecutive turns.
 - [x] T2 — No greetings mid conversation in LLM answers.
 - [x] T3 — Handoff offer with Administración / Menú principal buttons; main menu resets
   workflow state but keeps identity.
-- [ ] T4 — Varied LLM-built intake re-ask intros.
+- [x] T4 — Varied LLM-built intake re-ask intros.
 
 ## Acceptance criteria
 
@@ -83,6 +83,9 @@ faltan…" on consecutive turns.
 - T3 done. No structured signal exists for the offer (`understand()` returns prose only), so `app/agent/handoff_offer.py` detects it deterministically (administración + an offer verb). Question node (LLM answer and the "no confirmed answer" reply) and the fallback node's `pending_answer` now send `HANDOFF_OFFER_BUTTONS` (💬 Administración = `MENU_ADMIN_PAYLOAD`, Menú principal = `MENU_MAIN_PAYLOAD`) and set the one-turn `handoff_offer_pending` flag; `resolve_interaction` turns a short agreement ("bueno", "dale", "sí", "ok"...) with that flag into the same `handoff`/`terminate` result as the button, and strips the flag every turn. Typed "menú principal" (and "volver al menú"...) is recognised deterministically in `resolve_interaction` (carries `navigation_target=main`) and in the appointment node, which resets via the same `_welcome_reset_response` as the button; `collected_data` (stage, operation, pending action id, intake, slots) is cleared while `AgentState["patient_identity"]` (T1) keeps the patient until the thread ends (idle rotation or admin reset). Not applied: the reschedule/cancel "no appointments" reply still has no buttons (open question).
   RED: `test_handoff_offer.py` (ModuleNotFoundError), question/fallback button tests, the 4 acceptance tests + `test_the_handoff_offer_only_lives_for_one_turn`, `test_the_main_menu_resets_the_workflow_state_however_it_is_requested[typed]`. GREEN: `uv run pytest` 1801 unit passed; ruff check and mypy clean.
 
+- T4 done. Origin of the repeat: the LLM, not the static fallback. The live sentence "Buenísimo, gracias por la info. Todavía me faltan…" is not any static text (`RETRY_ASK_INTRO` read "Gracias. Todavía me faltan estos datos:"); the ask was generated with the same situacion/instruccion on every turn, no previous intro and the configured (low) temperature. Fix: `_first_visit_ask_message` (`app/agent/nodes/appointment.py`) now passes `intro_anterior` and a "no repitas su apertura" instruction, samples at 0.9 through the new per-call `ResponseContext.temperature` (`generate_or_fallback(temperature=...)`, honoured by the OpenAI-compatible provider), and if the model still opens like the previous ask (`repeats_opening`, first two words) it uses the static fallback. The static fallback is now 4 phrasings per ask kind (`app/agent/first_visit_intake_wording.py`) rotated so it never opens like the previous intro; the defensive "still missing" branch uses the same rotation. Previous intro = text before the bullets of the last assistant message.
+  RED: `test_first_visit_intake_wording.py` (ImportError), `test_consecutive_re_asks_do_not_repeat_the_intro_even_if_the_llm_does`, `test_the_intake_ask_tells_the_llm_the_previous_intro_and_asks_for_variety`, `test_static_fallback_intros_of_consecutive_re_asks_differ`, `test_generate_response_honours_a_per_call_temperature`. GREEN: `uv run pytest` unit suite passes; ruff check and mypy clean.
+
 ## Next step
 
-T4.
+Ready for user review (push/PR are the user's decision). Open questions: identity is lost when a booking succeeds (workflow session rotation starts a new checkpoint thread); reschedule/cancel "no appointments" reply has no handoff buttons.

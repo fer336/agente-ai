@@ -58,6 +58,7 @@ async def generate_or_fallback(
     static_text: str,
     recent_messages: list[dict[str, str]],
     contact_memory: str | None,
+    temperature: float | None = None,
 ) -> str:
     """Calls `LLMProvider.generate_response`, falling back to `static_text`
     on any provider failure (timeout/auth/bad output/etc).
@@ -89,6 +90,7 @@ async def generate_or_fallback(
                 recent_messages=recent_messages,
                 contact_memory=contact_memory,
                 conversation_started=conversation_started(recent_messages),
+                temperature=temperature,
             )
         )
         return without_mid_conversation_greeting(text, recent_messages)

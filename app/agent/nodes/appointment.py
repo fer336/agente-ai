@@ -16,13 +16,11 @@ from app.agent.first_visit_intake_extraction import (
     extract_question_reply,
 )
 from app.agent.first_visit_intake_subgraph import (
-    FIRST_ASK_INTRO,
     FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
     INTAKE_FIELDS,
-    RETRY_ASK_INTRO,
     FirstVisitIntakeState,
     build_first_visit_intake_graph,
     format_field_bullets,
@@ -33,6 +31,13 @@ from app.agent.first_visit_intake_subgraph import (
 #: `SELECT_SLOT_PAYLOAD_PREFIX` from this module. The `as`-self-alias is
 #: the standard idiom for telling ruff/pyflakes this is an intentional
 #: re-export, not dead code.
+from app.agent.first_visit_intake_wording import (
+    FIRST_ASK_INTROS,
+    RETRY_ASK_INTROS,
+    pick_static_intro,
+    previous_intake_intro,
+    repeats_opening,
+)
 from app.agent.handoff_offer import is_main_menu_request
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX as SELECT_SLOT_PAYLOAD_PREFIX,
@@ -341,6 +346,9 @@ _NO_PROFESSIONALS_MESSAGE = (
 _OPERATION_MENU_MESSAGE = "Qué querés hacer?"
 _MAIN_MENU_RESET_MESSAGE = "Listo, volvemos al principio. Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
+#: Sampling temperature for the intake ask/re-ask intro: high on purpose, so consecutive
+#: asks are not worded the same.
+_INTAKE_ASK_TEMPERATURE = 0.9
 _ASK_IDENTIFICATION_MESSAGE = (
     "Para coordinar un turno necesito identificarte primero.\n\n"
     "Escribime tu *nombre completo* y tu *DNI* (por ejemplo: Rosa Gómez, 30123456)."
@@ -1568,6 +1576,7 @@ def create_appointment_node(
         (same split as `_confirmation_message`). On any provider failure the
         static intro takes its place, bullets unchanged.
         """
+        previous_intro = previous_intake_intro(recent_messages)
         if first:
             situacion = (
                 "El paciente confirmó que es su primera vez en la clínica. Para dejarlo "
@@ -1578,7 +1587,7 @@ def create_appointment_node(
                 "nombres de campos: la lista se agrega aparte, después de tu mensaje. No "
                 "vuelvas a preguntar si es su primera vez. Sin saludo, en una oración corta."
             )
-            fallback = FIRST_ASK_INTRO
+            static_intros = FIRST_ASK_INTROS
         else:
             situacion = "El paciente ya pasó parte de sus datos de registro y todavía faltan otros."
             instruccion = (
@@ -1587,16 +1596,30 @@ def create_appointment_node(
                 "mensaje. No vuelvas a preguntar si es su primera vez. Sin saludo, una "
                 "oración corta."
             )
-            fallback = RETRY_ASK_INTRO
+            static_intros = RETRY_ASK_INTROS
+        context: dict[str, object] = {"situacion": situacion, "instruccion": instruccion}
+        if previous_intro is not None:
+            context["intro_anterior"] = previous_intro
+            context["instruccion"] = (
+                f"{instruccion} Ya le pediste datos antes con este mensaje: "
+                f'"{previous_intro}". No repitas su apertura ni su frase: empezá y redactá '
+                "distinto."
+            )
+        static_intro = pick_static_intro(static_intros, previous_intro, len(recent_messages))
         intro = await generate_or_fallback(
             llm_provider,
             str(conversation_id),
             "first_visit_intake_ask",
-            {"situacion": situacion, "instruccion": instruccion},
-            fallback,
+            context,
+            static_intro,
             recent_messages,
             contact_memory,
+            temperature=_INTAKE_ASK_TEMPERATURE,
         )
+        if repeats_opening(intro, previous_intro):
+            # The model ignored the instruction: the rotated static wording
+            # guarantees two consecutive asks never open the same way.
+            intro = static_intro
         return f"{intro}\n\n{format_field_bullets(missing_fields)}"
 
     async def _first_visit_question_message(
@@ -1800,13 +1823,17 @@ def create_appointment_node(
         if result.get("next_action") == "persist" and still_missing:
             # Defensive: the subgraph never asks to persist an incomplete
             # record, but a partial one must never reach the gateways.
+            recent = state["recent_messages"]
+            retry_intro = pick_static_intro(
+                RETRY_ASK_INTROS, previous_intake_intro(recent), len(recent)
+            )
             result = {
                 **result,
                 "stage": "collect",
                 "editing_field": None,
                 "next_action": "none",
                 "ready_to_persist": False,
-                "response_text": f"{RETRY_ASK_INTRO}\n\n{format_field_bullets(still_missing)}",
+                "response_text": (f"{retry_intro}\n\n{format_field_bullets(still_missing)}"),
                 "response_buttons": None,
             }
 

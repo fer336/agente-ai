@@ -21,6 +21,7 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.first_visit_intake_wording import FIRST_ASK_INTROS, RETRY_ASK_INTROS
 from app.domain.value_objects.interactive_button import InteractiveButton
 
 #: The first-visit question's two reply buttons: confirm = first visit,
@@ -59,8 +60,8 @@ FIRST_VISIT_QUESTION = (
     "¿Es tu primera cita en Smiling Pilar? Confirmame así te registro, "
     "o cancelá si ya sos paciente."
 )
-FIRST_ASK_INTRO = "Para dejarte registrado necesito que me pases estos datos:"
-RETRY_ASK_INTRO = "Gracias. Todavía me faltan estos datos:"
+FIRST_ASK_INTRO = FIRST_ASK_INTROS[0]
+RETRY_ASK_INTRO = RETRY_ASK_INTROS[0]
 
 
 class FirstVisitIntakeState(TypedDict, total=False):

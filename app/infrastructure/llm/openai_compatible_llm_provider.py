@@ -397,9 +397,11 @@ class OpenAICompatibleLLMProvider:
         # "Hola").
         messages = [{"role": "system", "content": prompt}, *context.recent_messages]
 
+        temperature = context.temperature if context.temperature is not None else config.temperature
+
         async def _call() -> str:
             return await self._client.chat_completion(
-                config.model, messages, temperature=config.temperature
+                config.model, messages, temperature=temperature
             )
 
         return await traced_call(
