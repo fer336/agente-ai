@@ -544,24 +544,18 @@ async def _extract_identification_pieces(
     return await _extract_full_name(llm_provider, stripped), None
 
 
-def _match_intake_agreement(
-    coverage: str, agreements: list[Agreement]
-) -> tuple[Agreement | None, str]:
-    """Match the longest insurer-name prefix and keep the remaining plan local."""
-    normalized_coverage = " ".join(coverage.strip().casefold().split())
-    matches = [
-        agreement
-        for agreement in agreements
-        if normalized_coverage == " ".join(agreement.name.strip().casefold().split())
-        or normalized_coverage.startswith(
-            f"{' '.join(agreement.name.strip().casefold().split())} "
-        )
-    ]
-    if not matches:
-        return None, ""
-    agreement = max(matches, key=lambda candidate: len(candidate.name.strip()))
-    plan = coverage.strip()[len(agreement.name.strip()) :].strip(" ,-|")
-    return agreement, plan
+def _match_intake_agreement(obra_social: str, agreements: list[Agreement]) -> Agreement | None:
+    """Match the patient's obra social against the insurer names on file.
+
+    Only the obra social takes part in the match (case- and spacing-insensitive,
+    exact): the plan is a separate, local-only detail, so it can never turn
+    "OSDE" + "Binario 210" into the "OSDE Binario" insurer.
+    """
+    normalized = " ".join(obra_social.strip().casefold().split())
+    for agreement in agreements:
+        if normalized == " ".join(agreement.name.strip().casefold().split()):
+            return agreement
+    return None
 
 
 def _known_intake_details(collected_data: dict[str, object]) -> dict[str, str]:
@@ -1630,7 +1624,6 @@ def create_appointment_node(
 
         if result.get("next_action") == "persist":
             details = cast(dict[str, str], result.get("details", {}))
-            coverage = f"{details['obra_social']} {details['plan']}".strip()
             try:
                 agreements = await agreement_gateway.list_agreements()
             except Exception as exc:  # noqa: BLE001 -- external gateway boundary
@@ -1657,7 +1650,7 @@ def create_appointment_node(
                     ],
                 }
             else:
-                agreement, plan = _match_intake_agreement(coverage, agreements)
+                agreement = _match_intake_agreement(details["obra_social"], agreements)
                 if agreement is None:
                     result = {
                         **result,
@@ -1677,6 +1670,7 @@ def create_appointment_node(
                             details["full_name"],
                             details["dni"],
                             PhoneNumber(str(conversation_id).removeprefix("ycloud-")),
+                            email=details["email"],
                         )
                     except PatientAlreadyExistsError:
                         recovered = await identify_patient.execute(
@@ -1775,7 +1769,7 @@ def create_appointment_node(
                                         "first_visit_completed": True,
                                         "first_visit_details": details,
                                         "insurance_provider": agreement.name,
-                                        "insurance_plan": plan,
+                                        "insurance_plan": details["plan"],
                                         "patient": _patient_to_primitives(new_patient),
                                     },
                                 },

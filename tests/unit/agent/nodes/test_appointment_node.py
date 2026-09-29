@@ -386,6 +386,85 @@ async def test_confirmed_first_visit_creates_patient_links_insurer_then_offers_s
 
 
 @pytest.mark.asyncio
+async def test_confirmed_first_visit_persists_the_email_on_the_new_patient():
+    patient_gateway = make_patient_gateway(patients=[])
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=make_agreement_gateway(
+            agreements=[make_agreement(id_="osde", name="OSDE")]
+        ),
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+
+    await _complete_new_patient_intake(node)
+
+    patient = await patient_gateway.find_patient("Ana Pérez", "30123457")
+    assert patient is not None
+    assert patient.email == "ana@example.com"
+
+
+@pytest.mark.asyncio
+async def test_first_visit_agreement_is_matched_on_the_obra_social_alone():
+    # The plan must never take part in the match: with both "OSDE" and
+    # "OSDE Binario" on file, obra social "OSDE" + plan "Binario 210" is OSDE.
+    osde = make_agreement(id_="osde", name="OSDE")
+    binario = make_agreement(id_="osde-binario", name="OSDE Binario")
+    patient_gateway = make_patient_gateway(patients=[])
+    agreement_gateway = make_agreement_gateway(agreements=[osde, binario])
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=agreement_gateway,
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=llm,
+    )
+    intake = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
+        )
+    )
+    intake_data = intake["collected_data"]
+    for value in ("Ana Pérez", "30123457", "ana@example.com", "OSDE", "Binario 210"):
+        if value == "Binario 210":
+            llm_plan = value
+
+            async def _plan_only(message, required_fields, _plan=llm_plan):
+                from app.domain.repositories.llm_provider import ExtractionResult
+
+                return ExtractionResult(fields={"plan": _plan}, missing_fields=[])
+
+            llm.extract_information = _plan_only
+        intake = await node(
+            make_agent_state(
+                conversation_id=_CONTACT_CONVERSATION_ID,
+                user_message=value,
+                collected_data=intake_data,
+            )
+        )
+        intake_data = intake["collected_data"]
+    assert intake_data["first_visit_intake"]["stage"] == "review"
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            button_payload=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+            collected_data=intake_data,
+        )
+    )
+
+    patient = await patient_gateway.find_patient("Ana Pérez", "30123457")
+    assert patient is not None
+    assert await agreement_gateway.get_patient_agreements(patient.id) == [osde]
+    assert result["collected_data"]["insurance_provider"] == "OSDE"
+    assert result["collected_data"]["insurance_plan"] == "Binario 210"
+
+
+@pytest.mark.asyncio
 async def test_unmatched_first_visit_insurer_does_not_create_patient_or_advance():
     patient_gateway = make_patient_gateway(patients=[])
     node, _, _ = await _make_node_and_conversation(

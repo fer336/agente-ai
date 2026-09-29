@@ -60,7 +60,7 @@ Root causes (origin/main e9d1c08):
   from known `collected_data`. Route: delegated direct (writer trigger: 2+ files).
 - [x] T2 — Intake rewrite: 5 fields, multi-field extraction, LLM-built single ask and
   re-ask with static fallback, review with 5 fields. Route: delegated direct.
-- [ ] T3 — Persistence adapts to `obra_social` / `plan` / `email` and the contact phone.
+- [x] T3 — Persistence adapts to `obra_social` / `plan` / `email` and the contact phone.
   Route: delegated direct.
 
 ## Acceptance criteria
@@ -79,9 +79,12 @@ Root causes (origin/main e9d1c08):
 
 ## Next step
 
-T3.
+Ready for user review (push/PR are the user's decision).
 
 - Note: `uv run ruff format --check .` already reports 82 files on the untouched base (installed ruff 0.16.1 drift); changed hunks were checked with `ruff format --diff` and add no new drift. Repo-wide format is not applied to avoid unrelated churn.
 - T1 commit: 6cc4019.
 - T2 done. Approach: subgraph stays pure (validates/merges `extracted_details`, returns `ask_fields` + static fallback text); new `app/agent/first_visit_intake_extraction.py` extracts email/DNI/first-visit answer deterministically and full name/obra social/plan via the existing `LLMProvider.extract_information` (no new provider capability; lone obra social/plan answer taken verbatim only if the LLM errors; a name is never guessed). Ask wording: `generate_or_fallback` with new intent `first_visit_intake_ask` (intro only) + "- " bullets appended verbatim, so field list/order cannot drift. Bridge kept for T3: coverage string = obra social + plan; phone = WhatsApp contact.
   RED: 8 subgraph tests failed, extraction module ImportError, 7 node tests + 5 invoker tests failed before implementation (e.g. `test_asking_to_book_after_a_reschedule_without_appointments_reuses_name_and_dni`). GREEN: `uv run pytest` 1675 passed, only the baseline environmental failures remain; ruff check and mypy clean.
+- T2 commit: a153891.
+- T3 done. `_match_intake_agreement` now takes only the obra social (exact, case/space-insensitive); plan is stored as `insurance_plan` untouched. Email passed to `create_patient(..., email=)` (gateway and Dentalink adapter already supported it; the adapter's own comment notes the field is unverified against a live POST). Phone is taken from the WhatsApp contact (`ycloud-<phone>` conversation id), no longer asked (done in T2's bridge).
+  RED: `test_confirmed_first_visit_persists_the_email_on_the_new_patient` (email None) and `test_first_visit_agreement_is_matched_on_the_obra_social_alone` (matched "OSDE Binario" instead of "OSDE"). GREEN: `uv run pytest` 1677 passed, only baseline environmental failures; ruff check and mypy clean.
