@@ -3,6 +3,7 @@ import pytest
 from app.agent.first_visit_intake_extraction import (
     detect_first_visit_answer,
     extract_intake_reply,
+    extract_question_reply,
 )
 from app.domain.repositories.llm_provider import ExtractionResult
 from app.infrastructure.llm.exceptions import LLMTimeoutError
@@ -164,3 +165,56 @@ async def test_incidental_soy_paciente_de_an_insurer_is_not_an_existing_patient(
 )
 def test_detect_first_visit_answer_reads_the_question_reply(text, expected):
     assert detect_first_visit_answer(text) == expected
+
+
+@pytest.mark.parametrize("text", ["Cancelar", "Confirmar", "cancelo", "confirmo"])
+@pytest.mark.asyncio
+async def test_button_words_do_not_answer_the_first_visit_question_during_collection(text):
+    reply = await extract_intake_reply(_FailingExtractionLLM(), text, ["email"])
+
+    assert reply.first_visit is None
+
+
+@pytest.mark.asyncio
+async def test_a_bare_button_word_reply_to_the_question_skips_field_extraction():
+    llm = _ScriptedExtractionLLM({"nombre_completo": "Cancelar"})
+
+    reply = await extract_question_reply(llm, "Cancelar", ["full_name", "dni"])
+
+    assert reply.first_visit == "existing"
+    assert reply.details == {}
+    assert llm.asked == []
+
+
+@pytest.mark.asyncio
+async def test_a_first_visit_reply_to_the_question_keeps_its_inline_details():
+    llm = _ScriptedExtractionLLM({"nombre_completo": "Juan Perez"})
+
+    reply = await extract_question_reply(
+        llm, "sí, es la primera, soy Juan Perez DNI 30123456", ["full_name", "dni", "email"]
+    )
+
+    assert reply.first_visit == "new"
+    assert reply.details == {"full_name": "Juan Perez", "dni": "30123456"}
+
+
+@pytest.mark.asyncio
+async def test_an_existing_patient_reply_to_the_question_keeps_name_and_dni():
+    llm = _ScriptedExtractionLLM({"nombre_completo": "Juan Perez"})
+
+    reply = await extract_question_reply(
+        llm, "ya soy paciente, Juan Perez 30123456", ["full_name", "dni"]
+    )
+
+    assert reply.first_visit == "existing"
+    assert reply.details == {"full_name": "Juan Perez", "dni": "30123456"}
+
+
+@pytest.mark.asyncio
+async def test_an_unclear_reply_to_the_question_discards_extracted_details():
+    llm = _ScriptedExtractionLLM({"obra_social": "quizás"})
+
+    reply = await extract_question_reply(llm, "quizás", ["obra_social"])
+
+    assert reply.first_visit is None
+    assert reply.details == {}

@@ -12,8 +12,8 @@ from app.agent.appointment_decision_subgraph import (
     build_appointment_decision_graph,
 )
 from app.agent.first_visit_intake_extraction import (
-    detect_first_visit_answer,
     extract_intake_reply,
+    extract_question_reply,
 )
 from app.agent.first_visit_intake_subgraph import (
     FIRST_ASK_INTRO,
@@ -1585,13 +1585,15 @@ def create_appointment_node(
         )
 
     async def _identify_existing_patient(
-        state: AgentState, collected_data: dict[str, object]
+        state: AgentState,
+        collected_data: dict[str, object],
+        given: dict[str, str],
     ) -> dict[str, object]:
         """Verify a patient who is not a first visit, before any specialty is shown.
 
         Name and DNI already known from the conversation (e.g. a reschedule
-        attempt) are verified straight away; otherwise the regular
-        identification step asks for them.
+        attempt) or given along with the answer are verified straight away;
+        otherwise the regular identification step asks for what is missing.
         """
         conversation_id = ConversationId(state["conversation_id"])
         identification_data = {
@@ -1600,6 +1602,10 @@ def create_appointment_node(
             if key not in {"first_visit_intake", "stage"}
         }
         known = _known_intake_details(collected_data)
+        for field in ("full_name", "dni"):
+            value = given.get(field, "").strip()
+            if value and (field == "dni" or len(value.split()) >= 2):
+                known[field] = value
         if "full_name" in known and "dni" in known:
             return await node(
                 cast(
@@ -1617,6 +1623,9 @@ def create_appointment_node(
                     },
                 )
             )
+        if known:
+            identification_data["identification_full_name"] = known.get("full_name")
+            identification_data["identification_dni"] = known.get("dni")
         return await _begin_identification(
             conversation_id,
             identification_data,
@@ -1693,10 +1702,15 @@ def create_appointment_node(
             and intake_state["button_payload"] is None
             and intake_state["user_message"].strip()
         ):
-            # A typed answer to the first-visit question stands in for its buttons.
-            intake_state["first_visit_answer"] = detect_first_visit_answer(
-                intake_state["user_message"]
+            # A typed answer to the first-visit question stands in for its
+            # buttons; details given along with it are not asked for again.
+            reply = await extract_question_reply(
+                llm_provider,
+                intake_state["user_message"],
+                missing_intake_fields(intake_state["details"]),
             )
+            intake_state["extracted_details"] = reply.details
+            intake_state["first_visit_answer"] = reply.first_visit
         elif (
             intake_state["stage"] == "collect"
             and intake_state["button_payload"] is None
@@ -1735,7 +1749,9 @@ def create_appointment_node(
             }
 
         if result.get("next_action") == "identify":
-            return await _identify_existing_patient(state, collected_data)
+            return await _identify_existing_patient(
+                state, collected_data, intake_state.get("extracted_details", {})
+            )
 
         still_missing = missing_intake_fields(cast(dict[str, str], result.get("details", {})))
         if result.get("next_action") == "persist" and still_missing:

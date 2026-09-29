@@ -34,9 +34,12 @@ _NEGATED_EXISTING_PATTERN = re.compile(
 _NEW_PATIENT_PATTERN = re.compile(
     r"\b(?:primera\s+(?:vez|cita|consulta)|es\s+(?:mi|la)\s+primera)\b", re.IGNORECASE
 )
-#: Bare replies, including the words of the question's own buttons.
-_BARE_NO = frozenset({"no", "nop", "nope", "cancelar", "cancelo"})
-_BARE_YES = frozenset({"si", "sí", "sip", "claro", "dale", "confirmar", "confirmo"})
+_BARE_NO = frozenset({"no", "nop", "nope"})
+_BARE_YES = frozenset({"si", "sí", "sip", "claro", "dale"})
+#: The words of the first-visit question's own buttons.  They only answer that
+#: question: typed mid-collection they are not a first-visit answer.
+_BUTTON_NO = frozenset({"cancelar", "cancelo"})
+_BUTTON_YES = frozenset({"confirmar", "confirmo"})
 
 #: Intake field -> name handed to `LLMProvider.extract_information`.
 _LLM_FIELD_NAMES = {
@@ -134,6 +137,32 @@ async def _extract_free_text(
     return extracted
 
 
+def _button_word_answer(text: str) -> Literal["new", "existing"] | None:
+    bare = text.strip().strip(".,!¡?¿ ").casefold()
+    if bare in _BUTTON_NO:
+        return "existing"
+    if bare in _BUTTON_YES:
+        return "new"
+    return None
+
+
 def detect_first_visit_answer(text: str) -> Literal["new", "existing"] | None:
     """Read a reply to the first-visit question ("new" = first visit)."""
-    return _first_visit_answer(text)[0]
+    return _button_word_answer(text) or _first_visit_answer(text)[0]
+
+
+async def extract_question_reply(
+    llm_provider: LLMProvider, text: str, missing_fields: list[str]
+) -> IntakeReply:
+    """Read a typed reply to the first-visit question, keeping any inline details.
+
+    A bare button word carries no details.  A reply that does not answer the
+    question is discarded whole: the question is asked again.
+    """
+    button_answer = _button_word_answer(text)
+    if button_answer is not None:
+        return IntakeReply(first_visit=button_answer)
+    reply = await extract_intake_reply(llm_provider, text, missing_fields)
+    if reply.first_visit is None:
+        return IntakeReply()
+    return reply

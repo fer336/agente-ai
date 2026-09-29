@@ -42,6 +42,7 @@ The first-visit question and the data request must be two separate steps.
 - [x] T1 — First-visit question step: LLM-built text + confirm/cancel buttons; confirm →
   5-field intake; cancel → identification (name + DNI, Dentalink check) → specialties.
   Route: delegated direct (writer trigger: 2+ files).
+- [x] T2 — Review follow-up: button words only in the question stage; inline details from the question reply are kept (collect / identification).
 
 ## Acceptance criteria
 
@@ -63,7 +64,10 @@ The first-visit question and the data request must be two separate steps.
     `test_detect_first_visit_answer_reads_the_question_reply[*]`.
   - GREEN: `uv run pytest tests/unit` 1717 passed; full run only the excused environmental failures.
   - Design: intake subgraph gained a `question` stage (confirm -> collect, cancel/legacy existing payload -> `next_action="identify"`); adapter words the question via intent `first_visit_question`; cancel reuses the identification stage (known name/DNI verified directly, else `_begin_identification`); after verification/registration with no slot picked, booking resumes at specialties (`_continue_booking_with_patient`). Legacy `collect`/`review` checkpoints keep working.
-  - Assessed tier / review: RDD off by default; no native review run.
+  - Native review (RDD on, medium, 900 lines): consent granted, review-reliability approved and acknowledged (lineage review-89de7c1ab7675a13). Findings R3-bare-no-cancel-leaks-into-collect and R3-question-stage-drops-inline-details fixed in the follow-up commit.
+- T2 done (follow-up commit `fix(appointments): scope button words and keep inline details in the first-visit question`).
+  - RED (12 failures, stub `extract_question_reply`): `test_button_words_do_not_answer_the_first_visit_question_during_collection[*]`, `test_button_words_typed_during_collection_do_not_leave_the_intake[Cancelar]`, `test_a_first_visit_reply_to_the_question_keeps_its_inline_details`, `test_an_existing_patient_reply_to_the_question_keeps_name_and_dni`, `test_a_first_visit_answer_with_inline_details_only_asks_the_missing_fields`, `test_an_existing_patient_reply_with_name_and_dni_is_verified_without_asking_again`.
+  - GREEN: `uv run pytest tests/unit` 1730 passed. Button words (confirmar/cancelar) now count only in the question stage; question-stage replies run extraction and carry details into collect or identification.
 
 ## Next step
 

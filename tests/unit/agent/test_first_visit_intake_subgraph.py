@@ -71,6 +71,22 @@ async def test_confirming_skips_fields_already_known():
 
 
 @pytest.mark.asyncio
+async def test_a_first_visit_answer_with_inline_details_only_asks_the_missing_fields():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "question",
+            "details": {},
+            "first_visit_answer": "new",
+            "extracted_details": {"full_name": "Juan Perez", "dni": "30123456"},
+        }
+    )
+
+    assert state["stage"] == "collect"
+    assert state["details"] == {"full_name": "Juan Perez", "dni": "30123456"}
+    assert state["ask_fields"] == ["email", "obra_social", "plan"]
+
+
+@pytest.mark.asyncio
 async def test_cancelling_the_question_hands_over_to_identification():
     state = await build_first_visit_intake_graph().ainvoke(
         {"stage": "question", "details": {}, "button_payload": FIRST_VISIT_CANCEL_PAYLOAD}

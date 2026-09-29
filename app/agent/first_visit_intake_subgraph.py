@@ -121,6 +121,14 @@ def _clean_details(details: dict[str, str]) -> dict[str, str]:
     return cleaned
 
 
+def _merge_extracted(details: dict[str, str], extracted: dict[str, str]) -> None:
+    """Merge the valid, normalised extracted values into ``details``."""
+    for field in INTAKE_FIELDS:
+        value = _normalise(field, str(extracted.get(field, "")))
+        if value and _valid(field, value):
+            details[field] = value
+
+
 def missing_intake_fields(details: dict[str, str]) -> list[str]:
     """Fields with no value yet, in the fixed intake order."""
     return [field for field in INTAKE_FIELDS if not details.get(field, "").strip()]
@@ -302,6 +310,8 @@ def build_first_visit_intake_graph() -> Any:
         if stage in ("offer", "question"):
             if payload != FIRST_VISIT_CONFIRM_PAYLOAD and answer != "new":
                 return _question_turn(details)
+            # Details the patient gave along with the answer are kept.
+            _merge_extracted(details, state.get("extracted_details", {}))
             missing = missing_intake_fields(details)
             if not missing:
                 return _review_turn(details)
@@ -313,11 +323,7 @@ def build_first_visit_intake_graph() -> Any:
                 return _ask(details, [editing_field], "retry", editing_field=editing_field)
             details[editing_field] = value
         else:
-            extracted = state.get("extracted_details", {})
-            for field in INTAKE_FIELDS:
-                value = _normalise(field, str(extracted.get(field, "")))
-                if value and _valid(field, value):
-                    details[field] = value
+            _merge_extracted(details, state.get("extracted_details", {}))
         missing = missing_intake_fields(details)
         if missing:
             return _ask(details, missing, "retry")

@@ -430,6 +430,64 @@ async def test_a_free_text_first_visit_answer_behaves_like_the_confirm_button(re
     assert intake["response_text"].endswith(_INTAKE_BULLETS_ALL)
 
 
+@pytest.mark.asyncio
+async def test_a_first_visit_reply_with_inline_details_only_asks_the_missing_fields():
+    node, _, _ = await _make_node_and_conversation(llm_provider=_IntakeLLM())
+    question = await _start_create(node)
+
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="sí, es la primera, soy Ana Pérez ana@example.com",
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert intake["collected_data"]["first_visit_intake"]["stage"] == "collect"
+    assert intake["response_text"].endswith("- DNI\n- Obra social\n- Plan")
+    assert "Nombre completo" not in intake["response_text"]
+    assert "Correo electrónico" not in intake["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_an_existing_patient_reply_with_name_and_dni_is_verified_without_asking_again():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(
+        llm_provider=llm,
+        patients=[make_patient(id_="pat-2", full_name="Ana Pérez", dni="30123457")],
+    )
+    question = await _start_create(node)
+    llm.intents.clear()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="ya soy paciente, Ana Pérez 30123457",
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert "ask_identification" not in llm.intents
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["patient"]["dni"] == "30123457"
+
+
+@pytest.mark.parametrize("reply", ["Cancelar", "Confirmar"])
+@pytest.mark.asyncio
+async def test_button_words_typed_during_collection_do_not_leave_the_intake(reply):
+    node, _, _ = await _make_node_and_conversation(llm_provider=_IntakeLLM())
+    intake = await _confirm_first_visit(node, await _start_create(node))
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1", user_message=reply, collected_data=intake["collected_data"]
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["collected_data"]["first_visit_intake"]["stage"] == "collect"
+
+
 @pytest.mark.parametrize("reply", ["no, ya soy paciente", "no", "Cancelar"])
 @pytest.mark.asyncio
 async def test_a_free_text_existing_patient_answer_behaves_like_the_cancel_button(reply):
