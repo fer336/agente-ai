@@ -360,6 +360,78 @@ async def _complete_new_patient_intake(node, coverage: str = "OSDE 210"):
     )
 
 
+def _legacy_intake_collected_data(stage: str, editing_field: str | None = None):
+    """Intake state checkpointed under the old schema (phone + merged coverage)."""
+    return {
+        "operation": "create_appointment",
+        "stage": STAGE_AWAITING_FIRST_VISIT_INTAKE,
+        "first_visit_intake": {
+            "stage": stage,
+            "editing_field": editing_field,
+            "details": {
+                "full_name": "Ana Pérez",
+                "dni": "30123457",
+                "phone": "+5491198765432",
+                "coverage": "OSDE 210",
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_checkpointed_review_confirm_asks_for_the_missing_fields_instead_of_failing():
+    patient_gateway = make_patient_gateway(patients=[])
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=make_agreement_gateway(
+            agreements=[make_agreement(id_="osde", name="OSDE")]
+        ),
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            button_payload=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+            collected_data=_legacy_intake_collected_data("review"),
+        )
+    )
+
+    assert result["collected_data"]["first_visit_intake"]["stage"] == "collect"
+    assert result["response_text"].endswith("- Correo electrónico\n- Obra social\n- Plan")
+    assert await patient_gateway.find_patient("Ana Pérez", "30123457") is None
+
+
+@pytest.mark.parametrize("legacy_field", ["phone", "coverage"])
+@pytest.mark.asyncio
+async def test_legacy_checkpointed_editing_field_still_extracts_the_free_text_reply(legacy_field):
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=make_patient_gateway(patients=[]),
+        agreement_gateway=make_agreement_gateway(
+            agreements=[make_agreement(id_="osde", name="OSDE")]
+        ),
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            user_message="ana@example.com, OSDE 210",
+            collected_data=_legacy_intake_collected_data("collect", legacy_field),
+        )
+    )
+
+    intake = result["collected_data"]["first_visit_intake"]
+    assert intake["stage"] == "review"
+    assert intake["details"]["email"] == "ana@example.com"
+    assert intake["details"]["obra_social"] == "OSDE"
+    assert "Correo electrónico: ana@example.com" in result["response_text"]
+
+
 @pytest.mark.asyncio
 async def test_confirmed_first_visit_creates_patient_links_insurer_then_offers_specialties():
     patient_gateway = make_patient_gateway(patients=[])
@@ -488,9 +560,7 @@ async def test_unmatched_first_visit_insurer_does_not_create_patient_or_advance(
 @pytest.mark.asyncio
 async def test_agreement_link_failure_keeps_confirmed_intake_retryable():
     patient_gateway = make_patient_gateway(patients=[])
-    agreement_gateway = make_agreement_gateway(
-        agreements=[make_agreement(id_="osde", name="OSDE")]
-    )
+    agreement_gateway = make_agreement_gateway(agreements=[make_agreement(id_="osde", name="OSDE")])
     agreement_gateway.link_patient_agreement = AsyncMock(side_effect=RuntimeError("unavailable"))
     node, _, _ = await _make_node_and_conversation(
         patients=[],

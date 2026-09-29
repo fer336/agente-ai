@@ -17,6 +17,7 @@ from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
+    INTAKE_FIELDS,
     RETRY_ASK_INTRO,
     FirstVisitIntakeState,
     build_first_visit_intake_graph,
@@ -1558,6 +1559,12 @@ def create_appointment_node(
     ) -> dict[str, object]:
         """Run one intake turn and persist only after complete explicit confirmation."""
         intake_data = cast(dict[str, object], collected_data.get("first_visit_intake", {}))
+        # A checkpoint from the old intake schema may name a field that no longer
+        # exists (phone, coverage): treat it as "not editing" so the reply is
+        # extracted like any other collect turn.
+        editing_field = intake_data.get("editing_field")
+        if editing_field not in INTAKE_FIELDS:
+            editing_field = None
         intake_state = cast(
             FirstVisitIntakeState,
             {
@@ -1568,7 +1575,7 @@ def create_appointment_node(
                     **_known_intake_details(collected_data),
                     **cast(dict[str, str], intake_data.get("details", {})),
                 },
-                "editing_field": intake_data.get("editing_field"),
+                "editing_field": editing_field,
             },
         )
         if (
@@ -1621,6 +1628,20 @@ def create_appointment_node(
                 },
             )
             return await node(resumed_state)
+
+        still_missing = missing_intake_fields(cast(dict[str, str], result.get("details", {})))
+        if result.get("next_action") == "persist" and still_missing:
+            # Defensive: the subgraph never asks to persist an incomplete
+            # record, but a partial one must never reach the gateways.
+            result = {
+                **result,
+                "stage": "collect",
+                "editing_field": None,
+                "next_action": "none",
+                "ready_to_persist": False,
+                "response_text": f"{RETRY_ASK_INTRO}\n\n{format_field_bullets(still_missing)}",
+                "response_buttons": None,
+            }
 
         if result.get("next_action") == "persist":
             details = cast(dict[str, str], result.get("details", {}))

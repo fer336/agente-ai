@@ -167,3 +167,72 @@ async def test_review_cancel_offers_the_menu_buttons():
 
     assert state["stage"] == "cancelled"
     assert state["next_action"] == "none"
+
+
+#: Shape checkpointed by the previous intake schema (phone + merged coverage).
+_LEGACY_DETAILS = {
+    "full_name": "Ana Pérez",
+    "dni": "30123456",
+    "phone": "+5491198765432",
+    "coverage": "OSDE 210",
+}
+
+
+@pytest.mark.asyncio
+async def test_legacy_review_state_goes_back_to_collecting_the_missing_fields():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {"stage": "review", "details": dict(_LEGACY_DETAILS)}
+    )
+
+    assert state["stage"] == "collect"
+    assert state["details"] == {"full_name": "Ana Pérez", "dni": "30123456"}
+    assert state["ask_fields"] == ["email", "obra_social", "plan"]
+    assert state["response_text"].endswith("- Correo electrónico\n- Obra social\n- Plan")
+    assert state["ready_to_persist"] is False
+
+
+@pytest.mark.asyncio
+async def test_legacy_review_confirm_tap_never_persists_and_asks_for_the_missing_fields():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "review",
+            "details": dict(_LEGACY_DETAILS),
+            "button_payload": FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+        }
+    )
+
+    assert state["next_action"] == "none"
+    assert state["ready_to_persist"] is False
+    assert state["stage"] == "collect"
+    assert state["ask_fields"] == ["email", "obra_social", "plan"]
+
+
+@pytest.mark.parametrize("legacy_field", ["phone", "coverage"])
+@pytest.mark.asyncio
+async def test_legacy_editing_field_is_cleared_and_the_missing_fields_are_asked(legacy_field):
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "collect",
+            "details": dict(_LEGACY_DETAILS),
+            "editing_field": legacy_field,
+            "user_message": "  ",
+        }
+    )
+
+    assert state["stage"] == "collect"
+    assert state["editing_field"] is None
+    assert state["ask_fields"] == ["email", "obra_social", "plan"]
+
+
+@pytest.mark.asyncio
+async def test_review_state_with_missing_fields_never_reviews_or_persists_on_modify():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "review",
+            "details": {"full_name": "Ana Pérez", "dni": "30123456", "coverage": "OSDE"},
+            "button_payload": FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
+        }
+    )
+
+    assert state["stage"] == "collect"
+    assert state["ask_fields"] == ["email", "obra_social", "plan"]

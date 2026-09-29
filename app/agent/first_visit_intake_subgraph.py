@@ -208,10 +208,23 @@ def build_first_visit_intake_graph() -> Any:
     def advance(state: FirstVisitIntakeState) -> dict[str, object]:
         stage = state.get("stage", "offer")
         payload = state.get("button_payload")
+        # Legacy checkpoints (full_name/dni/phone/coverage) are migrated on
+        # entry: unknown keys are dropped (so obra social and plan are asked
+        # again rather than guessed from the merged coverage string) and an
+        # editing field that no longer exists is cleared.
         details = _clean_details(state.get("details", {}))
+        editing_field = state.get("editing_field")
+        if editing_field not in INTAKE_FIELDS:
+            editing_field = None
 
         if stage == "cancelled":
             return _cancelled()
+
+        if stage in ("review", "choose_field"):
+            # Never review, edit or persist an incomplete record.
+            missing = missing_intake_fields(details)
+            if missing:
+                return _ask(details, missing, "retry")
 
         if stage == "choose_field":
             field = _normalise_field_choice(state.get("user_message", ""))
@@ -252,7 +265,7 @@ def build_first_visit_intake_graph() -> Any:
             return _review_turn(details)
 
         if payload == FIRST_VISIT_EXISTING_PATIENT_PAYLOAD or (
-            state.get("first_visit_answer") == "existing" and not state.get("editing_field")
+            state.get("first_visit_answer") == "existing" and not editing_field
         ):
             return {"next_action": "specialties", "ready_to_persist": False}
 
@@ -262,7 +275,6 @@ def build_first_visit_intake_graph() -> Any:
                 return _review_turn(details)
             return _ask(details, missing, "first")
 
-        editing_field = state.get("editing_field")
         if editing_field:
             value = _normalise(editing_field, state.get("user_message", ""))
             if not _valid(editing_field, value):
