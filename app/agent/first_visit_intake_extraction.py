@@ -17,9 +17,18 @@ from app.infrastructure.llm.exceptions import LLMProviderError
 _EMAIL_PATTERN = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 #: Plain 7-8 digit DNI or the dotted "30.123.456" spelling.
 _DNI_PATTERN = re.compile(r"(?<![\d.])(?:\d{7,8}|\d{2}\.\d{3}\.\d{3})(?![\d.])")
+#: "ya soy paciente" is always existing; a bare "soy paciente" only when it is
+#: neither negated ("no soy paciente") nor incidental ("soy paciente de OSDE").
 _EXISTING_PATIENT_PATTERN = re.compile(
-    r"\b(?:ya\s+soy\s+paciente|soy\s+paciente|ya\s+me\s+at(?:ie|e)nd\w+|"
+    r"\b(?:ya\s+soy\s+paciente|ya\s+fui|"
+    r"(?<!\bno\s)(?<!\bnunca\s)soy\s+paciente(?!\s+de\s+(?!(?:la|esta)\s+cl[ií]nica))|"
+    r"ya\s+me\s+at(?:ie|e)nd\w+|"
     r"no\s+es\s+(?:mi|la)\s+primera(?:\s+vez)?|no\s*,?\s*no\s+es\s+(?:mi|la)\s+primera)\b",
+    re.IGNORECASE,
+)
+#: Explicitly negated existing-patient phrases: the patient is not one yet.
+_NEGATED_EXISTING_PATTERN = re.compile(
+    r"\b(?:(?:todav[ií]a\s+)?no\s+soy\s+paciente(?:\s+todav[ií]a)?|nunca\s+fui)\b",
     re.IGNORECASE,
 )
 _NEW_PATIENT_PATTERN = re.compile(r"\bprimera\s+vez\b", re.IGNORECASE)
@@ -52,6 +61,9 @@ def _first_visit_answer(text: str) -> tuple[Literal["new", "existing"] | None, s
         return "existing", ""
     if bare in _BARE_YES:
         return "new", ""
+    match = _NEGATED_EXISTING_PATTERN.search(text)
+    if match is not None:
+        return "new", text[: match.start()] + " " + text[match.end() :]
     match = _EXISTING_PATIENT_PATTERN.search(text)
     if match is not None:
         return "existing", text[: match.start()] + " " + text[match.end() :]

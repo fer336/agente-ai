@@ -62,6 +62,12 @@ Root causes (origin/main e9d1c08):
   re-ask with static fallback, review with 5 fields. Route: delegated direct.
 - [x] T3 — Persistence adapts to `obra_social` / `plan` / `email` and the contact phone.
   Route: delegated direct.
+- [x] T4 — Review follow-up R3-existing-patient-negation: negated or incidental phrases
+  ("no soy paciente", "soy paciente de OSDE") must not be read as an existing patient.
+  Route: delegated direct.
+- [ ] T5 — Review follow-up R3-inflight-state-migration: intake state checkpointed under
+  the old schema (full_name/dni/phone/coverage, editing_field phone/coverage) must migrate
+  or restart cleanly, never KeyError. Route: delegated direct.
 
 ## Acceptance criteria
 
@@ -88,3 +94,6 @@ Ready for user review (push/PR are the user's decision).
 - T2 commit: a153891.
 - T3 done. `_match_intake_agreement` now takes only the obra social (exact, case/space-insensitive); plan is stored as `insurance_plan` untouched. Email passed to `create_patient(..., email=)` (gateway and Dentalink adapter already supported it; the adapter's own comment notes the field is unverified against a live POST). Phone is taken from the WhatsApp contact (`ycloud-<phone>` conversation id), no longer asked (done in T2's bridge).
   RED: `test_confirmed_first_visit_persists_the_email_on_the_new_patient` (email None) and `test_first_visit_agreement_is_matched_on_the_obra_social_alone` (matched "OSDE Binario" instead of "OSDE"). GREEN: `uv run pytest` 1677 passed, only baseline environmental failures; ruff check and mypy clean.
+- Native review (RDD on, risk medium, 1247 lines, base origin/main): consent granted, lens review-reliability → approved, acknowledged (lineage review-6d59820c412aa7a0, authority burned). Non-blocking follow-ups: R3-existing-patient-negation ("no soy paciente" matches existing), R3-inflight-state-migration (old checkpointed intake state → KeyError), R3-contact-phone-derivation (non-ycloud conversation ids), R3-unmatched-obra-social-verbatim (re-ask loop on unmatched obra social).
+- T4 done. Negated phrases ("no soy paciente", "no, no soy paciente todavía", "nunca fui") now read as a first visit; a bare "soy paciente" no longer matches when negated or followed by "de <obra social>"; "ya fui" added as a true positive. Incidental "soy paciente de OSDE" yields no first-visit answer (text stays available for extraction).
+  RED: `test_negated_existing_patient_phrases_are_read_as_a_first_visit` (5 cases: got "existing"), `test_incidental_soy_paciente_de_an_insurer_is_not_an_existing_patient` (2 cases), `test_existing_patient_answers_are_recognised[sí, ya fui]` failed before the change. GREEN: 25 passed in the extraction module. Commit hash: recorded with T5 (`fix(appointments): ignore negated existing-patient answers`).

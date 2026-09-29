@@ -90,6 +90,9 @@ async def test_llm_failure_never_guesses_a_full_name():
         "ya soy paciente de la clínica",
         "ya me atiendo ahí",
         "no",
+        "sí, ya fui",
+        "soy paciente",
+        "Soy paciente de la clínica",
     ],
 )
 @pytest.mark.asyncio
@@ -113,3 +116,31 @@ async def test_first_visit_phrase_is_not_taken_as_a_free_text_field_value():
 
     assert reply.first_visit == "new"
     assert reply.details == {}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no soy paciente",
+        "no, no soy paciente todavía",
+        "todavía no soy paciente",
+        "nunca fui",
+        "no, nunca fui a la clínica",
+    ],
+)
+@pytest.mark.asyncio
+async def test_negated_existing_patient_phrases_are_read_as_a_first_visit(text):
+    reply = await extract_intake_reply(_ScriptedExtractionLLM({}), text, ["email"])
+
+    assert reply.first_visit == "new"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["soy paciente de OSDE", "tengo OSDE, soy paciente de OSDE 210"],
+)
+@pytest.mark.asyncio
+async def test_incidental_soy_paciente_de_an_insurer_is_not_an_existing_patient(text):
+    reply = await extract_intake_reply(_ScriptedExtractionLLM({}), text, ["email"])
+
+    assert reply.first_visit is None
