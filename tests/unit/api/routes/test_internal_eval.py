@@ -179,10 +179,8 @@ async def test_an_empty_button_payload_is_treated_as_no_tap(stub_use_case: _Stub
     """Promptfoo templates an unset var as an empty string; that must not reach
     the agent as a (non-null) button tap.
     """
-    app.dependency_overrides[get_settings] = lambda: _override_settings(
-        internal_eval_enabled=True
-    )
-    app.dependency_overrides[get_eval_use_case_provider] = lambda: (lambda _cid: stub_use_case)
+    app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
     try:
         response = await _post_eval_chat(cookies=_session_cookies(), extra={"button_payload": ""})
     finally:
