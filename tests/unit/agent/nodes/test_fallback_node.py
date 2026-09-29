@@ -235,3 +235,37 @@ async def test_fallback_node_tells_the_llm_how_many_consecutive_attempts_happene
 
     assert seen_contexts[0].intent == "fallback"
     assert seen_contexts[0].collected_data["intentos_seguidos_sin_resolver"] == 2
+
+
+@pytest.mark.asyncio
+async def test_fallback_delivers_a_pending_answer_without_a_mid_conversation_greeting():
+    node = create_fallback_node(FakeLLMProvider())
+    state = make_agent_state(
+        recent_messages=[
+            {"role": "user", "content": "Hola"},
+            {"role": "assistant", "content": "Hola! Soy el asistente."},
+            {"role": "user", "content": "¿atienden particulares?"},
+        ],
+        collected_data={"pending_answer": "Hola! Sí, atendemos particulares."},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == "Sí, atendemos particulares."
+
+
+@pytest.mark.asyncio
+async def test_fallback_answer_offering_administration_carries_the_handoff_buttons():
+    from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD
+
+    node = create_fallback_node(FakeLLMProvider())
+    state = make_agent_state(
+        collected_data={
+            "pending_answer": "Si querés, puedo pasarte con administración. ¿Te parece bien?"
+        },
+    )
+
+    result = await node(state)
+
+    assert [b.id for b in result["response_buttons"]] == [MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD]
+    assert result["collected_data"]["handoff_offer_pending"] is True

@@ -4385,3 +4385,332 @@ async def test_a_stale_navigation_target_does_not_reset_a_later_idle_turn():
     result = await node(next_state)
 
     assert result.get("response_text") != WELCOME_TEXT
+
+
+def _slot_selection_state(slot, **overrides):
+    """A create flow at the slot list: the slot chosen, nobody identified yet."""
+    collected_data = {
+        "stage": STAGE_AWAITING_SLOT_SELECTION,
+        "chosen_specialty_id": "cleaning",
+        "chosen_specialty_name": "Ortodoncia",
+        "available_slots": [slot],
+        "professional_names": {"prof-1": "Dra. Laura Pérez"},
+        "slots_page": 0,
+        **overrides.pop("collected_data", {}),
+    }
+    return make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
+        collected_data=collected_data,
+        **overrides,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_picked_slot_and_create_operation_survive_identification():
+    # Chat A regression (live, v0.42.3): after picking a slot the patient was asked for
+    # name + DNI, and once given the agent answered "no encontramos turnos próximos"
+    # (the reschedule/cancel/view path) because the create operation was only implicit
+    # in the slot stage and never carried through identification.
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot])
+
+    ask = await node(_slot_selection_state(slot))
+
+    assert ask["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert ask["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert ask["collected_data"]["pending_selected_slot"] == slot
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Juan Perez 30123456",
+            collected_data=ask["collected_data"],
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["pending_selected_slot"] == slot
+    assert result["response_buttons"] is not None
+    assert result["pending_action_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_identification_with_a_picked_slot_never_takes_the_no_appointments_path():
+    # Same regression from a checkpoint that lost the operation key: a pending slot
+    # pick can only mean a booking.
+    slot = _future_slot()
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot], llm_provider=llm)
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Juan Perez 30123456",
+            collected_data={
+                "stage": STAGE_AWAITING_IDENTIFICATION,
+                "pending_selected_slot": slot,
+                "chosen_specialty_id": "cleaning",
+                "professional_names": {"prof-1": "Dra. Laura Pérez"},
+            },
+        )
+    )
+
+    assert "no_appointments" not in llm.intents
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_patient_is_not_asked_for_identification_after_picking_a_slot():
+    slot = _future_slot()
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot], llm_provider=llm)
+
+    result = await node(_slot_selection_state(slot, patient_identity=_PATIENT_PRIMITIVES))
+
+    assert "ask_identification" not in llm.intents
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
+    assert result["pending_action_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_patient_skips_the_first_visit_question_when_booking_again():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CREATE_PAYLOAD,
+            collected_data={},
+            patient_identity=_PATIENT_PRIMITIVES,
+        )
+    )
+
+    assert "first_visit_question" not in llm.intents
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_patient_is_not_asked_for_identification_to_view_appointments():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+
+    await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=OPERATION_CANCEL_PAYLOAD,
+            collected_data={},
+            patient_identity=_PATIENT_PRIMITIVES,
+        )
+    )
+
+    assert "ask_identification" not in llm.intents
+    # Nothing scheduled for this patient in the fake gateway: the no-appointments reply,
+    # never an identification prompt.
+    assert "no_appointments" in llm.intents
+
+
+@pytest.mark.asyncio
+async def test_identifying_a_patient_reports_the_identity_to_remember():
+    node, _, _ = await _make_node_and_conversation()
+    question = await _start_create(node)
+
+    result = await _answer_as_existing_patient(node, question)
+
+    assert result["patient_identity"]["dni"] == "30123456"
+    assert result["patient_identity"]["full_name"] == "Juan Perez"
+
+
+@pytest.mark.asyncio
+async def test_a_patient_awaiting_verification_confirmation_is_not_remembered_yet():
+    node, _, _ = await _make_node_and_conversation()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=REJECT_APPOINTMENT_PAYLOAD,
+            collected_data={
+                "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+                "operation": CREATE_APPOINTMENT_ACTION,
+                "patient": _PATIENT_PRIMITIVES,
+                "verified_patient_id": "pat-1",
+            },
+        )
+    )
+
+    assert result.get("patient_identity") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via", ["button", "typed"])
+async def test_the_main_menu_resets_the_workflow_state_however_it_is_requested(via):
+    slot = _future_slot()
+    node, _, _ = await _make_node_and_conversation(available_slots=[slot])
+    in_flight = {
+        "stage": STAGE_AWAITING_CONFIRMATION,
+        "operation": CREATE_APPOINTMENT_ACTION,
+        "pending_selected_slot": slot,
+        "patient": _PATIENT_PRIMITIVES,
+        "first_visit_completed": True,
+        "first_visit_intake": {"stage": "collect"},
+        "chosen_specialty_id": "cleaning",
+    }
+    request = (
+        {"button_payload": MENU_MAIN_PAYLOAD}
+        if via == "button"
+        else {"user_message": "Menú principal"}
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            collected_data=in_flight,
+            pending_action_id="pending-1",
+            patient_identity=_PATIENT_PRIMITIVES,
+            **request,
+        )
+    )
+
+    assert result["response_text"] == WELCOME_TEXT
+    assert result["response_list"] == WELCOME_LIST
+    assert result["collected_data"] == {}
+    assert result["pending_action_id"] is None
+    # The reset clears the workflow only; the remembered patient stays known.
+    # The reset never overwrites the remembered patient (state keeps it untouched).
+    assert "patient_identity" not in result
+
+
+_REPEATED_INTRO = "Buenísimo, gracias por la info. Todavía me faltan estos datos:"
+
+
+class _RepeatingIntroLLM(_IntakeLLM):
+    """The live model, which opened every re-ask with the same sentence."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ask_contexts = []
+
+    async def generate_response(self, context):
+        if context.intent == "first_visit_intake_ask":
+            self.intents.append(context.intent)
+            self.ask_contexts.append(context)
+            # The first ask reads differently; every re-ask then opens the same way.
+            return _REPEATED_INTRO if len(self.ask_contexts) > 1 else "Necesito unos datos:"
+        return await super().generate_response(context)
+
+
+async def _two_consecutive_re_asks(llm):
+    """Confirm the first visit, then send two replies that each leave fields missing."""
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    recent: list[dict[str, str]] = []
+
+    def remember(user_text, result):
+        if user_text:
+            recent.append({"role": "user", "content": user_text})
+        recent.append({"role": "assistant", "content": result["response_text"]})
+
+    result = await _confirm_first_visit(node, await _start_create(node))
+    remember("", result)
+    replies = []
+    for text in ("Soy Ana Pérez", "ana@example.com"):
+        result = await node(
+            make_agent_state(
+                conversation_id="conv-1",
+                user_message=text,
+                collected_data=result["collected_data"],
+                recent_messages=list(recent),
+            )
+        )
+        remember(text, result)
+        replies.append(result["response_text"])
+    return replies, llm
+
+
+@pytest.mark.asyncio
+async def test_consecutive_re_asks_do_not_repeat_the_intro_even_if_the_llm_does():
+    # Chat B regression (live): "Buenísimo, gracias por la info. Todavía me faltan…"
+    # opened consecutive re-asks. That sentence came from the LLM (the static fallback
+    # reads differently), so the repeat must be caught after generation too.
+    (first_re_ask, second_re_ask), _ = await _two_consecutive_re_asks(_RepeatingIntroLLM())
+
+    first_intro = first_re_ask.split("\n\n")[0]
+    second_intro = second_re_ask.split("\n\n")[0]
+    assert first_intro == _REPEATED_INTRO
+    assert second_intro != first_intro
+    assert second_re_ask.split("\n\n")[1].startswith("- ")
+
+
+@pytest.mark.asyncio
+async def test_the_intake_ask_tells_the_llm_the_previous_intro_and_asks_for_variety():
+    llm = _RepeatingIntroLLM()
+    await _two_consecutive_re_asks(llm)
+
+    second_ask = llm.ask_contexts[-1]
+    assert second_ask.collected_data["intro_anterior"] == _REPEATED_INTRO
+    assert "No repitas" in str(second_ask.collected_data["instruccion"])
+    assert second_ask.temperature is not None and second_ask.temperature >= 0.8
+
+
+@pytest.mark.asyncio
+async def test_static_fallback_intros_of_consecutive_re_asks_differ():
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLM(_IntakeLLM):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    (first_re_ask, second_re_ask), _ = await _two_consecutive_re_asks(_ExplodingLLM())
+
+    assert first_re_ask.split("\n\n")[0] != second_re_ask.split("\n\n")[0]
+
+
+@pytest.mark.asyncio
+async def test_no_appointments_reply_offers_administration_with_buttons():
+    from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS
+
+    class _OfferingLLM(_IntakeLLM):
+        async def generate_response(self, context):
+            if context.intent == "no_appointments":
+                return "No encontramos turnos. Querés que te comunique con administración?"
+            return await super().generate_response(context)
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_OfferingLLM())
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Juan Perez, 30123456",
+            collected_data={
+                "stage": STAGE_AWAITING_IDENTIFICATION,
+                "operation": RESCHEDULE_APPOINTMENT_ACTION,
+            },
+        )
+    )
+
+    assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
+    assert result["collected_data"]["handoff_offer_pending"] is True
+    assert result["collected_data"]["patient"]["dni"] == "30123456"
+
+
+@pytest.mark.asyncio
+async def test_a_patient_found_by_the_verification_flow_is_not_remembered_until_confirmed():
+    node, _, _ = await _make_node_and_conversation()
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Juan Perez", "dni": "30123456"}}'
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=payload,
+            collected_data={
+                "stage": STAGE_AWAITING_VERIFICATION_FLOW,
+                "operation": CREATE_APPOINTMENT_ACTION,
+            },
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_VERIFICATION_CONFIRMATION
+    assert result["collected_data"]["patient"]["dni"] == "30123456"
+    assert "patient_identity" not in result

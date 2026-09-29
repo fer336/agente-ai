@@ -269,6 +269,22 @@ class LangGraphAgentInvoker:
                 if checkpointer is not None:
                     snapshot = await compiled_graph.aget_state(config)
                     previous_values = snapshot.values or {}
+                    if previous_values.get("patient_identity") is None and generation > 1:
+                        # A booking rotates to a new thread but the conversation goes on:
+                        # inherit the patient when the previous thread handed it over.
+                        earlier = await compiled_graph.aget_state(
+                            {
+                                "configurable": {
+                                    "thread_id": f"{conversation_id}:session:{generation - 1}"
+                                }
+                            }
+                        )
+                        earlier_values = earlier.values or {}
+                        if earlier_values.get("carry_identity_to") == generation:
+                            previous_values = {
+                                **previous_values,
+                                "patient_identity": earlier_values.get("patient_identity"),
+                            }
 
                 recent_messages: list[dict[str, str]] = []
                 contact_memory_summary: str | None = None
@@ -321,6 +337,7 @@ class LangGraphAgentInvoker:
                     "resume_node": None,
                     "interruption": None,
                     "appointment_action": previous_values.get("appointment_action"),
+                    "patient_identity": previous_values.get("patient_identity"),
                     "collected_data": {
                         **(previous_values.get("collected_data", {})),
                         # Seed the fresh-restart flag into the graph state so

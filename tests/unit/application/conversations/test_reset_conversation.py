@@ -220,3 +220,17 @@ async def test_execute_returns_none_when_conversation_does_not_exist():
     result = await use_case.execute(ConversationId("missing"))
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_execute_starts_a_fresh_workflow_session_so_no_remembered_patient_survives():
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1"))
+    use_case, *_ = _make_use_case(conversation_repository=conversation_repository)
+    before = (
+        await conversation_repository.get_by_id(ConversationId("conv-1"))
+    ).workflow_session_generation
+
+    refreshed = await use_case.execute(ConversationId("conv-1"))
+
+    assert refreshed.workflow_session_generation == before + 1

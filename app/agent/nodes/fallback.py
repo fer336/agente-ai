@@ -1,6 +1,14 @@
 from typing import cast
 
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.handoff_offer import (
+    HANDOFF_OFFER_BUTTONS,
+    HANDOFF_OFFER_KEY,
+    offers_administration_handoff,
+)
+from app.agent.nodes.llm_response import (
+    generate_or_fallback,
+    without_mid_conversation_greeting,
+)
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
@@ -114,9 +122,15 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             # it, keep the menu as a way forward, and do NOT count this
             # turn as a failed one.
             remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
+            answer = without_mid_conversation_greeting(pending_answer, state["recent_messages"])
+            offers_handoff = offers_administration_handoff(answer)
+            if offers_handoff:
+                remaining[HANDOFF_OFFER_KEY] = True
             return {
-                "response_text": pending_answer,
-                "response_buttons": _CONFUSED_PATIENT_BUTTONS,
+                "response_text": answer,
+                "response_buttons": (
+                    HANDOFF_OFFER_BUTTONS if offers_handoff else _CONFUSED_PATIENT_BUTTONS
+                ),
                 "requires_handoff": False,
                 "collected_data": remaining,
             }

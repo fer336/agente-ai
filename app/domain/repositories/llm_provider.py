@@ -65,6 +65,11 @@ class ResponseContext:
     #: site that doesn't go through it yet.
     recent_messages: list[dict[str, str]] = field(default_factory=list)
     contact_memory: str | None = None
+    #: The assistant already spoke in this conversation, so the reply must not greet.
+    conversation_started: bool = False
+    #: Overrides the configured sampling temperature for this call only (a wording that
+    #: must vary between turns asks for more); `None` keeps the configured one.
+    temperature: float | None = None
 
 
 @runtime_checkable
