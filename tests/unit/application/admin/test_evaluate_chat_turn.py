@@ -135,6 +135,39 @@ async def test_execute_returns_the_latest_agent_run_trace_and_the_last_sent_repl
     assert [te.id for te in result.tool_executions] == ["te-1"]
 
 
+@pytest.mark.parametrize(
+    ("collection_name", "entry", "expected_reply"),
+    [
+        (
+            "sent_buttons",
+            (PhoneNumber("+5490000000000"), "Elegí una opción", [], None),
+            "Elegí una opción",
+        ),
+        (
+            "sent_flows",
+            (PhoneNumber("+5490000000000"), "Completá tus datos", object()),
+            "Completá tus datos",
+        ),
+        (
+            "sent_lists",
+            (PhoneNumber("+5490000000000"), "Seleccioná una alternativa", object()),
+            "Seleccioná una alternativa",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_execute_returns_text_from_interactive_replies(
+    collection_name, entry, expected_reply
+):
+    messaging_gateway = FakeYCloudMessagingGateway()
+    getattr(messaging_gateway, collection_name).append(entry)
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-interactive"), "hola", now=_NOW)
+
+    assert result.reply_text == expected_reply
+
+
 @pytest.mark.asyncio
 async def test_execute_returns_no_reply_and_empty_trace_when_the_invoker_produced_nothing():
     use_case = _use_case()

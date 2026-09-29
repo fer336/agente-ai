@@ -100,11 +100,21 @@ class EvaluateChatTurnUseCase:
             node_executions = await self._node_executions.get_by_agent_run_id(agent_run.id)
             tool_executions = await self._tool_executions.get_by_agent_run_id(agent_run.id)
 
-        # `sent_messages` reflects only this call's traffic — the invoker
-        # (and its `MessagingGateway`) are freshly built per eval request,
-        # never shared across calls (see `app.api.dependencies.internal_eval`).
-        sent = getattr(self._messaging_gateway, "sent_messages", [])
-        reply_text = sent[-1][1] if sent else None
+        # The fake gateway is freshly built per eval request, so at most one
+        # outbound collection contains this turn's reply. Interactive buttons,
+        # flows, and lists all carry text too; looking only at plain messages
+        # incorrectly reports a successful interactive turn as reply-less.
+        reply_text = None
+        for collection_name in (
+            "sent_messages",
+            "sent_buttons",
+            "sent_flows",
+            "sent_lists",
+        ):
+            sent = getattr(self._messaging_gateway, collection_name, [])
+            if sent:
+                reply_text = sent[-1][1]
+                break
 
         return ChatTurnResult(
             reply_text=reply_text,
