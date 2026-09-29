@@ -8,7 +8,8 @@ import pytest
 import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
 import app.agent.nodes.appointment as appointment
 from app.agent.first_visit_intake_subgraph import (
-    FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    FIRST_VISIT_CANCEL_PAYLOAD,
+    FIRST_VISIT_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -188,8 +189,10 @@ class _IntakeLLM(FakeLLMProvider):
 
     async def generate_response(self, context):
         self.intents.append(context.intent)
+        if context.intent == "first_visit_question":
+            return "Dale, es tu primera cita en Smiling Pilar? Confirmame así te registro."
         if context.intent == "first_visit_intake_ask":
-            return "Dale, te ayudo a sacar el turno. Es tu primera vez en la clínica?"
+            return "Necesito que me pases estos datos para registrarte."
         return await super().generate_response(context)
 
     async def extract_information(self, message, required_fields):
@@ -214,37 +217,104 @@ class _IntakeLLM(FakeLLMProvider):
         )
 
 
-@pytest.mark.asyncio
-async def test_create_operation_enters_first_visit_intake_with_one_llm_built_ask():
-    llm = _IntakeLLM()
-    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
-
-    intake = await node(
+async def _start_create(node, conversation_id="conv-1"):
+    return await node(
         make_agent_state(
-            conversation_id="conv-1",
+            conversation_id=conversation_id,
             button_payload=OPERATION_CREATE_PAYLOAD,
             collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
         )
     )
 
-    assert intake["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
-    assert intake["response_buttons"] is None
-    assert intake["response_text"] == (
-        "Dale, te ayudo a sacar el turno. Es tu primera vez en la clínica?\n\n"
-        + _INTAKE_BULLETS_ALL
-    )
-    assert llm.intents == ["first_visit_intake_ask"]
 
-    specialties = await node(
+async def _confirm_first_visit(node, question, conversation_id="conv-1"):
+    return await node(
         make_agent_state(
-            conversation_id="conv-1",
-            user_message="No, ya soy paciente",
-            collected_data=intake["collected_data"],
+            conversation_id=conversation_id,
+            button_payload=FIRST_VISIT_CONFIRM_PAYLOAD,
+            collected_data=question["collected_data"],
         )
     )
 
-    assert specialties["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert specialties["collected_data"]["first_visit_completed"] is True
+
+async def _answer_as_existing_patient(
+    node, question, identification="Juan Perez, 30123456", conversation_id="conv-1"
+):
+    """Cancel the first-visit question, then identify (name + DNI)."""
+    ask = await node(
+        make_agent_state(
+            conversation_id=conversation_id,
+            button_payload=FIRST_VISIT_CANCEL_PAYLOAD,
+            collected_data=question["collected_data"],
+        )
+    )
+    return await node(
+        make_agent_state(
+            conversation_id=conversation_id,
+            user_message=identification,
+            collected_data=ask["collected_data"],
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_operation_asks_the_first_visit_question_with_confirm_and_cancel_buttons():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+
+    question = await _start_create(node)
+
+    assert question["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert question["response_text"] == (
+        "Dale, es tu primera cita en Smiling Pilar? Confirmame así te registro."
+    )
+    assert [(b.id, b.title) for b in question["response_buttons"]] == [
+        (FIRST_VISIT_CONFIRM_PAYLOAD, "✅ Confirmar"),
+        (FIRST_VISIT_CANCEL_PAYLOAD, "❌ Cancelar"),
+    ]
+    assert "- " not in question["response_text"]
+    assert question.get("response_list") is None
+    assert llm.intents == ["first_visit_question"]
+
+
+@pytest.mark.asyncio
+async def test_confirming_the_first_visit_question_asks_for_the_five_fields():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    question = await _start_create(node)
+    llm.intents.clear()
+
+    intake = await _confirm_first_visit(node, question)
+
+    assert intake["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert intake["collected_data"]["first_visit_intake"]["stage"] == "collect"
+    assert intake["response_buttons"] is None
+    assert intake["response_text"] == (
+        "Necesito que me pases estos datos para registrarte.\n\n" + _INTAKE_BULLETS_ALL
+    )
+    assert intake.get("response_list") is None
+    assert llm.intents == ["first_visit_intake_ask"]
+
+
+@pytest.mark.asyncio
+async def test_first_visit_question_falls_back_to_static_text_with_buttons_when_llm_fails():
+    from app.infrastructure.llm.exceptions import LLMTimeoutError
+
+    class _ExplodingLLM(FakeLLMProvider):
+        async def generate_response(self, context):
+            raise LLMTimeoutError("boom")
+
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ExplodingLLM())
+
+    question = await _start_create(node)
+
+    assert [b.id for b in question["response_buttons"]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "primera" in question["response_text"].casefold()
+    assert "hola" not in question["response_text"].casefold()
+    assert "- " not in question["response_text"]
 
 
 @pytest.mark.asyncio
@@ -256,19 +326,227 @@ async def test_first_visit_ask_falls_back_to_static_bullets_when_the_llm_fails()
             raise LLMTimeoutError("boom")
 
     node, _, _ = await _make_node_and_conversation(llm_provider=_ExplodingLLM())
+    question = await _start_create(node)
 
-    intake = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=OPERATION_CREATE_PAYLOAD,
-            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
-        )
-    )
+    intake = await _confirm_first_visit(node, question)
 
     assert intake["response_buttons"] is None
     assert intake["response_text"].endswith(_INTAKE_BULLETS_ALL)
     assert "hola" not in intake["response_text"].casefold()
-    assert "primera vez" in intake["response_text"].casefold()
+    assert "primera" not in intake["response_text"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_first_visit_question_asks_for_name_and_dni_before_specialties():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    question = await _start_create(node)
+    llm.intents.clear()
+
+    ask = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_CANCEL_PAYLOAD,
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert ask["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert ask["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert llm.intents == ["ask_identification"]
+    assert ask.get("response_list") is None
+    assert "first_visit_intake" not in ask["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_a_verified_existing_patient_then_gets_the_specialties():
+    node, _, _ = await _make_node_and_conversation()
+    question = await _start_create(node)
+
+    result = await _answer_as_existing_patient(node, question)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["first_visit_completed"] is True
+    assert result["collected_data"]["patient"]["dni"] == "30123456"
+    assert result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_with_name_and_dni_already_known_verifies_without_asking_again():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    question = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Puedo sacar uno ?",
+            collected_data={
+                "operation_mention": "create",
+                "identification_full_name": "Juan Perez",
+                "identification_dni": "30123456",
+            },
+        )
+    )
+    assert question["response_buttons"] is not None
+    llm.intents.clear()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_CANCEL_PAYLOAD,
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert "ask_identification" not in llm.intents
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["first_visit_completed"] is True
+    assert result["response_list"] is not None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_when_the_patient_is_not_in_dentalink_offers_registration():
+    node, _, _ = await _make_node_and_conversation(patients=[])
+    question = await _start_create(node)
+
+    result = await _answer_as_existing_patient(node, question)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert result.get("response_list") is None
+
+
+@pytest.mark.parametrize("reply", ["sí, es la primera", "no soy paciente", "Confirmar"])
+@pytest.mark.asyncio
+async def test_a_free_text_first_visit_answer_behaves_like_the_confirm_button(reply):
+    node, _, _ = await _make_node_and_conversation(llm_provider=_IntakeLLM())
+    question = await _start_create(node)
+
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1", user_message=reply, collected_data=question["collected_data"]
+        )
+    )
+
+    assert intake["collected_data"]["first_visit_intake"]["stage"] == "collect"
+    assert intake["response_text"].endswith(_INTAKE_BULLETS_ALL)
+
+
+@pytest.mark.asyncio
+async def test_a_first_visit_reply_with_inline_details_only_asks_the_missing_fields():
+    node, _, _ = await _make_node_and_conversation(llm_provider=_IntakeLLM())
+    question = await _start_create(node)
+
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="sí, es la primera, soy Ana Pérez ana@example.com",
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert intake["collected_data"]["first_visit_intake"]["stage"] == "collect"
+    assert intake["response_text"].endswith("- DNI\n- Obra social\n- Plan")
+    assert "Nombre completo" not in intake["response_text"]
+    assert "Correo electrónico" not in intake["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_an_existing_patient_reply_with_name_and_dni_is_verified_without_asking_again():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(
+        llm_provider=llm,
+        patients=[make_patient(id_="pat-2", full_name="Ana Pérez", dni="30123457")],
+    )
+    question = await _start_create(node)
+    llm.intents.clear()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="ya soy paciente, Ana Pérez 30123457",
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert "ask_identification" not in llm.intents
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["patient"]["dni"] == "30123457"
+
+
+@pytest.mark.parametrize("reply", ["Cancelar", "Confirmar"])
+@pytest.mark.asyncio
+async def test_button_words_typed_during_collection_do_not_leave_the_intake(reply):
+    node, _, _ = await _make_node_and_conversation(llm_provider=_IntakeLLM())
+    intake = await _confirm_first_visit(node, await _start_create(node))
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1", user_message=reply, collected_data=intake["collected_data"]
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["collected_data"]["first_visit_intake"]["stage"] == "collect"
+
+
+@pytest.mark.parametrize("reply", ["no, ya soy paciente", "no", "Cancelar"])
+@pytest.mark.asyncio
+async def test_a_free_text_existing_patient_answer_behaves_like_the_cancel_button(reply):
+    node, _, _ = await _make_node_and_conversation(llm_provider=_IntakeLLM())
+    question = await _start_create(node)
+
+    ask = await node(
+        make_agent_state(
+            conversation_id="conv-1", user_message=reply, collected_data=question["collected_data"]
+        )
+    )
+
+    assert ask["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert ask.get("response_list") is None
+
+
+@pytest.mark.asyncio
+async def test_an_unclear_first_visit_answer_asks_the_question_again_with_the_buttons():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    question = await _start_create(node)
+    llm.intents.clear()
+
+    again = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="quizás",
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert llm.intents == ["first_visit_question"]
+    assert [b.id for b in again["response_buttons"]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert again["collected_data"]["first_visit_intake"]["stage"] == "question"
+    assert again.get("response_list") is None
+
+
+@pytest.mark.asyncio
+async def test_a_verified_patient_confirmation_without_a_slot_continues_to_specialties():
+    node, _, _ = await _make_node_and_conversation()
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+            collected_data={
+                "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+                "operation": CREATE_APPOINTMENT_ACTION,
+                "patient": _PATIENT_PRIMITIVES,
+                "verified_patient_id": "pat-1",
+            },
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["first_visit_completed"] is True
 
 
 @pytest.mark.asyncio
@@ -290,13 +568,16 @@ async def test_asking_to_book_after_a_reschedule_without_appointments_reuses_nam
     )
     llm.intents.clear()
 
-    result = await node(
+    question = await node(
         make_agent_state(
             conversation_id="conv-1",
             user_message="Puedo sacar uno ?",
             collected_data={**no_appointments["collected_data"], "operation_mention": "create"},
         )
     )
+    assert llm.intents == ["first_visit_question"]
+    llm.intents.clear()
+    result = await _confirm_first_visit(node, question)
 
     assert llm.intents == ["first_visit_intake_ask"]
     assert result["response_buttons"] is None
@@ -311,13 +592,7 @@ async def test_asking_to_book_after_a_reschedule_without_appointments_reuses_nam
 async def test_partial_intake_reply_re_asks_only_the_missing_fields():
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(llm_provider=llm)
-    intake = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=OPERATION_CREATE_PAYLOAD,
-            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
-        )
-    )
+    intake = await _confirm_first_visit(node, await _start_create(node))
 
     collecting = await node(
         make_agent_state(
@@ -334,12 +609,8 @@ async def test_partial_intake_reply_re_asks_only_the_missing_fields():
 
 
 async def _complete_new_patient_intake(node, coverage: str = "OSDE 210"):
-    result = await node(
-        make_agent_state(
-            conversation_id=_CONTACT_CONVERSATION_ID,
-            button_payload=OPERATION_CREATE_PAYLOAD,
-            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
-        )
+    result = await _confirm_first_visit(
+        node, await _start_create(node, _CONTACT_CONVERSATION_ID), _CONTACT_CONVERSATION_ID
     )
     result = await node(
         make_agent_state(
@@ -493,12 +764,10 @@ async def test_first_visit_agreement_is_matched_on_the_obra_social_alone():
         conversation_id=_CONTACT_CONVERSATION_ID,
         llm_provider=llm,
     )
-    intake = await node(
-        make_agent_state(
-            conversation_id=_CONTACT_CONVERSATION_ID,
-            button_payload=OPERATION_CREATE_PAYLOAD,
-            collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
-        )
+    intake = await _confirm_first_visit(
+        node,
+        await _start_create(node, _CONTACT_CONVERSATION_ID),
+        _CONTACT_CONVERSATION_ID,
     )
     intake_data = intake["collected_data"]
     for value in ("Ana Pérez", "30123457", "ana@example.com", "OSDE", "Binario 210"):
@@ -700,13 +969,7 @@ async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
     )
 
     intake = await node(state)
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-            collected_data=intake["collected_data"],
-        )
-    )
+    result = await _answer_as_existing_patient(node, intake)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
@@ -733,13 +996,7 @@ async def test_a_named_professional_skips_the_specialty_question_too():
     )
 
     intake = await node(state)
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-            collected_data=intake["collected_data"],
-        )
-    )
+    result = await _answer_as_existing_patient(node, intake)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
@@ -778,13 +1035,7 @@ async def test_offering_professionals_tells_the_llm_not_to_repeat_the_names():
     )
 
     intake = await node(state)
-    await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-            collected_data=intake["collected_data"],
-        )
-    )
+    await _answer_as_existing_patient(node, intake)
 
     assert any(context.intent == "choose_professional" for context in captured)
     choose_professional_context = next(c for c in captured if c.intent == "choose_professional")
@@ -968,13 +1219,7 @@ async def test_operation_menu_create_shows_the_numbered_specialty_list():
     )
 
     intake = await node(state)
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-            collected_data=intake["collected_data"],
-        )
-    )
+    result = await _answer_as_existing_patient(node, intake)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
@@ -1047,13 +1292,7 @@ async def test_actual_create_route_shows_all_specialties_when_staffed_lookup_fai
             collected_data={"stage": STAGE_AWAITING_OPERATION_SELECTION},
         )
     )
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-            collected_data=intake["collected_data"],
-        )
-    )
+    result = await _answer_as_existing_patient(node, intake)
 
     safe_lookup.assert_awaited_once_with(appointment_gateway)
     assert result["collected_data"]["specialty_options"] == specialties
@@ -1448,13 +1687,7 @@ async def test_specialty_and_professional_stages_leave_free_input():
     )
 
     intake = await node(state)
-    await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            button_payload=FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
-            collected_data=intake["collected_data"],
-        )
-    )
+    await _answer_as_existing_patient(node, intake)
 
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
@@ -2678,8 +2911,11 @@ async def test_confirmation_stage_with_a_dangling_pending_action_routes_a_fresh_
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
-    assert result["response_buttons"] is None
-    assert result["response_text"].endswith(_INTAKE_BULLETS_ALL)
+    assert [b.id for b in result["response_buttons"]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in result["response_text"]
     assert result["pending_action_id"] is None
 
 
@@ -2701,8 +2937,11 @@ async def test_confirmation_stage_with_no_pending_action_id_routes_a_fresh_reque
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
-    assert result["response_buttons"] is None
-    assert result["response_text"].endswith(_INTAKE_BULLETS_ALL)
+    assert [b.id for b in result["response_buttons"]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in result["response_text"]
     assert result["pending_action_id"] is None
 
 
@@ -2839,8 +3078,11 @@ async def test_confirmation_stage_free_text_decline_with_no_pending_id_routes_a_
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
-    assert result["response_buttons"] is None
-    assert result["response_text"].endswith(_INTAKE_BULLETS_ALL)
+    assert [b.id for b in result["response_buttons"]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in result["response_text"]
     assert result["pending_action_id"] is None
 
 
@@ -2872,8 +3114,11 @@ async def test_confirmation_stage_expired_pending_action_row_routes_a_fresh_requ
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
-    assert result["response_buttons"] is None
-    assert result["response_text"].endswith(_INTAKE_BULLETS_ALL)
+    assert [b.id for b in result["response_buttons"]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]
+    assert "- " not in result["response_text"]
     assert result["pending_action_id"] is None
 
 
@@ -3195,9 +3440,10 @@ async def test_first_visit_intake_is_prefilled_from_the_identified_patient():
         )
     )
 
-    intake = result["collected_data"]["first_visit_intake"]
+    intake = (await _confirm_first_visit(node, result))["collected_data"]["first_visit_intake"]
     assert intake["details"]["full_name"] == "Juan Perez"
     assert intake["details"]["dni"] == "30123456"
+    assert intake["ask_fields"] == ["email", "obra_social", "plan"]
 
 
 @pytest.mark.asyncio

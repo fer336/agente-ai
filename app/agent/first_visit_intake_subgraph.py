@@ -1,5 +1,9 @@
 """Deterministic first-visit intake flow, isolated from appointment selection.
 
+The flow opens with a first-visit question (confirm / cancel buttons): confirm
+starts the data collection below, cancel hands the patient over to the
+appointment node's identification step (``next_action == "identify"``).
+
 The appointment node adapts its conversational state into this graph.  The
 subgraph never persists data and never calls the LLM: the adapter extracts
 whatever the patient wrote (see ``first_visit_intake_extraction``) and hands it
@@ -19,9 +23,12 @@ from langgraph.graph import END, START, StateGraph
 
 from app.domain.value_objects.interactive_button import InteractiveButton
 
-#: Legacy "No, ya soy paciente" tap.  The first-visit question is now answered
-#: as free text, but a stale button from an older message (and programmatic
-#: callers that skip the intake) still resolve to the existing-patient path.
+#: The first-visit question's two reply buttons: confirm = first visit,
+#: cancel = already a patient.
+FIRST_VISIT_CONFIRM_PAYLOAD = "FIRST_VISIT_CONFIRM"
+FIRST_VISIT_CANCEL_PAYLOAD = "FIRST_VISIT_CANCEL"
+#: Legacy "No, ya soy paciente" tap: a stale button from an older message
+#: still resolves to the existing-patient path, like cancel.
 FIRST_VISIT_EXISTING_PATIENT_PAYLOAD = "FIRST_VISIT_EXISTING_PATIENT"
 FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD = "FIRST_VISIT_REVIEW_CONFIRM"
 FIRST_VISIT_REVIEW_MODIFY_PAYLOAD = "FIRST_VISIT_REVIEW_MODIFY"
@@ -47,8 +54,12 @@ _FIELD_PROMPTS = {
 }
 _EMAIL_PATTERN = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 
-#: Static intros, also the fallback wording when the LLM-built one fails.
-FIRST_ASK_INTRO = "¿Es tu primera vez en la clínica? Para dejarte registrado necesito estos datos:"
+#: Static wordings, also the fallback when the LLM-built ones fail.
+FIRST_VISIT_QUESTION = (
+    "¿Es tu primera cita en Smiling Pilar? Confirmame así te registro, "
+    "o cancelá si ya sos paciente."
+)
+FIRST_ASK_INTRO = "Para dejarte registrado necesito que me pases estos datos:"
 RETRY_ASK_INTRO = "Gracias. Todavía me faltan estos datos:"
 
 
@@ -57,7 +68,7 @@ class FirstVisitIntakeState(TypedDict, total=False):
 
     user_message: str
     button_payload: str | None
-    stage: Literal["offer", "collect", "review", "choose_field", "cancelled"]
+    stage: Literal["offer", "question", "collect", "review", "choose_field", "cancelled"]
     details: dict[str, str]
     #: Fields the adapter extracted from this turn's free-text reply.
     extracted_details: dict[str, str]
@@ -68,8 +79,9 @@ class FirstVisitIntakeState(TypedDict, total=False):
     response_buttons: list[InteractiveButton] | None
     #: Missing fields listed by this turn's ask, in fixed order; unset otherwise.
     ask_fields: list[str] | None
-    ask_kind: Literal["first", "retry"] | None
-    next_action: Literal["none", "specialties", "persist", "main_menu", "handoff"]
+    ask_kind: Literal["question", "first", "retry"] | None
+    #: ``identify`` = the patient is not a first visit: verify them instead.
+    next_action: Literal["none", "identify", "persist", "main_menu", "handoff"]
     ready_to_persist: bool
 
 
@@ -109,6 +121,14 @@ def _clean_details(details: dict[str, str]) -> dict[str, str]:
     return cleaned
 
 
+def _merge_extracted(details: dict[str, str], extracted: dict[str, str]) -> None:
+    """Merge the valid, normalised extracted values into ``details``."""
+    for field in INTAKE_FIELDS:
+        value = _normalise(field, str(extracted.get(field, "")))
+        if value and _valid(field, value):
+            details[field] = value
+
+
 def missing_intake_fields(details: dict[str, str]) -> list[str]:
     """Fields with no value yet, in the fixed intake order."""
     return [field for field in INTAKE_FIELDS if not details.get(field, "").strip()]
@@ -130,6 +150,23 @@ def _ask(
         "ask_kind": kind,
         "response_text": f"{intro}\n\n{format_field_bullets(missing)}",
         "response_buttons": None,
+        "next_action": "none",
+        "ready_to_persist": False,
+    }
+
+
+def _question_turn(details: dict[str, str]) -> dict[str, object]:
+    return {
+        "stage": "question",
+        "editing_field": None,
+        "details": details,
+        "ask_fields": None,
+        "ask_kind": "question",
+        "response_text": FIRST_VISIT_QUESTION,
+        "response_buttons": _buttons(
+            (FIRST_VISIT_CONFIRM_PAYLOAD, "✅ Confirmar"),
+            (FIRST_VISIT_CANCEL_PAYLOAD, "❌ Cancelar"),
+        ),
         "next_action": "none",
         "ready_to_persist": False,
     }
@@ -264,12 +301,17 @@ def build_first_visit_intake_graph() -> Any:
                 return _cancelled()
             return _review_turn(details)
 
-        if payload == FIRST_VISIT_EXISTING_PATIENT_PAYLOAD or (
+        answer = state.get("first_visit_answer") if stage == "question" else None
+        if payload in (FIRST_VISIT_CANCEL_PAYLOAD, FIRST_VISIT_EXISTING_PATIENT_PAYLOAD) or (
             state.get("first_visit_answer") == "existing" and not editing_field
         ):
-            return {"next_action": "specialties", "ready_to_persist": False}
+            return {"next_action": "identify", "ready_to_persist": False}
 
-        if stage == "offer":
+        if stage in ("offer", "question"):
+            if payload != FIRST_VISIT_CONFIRM_PAYLOAD and answer != "new":
+                return _question_turn(details)
+            # Details the patient gave along with the answer are kept.
+            _merge_extracted(details, state.get("extracted_details", {}))
             missing = missing_intake_fields(details)
             if not missing:
                 return _review_turn(details)
@@ -281,11 +323,7 @@ def build_first_visit_intake_graph() -> Any:
                 return _ask(details, [editing_field], "retry", editing_field=editing_field)
             details[editing_field] = value
         else:
-            extracted = state.get("extracted_details", {})
-            for field in INTAKE_FIELDS:
-                value = _normalise(field, str(extracted.get(field, "")))
-                if value and _valid(field, value):
-                    details[field] = value
+            _merge_extracted(details, state.get("extracted_details", {}))
         missing = missing_intake_fields(details)
         if missing:
             return _ask(details, missing, "retry")
