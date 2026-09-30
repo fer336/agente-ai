@@ -10,13 +10,11 @@ from app.api.dependencies.internal_eval import (
     require_internal_eval_enabled,
 )
 from app.application.admin.evaluate_chat_turn import EvalFlow, EvalOption
-from app.domain.entities.admin_user import ROLES
+from app.domain.entities.admin_user import ADMIN_TECHNICAL
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
 
 router = APIRouter(prefix="/internal/eval", tags=["internal-eval"])
-
-_ANY_AUTHENTICATED_ROLE = tuple(ROLES)
 
 
 class EvalChatRequest(BaseModel):
@@ -79,10 +77,11 @@ def _flow_out(flow: EvalFlow | None) -> EvalFlowOut | None:
 async def eval_chat(
     body: EvalChatRequest,
     _enabled: None = Depends(require_internal_eval_enabled),
-    _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+    _session: SessionPayload = Depends(require_role(ADMIN_TECHNICAL)),
     use_case_for: EvalUseCaseProvider = Depends(get_eval_use_case_provider),
 ) -> EvalChatResponse:
-    """PRD.md §61's isolated agent-behavior evaluation endpoint. Runs the
+    """`ADMIN_TECHNICAL`-only: with the endpoint permanently enabled, every
+    other role gets 403. PRD.md §61's isolated agent-behavior evaluation endpoint. Runs the
     real LangGraph agent against a fake Dentalink/YCloud stack (see
     `app.api.dependencies.internal_eval`'s own docstring) — never real
     patient data or WhatsApp traffic. The LLM is fake unless
