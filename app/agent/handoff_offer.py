@@ -70,7 +70,7 @@ _MAIN_MENU_REQUESTS = frozenset(
 )
 
 
-def _normalize(text: str) -> str:
+def normalize_text(text: str) -> str:
     """Lowercase, accent-free, punctuation-free, single-spaced."""
     decomposed = unicodedata.normalize("NFD", text.casefold())
     without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
@@ -79,13 +79,13 @@ def _normalize(text: str) -> str:
 
 def offers_administration_handoff(text: str) -> bool:
     """True when the text offers to hand the patient over to administration."""
-    normalized = _normalize(text)
+    normalized = normalize_text(text)
     return "administracion" in normalized and _OFFER.search(normalized) is not None
 
 
 def is_handoff_offer_acceptance(text: str) -> bool:
     """True for a short free-text agreement ("bueno", "dale", "sí, por favor")."""
-    tokens = _normalize(text).split()
+    tokens = normalize_text(text).split()
     if not tokens:
         return False
     if not all(token in _AGREEMENT_CORE or token in _AGREEMENT_FILLER for token in tokens):
@@ -95,4 +95,4 @@ def is_handoff_offer_acceptance(text: str) -> bool:
 
 def is_main_menu_request(text: str) -> bool:
     """True when the patient typed the main menu request instead of tapping the button."""
-    return _normalize(text) in _MAIN_MENU_REQUESTS
+    return normalize_text(text) in _MAIN_MENU_REQUESTS

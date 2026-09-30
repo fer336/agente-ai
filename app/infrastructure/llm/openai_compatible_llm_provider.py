@@ -60,7 +60,9 @@ esta forma exacta, sin texto adicional:
 - appointment: pedir, cambiar o cancelar un turno.
 - insurance: preguntar por obra social, prepaga o convenios.
 - specialties: preguntar qué especialidades atiende la clínica.
-- handoff: pedir hablar con una persona, urgencias, reclamos, quejas, o cualquier cosa que \
+- handoff: pedir hablar con una persona, urgencias, reclamos, quejas, avisar que llega tarde \
+("voy a llegar tarde", "estoy llegando", "ya llego"), problemas con un turno ("no aparece mi \
+turno", "me equivoqué con el turno", "tengo un problema con mi turno"), o cualquier cosa que \
 un bot no debería resolver solo.
 - unknown: cualquier otra cosa, saludos, o si no estás seguro.
 """
@@ -102,7 +104,9 @@ Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin 
 médicos de una especialidad.
 - insurance: pregunta por obra social, prepaga o convenios.
 - specialties: pregunta qué especialidades atiende la clínica, sin pedir turno.
-- handoff: pide hablar con una persona, urgencias, reclamos o quejas.
+- handoff: pide hablar con una persona, urgencias, reclamos o quejas, avisa que llega tarde \
+("voy a llegar tarde", "estoy llegando", "ya llego") o tiene un problema con un turno ("no \
+aparece mi turno", "me equivoqué con el turno", "tengo un problema con mi turno").
 - location: pregunta dónde queda la clínica, la dirección, cómo llegar o cómo hacer para \
 llegar, en qué zona/barrio están, o pide el mapa/la ubicación. Es un dato fijo que se \
 responde con una tarjeta de ubicación nativa de WhatsApp, nunca con texto armado por vos — \

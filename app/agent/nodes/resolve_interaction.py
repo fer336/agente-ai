@@ -1,3 +1,4 @@
+from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_KEY,
     is_handoff_offer_acceptance,
@@ -281,6 +282,17 @@ async def _resolve(
             "intent": "appointment",
             "collected_data": {**collected_data, "navigation_target": "main"},
         }
+
+    # PRD.md §22's automatic-handoff phrases ("voy a llegar tarde", "no aparece mi
+    # turno", ...) are matched before the LLM: the real model read them as an
+    # appointment request. Same route as the LLM's "handoff" intent, mid-flow included.
+    if requires_automatic_handoff(state["user_message"]):
+        handoff: dict[str, object] = {"intent": "handoff", "interruption": "terminate"}
+        if post_action_context is not None:
+            handoff["collected_data"] = {
+                key: value for key, value in collected_data.items() if key != "post_action_context"
+            }
+        return handoff
 
     # Verified location data is a deterministic global concern. Handle it
     # before the LLM so an active stage cannot trap "dónde quedan?".
