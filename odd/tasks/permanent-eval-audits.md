@@ -61,7 +61,8 @@ command and the endpoint stays safe while it is always on.
   Commit: 587aa92
 - [x] T3 — `evals/run-audit.sh`. Route: delegated direct.
   Evidence: `bash -n` ok, static tests pass, shellcheck not installed. Commit: see git log (`feat(evals): add a one-command production audit script`).
-- [ ] T4 — Stack back on `agente_ai_backend_env`, plus always-on docs. Route: delegated direct.
+- [x] T4 — Stack back on `agente_ai_backend_env`, plus always-on docs. Route: delegated direct.
+  Commit: see git log (`docs(evals): document always-on production audits`).
 
 ## Progress
 
@@ -70,4 +71,4 @@ command and the endpoint stays safe while it is always on.
 
 ## Next step
 
-T4.
+Open the PR (`feat(...)` title, minor release); after deploy, `docker secret rm agente_ai_backend_env_eval`.

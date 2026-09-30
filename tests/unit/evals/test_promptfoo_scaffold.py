@@ -442,26 +442,26 @@ def test_no_sensitive_values_in_reply_flags_a_leaked_decoy():
     assert json.loads(result.stdout)["pass"] is False
 
 
-def test_readme_documents_the_production_run_variables_and_rollback():
+def test_readme_documents_the_always_on_production_audit():
     readme = (_EVALS_DIR / "README.md").read_text()
 
     for required in [
-        "INTERNAL_EVAL_ENABLED=true",
-        "INTERNAL_EVAL_REAL_LLM=true",
-        "https://agent.qeva-ai.com/admin/login",
-        "ADMIN_SESSION_COOKIE",
-        "ADMIN_CSRF_COOKIE",
+        "INTERNAL_EVAL_ENABLED",
+        "INTERNAL_EVAL_REAL_LLM",
+        "agente_ai_backend_env",
+        "ADMIN_TECHNICAL",
+        "evals/run-audit.sh",
+        "--view",
         "EVAL_RUN_ID",
-        "apiBaseUrl",
-        "npx promptfoo@latest eval",
-        "--env-rm INTERNAL_EVAL_REAL_LLM",
         "read -r -s",
-        "--data @-",
         "replicas: 1",
         "Default stance",
+        "docker secret rm agente_ai_backend_env_eval",
     ]:
         assert required in readme
-    # The runbook must never copy the production secret file nor put the password in argv.
+    # The old temporary-exception runbook is gone, and secrets/passwords stay out of it.
+    assert "--env-add" not in readme
+    assert "--env-rm" not in readme
     assert "cp <your-backend.env>" not in readme
     assert "docker secret create" not in readme
     assert '"password":"<ADMIN_PASSWORD>"' not in readme

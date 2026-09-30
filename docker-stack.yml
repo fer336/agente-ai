@@ -75,7 +75,3 @@ networks:
 secrets:
   agente_ai_backend_env:
     external: true
-    # Temporary audit window (evals/README.md): same env as the base secret
-    # plus INTERNAL_EVAL_ENABLED=true and INTERNAL_EVAL_REAL_LLM=true. Revert
-    # to `agente_ai_backend_env` with a `fix(...)` PR once the audit ends.
-    name: agente_ai_backend_env_eval
