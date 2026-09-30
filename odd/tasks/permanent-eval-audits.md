@@ -65,10 +65,12 @@ command and the endpoint stays safe while it is always on.
   Commit: see git log (`docs(evals): document always-on production audits`).
 
 - [x] T5 — Review findings (R1-001/002, R2, R3, R4): pinned promptfoo 0.123.1, grader-host allowlist and shared-key notice, session expiry note, config defaults, complete preload plus behavioral test, quote strip, case-insensitive role, help/usage tests, all-roles 403 test, rollback-safe secret docs. Evidence: new tests RED (8 failed) then GREEN.
+- [x] T6 — Review findings (R3-001 host allowlist bypass via userinfo, R3-002/003 behavioral tests, bash-3.2 uppercase, README `@latest`, TTL notice, honest test names): host check and quote strip moved to `evals/check_grader_host.py` (urlsplit: https only, no userinfo, exact hostname). Evidence: new tests RED (33 failed, 51 passed) then GREEN. Route: direct inline (single writer).
 
 ## Progress
 
 - Native review (high, 3005 lines, 4 lenses): consent granted, approved and acknowledged (lineage review-4ddc18d495c61269); findings fixed in T5.
+- Native review (high, 246 lines, 4 lenses): approved and acknowledged (lineage review-f3f976bfb8a63ae5); findings fixed in T6.
 - Branch `feat/permanent-eval-audits` from origin/main eae7f7a (v0.44.0), with T1
   cherry-picked as 13810f0 and 571dbaa.
 

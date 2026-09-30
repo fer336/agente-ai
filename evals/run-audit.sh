@@ -19,6 +19,8 @@ Environment (all optional):
   INTERNAL_EVAL_BASE_URL   default https://agent.qeva-ai.com
   EVAL_GRADER_BASE_URL     default https://openrouter.ai/api/v1
   EVAL_GRADER_MODEL        default anthropic/claude-haiku-4.5
+  ADMIN_SESSION_TTL_SECONDS  server session lifetime, only used to print the
+                           expiry estimate (default 3600)
   EVAL_GRADER_API_KEY      default: read from the running backend container's
                            /run/secrets/backend.env (LLM_API_KEY, then
                            OPENROUTER_API_KEY); never printed. That shares the
@@ -52,8 +54,8 @@ done
 EVALS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Pinned on purpose: this runs with production admin cookies. Bump deliberately.
 PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.123.1}"
-# Hosts that may receive a grader key auto-read from the backend secret.
-ALLOWED_SECRET_KEY_HOSTS="openrouter.ai"
+# Grader-host allowlist and quote stripping live in check_grader_host.py (tested).
+HELPER="$EVALS_DIR/check_grader_host.py"
 BASE_URL="${INTERNAL_EVAL_BASE_URL:-https://agent.qeva-ai.com}"
 RESULTS_DIR="${EVAL_RESULTS_DIR:-$HOME/.cache/agente-ai-evals}"
 VIEW_PORT="${EVAL_VIEW_PORT:-15500}"
@@ -75,21 +77,16 @@ read_backend_secret() {
   local container
   container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep 'agente-clinica_backend' | head -n 1 || true)"
   [ -n "$container" ] || return 1
+  # Raw value only; surrounding quotes are stripped host-side by the helper.
   docker exec "$container" sh -c '
     f=/run/secrets/backend.env
     [ -r "$f" ] || exit 1
     for k in LLM_API_KEY OPENROUTER_API_KEY; do
       v="$(grep -E "^${k}=" "$f" | head -n 1 | cut -d= -f2-)"
-      # strip one pair of matching surrounding quotes only (values may contain quotes)
-      q="$(printf "\047")"
-      case "$v" in
-        \"*\") v="${v#\"}"; v="${v%\"}" ;;
-        "$q"*"$q") v="${v#"$q"}"; v="${v%"$q"}" ;;
-      esac
       if [ -n "$v" ]; then printf "%s" "$v"; exit 0; fi
     done
     exit 1
-  ' 2>/dev/null
+  ' 2>/dev/null | python3 "$HELPER" strip-quotes
 }
 
 KEY_FROM_SECRET=0
@@ -104,15 +101,7 @@ if [ -z "${EVAL_GRADER_API_KEY:-}" ]; then
 fi
 export EVAL_GRADER_BASE_URL="${EVAL_GRADER_BASE_URL:-https://openrouter.ai/api/v1}"
 if [ "$KEY_FROM_SECRET" -eq 1 ]; then
-  GRADER_HOST="$(printf '%s' "$EVAL_GRADER_BASE_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/:?].*$##')"
-  case " $ALLOWED_SECRET_KEY_HOSTS " in
-    *" $GRADER_HOST "*) ;;
-    *)
-      echo "Refusing to send the backend's key to '$GRADER_HOST' (allowed: $ALLOWED_SECRET_KEY_HOSTS)." >&2
-      echo "Set EVAL_GRADER_API_KEY explicitly to use another grader host." >&2
-      exit 1
-      ;;
-  esac
+  python3 "$HELPER" check "$EVAL_GRADER_BASE_URL" --key-from-secret || exit 1
   echo "Note: the grader uses the production LLM key, which shares the production" \
     "credit and rate limits. Prefer a dedicated EVAL_GRADER_API_KEY with a spend limit."
 fi
@@ -139,7 +128,8 @@ try:
 except Exception:
     print("")
 ')"
-if [ "${ROLE^^}" != "ADMIN_TECHNICAL" ]; then
+ROLE_UPPER="$(printf '%s' "$ROLE" | tr '[:lower:]' '[:upper:]')"
+if [ "$ROLE_UPPER" != "ADMIN_TECHNICAL" ]; then
   echo "Login failed or the account is not ADMIN_TECHNICAL (role: ${ROLE:-none})." >&2
   exit 1
 fi
@@ -152,9 +142,17 @@ if [ -z "$ADMIN_SESSION_COOKIE" ] || [ -z "$ADMIN_CSRF_COOKIE" ]; then
 fi
 export ADMIN_SESSION_COOKIE ADMIN_CSRF_COOKIE
 rm -f "$COOKIE_JAR"
-echo "Session valid ~1h from now (ADMIN_SESSION_TTL_SECONDS, default 3600 s; until about" \
-  "$(date -d '+1 hour' +%H:%M 2>/dev/null || echo 'one hour from now'))." \
-  "If the run fails with 401s, re-run."
+SESSION_TTL="${ADMIN_SESSION_TTL_SECONDS:-3600}"
+case "$SESSION_TTL" in
+  '' | *[!0-9]*) SESSION_TTL=3600 ;;
+esac
+EXPIRY="$(python3 -c '
+import sys
+from datetime import datetime, timedelta
+print((datetime.now() + timedelta(seconds=int(sys.argv[1]))).strftime("%H:%M"))
+' "$SESSION_TTL" 2>/dev/null || echo 'the session TTL from now')"
+echo "Session valid until about $EXPIRY (assumes ADMIN_SESSION_TTL_SECONDS=$SESSION_TTL;" \
+  "set that variable if the server uses another value). If the run fails with 401s, re-run."
 
 # --- Run --------------------------------------------------------------------
 RUN_ID="audit-$(date +%Y%m%d-%H%M%S)"

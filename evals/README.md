@@ -86,7 +86,7 @@ none itself, but the shared Postgres/Redis services on this host may use
    ```bash
    export INTERNAL_EVAL_BASE_URL=http://127.0.0.1:18000
    export EVAL_RUN_ID="$(date +%s)"   # unique per run: keeps conversation ids fresh
-   npx promptfoo@latest eval -c evals/promptfooconfig.yaml --no-cache \
+   npx promptfoo@0.123.1 eval -c evals/promptfooconfig.yaml --no-cache \
      --filter-metadata requires_real_llm=false
    ```
 
@@ -161,12 +161,12 @@ The script:
   secret file (`LLM_API_KEY`, then `OPENROUTER_API_KEY`), and never prints it;
 - pins promptfoo to an exact version (`PROMPTFOO_VERSION` in the script, currently
   `0.123.1`) because it runs with production admin cookies; bump it deliberately after
-  checking the release, never with `@latest`;
+  checking the release, never with a floating tag;
 - prints the approximate session expiry: the admin session lasts
-  `ADMIN_SESSION_TTL_SECONDS` (default 3600 s), so if a long run fails with 401s, re-run;
+  `ADMIN_SESSION_TTL_SECONDS` (default 3600 s; export the same variable to the script to adjust the printed estimate), so if a long run fails with 401s, re-run;
 - grades with `EVAL_GRADER_MODEL` (default `anthropic/claude-haiku-4.5`) at
   `EVAL_GRADER_BASE_URL` (default `https://openrouter.ai/api/v1`);
-- runs `npx -y promptfoo@latest eval` with a run-scoped `EVAL_RUN_ID=audit-<timestamp>`
+- runs `npx -y promptfoo@${PROMPTFOO_VERSION} eval` with a run-scoped `EVAL_RUN_ID=audit-<timestamp>`
   (conversation ids never reuse server state), telemetry and sharing disabled, and
   writes `audit-<run id>.json` under `${EVAL_RESULTS_DIR:-$HOME/.cache/agente-ai-evals}`;
 - refuses to send an auto-read backend key to any grader host other than `openrouter.ai`
