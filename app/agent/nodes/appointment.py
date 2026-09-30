@@ -995,6 +995,7 @@ async def _success_message(
         "✅ Tu turno quedó confirmado.\n\nTe esperamos en la clínica.",
         recent_messages,
         contact_memory,
+        action_executed=True,
     )
     return f"{text}\n\n{datetime_block}"
 
@@ -1025,6 +1026,7 @@ async def _reschedule_success_message(
         "✅ Reagendamos tu turno.\n\nTe esperamos en la clínica.",
         recent_messages,
         contact_memory,
+        action_executed=True,
     )
     return f"{text}\n\n{datetime_block}"
 
@@ -1059,6 +1061,7 @@ async def _cancel_success_message(
         fallback,
         recent_messages,
         contact_memory,
+        action_executed=True,
     )
 
 

@@ -80,3 +80,48 @@ async def test_the_provider_is_told_whether_the_conversation_already_started():
     await generate_or_fallback(llm, "conv-1", "question", {}, "static", _FIRST_TURN, None)
 
     assert [context.conversation_started for context in llm.contexts] == [True, False]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Buenísimo, ahí te lo confirmo entonces. Nos vemos el lunes! 👍",
+        "Dale, ahí te lo cancelo entonces.",
+    ],
+)
+async def test_a_reply_claiming_an_executed_action_is_replaced_by_the_static_text(claim):
+    llm = _ScriptedLLM(claim)
+
+    text = await generate_or_fallback(
+        llm, "conv-1", "confirmation_reminder", {}, "STATIC", _STARTED, None
+    )
+
+    assert text == "STATIC"
+
+
+@pytest.mark.asyncio
+async def test_a_post_execution_reply_may_report_the_executed_action():
+    llm = _ScriptedLLM("Listo, tu turno quedó confirmado para el lunes.")
+
+    text = await generate_or_fallback(
+        llm,
+        "conv-1",
+        "create_success",
+        {},
+        "STATIC",
+        _STARTED,
+        None,
+        action_executed=True,
+    )
+
+    assert text == "Listo, tu turno quedó confirmado para el lunes."
+
+
+@pytest.mark.asyncio
+async def test_a_diagnosis_reply_is_replaced_by_the_static_text():
+    llm = _ScriptedLLM("Por lo que describís, podría tratarse de una caries.")
+
+    text = await generate_or_fallback(llm, "conv-1", "fallback", {}, "STATIC", _STARTED, None)
+
+    assert text == "STATIC"

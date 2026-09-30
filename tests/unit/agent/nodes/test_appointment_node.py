@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -53,9 +53,7 @@ from app.agent.nodes.appointment import (
     create_appointment_node,
     should_use_appointment_decision_subgraph,
 )
-from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.conversation_id import ConversationId
-from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
@@ -71,6 +69,12 @@ from app.infrastructure.database.fake_pending_action_repository import (
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import (
+    future_slot as _future_slot,
+)
+from tests.fixtures.appointment_node import (
+    make_node_and_conversation as _make_node_and_conversation,
+)
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
     make_agreement_gateway,
@@ -95,69 +99,6 @@ _PATIENT_PRIMITIVES = {
     "phone": "+5491122334455",
     "dni": "30123456",
 }
-
-
-def _future_slot(
-    id_: str = "slot-1", days: int = 1, professional_id: str = "prof-1"
-) -> AppointmentSlot:
-    now = datetime.now(UTC)
-    start = now + timedelta(days=days)
-    return AppointmentSlot(
-        id=id_,
-        professional_id=professional_id,
-        specialty_id="cleaning",
-        time_range=DateTimeRange(start, start + timedelta(hours=1)),
-    )
-
-
-async def _make_node_and_conversation(
-    available_slots=None,
-    patients=None,
-    conversation_repository=None,
-    proposal_repositories_provider=None,
-    professionals=None,
-    conversation_id="conv-1",
-    llm_provider=None,
-    specialties=None,
-    agreements=None,
-    patient_gateway=None,
-    agreement_gateway=None,
-    verification_flow_id="",
-    registration_flow_id="",
-):
-    conversation_repository = conversation_repository or make_conversation_repository()
-    await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
-    appointment_gateway = make_dentalink_gateway(
-        available_slots=available_slots if available_slots is not None else [_future_slot()],
-        professionals=professionals
-        if professionals is not None
-        else [make_professional(id_="prof-1", specialty_id="cleaning")],
-    )
-    node = create_appointment_node(
-        appointment_gateway=appointment_gateway,
-        patient_gateway=patient_gateway
-        or make_patient_gateway(
-            patients=patients
-            if patients is not None
-            else [make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
-        ),
-        proposal_repositories_provider=(
-            proposal_repositories_provider or make_proposal_repositories_provider()
-        ),
-        conversation_repository=conversation_repository,
-        redis_client=InMemoryFakeRedis(),
-        confirmation_timeout_seconds=120,
-        llm_provider=llm_provider or FakeLLMProvider(),
-        specialty_gateway=make_specialty_gateway(
-            specialties=specialties
-            if specialties is not None
-            else [make_specialty(id_="cleaning", name="Ortodoncia")]
-        ),
-        agreement_gateway=agreement_gateway or make_agreement_gateway(agreements=agreements),
-        verification_flow_id=verification_flow_id,
-        registration_flow_id=registration_flow_id,
-    )
-    return node, conversation_repository, appointment_gateway
 
 
 @pytest.mark.asyncio

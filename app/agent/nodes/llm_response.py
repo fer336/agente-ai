@@ -1,5 +1,6 @@
 import re
 
+from app.agent.action_claims import claims_executed_action, offers_diagnosis
 from app.domain.entities.message import ROLE_ASSISTANT
 from app.domain.repositories.llm_provider import LLMProvider, ResponseContext
 from app.infrastructure.llm.exceptions import LLMProviderError
@@ -59,6 +60,8 @@ async def generate_or_fallback(
     recent_messages: list[dict[str, str]],
     contact_memory: str | None,
     temperature: float | None = None,
+    *,
+    action_executed: bool = False,
 ) -> str:
     """Calls `LLMProvider.generate_response`, falling back to `static_text`
     on any provider failure (timeout/auth/bad output/etc).
@@ -80,6 +83,12 @@ async def generate_or_fallback(
     message ago, and reliably re-greets/re-introduces itself on back-to-
     back replies (seen live: two consecutive LLM-generated messages both
     opened with "Hola").
+
+    Every reply is checked by `claims_executed_action`: an action (confirm/cancel/
+    reschedule) only runs on the confirmation button, so a text that says or implies
+    one already ran is replaced by `static_text`. Pass `action_executed=True` only for
+    the message sent after the gateway call really succeeded. A diagnosis (`offers_diagnosis`)
+    is replaced regardless.
     """
     try:
         text = await llm_provider.generate_response(
@@ -93,6 +102,8 @@ async def generate_or_fallback(
                 temperature=temperature,
             )
         )
+        if offers_diagnosis(text) or (not action_executed and claims_executed_action(text)):
+            return static_text
         return without_mid_conversation_greeting(text, recent_messages)
     except LLMProviderError:
         return static_text

@@ -326,7 +326,7 @@ async def test_generate_response_forwards_recent_messages_as_real_chat_history()
     )
 
     _, messages, _ = client.calls[0]
-    assert messages[1:] == recent_messages
+    assert messages[-len(recent_messages) :] == recent_messages
 
 
 @pytest.mark.asyncio
@@ -458,3 +458,51 @@ async def test_generate_response_honours_a_per_call_temperature() -> None:
     )
 
     assert [call[2] for call in client.calls] == [0.9, 0.2]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_always_carries_the_no_premature_action_claim_rule() -> None:
+    # Appended outside the admin-editable prompt so a saved version cannot lose it.
+    client = _StubClient("ok")
+    provider = _make_provider(client, generate_response_prompt="Intención: {intent}.")
+
+    await provider.generate_response(
+        ResponseContext(conversation_id="conv-1", intent="unknown", collected_data={})
+    )
+
+    _, messages, _ = client.calls[0]
+    system_text = " ".join(m["content"] for m in messages if m["role"] == "system")
+    assert "te lo confirmo" in system_text
+    assert "✅ Confirmar" in system_text
+    assert "[SYSTEM]" in system_text
+
+
+@pytest.mark.asyncio
+async def test_understand_carries_the_no_premature_action_claim_rule() -> None:
+    client = _StubClient('{"intent": "unknown", "confidence": 0.9, "answer": null}')
+    provider = _make_provider(client)
+
+    await provider.understand("sí, quiero ese turno", context={})
+
+    _, messages, _ = client.calls[0]
+    system_text = " ".join(m["content"] for m in messages if m["role"] == "system")
+    assert "te lo confirmo" in system_text
+    assert "✅ Confirmar" in system_text
+    assert "[SYSTEM]" in system_text
+
+
+@pytest.mark.asyncio
+async def test_generate_response_and_understand_carry_the_no_diagnosis_rule() -> None:
+    client = _StubClient('{"intent": "unknown", "confidence": 0.9, "answer": null}')
+    provider = _make_provider(client)
+
+    await provider.generate_response(
+        ResponseContext(conversation_id="conv-1", intent="unknown", collected_data={})
+    )
+    await provider.understand("me duele una muela, ¿qué tengo?", context={})
+
+    for _, messages, _ in client.calls:
+        system_text = " ".join(m["content"] for m in messages if m["role"] == "system")
+        assert "diagnóstic" in system_text
+        assert "caries" in system_text
+        assert "profesional" in system_text
