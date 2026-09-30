@@ -6,7 +6,8 @@
 #
 # Assertions are deterministic `javascript` helpers (assertions/custom.js).
 # Tests tagged `requires_real_llm: true` check LLM-built WORDING: while the eval
-# endpoint runs with `FakeLLMProvider` (placeholder replies) they fail on purpose
+# endpoint runs with the fake LLM (`INTERNAL_EVAL_REAL_LLM` off; placeholder replies)
+# they fail on purpose
 # instead of passing vacuously. Run only the ones that hold with the fake LLM with:
 #   npx promptfoo eval -c evals/promptfooconfig.yaml --filter-metadata requires_real_llm=false
 tests:

@@ -83,9 +83,11 @@ async def eval_chat(
     use_case_for: EvalUseCaseProvider = Depends(get_eval_use_case_provider),
 ) -> EvalChatResponse:
     """PRD.md §61's isolated agent-behavior evaluation endpoint. Runs the
-    real LangGraph agent against an entirely fake Dentalink/YCloud/LLM
-    stack (see `app.api.dependencies.internal_eval`'s own docstring) — never
-    real patient data, never a real external call.
+    real LangGraph agent against a fake Dentalink/YCloud stack (see
+    `app.api.dependencies.internal_eval`'s own docstring) — never real
+    patient data or WhatsApp traffic. The LLM is fake unless
+    `INTERNAL_EVAL_REAL_LLM` is on, which makes a real (billed) LLM call per
+    turn and is meant to be enabled only for an audit window.
     """
     conversation_id = ConversationId(body.conversation_id)
     result = await use_case_for(conversation_id).execute(

@@ -6,8 +6,9 @@ Audits the WhatsApp agent through `POST /internal/eval/chat`:
 promptfoo -> FastAPI -> LangGraph -> fake Dentalink / fake YCloud (in memory)
 ```
 
-No real patient data or WhatsApp traffic is involved. **Never point this at
-production** (`agent.qeva-ai.com`).
+No real patient data or WhatsApp traffic is involved. **Default stance: do not point
+this at production** (`agent.qeva-ai.com`); run it locally. Production is an explicit,
+temporary, documented exception, see "Run against production" at the end.
 
 ## What the endpoint really runs
 
@@ -47,8 +48,9 @@ none itself, but the shared Postgres/Redis services on this host may use
    docker run --rm -d --name eval-redis -p 127.0.0.1:16379:6379 redis:7-alpine
    ```
 
-2. The app, from the repository root. Use a fresh shell and do **not** copy
-   the production `.env` (its `REDIS_HOST` would point the lock at production):
+2. The app, from the repository root. Use a fresh shell and do **not** load
+   any production env file (its `REDIS_HOST` would point the lock at production);
+   the only variables the local run needs are the non-secret ones below:
 
    ```bash
    export ADMIN_SESSION_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -127,40 +129,51 @@ the duration of the run and roll back afterwards.
 **What the eval turns share with production** (real LLM on): the LLM endpoint
 (cost and its logs), one read of the admin runtime LLM config from Postgres (no
 writes), the Redis keys `lock:conversation:<eval id>`, `lock:appointment:eval-prof-*:<start>`,
-`memory:contact:eval-contact:summary` and the shared read cache `runtime_agent_config`,
+`memory:contact:eval-contact-<eval conversation id>:summary` and the shared read cache `runtime_agent_config`,
 and the application logs. Repositories, Dentalink, YCloud, Chatwoot, Telegram,
 Linear/incidents, traces and the checkpointer are per-conversation in-memory fakes.
 The admin login you need for the cookies writes one entry to `admin_audit_log`.
 
-1. **Secret variables to add** to the backend env (names only):
-   `INTERNAL_EVAL_ENABLED=true` and `INTERNAL_EVAL_REAL_LLM=true`. `LLM_API_URL`,
-   `LLM_API_KEY`/`OPENROUTER_API_KEY`, `LLM_MODEL` and `ADMIN_SESSION_SECRET` must
-   already be there. Optionally raise `ADMIN_SESSION_TTL_SECONDS` (default 3600 s)
-   if the run is longer than an hour.
-2. **Swarm secrets are immutable**, so create a new one from your local copy of the
-   env file (Swarm never shows a secret's contents), then swap it on the service
-   (service name from the stack: `agente-clinica_backend`; alternatively rename it in
-   `docker-stack.yml` as its header comment describes and redeploy):
+**Exposure while enabled.** Any authenticated admin session (every role) can call
+`POST /internal/eval/chat`, and with `INTERNAL_EVAL_REAL_LLM=true` each call spends
+real LLM budget. Keep both flags on only for the audit window and remove them right
+after (step 6).
+
+**Single process.** The eval conversation state lives in the memory of one process.
+The backend runs one uvicorn process (`entrypoint.sh` has no `--workers`) and the
+stack has `replicas: 1`; keep it that way during the audit. If the service was ever
+scaled, run `docker service scale agente-clinica_backend=1` first, otherwise turns of
+one conversation land on different processes and the scenarios break.
+
+1. **Variables to add** (names only, both non-secret): `INTERNAL_EVAL_ENABLED=true`
+   and `INTERNAL_EVAL_REAL_LLM=true`. `LLM_API_URL`, the LLM key, `LLM_MODEL` and
+   `ADMIN_SESSION_SECRET` must already be configured in the existing secret. Do
+   **not** copy or re-create the production secret file: service environment variables
+   take precedence over the secret's env file, so the two flags are added directly to
+   the service and the existing secret stays untouched. Optionally add
+   `ADMIN_SESSION_TTL_SECONDS` (default 3600 s) if the run lasts longer than an hour.
 
    ```bash
-   cp <your-backend.env> eval.env
-   printf '\nINTERNAL_EVAL_ENABLED=true\nINTERNAL_EVAL_REAL_LLM=true\n' >> eval.env
-   docker secret create agente_ai_backend_env_eval eval.env
    docker service update \
-     --secret-rm agente_ai_backend_env \
-     --secret-add source=agente_ai_backend_env_eval,target=/run/secrets/backend.env \
+     --env-add INTERNAL_EVAL_ENABLED=true \
+     --env-add INTERNAL_EVAL_REAL_LLM=true \
      agente-clinica_backend
    ```
 
-   Do not cut a release during the audit: the release pipeline redeploys the stack
-   file and would restore the old secret mid-run.
-3. **Admin cookies** from the production admin login (any role works; the account
-   must already exist). The cookies are `Secure`, so use https:
+   (This restarts the task once. A later `docker stack deploy` or release redeploy
+   drops these variables, so do not release during the audit.)
+2. **Admin cookies** from the production admin login (any role; the account must
+   already exist; the login adds one `admin_audit_log` entry). The password is read
+   from a silent prompt and sent on stdin, so it never appears in argv or shell
+   history. The cookies are `Secure`, so use https:
 
    ```bash
-   curl -sS -c /tmp/eval-cookies.txt -H 'Content-Type: application/json' \
-     -d '{"username":"<ADMIN_USER>","password":"<ADMIN_PASSWORD>"}' \
-     https://agent.qeva-ai.com/admin/login          # -> {"role":"..."}
+   read -r -p 'Admin user: ' ADMIN_USER
+   read -r -s -p 'Admin password: ' ADMIN_PASSWORD; echo
+   jq -n --arg u "$ADMIN_USER" --arg p "$ADMIN_PASSWORD" '{username:$u,password:$p}' \
+     | curl -sS -c /tmp/eval-cookies.txt -H 'Content-Type: application/json' \
+         --data @- https://agent.qeva-ai.com/admin/login      # -> {"role":"..."}
+   unset ADMIN_PASSWORD
    export ADMIN_SESSION_COOKIE="$(awk '$6=="admin_session"{print $7}' /tmp/eval-cookies.txt)"
    export ADMIN_CSRF_COOKIE="$(awk '$6=="admin_csrf"{print $7}' /tmp/eval-cookies.txt)"
    rm /tmp/eval-cookies.txt
@@ -168,9 +181,9 @@ The admin login you need for the cookies writes one entry to `admin_audit_log`.
 
    (curl prefixes the `HttpOnly` cookie's domain with `#HttpOnly_`, but the cookie
    name stays in column 6, so the `awk` above still finds it.)
-4. **Grader for `llm-rubric`**: promptfoo's default grader is OpenAI
-   (`OPENAI_API_KEY`). To use the same OpenAI-compatible gateway the agent uses
-   (OpenRouter), set in `defaultTest` of `promptfooconfig.yaml`:
+3. **Grader for `llm-rubric`**: promptfoo's default grader is OpenAI
+   (`OPENAI_API_KEY`). To use an OpenAI-compatible gateway such as OpenRouter, set in
+   `defaultTest` of `promptfooconfig.yaml`:
 
    ```yaml
    defaultTest:
@@ -182,10 +195,10 @@ The admin login you need for the cookies writes one entry to `admin_audit_log`.
            apiKeyEnvar: EVAL_GRADER_API_KEY
    ```
 
-   and `export EVAL_GRADER_API_KEY=<key>`. This config shape follows promptfoo's
-   OpenAI-provider options and was not executed here. A self-hosted 9Router
+   and `export EVAL_GRADER_API_KEY=<key>`. This follows promptfoo's OpenAI-provider
+   options and was not executed here. A self-hosted 9Router
    (`host.docker.internal:20128`) is not reachable from your workstation.
-5. **Run** (from the repository root):
+4. **Run** (from the repository root):
 
    ```bash
    export INTERNAL_EVAL_BASE_URL=https://agent.qeva-ai.com
@@ -195,15 +208,16 @@ The admin login you need for the cookies writes one entry to `admin_audit_log`.
 
    Each conversation id is suffixed with `EVAL_RUN_ID`, so runs never reuse server
    state. Every turn costs one or more real LLM calls.
-6. **Rollback**: swap back and remove the eval secret.
+5. **Verify** the endpoint answers before the full run: a single tap-free turn with
+   `curl` using the two cookies and the `X-CSRF-Token` header should return 200, not 404.
+6. **Rollback** (right after the run): remove the two variables. The original secret
+   was never modified, so nothing else needs restoring.
 
    ```bash
    docker service update \
-     --secret-rm agente_ai_backend_env_eval \
-     --secret-add source=agente_ai_backend_env,target=/run/secrets/backend.env \
+     --env-rm INTERNAL_EVAL_ENABLED \
+     --env-rm INTERNAL_EVAL_REAL_LLM \
      agente-clinica_backend
-   docker secret rm agente_ai_backend_env_eval && shred -u eval.env
    ```
 
-   The original secret is untouched, so this restores the previous configuration
-   (`INTERNAL_EVAL_ENABLED` unset means the endpoint answers 404 again).
+   With `INTERNAL_EVAL_ENABLED` unset the endpoint answers 404 again.

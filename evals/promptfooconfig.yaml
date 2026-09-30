@@ -10,7 +10,8 @@
 #      project's toolchain. See evals/README.md for the full local runbook.
 #   2. A running LOCAL server with `INTERNAL_EVAL_ENABLED=true` and a valid
 #      admin session (`ADMIN_SESSION_COOKIE`/`ADMIN_CSRF_COOKIE` below) —
-#      see app/api/routes/internal_eval.py. Never point this at production.
+#      see app/api/routes/internal_eval.py. Default: never point this at
+#      production; evals/README.md documents the explicit, temporary exception.
 #   3. `EVAL_RUN_ID` (any unique string per run, e.g. `$(date +%s)`): it is
 #      appended to every conversation id so a rerun never reuses the server's
 #      state of an earlier run.

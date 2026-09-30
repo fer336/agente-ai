@@ -69,7 +69,8 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
     `app.api.dependencies.gateways.get_agent_invoker()` singleton and never
     `@lru_cache`d: two concurrent eval calls (or two Promptfoo test cases)
     must never see each other's state, and this endpoint must never touch
-    the real Dentalink/YCloud/Groq adapters regardless of how production DI
+    the real Dentalink/YCloud/Groq adapters (the LLM is the one opt-in
+    exception, `INTERNAL_EVAL_REAL_LLM`) regardless of how production DI
     evolves once Etapa 11/12 wire those in for real (PRD.md §61's own
     diagram: "Promptfoo → FastAPI → LangGraph → FakeDentalinkGateway →
     FakeYCloudGateway").

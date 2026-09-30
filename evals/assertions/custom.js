@@ -88,8 +88,9 @@ function replyTextOf(parsed) {
   return parsed && typeof parsed.reply_text === "string" ? parsed.reply_text : null;
 }
 
-// The eval endpoint currently runs with `FakeLLMProvider`, whose LLM-worded
-// replies are placeholders like `[fake-response for intent=...]`. Assertions
+// Unless `INTERNAL_EVAL_REAL_LLM=true`, the eval endpoint runs with
+// `FakeLLMProvider`, whose LLM-worded replies are placeholders like
+// `[fake-response for intent=...]`. Assertions
 // about WORDING must not pass vacuously on those, so they fail loudly instead.
 const FAKE_LLM_PLACEHOLDER = /\[fake-response for intent=/;
 

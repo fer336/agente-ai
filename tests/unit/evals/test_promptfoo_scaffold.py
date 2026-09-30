@@ -446,6 +446,14 @@ def test_readme_documents_the_production_run_variables_and_rollback():
         "EVAL_RUN_ID",
         "apiBaseUrl",
         "npx promptfoo@latest eval",
-        "docker secret rm",
+        "--env-rm INTERNAL_EVAL_REAL_LLM",
+        "read -r -s",
+        "--data @-",
+        "replicas: 1",
+        "Default stance",
     ]:
         assert required in readme
+    # The runbook must never copy the production secret file nor put the password in argv.
+    assert "cp <your-backend.env>" not in readme
+    assert "docker secret create" not in readme
+    assert '"password":"<ADMIN_PASSWORD>"' not in readme
