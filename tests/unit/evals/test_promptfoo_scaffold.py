@@ -166,6 +166,7 @@ def test_custom_assertions_js_exports_the_expected_functions():
         "noSensitiveValuesInReply",
         "replyKindIs",
         "hasButtons",
+        "hasOptionIds",
         "noListRows",
         "noBulletList",
         "hasBulletLines",
@@ -228,6 +229,22 @@ def test_has_buttons_requires_an_interactive_reply_with_every_title():
         )["pass"]
         is False
     )
+
+
+def test_has_option_ids_checks_buttons_and_list_rows_and_can_forbid_extras():
+    rows = {
+        **_ASK_REPLY,
+        "reply_kind": "list",
+        "list_rows": [{"id": "SELECT_SLOT:1", "title": "a"}, {"id": "LIST_BACK", "title": "b"}],
+    }
+
+    assert _run_helper("hasOptionIds", rows, {"ids": ["SELECT_SLOT:1"]})["pass"] is True
+    assert _run_helper("hasOptionIds", rows, {"ids": ["SELECT_SLOT:2"]})["pass"] is False
+    exact = {"ids": ["SELECT_SLOT:1"], "exact": True}
+    assert _run_helper("hasOptionIds", rows, exact)["pass"] is False
+    both = {"ids": ["SELECT_SLOT:1", "LIST_BACK"], "exact": True}
+    assert _run_helper("hasOptionIds", rows, both)["pass"] is True
+    assert _run_helper("hasOptionIds", _QUESTION_REPLY, {"ids": ["FIRST_VISIT_CONFIRM"]})["pass"]
 
 
 def test_bullet_helpers_distinguish_a_bullet_list_from_a_plain_question():
@@ -419,3 +436,20 @@ def test_no_sensitive_values_in_reply_flags_a_leaked_decoy():
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["pass"] is False
+
+
+def test_readme_documents_the_production_run_variables_and_rollback():
+    readme = (_EVALS_DIR / "README.md").read_text()
+
+    for required in [
+        "INTERNAL_EVAL_ENABLED=true",
+        "INTERNAL_EVAL_REAL_LLM=true",
+        "https://agent.qeva-ai.com/admin/login",
+        "ADMIN_SESSION_COOKIE",
+        "ADMIN_CSRF_COOKIE",
+        "EVAL_RUN_ID",
+        "apiBaseUrl",
+        "npx promptfoo@latest eval",
+        "docker secret rm",
+    ]:
+        assert required in readme

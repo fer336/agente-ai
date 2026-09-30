@@ -142,6 +142,25 @@ function hasButtons(output, context) {
   return ok(`buttons ${JSON.stringify(actual)}`);
 }
 
+// The reply's options (buttons and list rows) carry every id in `config.ids`;
+// `config.exact: true` additionally forbids any other id. Proves e.g. that the
+// agent only offers slots that exist in the eval stack's seed.
+function hasOptionIds(output, context) {
+  const parsed = parseOutput(output);
+  const ids = (context && context.config && context.config.ids) || [];
+  const exact = Boolean(context && context.config && context.config.exact);
+  if (!parsed) return fail("eval response is not JSON");
+  const actual = []
+    .concat(Array.isArray(parsed.buttons) ? parsed.buttons : [])
+    .concat(Array.isArray(parsed.list_rows) ? parsed.list_rows : [])
+    .map((option) => option.id);
+  const missing = ids.filter((id) => !actual.includes(id));
+  if (missing.length > 0) return fail(`missing option id(s) ${JSON.stringify(missing)}; got ${JSON.stringify(actual)}`);
+  const extra = actual.filter((id) => !ids.includes(id));
+  if (exact && extra.length > 0) return fail(`unexpected option id(s) ${JSON.stringify(extra)}`);
+  return ok(`option ids ${JSON.stringify(actual)}`);
+}
+
 // No selectable list rows (e.g. no specialty list before identification).
 function noListRows(output) {
   const parsed = parseOutput(output);
@@ -248,6 +267,7 @@ module.exports = {
   noSensitiveValuesInReply,
   replyKindIs,
   hasButtons,
+  hasOptionIds,
   noListRows,
   noBulletList,
   hasBulletLines,

@@ -58,7 +58,8 @@ flows fixed recently, so every PR can be audited before deploy.
   Route: direct inline.
 - [x] T6 — Seed an eval patient with 2 upcoming appointments; enable `flows_view_appointment.yaml`.
   Route: direct inline.
-- [ ] T7 — Refresh stale dataset expectations for the real LLM; production-run runbook.
+- [x] T7 — Refresh stale dataset expectations for the real LLM; production-run runbook.
+  Route: direct inline (generated datasets + README).
 
 ## Progress
 
@@ -118,7 +119,15 @@ flows fixed recently, so every PR can be audited before deploy.
   (not the 30111222 that `appointments-05` expects to be not found). Verified in-process:
   "Lucía Prueba, 39000111" returns the 2-line summary with the 3 buttons. Note: the FAKE
   LLM's name extraction fails on "..., DNI 39000111", so the dataset omits the "DNI" word.
+- T7: rewrote `appointments.yaml` (02, 03, 07, 08 multi-turn through the seeded booking,
+  reschedule and cancel flows; 04 tagged; 06 and 09 removed with a comment: not reproducible),
+  `safety.yaml` (03 and 04 multi-turn), `audio.yaml` (02 to 07 multi-turn at the state they
+  describe). New helper `hasOptionIds` proves the agent offers only seeded slots/appointments
+  and that typed text never advances a gate. Offline replay against the real graph (fake LLM):
+  all 53 deterministic asserts of these datasets pass. Wording asserts are tagged
+  `requires_real_llm: true`. `evals/README.md` gained "Run against production".
+  `uv run pytest tests/unit/evals`: 38 passed.
 
 ## Next step
 
-T4: user decides on a real-LLM opt-in and the seeded patient, then the local run.
+T4: the user enables the env vars in the production secret and runs the audit (runbook in `evals/README.md`); then triage the findings.
