@@ -68,5 +68,4 @@ tests:
   - file://datasets/adversarial.yaml
   - file://datasets/audio.yaml
   - file://datasets/flows.yaml
-  # Not enabled yet: needs a patient with appointments seeded in the eval stack.
-  # - file://datasets/flows_view_appointment.yaml
+  - file://datasets/flows_view_appointment.yaml

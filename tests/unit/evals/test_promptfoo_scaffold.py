@@ -27,10 +27,9 @@ _DATASET_NAMES = [
     "adversarial",
     "audio",
     "flows",
+    "flows_view_appointment",
 ]
-#: Same multi-turn format as `flows`, kept out of the config until the eval stack
-#: seeds a patient with appointments (see the file's own header).
-_UNREFERENCED_DATASET_NAMES = ["flows_view_appointment"]
+_UNREFERENCED_DATASET_NAMES: list[str] = []
 _ALL_DATASET_NAMES = _DATASET_NAMES + _UNREFERENCED_DATASET_NAMES
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
@@ -350,6 +349,16 @@ def test_flow_datasets_are_ordered_multi_turn_scenarios(name: str):
     assert len(turns_by_conversation) >= 1
     for conversation_id, turns in turns_by_conversation.items():
         assert turns == list(range(1, len(turns) + 1)), f"{conversation_id}: turns {turns}"
+
+
+def test_view_appointment_dataset_uses_the_seeded_eval_patient():
+    from app.infrastructure.dentalink.eval_seed import EVAL_PATIENT_DNI, EVAL_PATIENT_NAME
+
+    dataset = _load_yaml(_EVALS_DIR / "datasets" / "flows_view_appointment.yaml")
+    identify = dataset["tests"][1]["vars"]["message"]
+
+    assert EVAL_PATIENT_NAME in identify
+    assert EVAL_PATIENT_DNI in identify
 
 
 def test_flows_dataset_covers_the_recent_flows():

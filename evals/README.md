@@ -11,8 +11,8 @@ production** (`agent.qeva-ai.com`).
 
 ## What the endpoint really runs
 
-- Everything behind the endpoint is a fake: Dentalink (no patients, no
-  professionals, no slots seeded), YCloud, Telegram, Linear and the **LLM**
+- Everything behind the endpoint is a fake: Dentalink (one seeded
+  patient with 2 appointments, 2 professionals, a few free slots), YCloud, Telegram, Linear and the **LLM**
   (`FakeLLMProvider`). `LLM_API_URL`/`LLM_API_KEY` are ignored here.
 - LLM-worded replies therefore come back as `[fake-response for intent=...]`.
   Static, code-built parts are real: reply kind, buttons, list rows, the intake
@@ -111,5 +111,5 @@ Response shape: `reply_text`, `reply_kind` (`text|buttons|list|flow|null`),
 `buttons[{id,title}]`, `list_rows[{id,title,description}]`, `flow`,
 `node_names`, `tool_names`, `agent_run_id`, `agent_run_status`.
 
-`datasets/flows_view_appointment.yaml` is not enabled in the config: it needs a
-patient with appointments seeded in the eval stack, which does not exist yet.
+`datasets/flows_view_appointment.yaml` uses the seeded eval patient (Lucía Prueba,
+DNI 39000111, two upcoming appointments; `app/infrastructure/dentalink/eval_seed.py`).

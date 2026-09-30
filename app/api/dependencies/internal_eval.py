@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException, status
 from langgraph.checkpoint.memory import MemorySaver
@@ -39,10 +40,8 @@ from app.infrastructure.database.fake_sent_message_repository import FakeSentMes
 from app.infrastructure.database.fake_tool_execution_repository import (
     FakeToolExecutionRepository,
 )
+from app.infrastructure.dentalink.eval_seed import build_eval_seed
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
-from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
-from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
-from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
 from app.infrastructure.linear.fake_linear_incident_gateway import FakeLinearIncidentGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from app.infrastructure.telegram.fake_telegram_alert_notifier import FakeTelegramAlertNotifier
@@ -135,6 +134,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
     async def checkpointer_provider() -> MemorySaver:
         return checkpointer
 
+    seed = build_eval_seed(datetime.now(UTC))
     settings = get_settings()
     llm_provider: LLMProvider = FakeLLMProvider()
     if settings.internal_eval_real_llm:
@@ -147,14 +147,14 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
             )
         llm_provider = get_llm_provider()
     agent_invoker = LangGraphAgentInvoker(
-        appointment_gateway=FakeDentalinkGateway(),
+        appointment_gateway=seed.dentalink,
         agreement_gateway=FakeAgreementGateway(),
-        specialty_gateway=FakeSpecialtyGateway(),
+        specialty_gateway=seed.specialties,
         handoff_gateway=FakeYCloudHandoffGateway(),
         llm_provider=llm_provider,
         repositories_provider=agent_repositories_provider,
         send_reply=SendReplyUseCase(messaging_gateway, sent_message_repository_provider),
-        patient_gateway=FakePatientGateway(),
+        patient_gateway=seed.patients,
         proposal_repositories_provider=proposal_repositories_provider,
         memory_recent_window_size=settings.memory_recent_window_size,
         redis_client=get_shared_redis_client(),

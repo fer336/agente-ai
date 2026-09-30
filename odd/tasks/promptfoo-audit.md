@@ -56,7 +56,8 @@ flows fixed recently, so every PR can be audited before deploy.
 - [x] T5 — `INTERNAL_EVAL_REAL_LLM` opt-in: the eval stack uses `get_llm_provider()` (same
   provider and admin runtime LLM config as the webhook path) instead of `FakeLLMProvider`.
   Route: direct inline.
-- [ ] T6 — Seed an eval patient with 2 upcoming appointments; enable `flows_view_appointment.yaml`.
+- [x] T6 — Seed an eval patient with 2 upcoming appointments; enable `flows_view_appointment.yaml`.
+  Route: direct inline.
 - [ ] T7 — Refresh stale dataset expectations for the real LLM; production-run runbook.
 
 ## Progress
@@ -111,6 +112,12 @@ flows fixed recently, so every PR can be audited before deploy.
   Postgres: one read of the runtime LLM config (no writes); the real LLM endpoint (cost, its
   own logs); app logs. Everything else (repos, checkpointer, Dentalink, YCloud, Telegram,
   Linear, incidents, errors, traces) is per-conversation in-memory fakes.
+- T6: RED = ModuleNotFoundError `app.infrastructure.dentalink.eval_seed`. New `eval_seed.py`
+  (`build_eval_seed(now)`, ids prefixed `eval-`), `FakeDentalinkGateway(appointments=...)` param,
+  seed used only by `get_evaluate_chat_turn_use_case`. Patient "Lucía Prueba", DNI 39000111
+  (not the 30111222 that `appointments-05` expects to be not found). Verified in-process:
+  "Lucía Prueba, 39000111" returns the 2-line summary with the 3 buttons. Note: the FAKE
+  LLM's name extraction fails on "..., DNI 39000111", so the dataset omits the "DNI" word.
 
 ## Next step
 
