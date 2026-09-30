@@ -9,6 +9,7 @@ real Dentalink id in any shared cache key.
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
@@ -17,6 +18,7 @@ from app.domain.entities.specialty import Specialty
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
@@ -35,6 +37,13 @@ _PROFESSIONALS = [
     Professional(id="eval-prof-1", full_name="Dra. Ana Ejemplo", specialty_id="eval-spec-1"),
     Professional(id="eval-prof-2", full_name="Dr. Bruno Muestra", specialty_id="eval-spec-2"),
 ]
+#: Fictional agreements so "osde 210" resolves in the eval stack (first-visit intake and the
+#: insurance lookup match the obra social name against this list).
+_AGREEMENTS = [
+    Agreement(id="eval-agr-1", name="OSDE"),
+    Agreement(id="eval-agr-2", name="Swiss Medical"),
+    Agreement(id="eval-agr-3", name="Galeno"),
+]
 
 
 @dataclass
@@ -42,6 +51,7 @@ class EvalSeed:
     dentalink: FakeDentalinkGateway
     patients: FakePatientGateway
     specialties: FakeSpecialtyGateway
+    agreements: FakeAgreementGateway
 
 
 def _slot(slot_id: str, professional: Professional, start: datetime) -> AppointmentSlot:
@@ -97,4 +107,5 @@ def build_eval_seed(now: datetime) -> EvalSeed:
             ]
         ),
         specialties=FakeSpecialtyGateway(list(_SPECIALTIES)),
+        agreements=FakeAgreementGateway(list(_AGREEMENTS)),
     )

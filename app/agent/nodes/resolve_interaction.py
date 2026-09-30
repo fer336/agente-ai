@@ -1,12 +1,29 @@
+import re
+
+from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.handoff_offer import (
+    HANDOFF_OFFER_BUTTONS,
+    HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
     is_handoff_offer_acceptance,
     is_main_menu_request,
+    normalize_text,
+)
+from app.agent.nodes.appointment import (
+    STAGE_AWAITING_CONFIRMATION,
+    STAGE_AWAITING_FIRST_VISIT_INTAKE,
+    STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_NEW_PATIENT_DETAILS,
 )
 from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
+from app.agent.third_party_guard import (
+    THIRD_PARTY_CONTEXT,
+    THIRD_PARTY_STATIC_MESSAGE,
+    claims_to_act_for_someone_else,
+)
 from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
@@ -23,6 +40,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_VIEW_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
 )
+from app.infrastructure.llm.exceptions import LLMProviderError
 
 _MIN_INTENT_CONFIDENCE = 0.5
 
@@ -37,6 +55,55 @@ _MIN_INTENT_CONFIDENCE = 0.5
 #: a hardcoded keyword list), but only decides "new request or closing
 #: reply", not intent classification from scratch.
 POST_ACTION_CLOSE_INTENT = "post_action_close"
+
+#: Set when a message claims to act for another person (see `third_party_guard.py`): the
+#: router itself answers, so no business node ever sees that person's name or DNI.
+THIRD_PARTY_GUARD_INTENT = "third_party_guard"
+_THIRD_PARTY_STAGES_EXEMPT = frozenset({STAGE_AWAITING_CONFIRMATION})
+
+#: Stages that ask the patient for a specific data field (first-visit intake, name + DNI,
+#: legacy new-patient details). A plain typed answer there ("OSDE 210", "Swiss Medical") is
+#: data for the stage, never an information request for the LLM to route elsewhere.
+_DATA_COLLECTION_STAGES = frozenset(
+    {
+        STAGE_AWAITING_FIRST_VISIT_INTAKE,
+        STAGE_AWAITING_IDENTIFICATION,
+        STAGE_AWAITING_NEW_PATIENT_DETAILS,
+    }
+)
+
+#: A message opening with one of these (accent-free) is an inquiry even without "?".
+_INQUIRY_WORDS = frozenset(
+    {
+        "atienden",
+        "trabajan",
+        "aceptan",
+        "cubren",
+        "tienen",
+        "hay",
+        "cuanto",
+        "cuanta",
+        "cual",
+        "que",
+        "como",
+        "donde",
+        "cuando",
+        "horario",
+        "horarios",
+        "direccion",
+    }
+)
+_DATA_SHAPE = re.compile(r"@|\d{6,}")
+
+
+def _looks_like_a_question(text: str) -> bool:
+    """A question mark, or an opening inquiry word on a message that carries no data
+    (an email or a DNI-sized number makes it a data answer)."""
+    if "?" in text or "¿" in text:
+        return True
+    words = normalize_text(text).split()
+    return bool(words) and words[0] in _INQUIRY_WORDS and _DATA_SHAPE.search(text) is None
+
 
 #: Every intent `_route_after_resolve_interaction` (graph.py) sends to a real
 #: business node EXCEPT "appointment" — that one gets its own, stricter
@@ -84,6 +151,7 @@ __all__ = [
     "MENU_LOCATION_PAYLOAD",
     "MENU_SPECIALTIES_PAYLOAD",
     "POST_ACTION_CLOSE_INTENT",
+    "THIRD_PARTY_GUARD_INTENT",
     "create_resolve_interaction_node",
 ]
 
@@ -131,7 +199,7 @@ def _route_idle_button_payload(payload: str) -> str | None:
 
 
 def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
-    return {
+    carried: dict[str, object] = {
         key: value
         for key, value in (
             ("pending_answer", result.answer),
@@ -142,6 +210,9 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
         )
         if value is not None
     }
+    if result.answer is not None and result.handoff_offer:
+        carried[HANDOFF_OFFER_FLAG_KEY] = True
+    return carried
 
 
 #: (`HANDOFF_OFFER_KEY` follows the same one-turn rule: an agreement word only ever
@@ -153,7 +224,12 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
 #: operation or a navigation request, a specialty/professional the patient
 #: already named may still be legitimately relevant several turns later
 #: (mid-flow selection), so they stay out of this task's scope.
-_PER_TURN_UNDERSTANDING_KEYS = ("operation_mention", "navigation_target", HANDOFF_OFFER_KEY)
+_PER_TURN_UNDERSTANDING_KEYS = (
+    "operation_mention",
+    "navigation_target",
+    HANDOFF_OFFER_KEY,
+    HANDOFF_OFFER_FLAG_KEY,
+)
 
 
 def _strip_per_turn_understanding(collected_data: dict[str, object]) -> dict[str, object]:
@@ -282,6 +358,40 @@ async def _resolve(
             "collected_data": {**collected_data, "navigation_target": "main"},
         }
 
+    # PRD.md §22's automatic-handoff phrases ("voy a llegar tarde", "no aparece mi
+    # turno", ...) are matched before the LLM: the real model read them as an
+    # appointment request. Same route as the LLM's "handoff" intent, mid-flow included.
+    if requires_automatic_handoff(state["user_message"]):
+        handoff: dict[str, object] = {"intent": "handoff", "interruption": "terminate"}
+        if post_action_context is not None:
+            handoff["collected_data"] = {
+                key: value for key, value in collected_data.items() if key != "post_action_context"
+            }
+        return handoff
+
+    # A kinship claim ("soy familiar de...", "mi mamá tiene turno") never reaches
+    # identification, registration or any lookup: the router answers it itself. A live
+    # confirmation keeps its own gate, which never reads free text anyway.
+    if stage not in _THIRD_PARTY_STAGES_EXEMPT and claims_to_act_for_someone_else(
+        state["user_message"]
+    ):
+        text = await generate_or_fallback(
+            llm_provider,
+            state["conversation_id"],
+            "third_party_request",
+            dict(THIRD_PARTY_CONTEXT),
+            THIRD_PARTY_STATIC_MESSAGE,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+        return {
+            "intent": THIRD_PARTY_GUARD_INTENT,
+            "response_text": text,
+            "response_buttons": HANDOFF_OFFER_BUTTONS,
+            "requires_handoff": False,
+            "collected_data": {**collected_data, HANDOFF_OFFER_KEY: True},
+        }
+
     # Verified location data is a deterministic global concern. Handle it
     # before the LLM so an active stage cannot trap "dónde quedan?".
     if asks_for_location(state["user_message"]):
@@ -300,6 +410,19 @@ async def _resolve(
         # graph/repository's responsibility.
         "workflow_data": collected_data,
     }
+    if stage in _DATA_COLLECTION_STAGES and not _looks_like_a_question(state["user_message"]):
+        # A data answer stays with the stage. The LLM is still asked, but only its
+        # "handoff" verdict counts (urgencies, complaints, wanting a human); a genuine
+        # question (typed "?" or an inquiry opening) takes the normal routing below and
+        # its answer is a temporary interruption that leaves the stage untouched.
+        try:
+            verdict = await llm_provider.understand(state["user_message"], context=context)
+        except LLMProviderError:
+            return {"intent": "appointment"}
+        if verdict.intent == "handoff" and verdict.confidence >= _MIN_INTENT_CONFIDENCE:
+            return {"intent": "handoff", "interruption": "terminate"}
+        return {"intent": "appointment"}
+
     result = await llm_provider.understand(state["user_message"], context=context)
     carried = _carried_understanding(result)
 

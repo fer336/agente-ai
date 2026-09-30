@@ -3,8 +3,9 @@ import re
 from app.agent.action_claims import guard_free_text_answer
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
+    HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
-    offers_administration_handoff,
+    answer_offers_handoff,
 )
 from app.agent.nodes.llm_response import (
     generate_or_fallback,
@@ -66,13 +67,20 @@ def create_question_node(llm_provider: LLMProvider) -> AgentNode:
 
         collected_data = dict(state["collected_data"])
         pending_answer = collected_data.pop("pending_answer", None)
+        flagged_offer = collected_data.pop(HANDOFF_OFFER_FLAG_KEY, None)
         stripped_answer = pending_answer.strip() if isinstance(pending_answer, str) else None
         if stripped_answer and _looks_off_topic(stripped_answer):
             text = _OFF_TOPIC_ANSWER
+            flagged_offer = None
         elif stripped_answer:
-            text = guard_free_text_answer(
-                without_mid_conversation_greeting(stripped_answer, state["recent_messages"])
+            model_answer = without_mid_conversation_greeting(
+                stripped_answer, state["recent_messages"]
             )
+            text = guard_free_text_answer(model_answer)
+            if text != model_answer:
+                # The guard swapped the answer for a safe one: the flag described the
+                # discarded text, not this one.
+                flagged_offer = None
         else:
             text = await generate_or_fallback(
                 llm_provider,
@@ -92,7 +100,7 @@ def create_question_node(llm_provider: LLMProvider) -> AgentNode:
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
-        offers_handoff = offers_administration_handoff(text)
+        offers_handoff = answer_offers_handoff(text, flagged=flagged_offer)
         if offers_handoff:
             collected_data[HANDOFF_OFFER_KEY] = True
         return {

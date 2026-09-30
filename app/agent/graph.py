@@ -16,6 +16,7 @@ from app.agent.nodes.location import location_node
 from app.agent.nodes.question import create_question_node
 from app.agent.nodes.resolve_interaction import (
     POST_ACTION_CLOSE_INTENT,
+    THIRD_PARTY_GUARD_INTENT,
     create_resolve_interaction_node,
 )
 from app.agent.nodes.specialties import create_specialties_node
@@ -97,7 +98,7 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
     if state.get("error"):
         return HANDLE_ERROR_NODE
     intent = state.get("intent")
-    if intent == POST_ACTION_CLOSE_INTENT:
+    if intent in (POST_ACTION_CLOSE_INTENT, THIRD_PARTY_GUARD_INTENT):
         # `resolve_interaction` already produced the full reply itself
         # (see `POST_ACTION_CLOSE_INTENT`'s own docstring) — no business
         # node needed, same "the router IS the answer" shape as
@@ -120,6 +121,14 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
 
 def _route_after_business_node(state: AgentState) -> str:
     return HANDLE_ERROR_NODE if state.get("error") else END
+
+
+def _route_after_appointment(state: AgentState) -> str:
+    """The appointment node may end a stuck flow by setting `intent="handoff"` (e.g. the
+    patient-not-found choice looping): hand over exactly like the handoff button."""
+    if state.get("error"):
+        return HANDLE_ERROR_NODE
+    return HANDOFF_NODE if state.get("intent") == "handoff" else END
 
 
 def build_graph(
@@ -327,8 +336,12 @@ def build_graph(
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
-    for node_name in (
+    graph.add_conditional_edges(
         APPOINTMENT_NODE,
+        _route_after_appointment,
+        {HANDLE_ERROR_NODE: HANDLE_ERROR_NODE, HANDOFF_NODE: HANDOFF_NODE, END: END},
+    )
+    for node_name in (
         AGREEMENT_NODE,
         SPECIALTIES_NODE,
         HANDOFF_NODE,

@@ -6,8 +6,8 @@ question mark gives the patient nothing to tap, so those messages carry two butt
 (Administración / Menú principal) and the next short "bueno"/"dale"/"sí" counts as
 tapping Administración.
 
-There is no structured signal for the offer (the model returns prose only), so it is
-detected deterministically from the text.
+`understand()` flags the offer explicitly (`handoff_offer`); the text detector below stays
+as the fallback for answers whose flag is missing or wrongly false.
 """
 
 import re
@@ -20,6 +20,11 @@ from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN
 #: on the next one, so an agreement word only ever accepts the offer just made.
 HANDOFF_OFFER_KEY = "handoff_offer_pending"
 
+#: One-turn `collected_data` carrier of `UnderstandingResult.handoff_offer`, set by
+#: `resolve_interaction` next to `pending_answer` and consumed by the question/fallback
+#: nodes that deliver that answer.
+HANDOFF_OFFER_FLAG_KEY = "pending_answer_offers_handoff"
+
 HANDOFF_OFFER_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
@@ -31,7 +36,7 @@ HANDOFF_OFFER_BUTTONS = [
 _OFFER = re.compile(
     r"\b(?:puedo|podemos|podria|podriamos)\s+(?:\w+\s+){0,2}"
     r"(?:pasarte|comunicarte|derivarte|contactarte|conectarte|transferirte)\b"
-    r"|\b(?:queres|quiere|preferis)\s+que\s+te\s+"
+    r"|\b(?:queres|quiere|preferis|gustaria)\s+que\s+te\s+"
     r"(?:pase|comunique|derive|contacte|conecte|transfiera)\b"
     r"|\bte\s+(?:comunico|paso|derivo|contacto|conecto|transfiero)\s+con\b"
 )
@@ -70,7 +75,7 @@ _MAIN_MENU_REQUESTS = frozenset(
 )
 
 
-def _normalize(text: str) -> str:
+def normalize_text(text: str) -> str:
     """Lowercase, accent-free, punctuation-free, single-spaced."""
     decomposed = unicodedata.normalize("NFD", text.casefold())
     without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
@@ -79,13 +84,18 @@ def _normalize(text: str) -> str:
 
 def offers_administration_handoff(text: str) -> bool:
     """True when the text offers to hand the patient over to administration."""
-    normalized = _normalize(text)
+    normalized = normalize_text(text)
     return "administracion" in normalized and _OFFER.search(normalized) is not None
+
+
+def answer_offers_handoff(text: str, *, flagged: object) -> bool:
+    """True when the LLM flagged its answer as a handoff offer or the text reads like one."""
+    return flagged is True or offers_administration_handoff(text)
 
 
 def is_handoff_offer_acceptance(text: str) -> bool:
     """True for a short free-text agreement ("bueno", "dale", "sí, por favor")."""
-    tokens = _normalize(text).split()
+    tokens = normalize_text(text).split()
     if not tokens:
         return False
     if not all(token in _AGREEMENT_CORE or token in _AGREEMENT_FILLER for token in tokens):
@@ -95,4 +105,4 @@ def is_handoff_offer_acceptance(text: str) -> bool:
 
 def is_main_menu_request(text: str) -> bool:
     """True when the patient typed the main menu request instead of tapping the button."""
-    return _normalize(text) in _MAIN_MENU_REQUESTS
+    return normalize_text(text) in _MAIN_MENU_REQUESTS

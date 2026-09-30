@@ -40,6 +40,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
     STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_OPERATION_SELECTION,
+    STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_REGISTRATION_FLOW,
     STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
@@ -352,7 +353,7 @@ async def test_cancelling_when_the_patient_is_not_in_dentalink_offers_registrati
 
     result = await _answer_as_existing_patient(node, question)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
     assert result.get("response_list") is None
 
 
@@ -1759,12 +1760,12 @@ async def test_an_unknown_patient_is_offered_registration_whatever_they_came_to_
 
     result = await node(state)
 
-    # Not found -> obra social/mail are asked before proposing to create
-    # the ficha (this session's own brief), not offered to confirm yet.
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
-    assert result["collected_data"]["new_patient_full_name"] == "Fernando Ariel"
-    assert result["collected_data"]["new_patient_dni"] == "35946257"
-    assert result["response_buttons"] is None
+    # Not found -> a plain "no patient found" with register / retry / advisor
+    # buttons; insurance and email are only asked inside the registration intake.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
+    assert result["collected_data"]["identification_full_name"] == "Fernando Ariel"
+    assert result["collected_data"]["identification_dni"] == "35946257"
+    assert len(result["response_buttons"]) == 3
 
 
 @pytest.mark.asyncio
@@ -2324,11 +2325,11 @@ async def test_cancelling_an_unknown_patient_also_offers_registration():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
 
 
 @pytest.mark.asyncio
-async def test_identification_stage_asks_for_obra_social_and_mail_when_not_found():
+async def test_identification_stage_offers_alternatives_when_the_patient_is_not_found():
     node, _, _ = await _make_node_and_conversation(
         patients=[], conversation_id="ycloud-+5491122334455"
     )
@@ -2343,10 +2344,10 @@ async def test_identification_stage_asks_for_obra_social_and_mail_when_not_found
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NEW_PATIENT_DETAILS
-    assert result["collected_data"]["new_patient_full_name"] == "Maria Soto"
-    assert result["collected_data"]["new_patient_dni"] == "30111222"
-    assert result["response_buttons"] is None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
+    assert result["collected_data"]["identification_full_name"] == "Maria Soto"
+    assert result["collected_data"]["identification_dni"] == "30111222"
+    assert len(result["response_buttons"]) == 3
 
 
 @pytest.mark.asyncio

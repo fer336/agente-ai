@@ -60,7 +60,9 @@ esta forma exacta, sin texto adicional:
 - appointment: pedir, cambiar o cancelar un turno.
 - insurance: preguntar por obra social, prepaga o convenios.
 - specialties: preguntar qué especialidades atiende la clínica.
-- handoff: pedir hablar con una persona, urgencias, reclamos, quejas, o cualquier cosa que \
+- handoff: pedir hablar con una persona, urgencias, reclamos, quejas, avisar que llega tarde \
+("voy a llegar tarde", "estoy llegando", "ya llego"), problemas con un turno ("no aparece mi \
+turno", "me equivoqué con el turno", "tengo un problema con mi turno"), o cualquier cosa que \
 un bot no debería resolver solo.
 - unknown: cualquier otra cosa, saludos, o si no estás seguro.
 """
@@ -96,13 +98,16 @@ Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin 
 "answer": <string o null>, "specialty_mention": <string o null>, \
 "professional_mention": <string o null>, \
 "operation_mention": <"create"|"reschedule"|"cancel"|"view"|null>, \
-"navigation_target": <"specialty"|"professional"|"slot"|"main"|null>}}
+"navigation_target": <"specialty"|"professional"|"slot"|"main"|null>, \
+"handoff_offer": <true|false>}}
 
 - appointment: quiere sacar, cambiar o cancelar un turno, o pregunta por horarios o por los \
 médicos de una especialidad.
 - insurance: pregunta por obra social, prepaga o convenios.
 - specialties: pregunta qué especialidades atiende la clínica, sin pedir turno.
-- handoff: pide hablar con una persona, urgencias, reclamos o quejas.
+- handoff: pide hablar con una persona, urgencias, reclamos o quejas, avisa que llega tarde \
+("voy a llegar tarde", "estoy llegando", "ya llego") o tiene un problema con un turno ("no \
+aparece mi turno", "me equivoqué con el turno", "tengo un problema con mi turno").
 - location: pregunta dónde queda la clínica, la dirección, cómo llegar o cómo hacer para \
 llegar, en qué zona/barrio están, o pide el mapa/la ubicación. Es un dato fijo que se \
 responde con una tarjeta de ubicación nativa de WhatsApp, nunca con texto armado por vos — \
@@ -138,6 +143,9 @@ null si no lo dijo.
 - "navigation_target": si está dentro de un flujo y pide volver/cambiar una decisión anterior, \
 devolvé "specialty", "professional", "slot" o "main" según corresponda. Esto solo describe lo \
 que pidió; nunca confirma ni ejecuta una acción. null si no pidió navegar.
+- "handoff_offer": true SOLO si tu "answer" ofrece o pregunta si querés pasarlo con \
+administración o con un asesor (ej.: "¿Te gustaría que te pase con administración?"). false en \
+cualquier otro caso, siempre false cuando "answer" es null.
 """
 
 #: `{required_fields}` is substituted with the comma-joined list of fields
@@ -529,6 +537,8 @@ def _parse_understanding_result(content: str) -> UnderstandingResult:
         professional_mention=_optional("professional_mention"),
         operation_mention=_optional("operation_mention"),
         navigation_target=_optional("navigation_target"),
+        # Strictly the JSON boolean: a smaller model's "true" string or null never counts.
+        handoff_offer=data.get("handoff_offer") is True,
     )
 
 

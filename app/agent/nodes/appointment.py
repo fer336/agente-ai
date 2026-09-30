@@ -16,6 +16,7 @@ from app.agent.first_visit_intake_extraction import (
     extract_question_reply,
 )
 from app.agent.first_visit_intake_subgraph import (
+    FIRST_VISIT_CONFIRM_PAYLOAD,
     FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
@@ -124,6 +125,7 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     MENU_SPECIALTIES_PAYLOAD,
@@ -131,6 +133,8 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_CREATE_PAYLOAD,
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
+    PATIENT_NOT_FOUND_REGISTER_PAYLOAD,
+    PATIENT_NOT_FOUND_RETRY_PAYLOAD,
 )
 from app.domain.value_objects.paginated_list import (
     professionals_list_message,
@@ -190,15 +194,22 @@ STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
 STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE = "awaiting_specialty_browse_choice"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
-#: Reached from `STAGE_AWAITING_IDENTIFICATION` only when `identify_patient`
+#: LEGACY: only old checkpoints can still be in this stage. Identification that finds no
+#: match now goes to `STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE`; its handler and wording
+#: constants below are kept solely so those in-flight conversations finish.
+#: (Originally: reached from `STAGE_AWAITING_IDENTIFICATION` only when `identify_patient`
 #: finds no match — a patient not yet in Dentalink must give obra social and
 #: mail too (this session's own brief) before creating their ficha, on top
 #: of the full name + DNI already collected during identification. Free-
 #: text only: `verification_flow_id`/`registration_flow_id`'s WhatsApp Flow
 #: already asks for these same fields on its own form (see
 #: `STAGE_AWAITING_REGISTRATION_FLOW`), so this stage is this flow's exact
-#: free-text equivalent.
+#: free-text equivalent.)
 STAGE_AWAITING_NEW_PATIENT_DETAILS = "awaiting_new_patient_details"
+#: Identification found no Dentalink patient for the name and DNI the patient gave: they
+#: pick register (first-visit intake), retry with other data, or an advisor. Never an
+#: identified patient, and never asked for insurance or email as if they were.
+STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE = "awaiting_patient_not_found_choice"
 #: Flow-based identification (this session's own brief, no PRD.md
 #: section): sent instead of `STAGE_AWAITING_IDENTIFICATION`'s free-text
 #: ask whenever `verification_flow_id` is configured — see
@@ -237,6 +248,7 @@ _NAVIGABLE_STAGES = frozenset(
         STAGE_AWAITING_SLOT_SELECTION,
         STAGE_AWAITING_IDENTIFICATION,
         STAGE_AWAITING_NEW_PATIENT_DETAILS,
+        STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
         STAGE_AWAITING_NO_SLOTS_CHOICE,
         STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
         STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
@@ -387,14 +399,29 @@ _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
 )
-_ASK_NEW_PATIENT_DETAILS_MESSAGE = (
-    "No encontramos tu ficha en el sistema. Para crearla necesito también tu *obra "
-    "social* y tu *mail* (por ejemplo: OSDE, rosa@gmail.com)."
+_PATIENT_NOT_FOUND_MESSAGE = (
+    "No encontré ningún paciente con esos datos. Podés registrarte, probar con otro nombre "
+    "o DNI, o hablar con administración."
 )
+_PATIENT_NOT_FOUND_CHOICE_REMINDER = (
+    "Elegí una opción tocando un botón: registrarte, probar otro dato o hablar con administración."
+)
+_PATIENT_NOT_FOUND_BUTTONS = [
+    InteractiveButton(id=PATIENT_NOT_FOUND_REGISTER_PAYLOAD, title="🆕 Registrarme"),
+    InteractiveButton(id=PATIENT_NOT_FOUND_RETRY_PAYLOAD, title="🔁 Probar otro dato"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
+]
+#: Retries that end "not found" again, and free-text replies at the choice, before handing off.
+_NOT_FOUND_MAX_RETRIES = 2
+_NOT_FOUND_MAX_FREE_TEXT = 2
+#: A "no patient found" reply must never ask for the data of a registration.
+_PATIENT_NOT_FOUND_FORBIDDEN_WORDS = ("obra social", "prepaga", "mail", "correo", "email")
+#: LEGACY wording of `STAGE_AWAITING_NEW_PATIENT_DETAILS` (old checkpoints only).
 _NEW_PATIENT_DETAILS_NOT_UNDERSTOOD_MESSAGE = (
     "No pude leer bien esos datos. Escribime tu obra social y tu mail juntos, "
     "por ejemplo: OSDE, rosa@gmail.com."
 )
+#: LEGACY wording of `STAGE_AWAITING_NEW_PATIENT_DETAILS` (old checkpoints only).
 _ASK_NEW_PATIENT_EMAIL_ONLY_MESSAGE = (
     "Gracias! Ahora decime tu *mail*, por ejemplo: rosa@gmail.com."
 )
@@ -1311,34 +1338,6 @@ def create_appointment_node(
                 ),
             },
             _ASK_IDENTIFICATION_MESSAGE,
-            recent_messages,
-            contact_memory,
-        )
-
-    async def _ask_new_patient_details_message(
-        conversation_id: ConversationId,
-        recent_messages: list[dict[str, str]],
-        contact_memory: str | None,
-    ) -> str:
-        """Free-text equivalent of the registration Flow's own form — asks
-        for obra social and mail once `identify_patient` found no match
-        (this session's own brief: creating a ficha needs both, on top of
-        the full name + DNI already collected during identification)."""
-        return await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "ask_new_patient_details",
-            {
-                "situacion": (
-                    "No encontramos al paciente registrado — para crear su ficha todavía "
-                    "hacen falta su obra social y su mail."
-                ),
-                "formato_requerido": (
-                    "Obra social y mail, en un mismo mensaje o en dos, ejemplo: OSDE, "
-                    "rosa@gmail.com. Incluí ese ejemplo en tu respuesta."
-                ),
-            },
-            _ASK_NEW_PATIENT_DETAILS_MESSAGE,
             recent_messages,
             contact_memory,
         )
@@ -2577,6 +2576,59 @@ def create_appointment_node(
                 "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
                 "rescheduling_appointment_id": str(appointment.id),
                 "rescheduling_professional_id": rescheduling_professional_id,
+            },
+        }
+
+    async def _offer_patient_not_found_choice(
+        state: AgentState,
+        collected_data: dict[str, object],
+        full_name: str,
+        dni: str,
+    ) -> dict[str, object]:
+        """Tells the patient no Dentalink record matched, with three ways forward.
+
+        The name and DNI just tried stay in `collected_data` (as the identification
+        pieces): registering prefills the intake with them and retrying reuses whatever
+        the patient does not correct.
+        """
+        conversation_id = ConversationId(state["conversation_id"])
+        if cast(int, collected_data.get("not_found_retries", 0)) >= _NOT_FOUND_MAX_RETRIES:
+            # The patient already retried and is still unknown: stop looping.
+            return {"intent": "handoff"}
+        text = await generate_or_fallback(
+            llm_provider,
+            str(conversation_id),
+            "patient_not_found",
+            {
+                "situacion": (
+                    "No se encontró ningún paciente con los datos (nombre completo y DNI) "
+                    "que dio la persona."
+                ),
+                "instruccion": (
+                    "Decile con claridad y calidez que no encontraste a ningún paciente con "
+                    "esos datos. NO le pidas obra social, mail ni ningún otro dato, y no "
+                    "repitas su nombre ni su DNI. Van a aparecer 3 botones debajo (registrarse, "
+                    "probar otro dato, hablar con administración): invitalo a tocar uno, sin "
+                    "listarlos. Sin saludo, en una o dos oraciones cortas."
+                ),
+            },
+            _PATIENT_NOT_FOUND_MESSAGE,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+        if any(word in text.casefold() for word in _PATIENT_NOT_FOUND_FORBIDDEN_WORDS):
+            text = _PATIENT_NOT_FOUND_MESSAGE
+        await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        kept = {key: value for key, value in collected_data.items() if key != "patient"}
+        return {
+            "response_text": text,
+            "response_buttons": _PATIENT_NOT_FOUND_BUTTONS,
+            "requires_handoff": False,
+            "collected_data": {
+                **kept,
+                "stage": STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
+                "identification_full_name": full_name,
+                "identification_dni": dni,
             },
         }
 
@@ -4153,42 +4205,14 @@ def create_appointment_node(
                 }
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
             if identified_patient is None:
-                # Offered WHATEVER they came to do, not just for CREATE.
-                # Gating this on `operation == CREATE` produced the worst
-                # bug this flow has had: a patient who opened with "voy a
-                # llegar más tarde" (read as rescheduling) hit a branch
-                # that returned no `collected_data` at all, so the stage
-                # stayed on identification and every later message came
-                # back through the same reprompt — a loop with no exit.
-                # Someone Dentalink has never seen has no appointment to
-                # reschedule or cancel either, so registering them is the
-                # only move that leads anywhere from here.
-                #
-                # DNI is well-formed but Dentalink has no matching record —
-                # ask for obra social and mail before proposing to create a
-                # new patient (this session's own brief), rather than
-                # dead-ending. `phone` is never asked — it comes from this
-                # WhatsApp contact's own identity (`conversation_id` is
-                # `ycloud-{phone}` by construction, see
-                # `IngestMessageUseCase`), never from parsed free text — the
-                # created record is always provably tied to whoever is
-                # actually messaging.
-                new_patient_details_text = await _ask_new_patient_details_message(
-                    conversation_id,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                # Dentalink has no record for this name + DNI. Say so plainly and let the
+                # patient choose (register, retry, advisor) — whatever they came to do,
+                # since someone Dentalink has never seen has nothing to reschedule or
+                # cancel either. Never treated as identified, never asked for insurance
+                # or email here: that only happens inside the registration intake.
+                return await _offer_patient_not_found_choice(
+                    state, collected_data, full_name.strip(), validated_dni.value
                 )
-                return {
-                    "response_text": new_patient_details_text,
-                    "response_buttons": None,
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **collected_data,
-                        "stage": STAGE_AWAITING_NEW_PATIENT_DETAILS,
-                        "new_patient_full_name": full_name.strip(),
-                        "new_patient_dni": validated_dni.value,
-                    },
-                }
             patient_primitives = _patient_to_primitives(identified_patient)
             if _is_create_flow(collected_data):
                 return await _continue_booking_with_patient(
@@ -4204,6 +4228,7 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_NEW_PATIENT_DETAILS:
+            # LEGACY: only reachable from checkpoints saved before the not-found choice.
             remembered_obra_social = cast(str | None, collected_data.get("new_patient_obra_social"))
             remembered_email = cast(str | None, collected_data.get("new_patient_email"))
             obra_social, email = _extract_new_patient_details(
@@ -4298,6 +4323,48 @@ def create_appointment_node(
                 "requires_handoff": False,
                 "pending_action_id": pending_action.id,
                 "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
+            }
+
+        if stage == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE:
+            payload = state["button_payload"]
+            if payload == PATIENT_NOT_FOUND_REGISTER_PAYLOAD:
+                # Same as tapping "first visit" -> Confirmar: the intake prefills the
+                # name and DNI already known from `identification_*`.
+                return await _delegate_to_first_visit_intake(
+                    cast(
+                        AgentState,
+                        {
+                            **state,
+                            "button_payload": FIRST_VISIT_CONFIRM_PAYLOAD,
+                            "user_message": "",
+                        },
+                    ),
+                    {**collected_data, "first_visit_intake": {"stage": "question"}},
+                )
+            if payload == PATIENT_NOT_FOUND_RETRY_PAYLOAD:
+                # The identity must come from what the patient types now.
+                return await _begin_identification(
+                    conversation_id,
+                    {
+                        key: value
+                        for key, value in collected_data.items()
+                        if key not in {"identification_full_name", "identification_dni"}
+                    }
+                    | {
+                        "not_found_retries": cast(int, collected_data.get("not_found_retries", 0))
+                        + 1
+                    },
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            free_text_replies = cast(int, collected_data.get("not_found_free_text", 0)) + 1
+            if free_text_replies >= _NOT_FOUND_MAX_FREE_TEXT:
+                return {"intent": "handoff"}
+            return {
+                "response_text": _PATIENT_NOT_FOUND_CHOICE_REMINDER,
+                "response_buttons": _PATIENT_NOT_FOUND_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "not_found_free_text": free_text_replies},
             }
 
         if stage == STAGE_AWAITING_FIRST_VISIT_INTAKE:

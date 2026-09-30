@@ -3,8 +3,9 @@ from typing import cast
 from app.agent.action_claims import guard_free_text_answer
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
+    HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
-    offers_administration_handoff,
+    answer_offers_handoff,
 )
 from app.agent.nodes.llm_response import (
     generate_or_fallback,
@@ -122,11 +123,21 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             # question, so there is nothing to be confused about — deliver
             # it, keep the menu as a way forward, and do NOT count this
             # turn as a failed one.
-            remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
-            answer = guard_free_text_answer(
-                without_mid_conversation_greeting(pending_answer, state["recent_messages"])
+            flagged_offer = collected_data.get(HANDOFF_OFFER_FLAG_KEY)
+            remaining = {
+                k: v
+                for k, v in collected_data.items()
+                if k not in {"pending_answer", HANDOFF_OFFER_FLAG_KEY}
+            }
+            model_answer = without_mid_conversation_greeting(
+                pending_answer, state["recent_messages"]
             )
-            offers_handoff = offers_administration_handoff(answer)
+            answer = guard_free_text_answer(model_answer)
+            if answer != model_answer:
+                # The guard swapped the answer for a safe one: the flag described the
+                # discarded text, not this one.
+                flagged_offer = None
+            offers_handoff = answer_offers_handoff(answer, flagged=flagged_offer)
             if offers_handoff:
                 remaining[HANDOFF_OFFER_KEY] = True
             return {

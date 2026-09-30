@@ -506,3 +506,27 @@ async def test_generate_response_and_understand_carry_the_no_diagnosis_rule() ->
         assert "diagnóstic" in system_text
         assert "caries" in system_text
         assert "profesional" in system_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('"handoff_offer": true', True),
+        ('"handoff_offer": false', False),
+        ('"handoff_offer": null', False),
+        ('"handoff_offer": "true"', False),
+        ('"other": 1', False),
+    ],
+)
+async def test_understand_parses_the_boolean_handoff_offer_flag(raw, expected) -> None:
+    client = _StubClient(
+        '{"intent": "question", "confidence": 0.9, "answer": "¿Te paso con administración?", '
+        + raw
+        + "}"
+    )
+    provider = _make_provider(client)
+
+    result = await provider.understand("¿aceptan obra social?", context={})
+
+    assert result.handoff_offer is expected

@@ -10,17 +10,36 @@
 # (slot list, confirmation gate), reached with real button taps. The seeded eval
 # patient is Lucía Prueba, DNI 39000111 (app/infrastructure/dentalink/eval_seed.py).
 # `requires_real_llm: true` marks tests that grade LLM-built wording.
-- description: "Audio en entrada libre aporta intención normalmente"
+- description: "Audio en entrada libre aporta intención normalmente — turn 1"
   vars:
     conversation_id: "eval-audio-01"
     message: "Quiero sacar un turno para la semana que viene"
   assert:
-    - type: llm-rubric
-      value: >
-        La respuesta procesa el mensaje como cualquier entrada de texto libre —
-        avanza el flujo de turnos normalmente.
+    # The booking flow now opens with the first-visit question, not a free-text ask.
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
   metadata:
-    requires_real_llm: true
+    requires_real_llm: false
+
+- description: "Audio en entrada libre aporta intención normalmente — turn 2"
+  vars:
+    conversation_id: "eval-audio-01"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
 
 - description: "Audio durante selección interactiva no reemplaza el botón — turn 1"
   vars:
@@ -82,15 +101,21 @@
     message: "El segundo, el de las 10"
   assert:
     - type: javascript
-      value: file://assertions/custom.js:hasOptionIds
+      value: file://assertions/custom.js:onlyOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
-        exact: true
+        allowed:
+          - "SELECT_SLOT:eval-free-*"
+          - "SPECIALTY:eval-spec-*"
+          - "PROFESSIONAL:eval-prof-*"
+          - "LIST_BACK"
+          - "LIST_MORE"
+          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         La respuesta no toma la transcripción como si fuera la selección del
-        botón — pide que se seleccione la opción mediante el menú interactivo
-        real.
+        botón: no avanza a una confirmación ni elige un horario por su cuenta, y
+        pide elegir con el menú interactivo real (puede volver a mostrar las
+        opciones).
   metadata:
     requires_real_llm: true
     critical: true
@@ -245,14 +270,20 @@
     message: "eh... el, esteee, no sé, el de la mañana quizás"
   assert:
     - type: javascript
-      value: file://assertions/custom.js:hasOptionIds
+      value: file://assertions/custom.js:onlyOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
-        exact: true
+        allowed:
+          - "SELECT_SLOT:eval-free-*"
+          - "SPECIALTY:eval-spec-*"
+          - "PROFESSIONAL:eval-prof-*"
+          - "LIST_BACK"
+          - "LIST_MORE"
+          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
-        Ante una transcripción ambigua, la respuesta pide aclaración en vez de
-        asumir una interpretación arbitraria.
+        Ante una transcripción ambigua, la respuesta no elige un horario ni
+        avanza a una confirmación: pide aclaración o vuelve a mostrar las
+        opciones reales, en vez de asumir una interpretación arbitraria.
   metadata:
     requires_real_llm: true
 

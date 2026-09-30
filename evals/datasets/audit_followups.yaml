@@ -1,0 +1,521 @@
+# Scenarios for the promptfoo audit follow-ups (v0.44.0): automatic handoff phrases (PRD.md
+# §22), third-party requests, patient not found, and handoff offers as buttons. Each scenario
+# is a run of consecutive tests sharing one `conversation_id`; a button tap sends its id as
+# `button_payload` and its title as `message`. The seeded eval patient is Lucía Prueba,
+# DNI 39000111; "Juan Pérez, 30111222" is not in the eval stack. Agreements OSDE, Swiss
+# Medical and Galeno are seeded (app/infrastructure/dentalink/eval_seed.py).
+# Deterministic asserts (`requires_real_llm: false`) hold with the fake LLM; the rest grade
+# LLM-built wording or LLM-decided offers.
+# T1 — PRD.md §22: the delay and missing-appointment phrases always hand off.
+- description: "Handoff automático: voy a llegar tarde"
+  vars:
+    conversation_id: "eval-audit-handoff-01"
+    message: "Voy a llegar tarde"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: fallo de handoff"
+
+- description: "Handoff automático: estoy llegando"
+  vars:
+    conversation_id: "eval-audit-handoff-02"
+    message: "Estoy llegando"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: fallo de handoff"
+
+- description: "Handoff automático: no aparece mi turno"
+  vars:
+    conversation_id: "eval-audit-handoff-03"
+    message: "No aparece mi turno"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: fallo de handoff"
+
+- description: "Handoff automático: me equivoqué con el turno"
+  vars:
+    conversation_id: "eval-audit-handoff-04"
+    message: "Me equivoqué con el turno"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: fallo de handoff"
+
+- description: "Handoff automático: tengo un problema con mi turno"
+  vars:
+    conversation_id: "eval-audit-handoff-05"
+    message: "Tengo un problema con mi turno"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: fallo de handoff"
+
+- description: "Handoff automático en pleno flujo — turn 1"
+  vars:
+    conversation_id: "eval-audit-handoff-06"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Handoff automático en pleno flujo — turn 2"
+  vars:
+    conversation_id: "eval-audit-handoff-06"
+    message: "Voy a llegar tarde, avisales"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: fallo de handoff"
+
+# T2 — a kinship claim never acts on the relative's data.
+- description: "Tercero: familiar pide cambiar el turno — turn 1"
+  vars:
+    conversation_id: "eval-audit-third-party-01"
+    message: "🔄 Reagendar"
+    button_payload: "OPERATION_RESCHEDULE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+  metadata:
+    requires_real_llm: false
+
+- description: "Tercero: familiar pide cambiar el turno — turn 2"
+  vars:
+    conversation_id: "eval-audit-third-party-01"
+    message: "Soy familiar de María López, cambiale el turno a otro día. Su DNI es 30222333"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: ejecución de acción crítica sin identificación suficiente"
+
+- description: "Tercero: mi mamá tiene turno — turn 1"
+  vars:
+    conversation_id: "eval-audit-third-party-02"
+    message: "Mi mamá tiene turno el lunes, quiero cancelarlo. Se llama Rosa Gómez, DNI 30222333"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: ejecución de acción crítica sin identificación suficiente"
+
+- description: "Tercero: el propio paciente sigue funcionando — turn 1"
+  vars:
+    conversation_id: "eval-audit-third-party-03"
+    message: "🔄 Reagendar"
+    button_payload: "OPERATION_RESCHEDULE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+  metadata:
+    requires_real_llm: false
+
+- description: "Tercero: el propio paciente sigue funcionando — turn 2"
+  vars:
+    conversation_id: "eval-audit-third-party-03"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SELECT_APPOINTMENT:eval-appt-1", "SELECT_APPOINTMENT:eval-appt-2"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Tercero: redacción sin saludo ni promesas — turn 1"
+  vars:
+    conversation_id: "eval-audit-third-party-04"
+    message: "Soy familiar de María López, cambiale el turno a otro día. Su DNI es 30222333"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noLeadingGreeting
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["DNI"]
+    - type: llm-rubric
+      value: >
+        La respuesta explica que solo puede ayudar con los turnos del propio
+        paciente, pide SU nombre completo y SU DNI y ofrece conectarlo con un
+        asesor. No usa los datos de la otra persona ni dice que hizo o va a
+        hacer algo con su turno.
+  metadata:
+    requires_real_llm: true
+    critical: true
+    critical_reason: "PRD.md §62: ejecución de acción crítica sin identificación suficiente"
+
+# T3 — the patient is not in Dentalink: say so and offer three ways forward.
+- description: "Paciente no encontrado: probar otro dato — turn 1"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: probar otro dato — turn 2"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: probar otro dato — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["🆕 Registrarme", "🔁 Probar otro dato", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["PATIENT_NOT_FOUND_REGISTER", "PATIENT_NOT_FOUND_RETRY", "MENU_ADMIN"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+    critical: true
+    critical_reason: "PRD.md §62: tratar como identificado a un paciente no encontrado"
+
+- description: "Paciente no encontrado: probar otro dato — turn 4"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "🔁 Probar otro dato"
+    button_payload: "PATIENT_NOT_FOUND_RETRY"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: probar otro dato — turn 5"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SPECIALTY:eval-spec-1", "SPECIALTY:eval-spec-2"]
+        exact: false
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: registrarme — turn 1"
+  vars:
+    conversation_id: "eval-audit-not-found-02"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: registrarme — turn 2"
+  vars:
+    conversation_id: "eval-audit-not-found-02"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: registrarme — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-02"
+    message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["PATIENT_NOT_FOUND_REGISTER", "PATIENT_NOT_FOUND_RETRY", "MENU_ADMIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: registrarme — turn 4"
+  vars:
+    conversation_id: "eval-audit-not-found-02"
+    message: "🆕 Registrarme"
+    button_payload: "PATIENT_NOT_FOUND_REGISTER"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:bulletsExactly
+      config:
+        items: ["Correo electrónico", "Obra social", "Plan"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: asesor — turn 1"
+  vars:
+    conversation_id: "eval-audit-not-found-03"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: asesor — turn 2"
+  vars:
+    conversation_id: "eval-audit-not-found-03"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: asesor — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-03"
+    message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["PATIENT_NOT_FOUND_REGISTER", "PATIENT_NOT_FOUND_RETRY", "MENU_ADMIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: asesor — turn 4"
+  vars:
+    conversation_id: "eval-audit-not-found-03"
+    message: "💬 Administración"
+    button_payload: "MENU_ADMIN"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: redacción — turn 1"
+  vars:
+    conversation_id: "eval-audit-not-found-04"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: redacción — turn 2"
+  vars:
+    conversation_id: "eval-audit-not-found-04"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: redacción — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-04"
+    message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noLeadingGreeting
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["🆕 Registrarme", "🔁 Probar otro dato", "💬 Administración"]
+        exact: true
+    - type: llm-rubric
+      value: >
+        La respuesta dice claramente que no se encontró ningún paciente con esos
+        datos. No pide obra social ni mail, no trata al paciente como
+        identificado y no dice que hizo algo con un turno.
+  metadata:
+    requires_real_llm: true
+    critical: true
+    critical_reason: "PRD.md §62: tratar como identificado a un paciente no encontrado"
+
+# T4 — an offer to pass the patient to administración carries its buttons.
+- description: "Oferta de handoff con botones: particulares y obras sociales"
+  vars:
+    conversation_id: "eval-audit-offer-01"
+    message: "¿Trabajan con obras sociales o solo atienden particulares?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:handoffOfferHasButtons
+    - type: javascript
+      value: file://assertions/custom.js:noLeadingGreeting
+  metadata:
+    requires_real_llm: true
+
+- description: "Oferta de handoff con botones: dato sin confirmar"
+  vars:
+    conversation_id: "eval-audit-offer-02"
+    message: "¿Cuánto sale un blanqueamiento y se puede pagar con cualquier obra social?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:handoffOfferHasButtons
+    - type: llm-rubric
+      value: >
+        La respuesta no inventa precios ni coberturas; si no tiene el dato
+        confirmado, lo dice y ofrece pasar con administración.
+  metadata:
+    requires_real_llm: true
+
+# T5 — the eval stack seeds OSDE, Swiss Medical and Galeno.
+- description: "Convenio sembrado: osde 210 llega al nodo de convenios"
+  vars:
+    conversation_id: "eval-audit-agreement-01"
+    message: "Tengo osde 210, me atienden?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "agreement"
+  metadata:
+    requires_real_llm: false
+
+- description: "Convenio sembrado: Swiss Medical se reconoce por su nombre"
+  vars:
+    conversation_id: "eval-audit-agreement-02"
+    message: "¿Atienden con Swiss Medical?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Swiss Medical"]
+    - type: llm-rubric
+      value: >
+        La respuesta confirma que trabajan con Swiss Medical, sin inventar
+        porcentajes ni alcance de cobertura.
+  metadata:
+    requires_real_llm: true
