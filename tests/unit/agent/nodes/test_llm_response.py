@@ -116,3 +116,12 @@ async def test_a_post_execution_reply_may_report_the_executed_action():
     )
 
     assert text == "Listo, tu turno quedó confirmado para el lunes."
+
+
+@pytest.mark.asyncio
+async def test_a_diagnosis_reply_is_replaced_by_the_static_text():
+    llm = _ScriptedLLM("Por lo que describís, podría tratarse de una caries.")
+
+    text = await generate_or_fallback(llm, "conv-1", "fallback", {}, "STATIC", _STARTED, None)
+
+    assert text == "STATIC"

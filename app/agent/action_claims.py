@@ -53,13 +53,20 @@ _CLAIM_PATTERNS = tuple(
 
 #: Words that make a claim conditional or negated. "no"/"todavía"/"aún" only count right
 #: before the verb ("todavía no está confirmado"); a distant "no" ("No te preocupes, ahí te
-#: lo cancelo") must not hide a claim. The others count anywhere earlier in the sentence
-#: ("cuando toques Confirmar, queda confirmado").
+#: lo cancelo") must not hide a claim. Conditional clauses count anywhere earlier in the
+#: sentence ("cuando toques Confirmar, queda confirmado", "si tocás Confirmar, te lo confirmo").
 _NEGATION_BEFORE = re.compile(
     r"\b(?:no|todav[ií]a|a[uú]n)\s+(?:\w+\s+)?$|\bas[ií]\s+$", re.IGNORECASE
 )
 _CONDITION_BEFORE = re.compile(
-    r"\b(?:cuando|una\s+vez|si|apenas|hasta\s+que|para\s+que)\b", re.IGNORECASE
+    r"\b(?:cuando|una\s+vez|hasta\s+que)\b"
+    # A real conditional clause ("si tocás", "si querés", "apenas toques"), never a bare
+    # affirmative "si"/"sí" ("Dale si, te lo confirmo").
+    r"|\bsi\s+(?:me\s+)?(?:toc[aá]s|quer[eé]s|confirm[aá]s|apret[aá]s|presion[aá]s|"
+    r"eleg[ií]s|decid[ií]s|prefer[ií]s|necesit[aá]s)\b"
+    r"|\bapenas\s+(?:toqu?[eé]s|confirm[eé]s|apriet[eé]s|presion[eé]s)\b"
+    r"|\bpara\s+que\s+(?:te|se|lo|la)\b",
+    re.IGNORECASE,
 )
 _SENTENCE_BREAK = re.compile(r"[.!?\n]")
 

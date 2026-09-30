@@ -65,7 +65,7 @@ outcome that did not happen.
     pass `action_executed=True` and bypass it.
   - RED: 11 new tests failing (detector import error, guard, 3 gate replays, question and
     fallback replays, prompt rule). GREEN: `uv run pytest` only the 3 excused redis failures.
-  - Commit: see git log (`fix(agent): never claim an appointment action before it runs`).
+  - Commit: `71fde9b` (`fix(agent): never claim an appointment action before it runs`).
 - [x] T2 — No diagnoses (prompt rule + deterministic guard). Route: delegated direct.
   - Root cause: `understand()`'s free-text `answer` for intent `question` (prompt in
     `app/infrastructure/llm/openai_compatible_llm_provider.py`, `DEFAULT_UNDERSTAND_PROMPT`)
@@ -76,7 +76,19 @@ outcome that did not happen.
   - Borderline decisions: "Tenemos turnos para caries" passes (no diagnostic phrasing);
     educational definitions ("la caries es una infección") are flagged on purpose.
   - RED: detector import error + node replays + prompt rule failing. GREEN: full suite.
-  - Commit: see git log (`fix(agent): never offer a diagnosis in free-text answers`).
+  - Commit: `2900c2c` (`fix(agent): never offer a diagnosis in free-text answers`).
+- [x] T3 — Close native-review findings (route: direct inline, one follow-up commit).
+  - R3-unaccented-si-hedge: `_CONDITION_BEFORE` now only counts real conditional clauses
+    ("si tocás/querés/confirmás…", "apenas toques…", "para que te…", "cuando", "una vez",
+    "hasta que"); a bare "si"/"sí" no longer hides a claim.
+  - R3-diagnosis-guard-gap-generate: `generate_or_fallback` also applies `offers_diagnosis`
+    (falls back to the static text, even when `action_executed=True`).
+  - R3-weak-collection-assertion: the collection-prompt test asserts the exact static text and
+    that the LLM was consulted. R3-cross-test-private-import: helpers moved to
+    `tests/fixtures/appointment_node.py`.
+  - RED: 6 failing tests (2 escaping claims, apenas case, diagnosis in `generate_or_fallback`,
+    diagnosis via the question node, exact-static assertion). GREEN: full suite.
+  - Commit: `fix(agent): close action-claim and diagnosis guard gaps` (see git log).
 
 ## Acceptance criteria
 
@@ -87,6 +99,7 @@ outcome that did not happen.
 ## Progress
 
 - Branch `fix/no-premature-action-claims` from origin/main eae7f7a (v0.44.0).
+- Native review (medium, 649 lines): consent granted, review-reliability approved and acknowledged (lineage review-1d72afe11a36d7c0); findings fixed in T3.
 
 ## Next step
 

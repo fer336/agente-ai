@@ -3,6 +3,7 @@
 import pytest
 
 from app.agent.nodes.appointment import (
+    _ASK_IDENTIFICATION_MESSAGE,
     _CONFIRM_BUTTONS,
     _CONFIRMATION_REMINDER,
     STAGE_AWAITING_CONFIRMATION,
@@ -13,9 +14,9 @@ from app.domain.repositories.llm_provider import ResponseContext
 from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import make_node_and_conversation
 from tests.fixtures.gateways import make_proposal_repositories_provider
 from tests.fixtures.seed_objects import make_pending_action
-from tests.unit.agent.nodes.test_appointment_node import _make_node_and_conversation
 
 _CONFIRM_CLAIM = "Buenísimo, ahí te lo confirmo entonces. Nos vemos el lunes! 👍"
 _CANCEL_CLAIM = "Dale, ahí te lo cancelo entonces."
@@ -28,8 +29,10 @@ class _ScriptedLLM(FakeLLMProvider):
     def __init__(self, text: str) -> None:
         super().__init__()
         self._text = text
+        self.calls: list[ResponseContext] = []
 
     async def generate_response(self, context: ResponseContext) -> str:
+        self.calls.append(context)
         return self._text
 
 
@@ -44,7 +47,7 @@ class _ScriptedLLM(FakeLLMProvider):
 )
 async def test_the_confirmation_gate_never_claims_the_pending_action_ran(user_message, claim):
     repositories_provider = make_proposal_repositories_provider()
-    node, _, _ = await _make_node_and_conversation(
+    node, _, _ = await make_node_and_conversation(
         proposal_repositories_provider=repositories_provider, llm_provider=_ScriptedLLM(claim)
     )
     async with repositories_provider() as repositories:
@@ -68,14 +71,16 @@ async def test_the_confirmation_gate_never_claims_the_pending_action_ran(user_me
 
 @pytest.mark.asyncio
 async def test_a_collection_prompt_never_claims_a_cancellation_that_did_not_run():
-    node, _, _ = await _make_node_and_conversation(
-        llm_provider=_ScriptedLLM(_CANCEL_WITH_NAME_CLAIM)
+    llm = _ScriptedLLM(_CANCEL_WITH_NAME_CLAIM)
+    node, _, _ = await make_node_and_conversation(llm_provider=llm)
+    state = make_agent_state(
+        user_message="quiero cancelar", collected_data={"operation_mention": "cancel"}
     )
-    state = make_agent_state(user_message="quiero cancelar", collected_data={})
 
     result = await node(state)
 
-    assert "te lo cancelo" not in (result["response_text"] or "")
+    assert llm.calls, "the scripted LLM was never consulted"
+    assert result["response_text"] == _ASK_IDENTIFICATION_MESSAGE
 
 
 @pytest.mark.asyncio
@@ -147,3 +152,17 @@ async def test_the_fallback_node_never_relays_a_diagnosis_and_keeps_its_buttons(
         OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_diagnosis_from_generate_response_is_blocked():
+    # The question node's no-answer branch words the reply through `generate_response`.
+    llm = _ScriptedLLM(_DIAGNOSIS)
+    node = create_question_node(llm)
+
+    result = await node(make_agent_state(collected_data={"stage": None}))
+
+    assert llm.calls
+    assert result["response_text"] == (
+        "Ese dato no lo tengo confirmado. Si querés, te comunico con administración para revisarlo."
+    )

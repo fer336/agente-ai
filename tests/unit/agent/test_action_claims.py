@@ -21,6 +21,11 @@ from app.agent.action_claims import claims_executed_action
         "Nos vemos el lunes!",
         "Te esperamos el martes a las 10.",
         "Cancelamos tu turno.",
+        # A bare affirmative "si"/"sí" is not a conditional clause.
+        "Buenísimo, si, te lo confirmo.",
+        "Dale si, ya te anoté.",
+        "Dale sí, te lo cancelo.",
+        "Apenas te lo confirmo, nos vemos.",
     ],
 )
 def test_claims_of_an_executed_action_are_detected(text):
@@ -36,6 +41,10 @@ def test_claims_of_an_executed_action_are_detected(text):
         "Todavía no está confirmado: tocá ✅ Confirmar.",
         "Cuando toques Confirmar, el turno queda confirmado.",
         "Si querés cancelarlo, tocá ❌ Cancelar.",
+        "Si tocás Confirmar, te lo confirmo.",
+        "Si querés, te lo cancelo apenas toques Cancelar.",
+        "Apenas toques Confirmar te lo reservo.",
+        "Para que te lo reserve, tocá ✅ Confirmar.",
         "Te confirmo que atendemos los sábados de 9 a 13.",
         "Te confirmo si aceptamos OSDE con administración.",
         "Listo, descartamos esa propuesta. Necesitás algo más?",
