@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.api.dependencies import internal_eval
 from app.api.dependencies.internal_eval import (
     EvalSessionRegistry,
     get_eval_use_case_provider,
@@ -10,6 +11,7 @@ from app.api.dependencies.internal_eval import (
 from app.application.admin.evaluate_chat_turn import EvaluateChatTurnUseCase
 from app.config.settings import Settings
 from app.domain.value_objects.conversation_id import ConversationId
+from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 
 
 def test_require_internal_eval_enabled_raises_404_when_disabled():
@@ -72,3 +74,44 @@ def test_provider_builds_a_use_case_per_conversation_and_reuses_it_across_turns(
     assert isinstance(first, EvaluateChatTurnUseCase)
     assert first is again
     assert first is not other
+
+
+def _llm_of(use_case: EvaluateChatTurnUseCase) -> object:
+    return use_case._agent_invoker._llm_provider  # type: ignore[attr-defined]
+
+
+def test_eval_stack_uses_the_fake_llm_by_default(monkeypatch):
+    monkeypatch.setattr(
+        internal_eval,
+        "get_settings",
+        lambda: Settings(internal_eval_real_llm=False, _env_file=None),
+    )
+
+    assert isinstance(_llm_of(get_evaluate_chat_turn_use_case()), FakeLLMProvider)
+
+
+def test_eval_stack_uses_the_webhook_llm_provider_when_the_real_llm_is_opted_in(monkeypatch):
+    real_provider = object()
+    monkeypatch.setattr(
+        internal_eval,
+        "get_settings",
+        lambda: Settings(
+            internal_eval_real_llm=True, llm_api_url="http://llm.invalid/v1", _env_file=None
+        ),
+    )
+    monkeypatch.setattr(internal_eval, "get_llm_provider", lambda: real_provider)
+
+    assert _llm_of(get_evaluate_chat_turn_use_case()) is real_provider
+
+
+def test_real_llm_opt_in_without_an_llm_url_fails_loudly_instead_of_faking(monkeypatch):
+    monkeypatch.setattr(
+        internal_eval,
+        "get_settings",
+        lambda: Settings(internal_eval_real_llm=True, llm_api_url="", _env_file=None),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_evaluate_chat_turn_use_case()
+
+    assert exc_info.value.status_code == 503

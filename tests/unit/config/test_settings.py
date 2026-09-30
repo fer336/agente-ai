@@ -387,3 +387,11 @@ def test_settings_reads_audio_fields_from_env(monkeypatch):
     assert settings.audio_max_duration_seconds == 60
     assert settings.audio_allowed_mime_types_set == {"audio/ogg", "audio/mp4"}
     assert settings.audio_rate_limit_per_conversation_per_minute == 3
+
+
+def test_internal_eval_real_llm_is_off_by_default_and_read_from_env(monkeypatch):
+    monkeypatch.delenv("INTERNAL_EVAL_REAL_LLM", raising=False)
+    assert Settings(_env_file=None).internal_eval_real_llm is False
+
+    monkeypatch.setenv("INTERNAL_EVAL_REAL_LLM", "true")
+    assert Settings(_env_file=None).internal_eval_real_llm is True

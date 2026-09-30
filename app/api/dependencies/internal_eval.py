@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, HTTPException, status
 from langgraph.checkpoint.memory import MemorySaver
 
+from app.api.dependencies.gateways import get_llm_provider
 from app.api.dependencies.redis import get_shared_redis_client
 from app.application.admin.evaluate_chat_turn import EvaluateChatTurnUseCase
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositories
 from app.config.settings import Settings, get_settings
+from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
@@ -134,12 +136,22 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
         return checkpointer
 
     settings = get_settings()
+    llm_provider: LLMProvider = FakeLLMProvider()
+    if settings.internal_eval_real_llm:
+        if not settings.llm_api_url:
+            # Never fall back to the fake silently: an audit believed to run
+            # against the real model would be meaningless.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="INTERNAL_EVAL_REAL_LLM is set but LLM_API_URL is not configured.",
+            )
+        llm_provider = get_llm_provider()
     agent_invoker = LangGraphAgentInvoker(
         appointment_gateway=FakeDentalinkGateway(),
         agreement_gateway=FakeAgreementGateway(),
         specialty_gateway=FakeSpecialtyGateway(),
         handoff_gateway=FakeYCloudHandoffGateway(),
-        llm_provider=FakeLLMProvider(),
+        llm_provider=llm_provider,
         repositories_provider=agent_repositories_provider,
         send_reply=SendReplyUseCase(messaging_gateway, sent_message_repository_provider),
         patient_gateway=FakePatientGateway(),

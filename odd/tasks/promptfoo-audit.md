@@ -53,6 +53,11 @@ flows fixed recently, so every PR can be audited before deploy.
   (evals-only files; no app code).
 - [ ] T4 — First local promptfoo run and findings report. Prepared only: runbook in
   `evals/README.md`; the run itself is pending the user's go-ahead.
+- [x] T5 — `INTERNAL_EVAL_REAL_LLM` opt-in: the eval stack uses `get_llm_provider()` (same
+  provider and admin runtime LLM config as the webhook path) instead of `FakeLLMProvider`.
+  Route: direct inline.
+- [ ] T6 — Seed an eval patient with 2 upcoming appointments; enable `flows_view_appointment.yaml`.
+- [ ] T7 — Refresh stale dataset expectations for the real LLM; production-run runbook.
 
 ## Progress
 
@@ -92,6 +97,20 @@ flows fixed recently, so every PR can be audited before deploy.
   (now a 3-turn flow: Agendar, Cancelar, then name + DNI). Others listed in the final report.
 - Finding: the eval endpoint always uses `FakeLLMProvider`; LLM wording cannot be audited until
   the endpoint can opt in to the real LLM (decision pending).
+- Decisions (2026-09-30): real-LLM opt-in YES; the audit runs against PRODUCTION
+  (https://agent.qeva-ai.com) with the vars added temporarily to the Swarm secret (PRD §74.3
+  "salvo necesidad expresa").
+- T5: RED = `test_internal_eval_real_llm_is_off_by_default_and_read_from_env` (no attribute),
+  `..._uses_the_webhook_llm_provider_when_the_real_llm_is_opted_in` (still FakeLLMProvider),
+  `test_real_llm_opt_in_without_an_llm_url_fails_loudly_instead_of_faking` (DID NOT RAISE).
+  GREEN: `uv run pytest` 1899+ passed (only the 3 excused redis failures), ruff check and mypy clean.
+  Opt-in with an empty `LLM_API_URL` returns 503 instead of silently faking.
+- T5 shared with production when the flag is on: Redis keys `lock:conversation:<eval id>`,
+  `lock:appointment:<professional id>:<start>`, `memory:contact:eval-contact:summary`
+  (10 s-ish cache), `runtime_agent_config` (shared read cache of the admin LLM config);
+  Postgres: one read of the runtime LLM config (no writes); the real LLM endpoint (cost, its
+  own logs); app logs. Everything else (repos, checkpointer, Dentalink, YCloud, Telegram,
+  Linear, incidents, errors, traces) is per-conversation in-memory fakes.
 
 ## Next step
 

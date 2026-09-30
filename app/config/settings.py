@@ -231,6 +231,11 @@ class Settings(BaseSettings):
     #: restriction half of that requirement is a deployment/infra concern
     #: this flag cannot enforce by itself.
     internal_eval_enabled: bool = False
+    #: Opt-in for `/internal/eval/chat`: use the same real LLM provider as the
+    #: webhook path (`LLM_API_URL`, honoring the admin runtime LLM config)
+    #: instead of `FakeLLMProvider`, so replies carry real wording. Dentalink,
+    #: YCloud, Telegram, Linear and every repository stay fake and isolated.
+    internal_eval_real_llm: bool = False
 
     #: Explicit opt-in guard for `tests/integration/conftest.py`'s
     #: `db_session` fixture, which runs `Base.metadata.create_all` then
