@@ -23,7 +23,8 @@ async def test_handoff_node_requests_handoff_and_sets_conversation_to_human():
     )
 
     assert result["requires_handoff"] is True
-    assert "administración" in result["response_text"]
+    assert "asesor" in result["response_text"]
+    assert "administración" not in result["response_text"].lower()
     assert handoff_gateway.handoff_requests == [
         (ConversationId("conv-1"), "Voy a llegar tarde")
     ]
