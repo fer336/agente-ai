@@ -489,3 +489,20 @@ async def test_understand_carries_the_no_premature_action_claim_rule() -> None:
     assert "te lo confirmo" in system_text
     assert "✅ Confirmar" in system_text
     assert "[SYSTEM]" in system_text
+
+
+@pytest.mark.asyncio
+async def test_generate_response_and_understand_carry_the_no_diagnosis_rule() -> None:
+    client = _StubClient('{"intent": "unknown", "confidence": 0.9, "answer": null}')
+    provider = _make_provider(client)
+
+    await provider.generate_response(
+        ResponseContext(conversation_id="conv-1", intent="unknown", collected_data={})
+    )
+    await provider.understand("me duele una muela, ¿qué tengo?", context={})
+
+    for _, messages, _ in client.calls:
+        system_text = " ".join(m["content"] for m in messages if m["role"] == "system")
+        assert "diagnóstic" in system_text
+        assert "caries" in system_text
+        assert "profesional" in system_text

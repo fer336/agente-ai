@@ -8,6 +8,12 @@ backstop sits behind the prompt rule ("never trust the prompt alone", PRD.md §7
 
 import re
 
+#: Safe text for a free-text answer that offers a diagnosis, likely cause or treatment.
+SAFE_DIAGNOSIS_ANSWER = (
+    "No puedo darte un diagnóstico por acá: lo tiene que evaluar un profesional. "
+    "¿Querés sacar un turno para que te revisen?"
+)
+
 #: Safe text for a free-text answer (question/fallback nodes) that claimed an action ran.
 SAFE_ACTION_CLAIM_ANSWER = (
     "Todavía no se hizo ningún cambio en tus turnos: se confirman o se cancelan solo "
@@ -79,12 +85,60 @@ def claims_executed_action(text: str) -> bool:
     return False
 
 
+_CONDITION = (
+    r"(?:caries|infecci[oó]n(?:es)?|absceso|gingivitis|periodontitis|pulpitis|pericoronitis"
+    r"|fractura|fisura|sensibilidad|hipersensibilidad|bruxismo|sarro|necrosis|fl[eé]m[oó]n"
+    r"|neuralgia|desgaste)"
+)
+_MEDICATION = (
+    r"(?:ibuprofeno|paracetamol|amoxicilina|antibi[oó]tico|analg[eé]sico|antiinflamatorio"
+    r"|aspirina|diclofenac|ketorolac)"
+)
+_SAME_SENTENCE = r"[^.!?\n]"
+
+_DIAGNOSIS_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # "podría tratarse de una caries", "puede ser una fractura", "podría ser bruxismo"
+        rf"\b(?:podr[ií]a|puede|pueden)\s+(?:ser|tratarse)\b{_SAME_SENTENCE}{{0,30}}?\b{_CONDITION}\b",
+        # "parece una infección", "parecería una caries"
+        rf"\bparec(?:e|er[ií]a)\b{_SAME_SENTENCE}{{0,25}}?\b{_CONDITION}\b",
+        # "probablemente sea un absceso", "seguramente tengas gingivitis", "tal vez es sarro"
+        rf"\b(?:probablemente|seguramente|posiblemente|quiz[aá]s?|tal\s+vez)\b"
+        rf"{_SAME_SENTENCE}{{0,30}}?\b{_CONDITION}\b",
+        # "es una caries", "sería una infección"
+        rf"\b(?:es|ser|sea|ser[ií]a)\s+(?:una?|la|el)\s+{_CONDITION}\b",
+        # "suena a una pulpitis", "se trata de una infección", "tengas caries"
+        rf"\b(?:suena\s+a|se\s+trata\s+de|tengas?|tenga[sn]?)\b{_SAME_SENTENCE}{{0,20}}?\b{_CONDITION}\b",
+        # "es síntoma de caries", "indica una infección", "compatible con pulpitis"
+        rf"\b(?:s[ií]ntoma\s+de|signo\s+de|se[ñn]al\s+de|indica|sugiere|compatible\s+con)\b"
+        rf"{_SAME_SENTENCE}{{0,20}}?\b{_CONDITION}\b",
+        # "tomá ibuprofeno", "te recomiendo un antibiótico"
+        rf"\b(?:tom[aá]|tomar|te\s+recomiendo|recomiendo)\b{_SAME_SENTENCE}{{0,40}}?\b{_MEDICATION}\b",
+    )
+)
+
+
+def offers_diagnosis(text: str) -> bool:
+    """True when `text` suggests a diagnosis, a likely cause or a treatment for symptoms.
+
+    Deliberately narrow: a condition word only counts next to diagnostic phrasing ("podría
+    tratarse de una caries", "es una infección", "tomá ibuprofeno"), so "tenemos turnos para
+    caries" still passes. Educational statements that define a condition ("la caries es una
+    infección bacteriana") are flagged too: the clinic prefers a professional answer.
+    """
+    return any(pattern.search(text) for pattern in _DIAGNOSIS_PATTERNS)
+
+
 def guard_free_text_answer(text: str) -> str:
-    """Returns `text`, or the safe static answer when it claims an action already ran.
+    """Returns `text`, or a safe static answer when it claims an action already ran or
+    offers a diagnosis.
 
     For the model's free-text answers (`understand()`'s `answer`), which never execute
-    anything: a claim there is always false.
+    anything (a claim there is always false) and never diagnose.
     """
+    if offers_diagnosis(text):
+        return SAFE_DIAGNOSIS_ANSWER
     if claims_executed_action(text):
         return SAFE_ACTION_CLAIM_ANSWER
     return text

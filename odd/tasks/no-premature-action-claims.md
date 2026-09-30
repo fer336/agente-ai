@@ -66,7 +66,17 @@ outcome that did not happen.
   - RED: 11 new tests failing (detector import error, guard, 3 gate replays, question and
     fallback replays, prompt rule). GREEN: `uv run pytest` only the 3 excused redis failures.
   - Commit: see git log (`fix(agent): never claim an appointment action before it runs`).
-- [ ] T2 — No diagnoses (prompt rule + deterministic guard). Route: delegated direct.
+- [x] T2 — No diagnoses (prompt rule + deterministic guard). Route: delegated direct.
+  - Root cause: `understand()`'s free-text `answer` for intent `question` (prompt in
+    `app/infrastructure/llm/openai_compatible_llm_provider.py`, `DEFAULT_UNDERSTAND_PROMPT`)
+    was relayed verbatim by `app/agent/nodes/question.py:73` (and `fallback.py:126`).
+  - Fix: `_NO_DIAGNOSIS_INSTRUCTION` (generate_response + understand) and `offers_diagnosis`
+    in `app/agent/action_claims.py`, applied by `guard_free_text_answer` in both nodes; the
+    fallback node keeps its Agendar/Administración buttons, the question node keeps none.
+  - Borderline decisions: "Tenemos turnos para caries" passes (no diagnostic phrasing);
+    educational definitions ("la caries es una infección") are flagged on purpose.
+  - RED: detector import error + node replays + prompt rule failing. GREEN: full suite.
+  - Commit: see git log (`fix(agent): never offer a diagnosis in free-text answers`).
 
 ## Acceptance criteria
 
@@ -80,4 +90,4 @@ outcome that did not happen.
 
 ## Next step
 
-T2.
+Both tasks done; open the PR per `docs/pr-release-workflow.md`.

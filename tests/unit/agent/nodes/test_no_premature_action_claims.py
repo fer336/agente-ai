@@ -109,3 +109,41 @@ async def test_the_fallback_node_never_relays_an_action_claim_and_keeps_its_butt
         OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
     ]
+
+
+_DIAGNOSIS = (
+    "Por lo que describís, podría tratarse de una caries o una sensibilidad profunda. "
+    "Lo ideal es que te vea un odontólogo y te indique el tratamiento."
+)
+
+
+@pytest.mark.asyncio
+async def test_the_question_node_never_relays_a_diagnosis():
+    node = create_question_node(FakeLLMProvider())
+    state = make_agent_state(
+        user_message="Me duele una muela y tiene una mancha oscura, ¿qué tengo?",
+        collected_data={"stage": None, "pending_answer": _DIAGNOSIS},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == (
+        "No puedo darte un diagnóstico por acá: lo tiene que evaluar un profesional. "
+        "¿Querés sacar un turno para que te revisen?"
+    )
+    assert "caries" not in result["response_text"]
+    assert "pending_answer" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_node_never_relays_a_diagnosis_and_keeps_its_buttons():
+    node = create_fallback_node(FakeLLMProvider())
+    state = make_agent_state(collected_data={"pending_answer": _DIAGNOSIS})
+
+    result = await node(state)
+
+    assert "caries" not in result["response_text"]
+    assert [button.id for button in result["response_buttons"]] == [
+        OPERATION_CREATE_PAYLOAD,
+        MENU_ADMIN_PAYLOAD,
+    ]
