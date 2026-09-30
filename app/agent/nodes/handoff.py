@@ -15,7 +15,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.phone_number import PhoneNumber
 
 _HANDOFF_ACK_MESSAGE = (
-    "Perfecto. Te comunico con administración de la clínica.\n\n"
+    "Perfecto. Te comunico con un asesor de la clínica.\n\n"
     "Podrán continuar la conversación desde este mismo chat."
 )
 
