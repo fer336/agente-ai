@@ -69,7 +69,16 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
     escapes any active stage, including awaiting_confirmation; button taps never reach it). Prompts extended.
   - RED: collection error (module missing) in `tests/unit/agent/test_automatic_handoff.py`; then `llego tardeee`
     cases failed until the matcher tolerated elongation. GREEN: 50+ tests pass. See git log.
-- [ ] T2 — Third-party guard. Route: delegated direct.
+- [x] T2 — Third-party guard. Route: delegated direct.
+  - Root cause: nothing looked at kinship claims. Free text reached the LLM intent -> appointment ->
+    `appointment.py` identification (`_merge_identification` ~line 3972 / `identify_patient.execute` ~4154), which
+    treated the relative's name + DNI as the patient's own; "not found" then asked obra social + mail (~4176).
+  - Fix: `app/agent/third_party_guard.py` matcher; `resolve_interaction._resolve` answers itself (LLM-built,
+    static fallback, HANDOFF_OFFER_BUTTONS + offer flag) before the LLM and before any stage handler sees the
+    text, so it covers identification, first-visit intake and idle. Exempt: awaiting_confirmation (its gate never
+    reads free text). Graph routes the new intent to END.
+  - RED: collection error (module missing); GREEN after implementation (one test fixed: `cambié` is not in the
+    existing action-claim guard, so the fallback test uses `cancelé`). See git log.
 - [ ] T3 — Patient not found: clear message and alternatives. Route: delegated direct.
 - [ ] T4 — Structured handoff offer flag. Route: delegated direct.
 - [ ] T5 — Eval agreements seed and stale datasets. Route: delegated direct.
