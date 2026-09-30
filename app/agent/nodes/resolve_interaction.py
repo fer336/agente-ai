@@ -314,6 +314,7 @@ async def _resolve(
             ),
             state["recent_messages"],
             state["contact_memory_summary"],
+            action_executed=True,
         )
         return {
             "intent": POST_ACTION_CLOSE_INTENT,

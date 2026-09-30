@@ -1,5 +1,6 @@
 import re
 
+from app.agent.action_claims import guard_free_text_answer
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_KEY,
@@ -69,7 +70,9 @@ def create_question_node(llm_provider: LLMProvider) -> AgentNode:
         if stripped_answer and _looks_off_topic(stripped_answer):
             text = _OFF_TOPIC_ANSWER
         elif stripped_answer:
-            text = without_mid_conversation_greeting(stripped_answer, state["recent_messages"])
+            text = guard_free_text_answer(
+                without_mid_conversation_greeting(stripped_answer, state["recent_messages"])
+            )
         else:
             text = await generate_or_fallback(
                 llm_provider,
