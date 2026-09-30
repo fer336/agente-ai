@@ -200,3 +200,35 @@ def test_purpose_negation_and_long_sentences_do_not_hand_off(message):
 )
 def test_short_arrival_notices_hand_off(message):
     assert requires_automatic_handoff(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "no puedo, llego tarde",
+        "no, voy a llegar tarde",
+        "no puedo ir, voy a llegar tarde",
+        "hola, no puedo llegar, llego tarde",
+        "no puedo ir voy a llegar tarde",
+        "no llego a la hora pero llego tarde",
+        "no vine ya que llego tarde",
+    ],
+)
+def test_a_negation_that_does_not_govern_the_verb_never_cancels_a_delay_notice(message):
+    assert requires_automatic_handoff(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "no voy a llegar tarde",
+        "no vamos a llegar tarde",
+        "no quiero llegar tarde",
+        "para no llegar tarde",
+        "sin llegar tarde",
+        "evitar llegar tarde",
+        "¿cómo hago para no llegar tarde?",
+    ],
+)
+def test_a_directly_governing_negation_still_cancels_it(message):
+    assert requires_automatic_handoff(message) is False

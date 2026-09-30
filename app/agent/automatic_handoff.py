@@ -28,10 +28,15 @@ _APPOINTMENT_PROBLEM = re.compile(
     r")\b"
 )
 
-#: "no llego tarde", "para no llegar tarde", "sin llegar tarde", "evitar llegar tarde".
+#: A negation only cancels a delay when it directly governs the verb: "no llego tarde", "no voy
+#: a llegar tarde", "no quiero llegar tarde", "para no llegar tarde", "sin llegar tarde",
+#: "evitar llegar tarde". No free words between them, and it never crosses a clause.
 _NEGATED_OR_PURPOSE_DELAY = re.compile(
-    r"\b(?:no|sin|evitar|evitando)\b(?:\s+\w+){0,3}\s+(?:llego|llegar)\s+tarde+\b"
+    r"\b(?:no|sin|evitar|evitando)\s+"
+    r"(?:(?:voy|vamos|van|quiero|queremos|quiere|pienso)\s+(?:a\s+)?)?(?:llego|llegar)\s+tarde+\b"
 )
+#: Clause breaks besides punctuation: a negation never reaches across them.
+_CLAUSE_CONNECTOR = re.compile(r"\b(?:pero|y|ya\s+que)\b")
 
 #: Arrival notices are only a notice when the clause is short: "ya llego" inside a long
 #: sentence is usually something else.
@@ -55,8 +60,10 @@ def requires_automatic_handoff(text: str) -> bool:
     normalized = normalize_text(text)
     if _HUMAN_REQUEST.search(normalized):
         return True
-    if _APPOINTMENT_PROBLEM.search(_NEGATED_OR_PURPOSE_DELAY.sub(" ", normalized)):
-        return True
+    for clause in re.split(r"[.,;:!?\n]+", text):
+        for segment in _CLAUSE_CONNECTOR.split(normalize_text(clause)):
+            if _APPOINTMENT_PROBLEM.search(_NEGATED_OR_PURPOSE_DELAY.sub(" ", segment)):
+                return True
     if _URGENCY_OR_COMPLAINT.search(_NEGATED_URGENCY.sub(" ", normalized)):
         return True
     for clause in re.split(r"[.,;:!?\n]+", text):

@@ -138,6 +138,12 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
   - RED: 25 failures across `test_automatic_handoff.py`, `test_third_party_guard.py`, `test_data_stage_routing.py`,
     `test_patient_not_found.py`; GREEN after implementation.
 
+- [x] T8 — Native review warning R3-negation-window (single scoped correction).
+  - The negation guard allowed up to 3 free words, so "no puedo, llego tarde" / "no, voy a llegar tarde" were not
+    handed off. Now the negator must directly govern the verb, and matching runs per clause (punctuation, "pero",
+    "y", "ya que" break it). RED: 4 failures (`test_a_negation_that_does_not_govern_the_verb_never_cancels...`); GREEN
+    after the change; the directly-governed negatives still pass.
+
 ## Progress
 
 - Native review (high, 2414 lines, 4 lenses): consent granted, approved and acknowledged (lineage review-a0bfb319a0b54692); findings fixed in T7.
