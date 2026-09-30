@@ -37,6 +37,15 @@ def _load_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text())
 
 
+def _load_test_cases(name: str) -> list[dict]:
+    """promptfoo loads a `file://` tests entry as a top-level YAML list of test
+    cases; a mapping (e.g. wrapped under a `tests:` key) is read as one
+    malformed test case and aborts the whole eval before any request."""
+    test_cases = yaml.safe_load((_EVALS_DIR / "datasets" / f"{name}.yaml").read_text())
+    assert isinstance(test_cases, list), f"{name}.yaml must be a top-level list"
+    return test_cases
+
+
 def test_scaffold_has_the_prd_58_documented_directory_tree():
     assert (_EVALS_DIR / "promptfooconfig.yaml").is_file()
     assert (_EVALS_DIR / "prompts" / "agent_system_prompt.txt").is_file()
@@ -85,16 +94,15 @@ def test_system_prompt_is_non_empty_and_covers_the_non_negotiable_rules():
 
 @pytest.mark.parametrize("name", _DATASET_NAMES)
 def test_dataset_file_has_well_formed_test_cases(name: str):
-    dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
+    dataset = _load_test_cases(name)
 
-    assert "tests" in dataset
-    assert len(dataset["tests"]) > 0
+    assert len(dataset) > 0
 
     # A conversation's turns are consecutive tests sharing one conversation_id; a
     # conversation_id must never come back after another conversation started.
     finished_conversation_ids = set()
     current_conversation_id = None
-    for test_case in dataset["tests"]:
+    for test_case in dataset:
         assert isinstance(test_case["description"], str) and test_case["description"]
         assert "message" in test_case["vars"]
         conversation_id = test_case["vars"]["conversation_id"]
@@ -124,8 +132,8 @@ def test_at_least_one_critical_case_per_prd_62_category_exists():
     """
     critical_count = 0
     for name in _DATASET_NAMES:
-        dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
-        for test_case in dataset["tests"]:
+        dataset = _load_test_cases(name)
+        for test_case in dataset:
             metadata = test_case.get("metadata")
             if metadata and metadata.get("critical"):
                 critical_count += 1
@@ -318,8 +326,8 @@ def test_intro_helper_flags_a_repeated_intro_within_one_conversation():
 
 
 def _dataset_asserts(name: str):
-    dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
-    for test_case in dataset["tests"]:
+    dataset = _load_test_cases(name)
+    for test_case in dataset:
         for assertion in test_case["assert"]:
             yield test_case, assertion
 
@@ -346,10 +354,10 @@ def test_dataset_javascript_asserts_reference_exported_helpers(name: str):
 
 @pytest.mark.parametrize("name", ["flows", "flows_view_appointment"])
 def test_flow_datasets_are_ordered_multi_turn_scenarios(name: str):
-    dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
+    dataset = _load_test_cases(name)
 
     turns_by_conversation: dict[str, list[int]] = {}
-    for test_case in dataset["tests"]:
+    for test_case in dataset:
         match = re.fullmatch(r".+ — turn (\d+)", test_case["description"])
         assert match, f"{test_case['description']!r} must end with ' — turn N'"
         turns_by_conversation.setdefault(test_case["vars"]["conversation_id"], []).append(
@@ -367,17 +375,17 @@ def test_flow_datasets_are_ordered_multi_turn_scenarios(name: str):
 def test_view_appointment_dataset_uses_the_seeded_eval_patient():
     from app.infrastructure.dentalink.eval_seed import EVAL_PATIENT_DNI, EVAL_PATIENT_NAME
 
-    dataset = _load_yaml(_EVALS_DIR / "datasets" / "flows_view_appointment.yaml")
-    identify = dataset["tests"][1]["vars"]["message"]
+    dataset = _load_test_cases("flows_view_appointment")
+    identify = dataset[1]["vars"]["message"]
 
     assert EVAL_PATIENT_NAME in identify
     assert EVAL_PATIENT_DNI in identify
 
 
 def test_flows_dataset_covers_the_recent_flows():
-    dataset = _load_yaml(_EVALS_DIR / "datasets" / "flows.yaml")
-    descriptions = " | ".join(t["description"] for t in dataset["tests"]).lower()
-    payloads = {t["vars"].get("button_payload") for t in dataset["tests"]}
+    dataset = _load_test_cases("flows")
+    descriptions = " | ".join(t["description"] for t in dataset).lower()
+    payloads = {t["vars"].get("button_payload") for t in dataset}
 
     for scenario in ["primera visita", "datos de alta", "ya soy paciente", "sin saludo", "handoff"]:
         assert scenario in descriptions
@@ -434,26 +442,39 @@ def test_no_sensitive_values_in_reply_flags_a_leaked_decoy():
     assert json.loads(result.stdout)["pass"] is False
 
 
-def test_readme_documents_the_production_run_variables_and_rollback():
+def test_readme_documents_the_always_on_production_audit():
     readme = (_EVALS_DIR / "README.md").read_text()
 
     for required in [
-        "INTERNAL_EVAL_ENABLED=true",
-        "INTERNAL_EVAL_REAL_LLM=true",
-        "https://agent.qeva-ai.com/admin/login",
-        "ADMIN_SESSION_COOKIE",
-        "ADMIN_CSRF_COOKIE",
+        "INTERNAL_EVAL_ENABLED",
+        "INTERNAL_EVAL_REAL_LLM",
+        "agente_ai_backend_env",
+        "ADMIN_TECHNICAL",
+        "evals/run-audit.sh",
+        "--view",
         "EVAL_RUN_ID",
-        "apiBaseUrl",
-        "npx promptfoo@latest eval",
-        "--env-rm INTERNAL_EVAL_REAL_LLM",
         "read -r -s",
-        "--data @-",
         "replicas: 1",
         "Default stance",
+        "docker secret rm agente_ai_backend_env_eval",
+        "PROMPTFOO_VERSION",
+        "ADMIN_SESSION_TTL_SECONDS",
+        "spend limit",
+        "rollback",
     ]:
         assert required in readme
-    # The runbook must never copy the production secret file nor put the password in argv.
+    # The old temporary-exception runbook is gone, and secrets/passwords stay out of it.
+    assert "--env-add" not in readme
+    assert "--env-rm" not in readme
     assert "cp <your-backend.env>" not in readme
     assert "docker secret create" not in readme
     assert '"password":"<ADMIN_PASSWORD>"' not in readme
+
+
+def test_grader_config_has_safe_defaults_and_no_stale_9router_default():
+    config = (_EVALS_DIR / "promptfooconfig.yaml").read_text()
+
+    assert "env.EVAL_GRADER_MODEL or" in config
+    assert "env.EVAL_GRADER_BASE_URL or" in config
+    assert "https://openrouter.ai/api/v1" in config
+    assert "OpenRouter" in config

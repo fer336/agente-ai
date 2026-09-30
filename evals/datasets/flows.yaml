@@ -10,177 +10,176 @@
 # they fail on purpose
 # instead of passing vacuously. Run only the ones that hold with the fake LLM with:
 #   npx promptfoo eval -c evals/promptfooconfig.yaml --filter-metadata requires_real_llm=false
-tests:
-  - description: "Primera visita: pregunta con botones y sin lista — turn 1"
-    vars:
-      conversation_id: "flows-first-visit-question"
-      message: "📅 Agendar una cita"
-      button_payload: "OPERATION_CREATE"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:hasButtons
-        config:
-          titles: ["✅ Confirmar", "❌ Cancelar"]
-          exact: true
-      - type: javascript
-        value: file://assertions/custom.js:noBulletList
-      - type: javascript
-        value: file://assertions/custom.js:noListRows
-    metadata:
-      requires_real_llm: false
+- description: "Primera visita: pregunta con botones y sin lista — turn 1"
+  vars:
+    conversation_id: "flows-first-visit-question"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noBulletList
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
 
-  - description: "Primera visita: datos de alta — turn 1"
-    vars:
-      conversation_id: "flows-first-visit-intake"
-      message: "📅 Agendar una cita"
-      button_payload: "OPERATION_CREATE"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:hasButtons
-        config:
-          titles: ["✅ Confirmar", "❌ Cancelar"]
-          exact: true
-    metadata:
-      requires_real_llm: false
+- description: "Primera visita: datos de alta — turn 1"
+  vars:
+    conversation_id: "flows-first-visit-intake"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
 
-  - description: "Primera visita: datos de alta — turn 2"
-    vars:
-      conversation_id: "flows-first-visit-intake"
-      message: "✅ Confirmar"
-      button_payload: "FIRST_VISIT_CONFIRM"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:replyKindIs
-        config:
-          kind: "text"
-      - type: javascript
-        value: file://assertions/custom.js:bulletsExactly
-        config:
-          items: ["Nombre completo", "DNI", "Correo electrónico", "Obra social", "Plan"]
-    metadata:
-      requires_real_llm: false
+- description: "Primera visita: datos de alta — turn 2"
+  vars:
+    conversation_id: "flows-first-visit-intake"
+    message: "✅ Confirmar"
+    button_payload: "FIRST_VISIT_CONFIRM"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:bulletsExactly
+      config:
+        items: ["Nombre completo", "DNI", "Correo electrónico", "Obra social", "Plan"]
+  metadata:
+    requires_real_llm: false
 
-  - description: "Primera visita: datos de alta — turn 3"
-    vars:
-      conversation_id: "flows-first-visit-intake"
-      message: "Me llamo Juan Pérez y mi DNI es 30123456"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:bulletsExactly
-        config:
-          items: ["Correo electrónico", "Obra social", "Plan"]
-      - type: javascript
-        value: file://assertions/custom.js:introDiffersFromPreviousAsk
-    metadata:
-      requires_real_llm: true
+- description: "Primera visita: datos de alta — turn 3"
+  vars:
+    conversation_id: "flows-first-visit-intake"
+    message: "Me llamo Juan Pérez y mi DNI es 30123456"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:bulletsExactly
+      config:
+        items: ["Correo electrónico", "Obra social", "Plan"]
+    - type: javascript
+      value: file://assertions/custom.js:introDiffersFromPreviousAsk
+  metadata:
+    requires_real_llm: true
 
-  - description: "Primera visita: datos de alta — turn 4"
-    vars:
-      conversation_id: "flows-first-visit-intake"
-      message: "juan.perez@example.com"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:bulletsExactly
-        config:
-          items: ["Obra social", "Plan"]
-      - type: javascript
-        value: file://assertions/custom.js:introDiffersFromPreviousAsk
-    metadata:
-      requires_real_llm: true
+- description: "Primera visita: datos de alta — turn 4"
+  vars:
+    conversation_id: "flows-first-visit-intake"
+    message: "juan.perez@example.com"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:bulletsExactly
+      config:
+        items: ["Obra social", "Plan"]
+    - type: javascript
+      value: file://assertions/custom.js:introDiffersFromPreviousAsk
+  metadata:
+    requires_real_llm: true
 
-  - description: "Cancelar primera visita: ya soy paciente — turn 1"
-    vars:
-      conversation_id: "flows-existing-patient"
-      message: "📅 Agendar una cita"
-      button_payload: "OPERATION_CREATE"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:hasButtons
-        config:
-          titles: ["✅ Confirmar", "❌ Cancelar"]
-          exact: true
-    metadata:
-      requires_real_llm: false
+- description: "Cancelar primera visita: ya soy paciente — turn 1"
+  vars:
+    conversation_id: "flows-existing-patient"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
 
-  - description: "Cancelar primera visita: ya soy paciente — turn 2"
-    vars:
-      conversation_id: "flows-existing-patient"
-      message: "❌ Cancelar"
-      button_payload: "FIRST_VISIT_CANCEL"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:replyKindIs
-        config:
-          kind: "text"
-      - type: javascript
-        value: file://assertions/custom.js:noListRows
-      - type: javascript
-        value: file://assertions/custom.js:mentionsAll
-        config:
-          terms: ["nombre", "DNI"]
-    metadata:
-      requires_real_llm: true
+- description: "Cancelar primera visita: ya soy paciente — turn 2"
+  vars:
+    conversation_id: "flows-existing-patient"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["nombre", "DNI"]
+  metadata:
+    requires_real_llm: true
 
-  - description: "Pregunta a mitad de conversación: sin saludo — turn 1"
-    vars:
-      conversation_id: "flows-mid-conversation-question"
-      message: "📅 Agendar una cita"
-      button_payload: "OPERATION_CREATE"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:hasButtons
-        config:
-          titles: ["✅ Confirmar", "❌ Cancelar"]
-          exact: true
-    metadata:
-      requires_real_llm: false
+- description: "Pregunta a mitad de conversación: sin saludo — turn 1"
+  vars:
+    conversation_id: "flows-mid-conversation-question"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
 
-  - description: "Pregunta a mitad de conversación: sin saludo — turn 2"
-    vars:
-      conversation_id: "flows-mid-conversation-question"
-      message: "¿Atienden pacientes particulares?"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:noLeadingGreeting
-    metadata:
-      requires_real_llm: true
+- description: "Pregunta a mitad de conversación: sin saludo — turn 2"
+  vars:
+    conversation_id: "flows-mid-conversation-question"
+    message: "¿Atienden pacientes particulares?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noLeadingGreeting
+  metadata:
+    requires_real_llm: true
 
-  - description: "Oferta de handoff: botones y sin aceptación por cortesía — turn 1"
-    vars:
-      conversation_id: "flows-handoff-offer"
-      message: "📅 Agendar una cita"
-      button_payload: "OPERATION_CREATE"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:hasButtons
-        config:
-          titles: ["✅ Confirmar", "❌ Cancelar"]
-          exact: true
-    metadata:
-      requires_real_llm: false
+- description: "Oferta de handoff: botones y sin aceptación por cortesía — turn 1"
+  vars:
+    conversation_id: "flows-handoff-offer"
+    message: "📅 Agendar una cita"
+    button_payload: "OPERATION_CREATE"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
 
-  - description: "Oferta de handoff: botones y sin aceptación por cortesía — turn 2"
-    vars:
-      conversation_id: "flows-handoff-offer"
-      message: "¿Atienden pacientes particulares?"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:hasButtons
-        config:
-          titles: ["💬 Administración", "Menú principal"]
-      - type: javascript
-        value: file://assertions/custom.js:noLeadingGreeting
-    metadata:
-      requires_real_llm: true
+- description: "Oferta de handoff: botones y sin aceptación por cortesía — turn 2"
+  vars:
+    conversation_id: "flows-handoff-offer"
+    message: "¿Atienden pacientes particulares?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["💬 Administración", "Menú principal"]
+    - type: javascript
+      value: file://assertions/custom.js:noLeadingGreeting
+  metadata:
+    requires_real_llm: true
 
-  - description: "Oferta de handoff: botones y sin aceptación por cortesía — turn 3"
-    vars:
-      conversation_id: "flows-handoff-offer"
-      message: "ok gracias"
-    assert:
-      - type: javascript
-        value: file://assertions/custom.js:nodeNotVisited
-        config:
-          node: "handoff"
-    metadata:
-      requires_real_llm: false
+- description: "Oferta de handoff: botones y sin aceptación por cortesía — turn 3"
+  vars:
+    conversation_id: "flows-handoff-offer"
+    message: "ok gracias"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "handoff"
+  metadata:
+    requires_real_llm: false

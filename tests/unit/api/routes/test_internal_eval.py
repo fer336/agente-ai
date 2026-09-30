@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api.dependencies.internal_eval import get_eval_use_case_provider
 from app.application.admin.evaluate_chat_turn import ChatTurnResult, EvalFlow, EvalOption
 from app.config.settings import Settings, get_settings
-from app.domain.entities.admin_user import ADMIN_TECHNICAL
+from app.domain.entities.admin_user import ADMIN_TECHNICAL, ROLES
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import create_session_token
 from app.main import app
@@ -106,6 +106,20 @@ async def test_enabled_but_unauthenticated_is_rejected(stub_use_case: _StubUseCa
         app.dependency_overrides.clear()
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", sorted(ROLES - {ADMIN_TECHNICAL}))
+async def test_enabled_but_non_technical_role_is_forbidden(stub_use_case: _StubUseCase, role: str):
+    app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
+    app.dependency_overrides[get_eval_use_case_provider] = lambda: lambda _cid: stub_use_case
+    try:
+        response = await _post_eval_chat(cookies=_session_cookies(role))
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+    assert stub_use_case.calls == []
 
 
 @pytest.mark.asyncio
