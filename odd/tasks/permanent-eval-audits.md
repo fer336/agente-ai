@@ -58,8 +58,9 @@ command and the endpoint stays safe while it is always on.
   `fix/promptfoo-dataset-format`: 2b23941 and 787d9ae). Route: direct inline.
 - [x] T2 — Eval endpoint restricted to `ADMIN_TECHNICAL`. Route: delegated direct.
   RED: 2 new 403 tests (ADMIN_CLINIC, READ_ONLY) got 200; GREEN after `require_role(ADMIN_TECHNICAL)`.
-  Commit: T2_HASH
-- [ ] T3 — `evals/run-audit.sh`. Route: delegated direct.
+  Commit: 587aa92
+- [x] T3 — `evals/run-audit.sh`. Route: delegated direct.
+  Evidence: `bash -n` ok, static tests pass, shellcheck not installed. Commit: see git log (`feat(evals): add a one-command production audit script`).
 - [ ] T4 — Stack back on `agente_ai_backend_env`, plus always-on docs. Route: delegated direct.
 
 ## Progress
@@ -69,4 +70,4 @@ command and the endpoint stays safe while it is always on.
 
 ## Next step
 
-T3.
+T4.
