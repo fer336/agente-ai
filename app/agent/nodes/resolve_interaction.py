@@ -51,6 +51,19 @@ POST_ACTION_CLOSE_INTENT = "post_action_close"
 THIRD_PARTY_GUARD_INTENT = "third_party_guard"
 _THIRD_PARTY_STAGES_EXEMPT = frozenset({"awaiting_confirmation"})
 
+#: Stages that ask the patient for a specific data field (first-visit intake, name + DNI,
+#: legacy new-patient details). A plain typed answer there ("OSDE 210", "Swiss Medical") is
+#: data for the stage, never an information request for the LLM to route elsewhere.
+_DATA_COLLECTION_STAGES = frozenset(
+    {"awaiting_first_visit_intake", "awaiting_identification", "awaiting_new_patient_details"}
+)
+
+
+def _looks_like_a_question(text: str) -> bool:
+    """A typed question mark is the deterministic sign of a genuine question mid-collection."""
+    return "?" in text or "¿" in text
+
+
 #: Every intent `_route_after_resolve_interaction` (graph.py) sends to a real
 #: business node EXCEPT "appointment" — that one gets its own, stricter
 #: check right below (`_is_genuine_new_request`): a bare `intent=appointment`
@@ -344,6 +357,12 @@ async def _resolve(
         if has_active_stage:
             return _temporary_result("location", collected_data)
         return {"intent": "location"}
+
+    # A data answer while a stage is collecting data goes to that stage without LLM
+    # routing. A genuine question (typed with a question mark, e.g. "¿atienden por OSDE?")
+    # still reaches the information node as a temporary interruption; the stage is kept.
+    if stage in _DATA_COLLECTION_STAGES and not _looks_like_a_question(state["user_message"]):
+        return {"intent": "appointment"}
 
     context: dict[str, object] = {
         "recent_messages": state["recent_messages"],

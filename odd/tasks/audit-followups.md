@@ -116,6 +116,18 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
   it through the real node paths.
 - A re-run of the promptfoo audit passes these cases.
 
+- [x] T6 — Keep data answers in data-collection stages; clear the retry identity.
+  - Root cause: `resolve_interaction._resolve` sent every typed message through the LLM intent, so "OSDE 210" during
+    the intake (stage `awaiting_first_visit_intake`) or identification became `insurance` and was answered by the
+    agreement node, never reaching the intake. Retry (`appointment.py`, not-found choice) kept `identification_*`.
+  - Fix: while stage is intake / identification / new-patient details, free text without a question mark returns
+    `appointment` with no LLM routing. Button payloads, main menu, T1 handoff phrases, T2 guard and location still
+    run first. Decision for mid-collection questions: a typed "?" means a genuine question, so it goes through the
+    LLM and the information node answers as a temporary interruption; the stage and its data are untouched (the
+    pending field is not re-asked; the previous prompt stays visible). Retry now drops name and DNI.
+  - RED: 6 failures in `tests/unit/agent/nodes/test_data_stage_routing.py` (osde/OSDE 210 routed to insurance,
+    retry kept identity); GREEN after the change.
+
 ## Progress
 
 - Branch `fix/audit-followups` from origin/fix/no-premature-action-claims (ea7a15b).

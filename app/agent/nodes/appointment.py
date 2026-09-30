@@ -4334,9 +4334,14 @@ def create_appointment_node(
                     {**collected_data, "first_visit_intake": {"stage": "question"}},
                 )
             if payload == PATIENT_NOT_FOUND_RETRY_PAYLOAD:
+                # The identity must come from what the patient types now.
                 return await _begin_identification(
                     conversation_id,
-                    collected_data,
+                    {
+                        key: value
+                        for key, value in collected_data.items()
+                        if key not in {"identification_full_name", "identification_dni"}
+                    },
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
