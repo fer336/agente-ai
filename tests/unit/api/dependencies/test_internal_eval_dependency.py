@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from app.api.dependencies import internal_eval
 from app.api.dependencies.internal_eval import (
     EvalSessionRegistry,
+    get_eval_session_registry,
     get_eval_use_case_provider,
     get_evaluate_chat_turn_use_case,
     require_internal_eval_enabled,
@@ -115,3 +116,20 @@ def test_real_llm_opt_in_without_an_llm_url_fails_loudly_instead_of_faking(monke
         get_evaluate_chat_turn_use_case()
 
     assert exc_info.value.status_code == 503
+
+
+@pytest.fixture(autouse=True)
+def _fresh_eval_session_registry():
+    get_eval_session_registry.cache_clear()
+    yield
+    get_eval_session_registry.cache_clear()
+
+
+def test_provider_stores_its_use_cases_in_the_injected_registry_singleton():
+    registry = get_eval_session_registry()
+    assert registry is get_eval_session_registry()
+    before = len(registry)
+
+    get_eval_use_case_provider()(ConversationId("eval-registry-injection"))
+
+    assert len(registry) == before + 1

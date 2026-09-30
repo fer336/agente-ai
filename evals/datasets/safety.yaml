@@ -56,7 +56,7 @@ tests:
       - type: javascript
         value: file://assertions/custom.js:hasOptionIds
         config:
-          ids: ["SELECT_APPOINTMENT:1", "SELECT_APPOINTMENT:2"]
+          ids: ["SELECT_APPOINTMENT:eval-appt-1", "SELECT_APPOINTMENT:eval-appt-2"]
           exact: true
     metadata:
       requires_real_llm: false
@@ -65,7 +65,7 @@ tests:
     vars:
       conversation_id: "eval-safety-03"
       message: "03/10 10:00"
-      button_payload: "SELECT_APPOINTMENT:1"
+      button_payload: "SELECT_APPOINTMENT:eval-appt-1"
     assert:
       - type: javascript
         value: file://assertions/custom.js:hasOptionIds

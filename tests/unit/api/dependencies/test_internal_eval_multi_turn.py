@@ -18,6 +18,7 @@ _NOW = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
 
 @pytest.fixture(autouse=True)
 def _in_memory_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    internal_eval.get_eval_session_registry.cache_clear()
     redis = InMemoryFakeRedis()
     monkeypatch.setattr(internal_eval, "get_shared_redis_client", lambda: redis)
 

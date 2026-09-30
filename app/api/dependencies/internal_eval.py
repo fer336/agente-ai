@@ -2,6 +2,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from functools import lru_cache
 
 from fastapi import Depends, HTTPException, status
 from langgraph.checkpoint.memory import MemorySaver
@@ -221,11 +222,16 @@ class EvalSessionRegistry:
 
 EvalUseCaseProvider = Callable[[ConversationId], EvaluateChatTurnUseCase]
 
-_registry = EvalSessionRegistry()
+
+@lru_cache
+def get_eval_session_registry() -> EvalSessionRegistry:
+    """Process-wide registry; tests reset it with `.cache_clear()`."""
+    return EvalSessionRegistry()
 
 
 def get_eval_use_case_provider() -> EvalUseCaseProvider:
     """FastAPI dependency: resolves the (per-conversation, reused) eval use case."""
-    return lambda conversation_id: _registry.get_or_create(
+    registry = get_eval_session_registry()
+    return lambda conversation_id: registry.get_or_create(
         conversation_id, get_evaluate_chat_turn_use_case
     )

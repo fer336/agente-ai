@@ -59,13 +59,13 @@ def build_eval_seed(now: datetime) -> EvalSeed:
     day = now.replace(hour=10, minute=0, second=0, microsecond=0)
     booked = [
         Appointment(
-            id=AppointmentId("1"),
+            id=AppointmentId("eval-appt-1"),
             patient_id=_EVAL_PATIENT_ID,
             slot=_slot("eval-booked-1", _PROFESSIONALS[0], day + timedelta(days=3)),
             status="confirmed",
         ),
         Appointment(
-            id=AppointmentId("2"),
+            id=AppointmentId("eval-appt-2"),
             patient_id=_EVAL_PATIENT_ID,
             slot=_slot(
                 "eval-booked-2",

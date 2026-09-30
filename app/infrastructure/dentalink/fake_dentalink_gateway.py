@@ -24,7 +24,6 @@ class FakeDentalinkGateway:
         self._professionals = list(professionals) if professionals else []
         self._appointments_by_key: dict[str, Appointment] = {}
         self._appointments_by_id: dict[str, Appointment] = {}
-        self._next_id = count(1)
         for appointment in appointments or []:
             self._appointments_by_id[str(appointment.id)] = appointment
             self._appointments_by_key[f"seed:{appointment.id}"] = appointment

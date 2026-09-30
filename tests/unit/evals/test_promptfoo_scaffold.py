@@ -29,8 +29,6 @@ _DATASET_NAMES = [
     "flows",
     "flows_view_appointment",
 ]
-_UNREFERENCED_DATASET_NAMES: list[str] = []
-_ALL_DATASET_NAMES = _DATASET_NAMES + _UNREFERENCED_DATASET_NAMES
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
 
@@ -43,7 +41,7 @@ def test_scaffold_has_the_prd_58_documented_directory_tree():
     assert (_EVALS_DIR / "promptfooconfig.yaml").is_file()
     assert (_EVALS_DIR / "prompts" / "agent_system_prompt.txt").is_file()
     assert (_EVALS_DIR / "assertions" / "custom.js").is_file()
-    for name in _ALL_DATASET_NAMES:
+    for name in _DATASET_NAMES:
         assert (_EVALS_DIR / "datasets" / f"{name}.yaml").is_file()
     assert (_EVALS_DIR / "README.md").is_file()
 
@@ -56,8 +54,6 @@ def test_promptfooconfig_parses_and_references_every_dataset_file():
     # `file://` paths resolve from the config file's own directory.
     for name in _DATASET_NAMES:
         assert f"file://datasets/{name}.yaml" in referenced
-    for name in _UNREFERENCED_DATASET_NAMES:
-        assert f"file://datasets/{name}.yaml" not in referenced
 
 
 def test_promptfooconfig_runs_turns_in_order_without_serving_cached_replies():
@@ -87,7 +83,7 @@ def test_system_prompt_is_non_empty_and_covers_the_non_negotiable_rules():
         assert required_phrase in text.lower()
 
 
-@pytest.mark.parametrize("name", _ALL_DATASET_NAMES)
+@pytest.mark.parametrize("name", _DATASET_NAMES)
 def test_dataset_file_has_well_formed_test_cases(name: str):
     dataset = _load_yaml(_EVALS_DIR / "datasets" / f"{name}.yaml")
 
@@ -328,7 +324,7 @@ def _dataset_asserts(name: str):
             yield test_case, assertion
 
 
-@pytest.mark.parametrize("name", _ALL_DATASET_NAMES)
+@pytest.mark.parametrize("name", _DATASET_NAMES)
 def test_dataset_javascript_asserts_reference_exported_helpers(name: str):
     node = shutil.which("node")
     if node is None:

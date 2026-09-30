@@ -60,8 +60,11 @@ flows fixed recently, so every PR can be audited before deploy.
   Route: direct inline.
 - [x] T7 — Refresh stale dataset expectations for the real LLM; production-run runbook.
   Route: direct inline (generated datasets + README).
+- [x] T8 — Native review advisory findings (code and docs). Route: direct inline.
 
 ## Progress
+
+- Native review (high, 2825 lines, 4 lenses): consent granted, approved and acknowledged (lineage review-869e633159b61089); advisory findings fixed in T8.
 
 - Branch `feat/promptfoo-audit` from origin/main 944affc (v0.43.0).
 - T1: applied the pending diff from `fix/internal-eval-reply` unchanged.
@@ -127,6 +130,18 @@ flows fixed recently, so every PR can be audited before deploy.
   all 53 deterministic asserts of these datasets pass. Wording asserts are tagged
   `requires_real_llm: true`. `evals/README.md` gained "Run against production".
   `uv run pytest tests/unit/evals`: 38 passed.
+- T8 code: RED = `ImportError eval_contact_id` (collection) in `test_evaluate_chat_turn.py`, plus
+  chronological-last, location, raising-invoker and per-conversation-contact tests; `sent_log`
+  added to the fake YCloud gateway so the use case reports the LAST message sent; one
+  kind->collection table for read and clear; clear runs in a `finally`; `location` reply kind;
+  eval contact id is `eval-contact-<conversation_id>`; seeded appointment ids are
+  `eval-appt-1/2` (datasets updated); dead `_next_id` line and `_UNREFERENCED_DATASET_NAMES`
+  removed; `get_eval_session_registry` (lru_cache) replaces the module global and is reset per
+  test. Real-LLM branch test (`test_internal_eval_real_llm.py`) calls the real
+  `get_llm_provider()` with only settings, runtime-config service and httpx transport patched:
+  the wiring was already correct (it reached the LLM endpoint and completed a turn), so it is a
+  guard rather than a fix. Uvicorn runs a single process (`entrypoint.sh`, no `--workers`).
+  `uv run pytest`: 1921 passed, only the 3 excused redis failures; ruff check and mypy clean.
 
 ## Next step
 

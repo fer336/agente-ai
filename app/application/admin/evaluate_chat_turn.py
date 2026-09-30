@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from app.domain.entities.agent_run import AgentRun
@@ -27,7 +27,7 @@ from app.domain.value_objects.phone_number import PhoneNumber
 #: the single isolated, all-fake `AgentInvoker` this use case is always
 #: constructed with (see `app.api.dependencies.internal_eval`), never the
 #: production one.
-EVAL_CONTACT_ID = "eval-contact"
+EVAL_CONTACT_ID_PREFIX = "eval-contact-"
 EVAL_PHONE = PhoneNumber("+5490000000000")
 
 
@@ -49,7 +49,25 @@ class EvalFlow:
     cta: str
 
 
-ReplyKind = Literal["text", "buttons", "list", "flow"]
+ReplyKind = Literal["text", "buttons", "list", "flow", "location"]
+
+#: Reply kind -> the fake gateway's own collection. One table for reading AND clearing,
+#: so a new kind can never be read without also being cleared.
+_COLLECTION_BY_KIND: dict[ReplyKind, str] = {
+    "text": "sent_messages",
+    "buttons": "sent_buttons",
+    "list": "sent_lists",
+    "flow": "sent_flows",
+    "location": "sent_locations",
+}
+
+
+def eval_contact_id(conversation_id: ConversationId) -> str:
+    """One synthetic contact per eval conversation: contact-scoped state (the
+    compacted memory summary and its Redis cache key) never leaks between
+    scenarios or runs.
+    """
+    return f"{EVAL_CONTACT_ID_PREFIX}{conversation_id}"
 
 
 @dataclass
@@ -118,7 +136,7 @@ class EvaluateChatTurnUseCase:
         now: datetime,
         button_payload: str | None = None,
     ) -> ChatTurnResult:
-        await self._ensure_eval_contact()
+        await self._ensure_eval_contact(conversation_id)
         await self._ensure_conversation(conversation_id, now)
 
         inbound = Message(
@@ -131,7 +149,13 @@ class EvaluateChatTurnUseCase:
         )
         await self._messages.save(inbound)
 
-        await self._agent_invoker.handle(conversation_id, [inbound.id], message, button_payload)
+        try:
+            await self._agent_invoker.handle(conversation_id, [inbound.id], message, button_payload)
+            reply = self._read_reply()
+        finally:
+            # Runs on every path, also when the agent raised: the gateway outlives a
+            # turn, so a leftover reply would be reported as the next turn's.
+            self._consume_captured_replies()
 
         agent_run = await self._agent_runs.get_latest_by_conversation_id(conversation_id)
         node_executions: list[NodeExecution] = []
@@ -139,9 +163,6 @@ class EvaluateChatTurnUseCase:
         if agent_run is not None:
             node_executions = await self._node_executions.get_by_agent_run_id(agent_run.id)
             tool_executions = await self._tool_executions.get_by_agent_run_id(agent_run.id)
-
-        reply = self._read_reply()
-        self._consume_captured_replies()
 
         return ChatTurnResult(
             reply_text=reply.text,
@@ -154,64 +175,69 @@ class EvaluateChatTurnUseCase:
             flow=reply.flow,
         )
 
+    def _captured(self, kind: ReplyKind) -> list[Any]:
+        collection = getattr(self._messaging_gateway, _COLLECTION_BY_KIND[kind], None)
+        return collection if isinstance(collection, list) else []
+
     def _consume_captured_replies(self) -> None:
-        """The gateway now outlives a single turn (the stack is reused per
-        conversation), so drop what this turn sent: the next turn must only
-        ever see its own reply.
+        for kind in _COLLECTION_BY_KIND:
+            self._captured(kind).clear()
+        log = getattr(self._messaging_gateway, "sent_log", None)
+        if isinstance(log, list):
+            log.clear()
+
+    def _last_sent(self) -> tuple[ReplyKind, Any] | None:
+        """The last message actually sent, chronologically. Falls back to the newest
+        entry of the first non-empty collection when the gateway keeps no send log.
         """
-        for name in ("sent_messages", "sent_buttons", "sent_flows", "sent_lists", "sent_locations"):
-            sent = getattr(self._messaging_gateway, name, None)
-            if isinstance(sent, list):
-                sent.clear()
+        log = getattr(self._messaging_gateway, "sent_log", None)
+        if isinstance(log, list) and log:
+            kind, index = log[-1]
+            return kind, self._captured(kind)[index]
+        for kind in _COLLECTION_BY_KIND:
+            captured = self._captured(kind)
+            if captured:
+                return kind, captured[-1]
+        return None
 
     def _read_reply(self) -> "_Reply":
-        """Reads what the fake gateway captured. Interactive replies win over
-        plain text (a summary text followed by buttons is one reply to the
-        patient, and its options are what an assertion needs); each option
-        family is exposed from its own collection.
+        """The reply is the LAST message sent this turn; its options (buttons, list
+        rows, flow) are exposed only when that message is the interactive one.
         """
-        gateway = self._messaging_gateway
-        sent_buttons = getattr(gateway, "sent_buttons", [])
-        sent_lists = getattr(gateway, "sent_lists", [])
-        sent_flows = getattr(gateway, "sent_flows", [])
-        sent_messages = getattr(gateway, "sent_messages", [])
-
-        reply = _Reply()
-        if sent_buttons:
-            reply.buttons = [EvalOption(id=b.id, title=b.title) for b in sent_buttons[-1][2]]
-        if sent_lists:
+        last = self._last_sent()
+        if last is None:
+            return _Reply()
+        kind, entry = last
+        reply = _Reply(kind=kind)
+        if kind == "buttons":
+            reply.text = entry[1]
+            reply.buttons = [EvalOption(id=b.id, title=b.title) for b in entry[2]]
+        elif kind == "list":
+            reply.text = entry[1]
             reply.list_rows = [
-                EvalOption(id=r.id, title=r.title, description=r.description)
-                for r in sent_lists[-1][2].rows
+                EvalOption(id=r.id, title=r.title, description=r.description) for r in entry[2].rows
             ]
-        if sent_flows:
-            request = sent_flows[-1][2]
+        elif kind == "flow":
+            reply.text = entry[1]
             reply.flow = EvalFlow(
-                flow_id=request.flow_id, screen_id=request.flow_screen_id, cta=request.flow_cta
+                flow_id=entry[2].flow_id, screen_id=entry[2].flow_screen_id, cta=entry[2].flow_cta
             )
-
-        for kind, sent in (
-            ("buttons", sent_buttons),
-            ("list", sent_lists),
-            ("flow", sent_flows),
-            ("text", sent_messages),
-        ):
-            if sent:
-                reply.kind = kind  # type: ignore[assignment]
-                reply.text = sent[-1][1]
-                break
+        elif kind == "text":
+            reply.text = entry[1]
         return reply
 
-    async def _ensure_eval_contact(self) -> None:
-        if await self._contacts.get_by_id(EVAL_CONTACT_ID) is None:
-            await self._contacts.save(
-                Contact(id=EVAL_CONTACT_ID, phone=EVAL_PHONE, patient_id=None)
-            )
+    async def _ensure_eval_contact(self, conversation_id: ConversationId) -> None:
+        contact_id = eval_contact_id(conversation_id)
+        if await self._contacts.get_by_id(contact_id) is None:
+            await self._contacts.save(Contact(id=contact_id, phone=EVAL_PHONE, patient_id=None))
 
     async def _ensure_conversation(self, conversation_id: ConversationId, now: datetime) -> None:
         if await self._conversations.get_by_id(conversation_id) is None:
             await self._conversations.save(
                 Conversation(
-                    id=conversation_id, contact_id=EVAL_CONTACT_ID, mode="agent", created_at=now
+                    id=conversation_id,
+                    contact_id=eval_contact_id(conversation_id),
+                    mode="agent",
+                    created_at=now,
                 )
             )

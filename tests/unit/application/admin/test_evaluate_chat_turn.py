@@ -3,15 +3,16 @@ from datetime import UTC, datetime
 import pytest
 
 from app.application.admin.evaluate_chat_turn import (
-    EVAL_CONTACT_ID,
     EvalFlow,
     EvalOption,
     EvaluateChatTurnUseCase,
+    eval_contact_id,
 )
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage, ListRow
+from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.fake_agent_invoker import FakeAgentInvoker
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
@@ -59,10 +60,10 @@ async def test_execute_creates_the_eval_contact_and_conversation_and_saves_the_i
 
     await use_case.execute(ConversationId("eval-001"), "Cancelame el turno de mañana", now=_NOW)
 
-    assert await contacts.get_by_id(EVAL_CONTACT_ID) is not None
+    assert await contacts.get_by_id(eval_contact_id(ConversationId("eval-001"))) is not None
     conversation = await conversations.get_by_id(ConversationId("eval-001"))
     assert conversation is not None
-    assert conversation.contact_id == EVAL_CONTACT_ID
+    assert conversation.contact_id == eval_contact_id(ConversationId("eval-001"))
     saved_messages = await messages.get_by_conversation_id(ConversationId("eval-001"))
     assert [m.text for m in saved_messages] == ["Cancelame el turno de mañana"]
 
@@ -286,18 +287,106 @@ async def test_execute_reports_no_reply_kind_when_nothing_was_sent():
 
 
 @pytest.mark.asyncio
-async def test_execute_prefers_the_interactive_reply_over_a_preceding_text():
+async def test_execute_reports_the_last_message_sent_not_a_fixed_kind_priority():
     messaging_gateway = FakeYCloudMessagingGateway()
-    await messaging_gateway.send_text_message(_PHONE, "Resumen")
     await messaging_gateway.send_buttons(
         _PHONE, "¿Qué hacemos?", [InteractiveButton(id="MENU_MAIN", title="Menú principal")]
     )
+    await messaging_gateway.send_text_message(_PHONE, "Resumen final")
     use_case = _use_case(messaging_gateway=messaging_gateway)
 
-    result = await use_case.execute(ConversationId("eval-mixed"), "hola", now=_NOW)
+    result = await use_case.execute(ConversationId("eval-order-1"), "hola", now=_NOW)
 
-    assert result.reply_kind == "buttons"
-    assert result.reply_text == "¿Qué hacemos?"
+    assert result.reply_kind == "text"
+    assert result.reply_text == "Resumen final"
+    assert result.buttons == []
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_a_list_sent_after_buttons_as_the_reply():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_buttons(
+        _PHONE, "Antes", [InteractiveButton(id="MENU_MAIN", title="Menú principal")]
+    )
+    await messaging_gateway.send_list(
+        _PHONE,
+        "Elegí",
+        ListMessage(button_label="Ver", rows=[ListRow(id="SPECIALTY:1", title="Ortodoncia")]),
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-order-2"), "hola", now=_NOW)
+
+    assert result.reply_kind == "list"
+    assert result.reply_text == "Elegí"
+    assert [r.id for r in result.list_rows] == ["SPECIALTY:1"]
+    assert result.buttons == []
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_a_location_reply():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_location(
+        _PHONE, LocationRequest(latitude=-34.6, longitude=-58.4, name="Clínica", address="Calle 1")
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-location"), "hola", now=_NOW)
+
+    assert result.reply_kind == "location"
+    assert result.reply_text is None
+
+
+class _RaisingInvoker:
+    def __init__(self, messaging_gateway: FakeYCloudMessagingGateway) -> None:
+        self._gateway = messaging_gateway
+
+    async def handle(self, conversation_id, message_ids, user_message, button_payload) -> None:
+        await self._gateway.send_text_message(_PHONE, "reply sent before the crash")
+        raise RuntimeError("agent exploded")
+
+
+@pytest.mark.asyncio
+async def test_execute_clears_captured_replies_even_when_the_invoker_raises():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case = EvaluateChatTurnUseCase(
+        conversations=make_conversation_repository(),
+        contacts=make_contact_repository(),
+        messages=make_message_repository(),
+        agent_runs=make_agent_run_repository(),
+        node_executions=make_node_execution_repository(),
+        tool_executions=make_tool_execution_repository(),
+        agent_invoker=_RaisingInvoker(messaging_gateway),
+        messaging_gateway=messaging_gateway,
+    )
+
+    with pytest.raises(RuntimeError):
+        await use_case.execute(ConversationId("eval-crash"), "hola", now=_NOW)
+
+    assert messaging_gateway.sent_messages == []
+    assert messaging_gateway.sent_log == []
+
+
+@pytest.mark.asyncio
+async def test_each_conversation_gets_its_own_eval_contact():
+    contacts = make_contact_repository()
+    use_case = EvaluateChatTurnUseCase(
+        conversations=make_conversation_repository(),
+        contacts=contacts,
+        messages=make_message_repository(),
+        agent_runs=make_agent_run_repository(),
+        node_executions=make_node_execution_repository(),
+        tool_executions=make_tool_execution_repository(),
+        agent_invoker=FakeAgentInvoker(),
+        messaging_gateway=FakeYCloudMessagingGateway(),
+    )
+
+    await use_case.execute(ConversationId("eval-a"), "hola", now=_NOW)
+    await use_case.execute(ConversationId("eval-b"), "hola", now=_NOW)
+
+    assert await contacts.get_by_id(eval_contact_id(ConversationId("eval-a"))) is not None
+    assert await contacts.get_by_id(eval_contact_id(ConversationId("eval-b"))) is not None
+    assert eval_contact_id(ConversationId("eval-a")) != eval_contact_id(ConversationId("eval-b"))
 
 
 @pytest.mark.asyncio
