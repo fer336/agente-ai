@@ -263,7 +263,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["🆕 Registrarme", "🔁 Probar otro dato", "💬 Asesor"]
+        titles: ["🆕 Registrarme", "🔁 Probar otro dato", "💬 Administración"]
         exact: true
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -405,7 +405,7 @@
 - description: "Paciente no encontrado: asesor — turn 4"
   vars:
     conversation_id: "eval-audit-not-found-03"
-    message: "💬 Asesor"
+    message: "💬 Administración"
     button_payload: "MENU_ADMIN"
   assert:
     - type: javascript
@@ -452,7 +452,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["🆕 Registrarme", "🔁 Probar otro dato", "💬 Asesor"]
+        titles: ["🆕 Registrarme", "🔁 Probar otro dato", "💬 Administración"]
         exact: true
     - type: llm-rubric
       value: >

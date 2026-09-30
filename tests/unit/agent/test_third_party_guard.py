@@ -130,7 +130,7 @@ def test_the_static_message_says_what_the_agent_can_do_and_carries_no_greeting()
     text = THIRD_PARTY_STATIC_MESSAGE.casefold()
     assert "propios" in text
     assert "dni" in text
-    assert "asesor" in text
+    assert "administración" in text
     assert not text.startswith(("hola", "buenas"))
 
 

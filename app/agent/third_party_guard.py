@@ -35,7 +35,7 @@ _CLAIM = re.compile(
 #: Static wording, also the fallback when the LLM-built reply fails the guards.
 THIRD_PARTY_STATIC_MESSAGE = (
     "Solo puedo ayudarte con tus propios turnos, no con los de otra persona. Si querés, "
-    "escribime tu nombre completo y tu DNI, o te conecto con un asesor."
+    "escribime tu nombre completo y tu DNI, o te conecto con administración."
 )
 
 THIRD_PARTY_CONTEXT: dict[str, object] = {
@@ -45,7 +45,7 @@ THIRD_PARTY_CONTEXT: dict[str, object] = {
     ),
     "instruccion": (
         "Explicá con calidez que solo podés ayudar con los turnos del propio paciente, "
-        "pedile SU nombre completo y SU DNI, y ofrecele conectarlo con un asesor. No pidas ni "
+        "pedile SU nombre completo y SU DNI, y ofrecele conectarlo con administración. No pidas ni "
         "repitas datos de la otra persona, no digas que hiciste ni vas a hacer nada con el "
         "turno. Sin saludo, en dos oraciones cortas. Van a aparecer botones debajo."
     ),

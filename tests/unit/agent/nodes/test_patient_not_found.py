@@ -84,7 +84,7 @@ async def test_audit_replay_says_no_patient_was_found_and_offers_three_ways_forw
     assert [(b.id, b.title) for b in result["response_buttons"]] == [
         (PATIENT_NOT_FOUND_REGISTER_PAYLOAD, "🆕 Registrarme"),
         (PATIENT_NOT_FOUND_RETRY_PAYLOAD, "🔁 Probar otro dato"),
-        (MENU_ADMIN_PAYLOAD, "💬 Asesor"),
+        (MENU_ADMIN_PAYLOAD, "💬 Administración"),
     ]
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
     assert result["requires_handoff"] is False
@@ -217,7 +217,7 @@ async def test_the_advisor_button_routes_to_the_handoff_even_mid_choice():
 
     result = await resolve(
         make_agent_state(
-            user_message="💬 Asesor",
+            user_message="💬 Administración",
             button_payload=MENU_ADMIN_PAYLOAD,
             collected_data={"stage": STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE},
         )

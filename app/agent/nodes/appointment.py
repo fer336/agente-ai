@@ -401,15 +401,15 @@ _NEW_PATIENT_RACE_LOST_MESSAGE = (
 )
 _PATIENT_NOT_FOUND_MESSAGE = (
     "No encontré ningún paciente con esos datos. Podés registrarte, probar con otro nombre "
-    "o DNI, o hablar con un asesor."
+    "o DNI, o hablar con administración."
 )
 _PATIENT_NOT_FOUND_CHOICE_REMINDER = (
-    "Elegí una opción tocando un botón: registrarte, probar otro dato o hablar con un asesor."
+    "Elegí una opción tocando un botón: registrarte, probar otro dato o hablar con administración."
 )
 _PATIENT_NOT_FOUND_BUTTONS = [
     InteractiveButton(id=PATIENT_NOT_FOUND_REGISTER_PAYLOAD, title="🆕 Registrarme"),
     InteractiveButton(id=PATIENT_NOT_FOUND_RETRY_PAYLOAD, title="🔁 Probar otro dato"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Asesor"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 #: Retries that end "not found" again, and free-text replies at the choice, before handing off.
 _NOT_FOUND_MAX_RETRIES = 2
@@ -2608,7 +2608,7 @@ def create_appointment_node(
                     "Decile con claridad y calidez que no encontraste a ningún paciente con "
                     "esos datos. NO le pidas obra social, mail ni ningún otro dato, y no "
                     "repitas su nombre ni su DNI. Van a aparecer 3 botones debajo (registrarse, "
-                    "probar otro dato, hablar con un asesor): invitalo a tocar uno, sin "
+                    "probar otro dato, hablar con administración): invitalo a tocar uno, sin "
                     "listarlos. Sin saludo, en una o dos oraciones cortas."
                 ),
             },
