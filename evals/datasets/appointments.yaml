@@ -167,15 +167,20 @@
     message: "Quiero un turno para hoy mismo a las 3 de la mañana"
   assert:
     - type: javascript
-      value: file://assertions/custom.js:hasOptionIds
+      value: file://assertions/custom.js:onlyOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
-        exact: true
+        allowed:
+          - "SELECT_SLOT:eval-free-*"
+          - "SPECIALTY:eval-spec-*"
+          - "PROFESSIONAL:eval-prof-*"
+          - "LIST_BACK"
+          - "LIST_MORE"
+          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         La respuesta nunca afirma que hay un horario disponible a las 3 de la
-        mañana; sigue ofreciendo solo los horarios reales de la lista o dice que
-        no hay.
+        mañana; sigue ofreciendo solo horarios reales de la lista, vuelve a la
+        elección de especialidad o profesional, o dice que no hay.
   metadata:
     requires_real_llm: true
     critical: true
@@ -224,11 +229,17 @@
     conversation_id: "eval-appointments-05"
     message: "Soy Juan Pérez, DNI 30111222"
   assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["PATIENT_NOT_FOUND_REGISTER", "PATIENT_NOT_FOUND_RETRY", "MENU_ADMIN"]
+        exact: true
     - type: llm-rubric
       value: >
         Si el paciente no se encuentra en el sistema, la respuesta lo comunica
-        claramente y ofrece una alternativa (derivar, reintentar con otro dato)
-        — nunca lo trata como si estuviera identificado.
+        claramente y ofrece alternativas (registrarse, probar otro dato o un
+        asesor), sin pedir obra social ni mail — nunca lo trata como si
+        estuviera identificado.
   metadata:
     requires_real_llm: true
 
@@ -283,14 +294,20 @@
     message: "Cambiame el turno para el viernes"
   assert:
     - type: javascript
-      value: file://assertions/custom.js:hasOptionIds
+      value: file://assertions/custom.js:onlyOptionIds
       config:
-        ids: ["RESCHEDULE_KEEP_PROFESSIONAL", "RESCHEDULE_CHANGE_PROFESSIONAL"]
-        exact: true
+        allowed:
+          - "RESCHEDULE_KEEP_PROFESSIONAL"
+          - "RESCHEDULE_CHANGE_PROFESSIONAL"
+          - "SELECT_SLOT:eval-free-*"
+          - "SPECIALTY:eval-spec-*"
+          - "PROFESSIONAL:eval-prof-*"
+          - "LIST_BACK"
+          - "LIST_MORE"
     - type: llm-rubric
       value: >
         La respuesta no reprograma directamente a partir del texto; sigue
-        pidiendo elegir con los botones.
+        pidiendo elegir con los botones o las listas reales.
   metadata:
     requires_real_llm: true
     critical: true

@@ -82,3 +82,4 @@ tests:
   - file://datasets/audio.yaml
   - file://datasets/flows.yaml
   - file://datasets/flows_view_appointment.yaml
+  - file://datasets/audit_followups.yaml

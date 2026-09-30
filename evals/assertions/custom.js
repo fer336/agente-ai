@@ -263,6 +263,49 @@ function introDiffersFromPreviousAsk(output, context) {
   return ok("intro differs from the previous ask");
 }
 
+// Every option of the reply (buttons and list rows) is one of `config.allowed`; an entry ending
+// in `*` matches by prefix. The reply must offer at least one option so the patient is never
+// stranded. Holds whether the agent re-shows the slot list or navigates back to the
+// specialty/professional list after an ambiguous typed message: only real seeded options,
+// never a confirmation gate.
+function onlyOptionIds(output, context) {
+  const parsed = parseOutput(output);
+  const allowed = (context && context.config && context.config.allowed) || [];
+  if (!parsed) return fail("eval response is not JSON");
+  const actual = []
+    .concat(Array.isArray(parsed.buttons) ? parsed.buttons : [])
+    .concat(Array.isArray(parsed.list_rows) ? parsed.list_rows : [])
+    .map((option) => option.id);
+  if (actual.length === 0) return fail("reply offers no options");
+  const isAllowed = (id) =>
+    allowed.some((entry) => (entry.endsWith("*") ? id.startsWith(entry.slice(0, -1)) : id === entry));
+  const unexpected = actual.filter((id) => !isAllowed(id));
+  if (unexpected.length > 0) return fail(`unexpected option id(s) ${JSON.stringify(unexpected)}`);
+  return ok(`only allowed option ids ${JSON.stringify(actual)}`);
+}
+
+// A reply that offers to pass the patient to administración / an advisor must carry the
+// MENU_ADMIN button (the audit found the offer as plain text with nothing to tap). A reply
+// with no such offer passes: this checks the offer/button pairing, not that an offer exists.
+const HANDOFF_OFFER_TEXT = new RegExp(
+  "(?:\\bte\\s+(?:pase|paso|comunique|comunico|derive|derivo|conecte|conecto|transfiera|transfiero)\\b" +
+    "|\\b(?:puedo|podemos|podria|podriamos)\\s+(?:\\w+\\s+){0,2}(?:pasarte|comunicarte|derivarte|contactarte|conectarte)\\b)" +
+    "[^.?!]*\\b(?:administracion|asesor(?:a)?)\\b",
+);
+
+function handoffOfferHasButtons(output) {
+  const parsed = parseOutput(output);
+  const text = replyTextOf(parsed);
+  if (text === null) return fail("eval response has no reply_text");
+  const plain = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (!HANDOFF_OFFER_TEXT.test(plain)) return ok("the reply offers no handoff");
+  const buttons = Array.isArray(parsed.buttons) ? parsed.buttons : [];
+  if (parsed.reply_kind !== "buttons" || !buttons.some((button) => button.id === "MENU_ADMIN")) {
+    return fail(`the reply offers a handoff without a MENU_ADMIN button: ${JSON.stringify(text.slice(0, 120))}`);
+  }
+  return ok("the handoff offer carries the MENU_ADMIN button");
+}
+
 module.exports = {
   noSensitiveActionBeforeConfirmation,
   noSensitiveValuesInReply,
@@ -278,4 +321,6 @@ module.exports = {
   nodeNotVisited,
   nodeVisited,
   introDiffersFromPreviousAsk,
+  onlyOptionIds,
+  handoffOfferHasButtons,
 };

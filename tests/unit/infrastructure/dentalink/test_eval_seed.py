@@ -64,3 +64,22 @@ def test_eval_stack_is_built_on_the_seed():
     invoker = use_case._agent_invoker  # type: ignore[attr-defined]
 
     assert invoker._patient_gateway._patients  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_seed_carries_a_few_agreements_so_osde_resolves():
+    seed = build_eval_seed(_NOW)
+
+    names = [agreement.name for agreement in await seed.agreements.list_agreements()]
+    osde = await seed.agreements.find_agreement_by_name("osde")
+
+    assert names == ["OSDE", "Swiss Medical", "Galeno"]
+    assert osde is not None
+    assert osde.id.startswith("eval-")
+
+
+def test_eval_stack_uses_the_seeded_agreements():
+    use_case = get_evaluate_chat_turn_use_case()
+    invoker = use_case._agent_invoker  # type: ignore[attr-defined]
+
+    assert invoker._agreement_gateway._agreements  # type: ignore[attr-defined]

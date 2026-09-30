@@ -100,7 +100,15 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
     HANDOFF_OFFER_BUTTONS when flag OR detector (detector gained "te gustaría que te pase"); the flag is ignored when
     the answer guards replaced the model text.
   - RED: `ImportError` for `HANDOFF_OFFER_FLAG_KEY`; GREEN: `test_handoff_offer_flag.py` + parser tests.
-- [ ] T5 — Eval agreements seed and stale datasets. Route: delegated direct.
+- [x] T5 — Eval agreements seed and stale datasets. Route: delegated direct.
+  - Seed: `EvalSeed.agreements` (OSDE, Swiss Medical, Galeno; ids `eval-agr-*`) used by the eval stack in
+    `app/api/dependencies/internal_eval.py`. RED: `test_seed_carries_a_few_agreements_so_osde_resolves`.
+  - Datasets: new `evals/datasets/audit_followups.yaml` (T1 x5 phrases + mid-flow, T2, T3 x4 scenarios, T4, agreements);
+    helpers `onlyOptionIds` and `handoffOfferHasButtons` in `assertions/custom.js`; `appointments`/`audio`/`safety`/
+    `agreements` refreshed (typed message on the slot list now asserts seeded options only; audio-01 is a 2-turn scenario
+    opening with the first-visit question).
+  - New `tests/unit/evals/test_dataset_replay.py` replays every deterministic case in-process (fake LLM, in-memory Redis).
+    RED: scaffold tests for the dataset/helpers failed until they existed. GREEN: full suite.
 
 ## Acceptance criteria
 
@@ -114,4 +122,4 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
 
 ## Next step
 
-T1.
+Rebase onto `origin/main` once #153 merges, then re-run the promptfoo audit.

@@ -28,6 +28,7 @@ _DATASET_NAMES = [
     "audio",
     "flows",
     "flows_view_appointment",
+    "audit_followups",
 ]
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
@@ -180,6 +181,8 @@ def test_custom_assertions_js_exports_the_expected_functions():
         "nodeNotVisited",
         "nodeVisited",
         "introDiffersFromPreviousAsk",
+        "onlyOptionIds",
+        "handoffOfferHasButtons",
     }
 
 
@@ -299,6 +302,50 @@ def test_reply_shape_helpers_check_kind_list_rows_and_nodes():
     assert _run_helper("nodeVisited", _ASK_REPLY, {"node": "appointment"})["pass"] is True
     assert _run_helper("mentionsAll", _ASK_REPLY, {"terms": ["datos", "necesito"]})["pass"] is True
     assert _run_helper("mentionsAll", _ASK_REPLY, {"terms": ["obra social"]})["pass"] is False
+
+
+def test_only_option_ids_accepts_seeded_options_and_rejects_anything_else():
+    allowed = {"allowed": ["SELECT_SLOT:eval-free-*", "SPECIALTY:eval-spec-*", "LIST_BACK"]}
+    slots = {
+        **_ASK_REPLY,
+        "reply_kind": "list",
+        "list_rows": [
+            {"id": "SELECT_SLOT:eval-free-1", "title": "a"},
+            {"id": "LIST_BACK", "title": "b"},
+        ],
+    }
+    specialties = {
+        **_ASK_REPLY,
+        "reply_kind": "list",
+        "list_rows": [{"id": "SPECIALTY:eval-spec-2", "title": "x"}],
+    }
+    invented = {**slots, "list_rows": [{"id": "SELECT_SLOT:invented-9", "title": "z"}]}
+
+    assert _run_helper("onlyOptionIds", slots, allowed)["pass"] is True
+    assert _run_helper("onlyOptionIds", specialties, allowed)["pass"] is True
+    assert _run_helper("onlyOptionIds", invented, allowed)["pass"] is False
+    assert _run_helper("onlyOptionIds", _QUESTION_REPLY, allowed)["pass"] is False
+    # A reply with no options at all strands the patient.
+    assert _run_helper("onlyOptionIds", _ASK_REPLY, allowed)["pass"] is False
+
+
+def test_handoff_offer_helper_fails_only_when_an_offer_carries_no_admin_button():
+    offer = "Sí, atendemos particulares. ¿Te gustaría que te pase con administración?"
+    with_button = {
+        "reply_text": offer,
+        "reply_kind": "buttons",
+        "buttons": [{"id": "MENU_ADMIN", "title": "💬 Administración"}],
+    }
+    no_buttons = {"reply_text": offer, "reply_kind": "text", "buttons": []}
+    other_buttons = {**with_button, "buttons": [{"id": "MENU_MAIN", "title": "Menú principal"}]}
+    plain = {"reply_text": "Atendemos de 9 a 18.", "reply_kind": "text", "buttons": []}
+    old_wording = {**no_buttons, "reply_text": "Si querés, puedo pasarte con un asesor."}
+
+    assert _run_helper("handoffOfferHasButtons", with_button)["pass"] is True
+    assert _run_helper("handoffOfferHasButtons", no_buttons)["pass"] is False
+    assert _run_helper("handoffOfferHasButtons", other_buttons)["pass"] is False
+    assert _run_helper("handoffOfferHasButtons", old_wording)["pass"] is False
+    assert _run_helper("handoffOfferHasButtons", plain)["pass"] is True
 
 
 def test_intro_helper_flags_a_repeated_intro_within_one_conversation():
@@ -478,3 +525,46 @@ def test_grader_config_has_safe_defaults_and_no_stale_9router_default():
     assert "env.EVAL_GRADER_BASE_URL or" in config
     assert "https://openrouter.ai/api/v1" in config
     assert "OpenRouter" in config
+
+
+def test_audit_followups_dataset_covers_each_task_with_deterministic_asserts():
+    tests = _load_test_cases("audit_followups")
+    messages = " | ".join(t["vars"]["message"].casefold() for t in tests)
+    helpers = {
+        _HELPER_REFERENCE.fullmatch(a["value"])[1]
+        for t in tests
+        for a in t["assert"]
+        if a["type"] == "javascript"
+    }
+
+    # T1: the five PRD.md §22 phrases hand off.
+    for phrase in [
+        "voy a llegar tarde",
+        "estoy llegando",
+        "no aparece mi turno",
+        "me equivoqué con el turno",
+        "tengo un problema con mi turno",
+    ]:
+        assert phrase in messages
+    # T2: a kinship claim; T3: an unknown patient; T4: an offer; T5: a seeded agreement.
+    assert "soy familiar de" in messages
+    assert "juan pérez, 30111222" in messages
+    assert "osde 210" in messages
+    assert {"nodeVisited", "hasButtons", "hasOptionIds", "handoffOfferHasButtons"} <= helpers
+    payloads = {t["vars"].get("button_payload") for t in tests}
+    assert {"PATIENT_NOT_FOUND_REGISTER", "PATIENT_NOT_FOUND_RETRY", "MENU_ADMIN"} <= payloads
+
+
+def test_datasets_no_longer_expect_the_old_slot_list_after_a_free_text_message():
+    # A typed message on the slot list may re-show it or navigate back; only seeded options
+    # and no confirmation gate hold in both cases.
+    for name in ["appointments", "audio"]:
+        for test_case in _load_test_cases(name):
+            if test_case["vars"].get("button_payload"):
+                continue
+            for assertion in test_case["assert"]:
+                config = assertion.get("config") or {}
+                if assertion["type"] == "javascript" and "hasOptionIds" in assertion["value"]:
+                    assert not any(i.startswith("SELECT_SLOT:") for i in config["ids"]), test_case[
+                        "description"
+                    ]

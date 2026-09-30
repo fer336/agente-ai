@@ -4,12 +4,19 @@
     conversation_id: "eval-agreements-01"
     message: "Tengo osde 210, me atienden?"
   assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "agreement"
     - type: llm-rubric
       value: >
-        La respuesta reconoce "osde 210" como una variante de OSDE y
+        La respuesta reconoce "osde 210" como una variante de OSDE (convenio
+        sembrado en el stack de evaluación) y
         consulta o responde en función de ese convenio normalizado —
         nunca lo trata como un dato no reconocido sin intentar
         normalizarlo primero.
+  metadata:
+    requires_real_llm: true
 
 - description: "Consulta el convenio real del paciente, no lo asume"
   vars:
