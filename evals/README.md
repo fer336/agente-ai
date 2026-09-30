@@ -159,16 +159,30 @@ The script:
   chmod-600 temp jar that it deletes on exit;
 - reads the grader key from `EVAL_GRADER_API_KEY`, or else from the running backend's
   secret file (`LLM_API_KEY`, then `OPENROUTER_API_KEY`), and never prints it;
+- pins promptfoo to an exact version (`PROMPTFOO_VERSION` in the script, currently
+  `0.123.1`) because it runs with production admin cookies; bump it deliberately after
+  checking the release, never with `@latest`;
+- prints the approximate session expiry: the admin session lasts
+  `ADMIN_SESSION_TTL_SECONDS` (default 3600 s), so if a long run fails with 401s, re-run;
 - grades with `EVAL_GRADER_MODEL` (default `anthropic/claude-haiku-4.5`) at
   `EVAL_GRADER_BASE_URL` (default `https://openrouter.ai/api/v1`);
 - runs `npx -y promptfoo@latest eval` with a run-scoped `EVAL_RUN_ID=audit-<timestamp>`
   (conversation ids never reuse server state), telemetry and sharing disabled, and
   writes `audit-<run id>.json` under `${EVAL_RESULTS_DIR:-$HOME/.cache/agente-ai-evals}`;
+- refuses to send an auto-read backend key to any grader host other than `openrouter.ai`
+  (an explicit `EVAL_GRADER_API_KEY` may go anywhere);
 - exits with promptfoo's code (100 means some tests failed).
 
 `--view` starts `promptfoo view` on `127.0.0.1:${EVAL_VIEW_PORT:-15500}` only (a preload,
 `evals/localhost-only.cjs`, overrides promptfoo's default 0.0.0.0 bind) and prints the
 tunnel to reach it: `ssh -N -L 15500:localhost:15500 <user>@<host>`.
+
+**Grader cost and limits.** With no `EVAL_GRADER_API_KEY` the grader reuses the production
+OpenRouter key, so grading shares its credit and rate limits with the live agent (the
+script prints a notice). Prefer a separate `EVAL_GRADER_API_KEY`, for example a dedicated
+OpenRouter key with a spend limit. A direct `promptfoo eval` falls back to the same
+OpenRouter defaults, but you still must provide the key and cookies; `run-audit.sh` is
+the supported path.
 
 `INTERNAL_EVAL_BASE_URL` overrides the target; see `evals/run-audit.sh --help`.
 
@@ -178,7 +192,9 @@ Remove `INTERNAL_EVAL_ENABLED` and `INTERNAL_EVAL_REAL_LLM` from the secret. Sec
 immutable, so recreate `agente_ai_backend_env` without those two lines and redeploy the
 stack. With `INTERNAL_EVAL_ENABLED` unset the endpoint answers 404 again.
 
-### One-time cleanup
+### Cleanup of the temporary secret
 
-After the release that points the stack back at `agente_ai_backend_env` deploys, remove
-the temporary secret: `docker secret rm agente_ai_backend_env_eval`.
+Keep `agente_ai_backend_env_eval` until rollback to v0.44.x or earlier (which still
+points at it) is no longer needed, for example after the next release. Then remove it:
+`docker secret rm agente_ai_backend_env_eval`. Do not remove it right after this
+release deploys, or a rollback would fail to start.

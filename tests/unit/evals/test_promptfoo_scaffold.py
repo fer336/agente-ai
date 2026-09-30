@@ -457,6 +457,10 @@ def test_readme_documents_the_always_on_production_audit():
         "replicas: 1",
         "Default stance",
         "docker secret rm agente_ai_backend_env_eval",
+        "PROMPTFOO_VERSION",
+        "ADMIN_SESSION_TTL_SECONDS",
+        "spend limit",
+        "rollback",
     ]:
         assert required in readme
     # The old temporary-exception runbook is gone, and secrets/passwords stay out of it.
@@ -465,3 +469,12 @@ def test_readme_documents_the_always_on_production_audit():
     assert "cp <your-backend.env>" not in readme
     assert "docker secret create" not in readme
     assert '"password":"<ADMIN_PASSWORD>"' not in readme
+
+
+def test_grader_config_has_safe_defaults_and_no_stale_9router_default():
+    config = (_EVALS_DIR / "promptfooconfig.yaml").read_text()
+
+    assert "env.EVAL_GRADER_MODEL or" in config
+    assert "env.EVAL_GRADER_BASE_URL or" in config
+    assert "https://openrouter.ai/api/v1" in config
+    assert "OpenRouter" in config

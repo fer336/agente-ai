@@ -21,7 +21,11 @@ Environment (all optional):
   EVAL_GRADER_MODEL        default anthropic/claude-haiku-4.5
   EVAL_GRADER_API_KEY      default: read from the running backend container's
                            /run/secrets/backend.env (LLM_API_KEY, then
-                           OPENROUTER_API_KEY); never printed
+                           OPENROUTER_API_KEY); never printed. That shares the
+                           production key's credit and rate limits: prefer a
+                           dedicated key with a spend limit. Auto-read keys are
+                           only sent to allowlisted hosts (openrouter.ai)
+  PROMPTFOO_VERSION        exact promptfoo version (pinned; bump deliberately)
   EVAL_RESULTS_DIR         default $HOME/.cache/agente-ai-evals
   EVAL_VIEW_PORT           default 15500
 
@@ -46,6 +50,10 @@ for arg in "$@"; do
 done
 
 EVALS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Pinned on purpose: this runs with production admin cookies. Bump deliberately.
+PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.123.1}"
+# Hosts that may receive a grader key auto-read from the backend secret.
+ALLOWED_SECRET_KEY_HOSTS="openrouter.ai"
 BASE_URL="${INTERNAL_EVAL_BASE_URL:-https://agent.qeva-ai.com}"
 RESULTS_DIR="${EVAL_RESULTS_DIR:-$HOME/.cache/agente-ai-evals}"
 VIEW_PORT="${EVAL_VIEW_PORT:-15500}"
@@ -72,22 +80,43 @@ read_backend_secret() {
     [ -r "$f" ] || exit 1
     for k in LLM_API_KEY OPENROUTER_API_KEY; do
       v="$(grep -E "^${k}=" "$f" | head -n 1 | cut -d= -f2-)"
-      if [ -n "$v" ]; then printf "%s" "$v" | tr -d "\"'"'"'"; exit 0; fi
+      # strip one pair of matching surrounding quotes only (values may contain quotes)
+      q="$(printf "\047")"
+      case "$v" in
+        \"*\") v="${v#\"}"; v="${v%\"}" ;;
+        "$q"*"$q") v="${v#"$q"}"; v="${v%"$q"}" ;;
+      esac
+      if [ -n "$v" ]; then printf "%s" "$v"; exit 0; fi
     done
     exit 1
   ' 2>/dev/null
 }
 
+KEY_FROM_SECRET=0
 if [ -z "${EVAL_GRADER_API_KEY:-}" ]; then
   EVAL_GRADER_API_KEY="$(read_backend_secret || true)"
+  KEY_FROM_SECRET=1
 fi
 if [ -z "${EVAL_GRADER_API_KEY:-}" ]; then
   echo "Grader key not found: set EVAL_GRADER_API_KEY, or run this on the host of the" >&2
   echo "backend container (agente-clinica_backend) so it can be read from its secret." >&2
   exit 1
 fi
-export EVAL_GRADER_API_KEY
 export EVAL_GRADER_BASE_URL="${EVAL_GRADER_BASE_URL:-https://openrouter.ai/api/v1}"
+if [ "$KEY_FROM_SECRET" -eq 1 ]; then
+  GRADER_HOST="$(printf '%s' "$EVAL_GRADER_BASE_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/:?].*$##')"
+  case " $ALLOWED_SECRET_KEY_HOSTS " in
+    *" $GRADER_HOST "*) ;;
+    *)
+      echo "Refusing to send the backend's key to '$GRADER_HOST' (allowed: $ALLOWED_SECRET_KEY_HOSTS)." >&2
+      echo "Set EVAL_GRADER_API_KEY explicitly to use another grader host." >&2
+      exit 1
+      ;;
+  esac
+  echo "Note: the grader uses the production LLM key, which shares the production" \
+    "credit and rate limits. Prefer a dedicated EVAL_GRADER_API_KEY with a spend limit."
+fi
+export EVAL_GRADER_API_KEY
 export EVAL_GRADER_MODEL="${EVAL_GRADER_MODEL:-anthropic/claude-haiku-4.5}"
 
 # --- Login (password only via a silent prompt and stdin) -------------------
@@ -110,7 +139,7 @@ try:
 except Exception:
     print("")
 ')"
-if [ "$ROLE" != "ADMIN_TECHNICAL" ]; then
+if [ "${ROLE^^}" != "ADMIN_TECHNICAL" ]; then
   echo "Login failed or the account is not ADMIN_TECHNICAL (role: ${ROLE:-none})." >&2
   exit 1
 fi
@@ -123,6 +152,9 @@ if [ -z "$ADMIN_SESSION_COOKIE" ] || [ -z "$ADMIN_CSRF_COOKIE" ]; then
 fi
 export ADMIN_SESSION_COOKIE ADMIN_CSRF_COOKIE
 rm -f "$COOKIE_JAR"
+echo "Session valid ~1h from now (ADMIN_SESSION_TTL_SECONDS, default 3600 s; until about" \
+  "$(date -d '+1 hour' +%H:%M 2>/dev/null || echo 'one hour from now'))." \
+  "If the run fails with 401s, re-run."
 
 # --- Run --------------------------------------------------------------------
 RUN_ID="audit-$(date +%Y%m%d-%H%M%S)"
@@ -136,7 +168,7 @@ export PROMPTFOO_DISABLE_SHARING=1
 
 echo "Audit $RUN_ID against $BASE_URL (grader: $EVAL_GRADER_MODEL)"
 STATUS=0
-npx -y promptfoo@latest eval \
+npx -y "promptfoo@${PROMPTFOO_VERSION}" eval \
   -c "$EVALS_DIR/promptfooconfig.yaml" \
   --no-cache --no-progress-bar \
   -o "$RESULTS_FILE" || STATUS=$?
@@ -161,7 +193,7 @@ if [ "$VIEW" -eq 1 ]; then
   echo "  ssh -N -L $VIEW_PORT:localhost:$VIEW_PORT <user>@<host>"
   echo "then browse http://localhost:$VIEW_PORT (Ctrl+C here to stop)."
   NODE_OPTIONS="--require $EVALS_DIR/localhost-only.cjs" \
-    npx -y promptfoo@latest view -n --port "$VIEW_PORT" || true
+    npx -y "promptfoo@${PROMPTFOO_VERSION}" view -n --port "$VIEW_PORT" || true
 fi
 
 exit "$STATUS"

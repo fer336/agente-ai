@@ -56,15 +56,17 @@ evaluateOptions:
   cache: false
 
 defaultTest:
-  # `llm-rubric` grader: any OpenAI-compatible endpoint (e.g. the host's 9Router
-  # at http://127.0.0.1:20128/v1). The key is read from EVAL_GRADER_API_KEY at
-  # run time, never stored here. Use a different model than the agent's, so the
-  # agent does not grade its own replies.
+  # `llm-rubric` grader: any OpenAI-compatible endpoint. Defaults to OpenRouter
+  # (`anthropic/claude-haiku-4.5`), the same gateway the agent uses; override with
+  # EVAL_GRADER_BASE_URL / EVAL_GRADER_MODEL (e.g. the host's 9Router, only if it is
+  # reachable from where promptfoo runs and with its own key). The key is read from
+  # EVAL_GRADER_API_KEY at run time, never stored here. Use a different model than
+  # the agent's, so the agent does not grade its own replies.
   options:
     provider:
-      id: "openai:chat:{{env.EVAL_GRADER_MODEL}}"
+      id: "openai:chat:{{ env.EVAL_GRADER_MODEL or 'anthropic/claude-haiku-4.5' }}"
       config:
-        apiBaseUrl: "{{env.EVAL_GRADER_BASE_URL}}"
+        apiBaseUrl: "{{ env.EVAL_GRADER_BASE_URL or 'https://openrouter.ai/api/v1' }}"
         apiKeyEnvar: EVAL_GRADER_API_KEY
   assert:
     - type: javascript

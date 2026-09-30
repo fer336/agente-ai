@@ -64,8 +64,11 @@ command and the endpoint stays safe while it is always on.
 - [x] T4 — Stack back on `agente_ai_backend_env`, plus always-on docs. Route: delegated direct.
   Commit: see git log (`docs(evals): document always-on production audits`).
 
+- [x] T5 — Review findings (R1-001/002, R2, R3, R4): pinned promptfoo 0.123.1, grader-host allowlist and shared-key notice, session expiry note, config defaults, complete preload plus behavioral test, quote strip, case-insensitive role, help/usage tests, all-roles 403 test, rollback-safe secret docs. Evidence: new tests RED (8 failed) then GREEN.
+
 ## Progress
 
+- Native review (high, 3005 lines, 4 lenses): consent granted, approved and acknowledged (lineage review-4ddc18d495c61269); findings fixed in T5.
 - Branch `feat/permanent-eval-audits` from origin/main eae7f7a (v0.44.0), with T1
   cherry-picked as 13810f0 and 571dbaa.
 
