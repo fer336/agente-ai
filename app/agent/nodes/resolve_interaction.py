@@ -1,6 +1,7 @@
 from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
+    HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
     is_handoff_offer_acceptance,
     is_main_menu_request,
@@ -144,7 +145,7 @@ def _route_idle_button_payload(payload: str) -> str | None:
 
 
 def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
-    return {
+    carried: dict[str, object] = {
         key: value
         for key, value in (
             ("pending_answer", result.answer),
@@ -155,6 +156,9 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
         )
         if value is not None
     }
+    if result.answer is not None and result.handoff_offer:
+        carried[HANDOFF_OFFER_FLAG_KEY] = True
+    return carried
 
 
 #: (`HANDOFF_OFFER_KEY` follows the same one-turn rule: an agreement word only ever
@@ -166,7 +170,12 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
 #: operation or a navigation request, a specialty/professional the patient
 #: already named may still be legitimately relevant several turns later
 #: (mid-flow selection), so they stay out of this task's scope.
-_PER_TURN_UNDERSTANDING_KEYS = ("operation_mention", "navigation_target", HANDOFF_OFFER_KEY)
+_PER_TURN_UNDERSTANDING_KEYS = (
+    "operation_mention",
+    "navigation_target",
+    HANDOFF_OFFER_KEY,
+    HANDOFF_OFFER_FLAG_KEY,
+)
 
 
 def _strip_per_turn_understanding(collected_data: dict[str, object]) -> dict[str, object]:

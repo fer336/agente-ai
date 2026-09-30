@@ -42,6 +42,10 @@ class UnderstandingResult:
     #: reports the semantic target; appointment.py decides whether that move is
     #: valid and which dependent values must be invalidated.
     navigation_target: str | None = None
+    #: True only when `answer` offers or asks to pass the patient to administración / an
+    #: advisor. Lets the question and fallback nodes show the handoff buttons without
+    #: guessing from the prose (the text detector stays as a fallback).
+    handoff_offer: bool = False
 
 
 @dataclass(frozen=True, slots=True)

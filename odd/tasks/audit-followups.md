@@ -91,7 +91,15 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
     `awaiting_new_patient_details` stage handler stays for old checkpoints.
   - RED: import error in `tests/unit/agent/nodes/test_patient_not_found.py`; 4 old tests in
     `test_appointment_node.py` failed after the change and were updated to the new contract. GREEN: full suite.
-- [ ] T4 — Structured handoff offer flag. Route: delegated direct.
+- [x] T4 — Structured handoff offer flag. Route: delegated direct.
+  - Root cause: `app/agent/handoff_offer.py` `_OFFER` regex only knew "querés que te pase" / "puedo pasarte";
+    "¿Te gustaría que te pase con administración…?" matched nothing, and `question.py` / `fallback.py` decided the
+    buttons from that regex alone (no structured signal from `understand()`).
+  - Fix: `UnderstandingResult.handoff_offer` (strict JSON boolean in the parser, prompt field, fake provider),
+    carried by `resolve_interaction` as the per-turn `pending_answer_offers_handoff` key; question and fallback show
+    HANDOFF_OFFER_BUTTONS when flag OR detector (detector gained "te gustaría que te pase"); the flag is ignored when
+    the answer guards replaced the model text.
+  - RED: `ImportError` for `HANDOFF_OFFER_FLAG_KEY`; GREEN: `test_handoff_offer_flag.py` + parser tests.
 - [ ] T5 — Eval agreements seed and stale datasets. Route: delegated direct.
 
 ## Acceptance criteria

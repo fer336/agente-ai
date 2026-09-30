@@ -259,6 +259,7 @@ class FakeLLMProvider:
             professional_mention=None,
             operation_mention=operation,
             navigation_target=navigation_target,
+            handoff_offer=False,
         )
 
     async def extract_information(
