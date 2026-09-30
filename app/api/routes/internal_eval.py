@@ -5,10 +5,11 @@ from pydantic import BaseModel
 
 from app.api.dependencies.auth import require_role
 from app.api.dependencies.internal_eval import (
-    get_evaluate_chat_turn_use_case,
+    EvalUseCaseProvider,
+    get_eval_use_case_provider,
     require_internal_eval_enabled,
 )
-from app.application.admin.evaluate_chat_turn import EvaluateChatTurnUseCase
+from app.application.admin.evaluate_chat_turn import EvalFlow, EvalOption
 from app.domain.entities.admin_user import ROLES
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
@@ -21,6 +22,26 @@ _ANY_AUTHENTICATED_ROLE = tuple(ROLES)
 class EvalChatRequest(BaseModel):
     conversation_id: str
     message: str
+    #: Machine-readable id of a tapped reply button / list row (what the real
+    #: webhook parses into `button_payload`); `message` then carries its title.
+    button_payload: str | None = None
+
+
+class EvalOptionOut(BaseModel):
+    id: str
+    title: str
+    description: str | None = None
+
+
+class EvalButtonOut(BaseModel):
+    id: str
+    title: str
+
+
+class EvalFlowOut(BaseModel):
+    flow_id: str
+    screen_id: str
+    cta: str
 
 
 class EvalChatResponse(BaseModel):
@@ -37,6 +58,21 @@ class EvalChatResponse(BaseModel):
     agent_run_status: str | None
     node_names: list[str]
     tool_names: list[str]
+    #: "text" | "buttons" | "list" | "flow" | null (nothing sent).
+    reply_kind: str | None = None
+    buttons: list[EvalButtonOut] = []
+    list_rows: list[EvalOptionOut] = []
+    flow: EvalFlowOut | None = None
+
+
+def _option_out(option: EvalOption) -> EvalOptionOut:
+    return EvalOptionOut(id=option.id, title=option.title, description=option.description)
+
+
+def _flow_out(flow: EvalFlow | None) -> EvalFlowOut | None:
+    if flow is None:
+        return None
+    return EvalFlowOut(flow_id=flow.flow_id, screen_id=flow.screen_id, cta=flow.cta)
 
 
 @router.post("/chat", response_model=EvalChatResponse)
@@ -44,15 +80,21 @@ async def eval_chat(
     body: EvalChatRequest,
     _enabled: None = Depends(require_internal_eval_enabled),
     _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
-    use_case: EvaluateChatTurnUseCase = Depends(get_evaluate_chat_turn_use_case),
+    use_case_for: EvalUseCaseProvider = Depends(get_eval_use_case_provider),
 ) -> EvalChatResponse:
     """PRD.md §61's isolated agent-behavior evaluation endpoint. Runs the
-    real LangGraph agent against an entirely fake Dentalink/YCloud/LLM
-    stack (see `app.api.dependencies.internal_eval`'s own docstring) — never
-    real patient data, never a real external call.
+    real LangGraph agent against a fake Dentalink/YCloud stack (see
+    `app.api.dependencies.internal_eval`'s own docstring) — never real
+    patient data or WhatsApp traffic. The LLM is fake unless
+    `INTERNAL_EVAL_REAL_LLM` is on, which makes a real (billed) LLM call per
+    turn and is meant to be enabled only for an audit window.
     """
-    result = await use_case.execute(
-        ConversationId(body.conversation_id), body.message, now=datetime.now(UTC)
+    conversation_id = ConversationId(body.conversation_id)
+    result = await use_case_for(conversation_id).execute(
+        conversation_id,
+        body.message,
+        now=datetime.now(UTC),
+        button_payload=body.button_payload or None,
     )
     return EvalChatResponse(
         reply_text=result.reply_text,
@@ -60,4 +102,8 @@ async def eval_chat(
         agent_run_status=result.agent_run.status if result.agent_run else None,
         node_names=[n.node_name for n in result.node_executions],
         tool_names=[t.tool_name for t in result.tool_executions],
+        reply_kind=result.reply_kind,
+        buttons=[EvalButtonOut(id=b.id, title=b.title) for b in result.buttons],
+        list_rows=[_option_out(r) for r in result.list_rows],
+        flow=_flow_out(result.flow),
     )

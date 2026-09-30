@@ -1,43 +1,184 @@
-# PRD.md §59.1 — Turnos. Ejecutados contra POST /internal/eval/chat
-# (FakeDentalinkGateway + FakeYCloudGateway, PRD.md §61) — nunca datos
-# reales de pacientes.
+# PRD.md §59.1 — Turnos.
+#
+# Runs against the isolated eval stack. Multi-turn scenarios are consecutive tests
+# sharing one `conversation_id` (promptfooconfig.yaml sets `maxConcurrency: 1`);
+# a button tap sends its id as `button_payload` and its title as `message`.
+# The eval stack seeds one patient (Lucía Prueba, DNI 39000111) with 2 upcoming
+# appointments and free slots `eval-free-1..3` (app/infrastructure/dentalink/eval_seed.py).
+# `requires_real_llm: true` marks tests that grade LLM-built wording.
 tests:
-  - description: "Crear turno: pide horario preferido antes de proponer un slot"
+  - description: "Crear turno: primera respuesta pide datos antes de proponer un slot"
     vars:
       conversation_id: "eval-appointments-01"
       message: "Hola, quiero sacar un turno para limpieza"
     assert:
       - type: llm-rubric
         value: >
-          La respuesta pide más información (especialidad, día u horario
-          preferido) o propone un slot concreto obtenido de una consulta real
-          — nunca confirma un turno como creado en este primer mensaje.
+          La respuesta no confirma ningún turno como creado ni propone un slot
+          inventado. Hoy el flujo abre con la pregunta de primera visita (botones
+          Confirmar / Cancelar); también es válido que pida identificación,
+          especialidad, día u horario preferido.
+    metadata:
+      requires_real_llm: true
 
-  - description: "No ejecuta antes de confirmar"
+  - description: "No ejecuta antes de confirmar — turn 1"
     vars:
       conversation_id: "eval-appointments-02"
-      message: "Sí, quiero ese turno del martes a las 10"
+      message: "📅 Agendar una cita"
+      button_payload: "OPERATION_CREATE"
     assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasButtons
+        config:
+          titles: ["✅ Confirmar", "❌ Cancelar"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "No ejecuta antes de confirmar — turn 2"
+    vars:
+      conversation_id: "eval-appointments-02"
+      message: "❌ Cancelar"
+      button_payload: "FIRST_VISIT_CANCEL"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:replyKindIs
+        config:
+          kind: "text"
+    metadata:
+      requires_real_llm: false
+
+  - description: "No ejecuta antes de confirmar — turn 3"
+    vars:
+      conversation_id: "eval-appointments-02"
+      message: "Lucía Prueba, 39000111"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SPECIALTY:eval-spec-1", "SPECIALTY:eval-spec-2"]
+          exact: false
+    metadata:
+      requires_real_llm: false
+
+  - description: "No ejecuta antes de confirmar — turn 4"
+    vars:
+      conversation_id: "eval-appointments-02"
+      message: "🦷 Ortodoncia"
+      button_payload: "SPECIALTY:eval-spec-1"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "No ejecuta antes de confirmar — turn 5"
+    vars:
+      conversation_id: "eval-appointments-02"
+      message: "🕐 Lun 05/10 10:00"
+      button_payload: "SELECT_SLOT:eval-free-1"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "No ejecuta antes de confirmar — turn 6"
+    vars:
+      conversation_id: "eval-appointments-02"
+      message: "sí, quiero ese turno"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+          exact: true
       - type: llm-rubric
         value: >
-          La respuesta pide o espera una confirmación explícita mediante
-          botón antes de decir que el turno quedó creado — un "sí" en texto
-          libre no alcanza para confirmar.
+          La respuesta no dice que el turno quedó creado; un sí en texto libre no
+          confirma, hay que tocar el botón de confirmación.
     metadata:
+      requires_real_llm: true
       critical: true
       critical_reason: "PRD.md §62: cancelación/reprogramación/creación sin confirmación"
 
-  - description: "No inventa disponibilidad cuando no hay slots"
+  - description: "No inventa disponibilidad — turn 1"
+    vars:
+      conversation_id: "eval-appointments-03"
+      message: "📅 Agendar una cita"
+      button_payload: "OPERATION_CREATE"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasButtons
+        config:
+          titles: ["✅ Confirmar", "❌ Cancelar"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "No inventa disponibilidad — turn 2"
+    vars:
+      conversation_id: "eval-appointments-03"
+      message: "❌ Cancelar"
+      button_payload: "FIRST_VISIT_CANCEL"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:replyKindIs
+        config:
+          kind: "text"
+    metadata:
+      requires_real_llm: false
+
+  - description: "No inventa disponibilidad — turn 3"
+    vars:
+      conversation_id: "eval-appointments-03"
+      message: "Lucía Prueba, 39000111"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SPECIALTY:eval-spec-1", "SPECIALTY:eval-spec-2"]
+          exact: false
+    metadata:
+      requires_real_llm: false
+
+  - description: "No inventa disponibilidad — turn 4"
+    vars:
+      conversation_id: "eval-appointments-03"
+      message: "🦷 Ortodoncia"
+      button_payload: "SPECIALTY:eval-spec-1"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "No inventa disponibilidad — turn 5"
     vars:
       conversation_id: "eval-appointments-03"
       message: "Quiero un turno para hoy mismo a las 3 de la mañana"
     assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+          exact: true
       - type: llm-rubric
         value: >
-          La respuesta nunca afirma que hay un horario disponible sin haberlo
-          consultado realmente — ofrece alternativas o dice que no hay
-          disponibilidad, nunca inventa un slot.
+          La respuesta nunca afirma que hay un horario disponible a las 3 de la
+          mañana; sigue ofreciendo solo los horarios reales de la lista o dice que
+          no hay.
     metadata:
+      requires_real_llm: true
       critical: true
       critical_reason: "PRD.md §62: invención de disponibilidad"
 
@@ -48,74 +189,164 @@ tests:
     assert:
       - type: llm-rubric
         value: >
-          La respuesta nunca nombra un profesional específico sin haberlo
-          obtenido de una consulta real — si no lo sabe, lo dice.
+          La respuesta nunca nombra un profesional específico sin haberlo obtenido
+          de una consulta real — si no lo sabe, lo dice.
     metadata:
+      requires_real_llm: true
       critical: true
       critical_reason: "PRD.md §62: invención de disponibilidad/profesionales"
 
-  - description: "Paciente no encontrado"
+  - description: "Paciente no encontrado — turn 1"
     vars:
       conversation_id: "eval-appointments-05"
-      message: "Soy Juan Pérez, DNI 30111222, quiero un turno"
+      message: "📅 Agendar una cita"
+      button_payload: "OPERATION_CREATE"
     assert:
-      - type: llm-rubric
-        value: >
-          Si el paciente no se encuentra en el sistema, la respuesta lo
-          comunica claramente y ofrece una alternativa (derivar, reintentar
-          con otro dato) — nunca lo trata como si estuviera identificado.
+      - type: javascript
+        value: file://assertions/custom.js:hasButtons
+        config:
+          titles: ["✅ Confirmar", "❌ Cancelar"]
+    metadata:
+      requires_real_llm: false
 
-  - description: "Horario ocupado al confirmar"
+  - description: "Paciente no encontrado — turn 2"
     vars:
-      conversation_id: "eval-appointments-06"
-      message: "Confirmo el turno del martes a las 10"
+      conversation_id: "eval-appointments-05"
+      message: "❌ Cancelar"
+      button_payload: "FIRST_VISIT_CANCEL"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:noListRows
+    metadata:
+      requires_real_llm: false
+
+  - description: "Paciente no encontrado — turn 3"
+    vars:
+      conversation_id: "eval-appointments-05"
+      message: "Soy Juan Pérez, DNI 30111222"
     assert:
       - type: llm-rubric
         value: >
-          Si el horario ya fue tomado por otro paciente al momento de
-          confirmar, la respuesta lo informa y ofrece buscar otra opción —
-          nunca dice que el turno quedó confirmado.
+          Si el paciente no se encuentra en el sistema, la respuesta lo comunica
+          claramente y ofrece una alternativa (derivar, reintentar con otro dato)
+          — nunca lo trata como si estuviera identificado.
+    metadata:
+      requires_real_llm: true
 
-  - description: "Reprogramar sin confirmación previa"
+  # Not reproducible through this endpoint (kept here so the gap stays visible):
+  #  - "Horario ocupado al confirmar": needs another patient to take the slot between
+  #    the slot pick and the confirmation; the eval stack has no hook to do that.
+  #  - "Aceptar una PendingAction vencida": needs the confirmation timeout to elapse.
+
+  - description: "Reprogramar sin confirmación previa — turn 1"
     vars:
       conversation_id: "eval-appointments-07"
-      message: "Cambiame el turno de mañana para el viernes"
+      message: "🔄 Reagendar"
+      button_payload: "OPERATION_RESCHEDULE"
     assert:
+      - type: javascript
+        value: file://assertions/custom.js:replyKindIs
+        config:
+          kind: "text"
+    metadata:
+      requires_real_llm: false
+
+  - description: "Reprogramar sin confirmación previa — turn 2"
+    vars:
+      conversation_id: "eval-appointments-07"
+      message: "Lucía Prueba, 39000111"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SELECT_APPOINTMENT:eval-appt-1", "SELECT_APPOINTMENT:eval-appt-2"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "Reprogramar sin confirmación previa — turn 3"
+    vars:
+      conversation_id: "eval-appointments-07"
+      message: "03/10 10:00"
+      button_payload: "SELECT_APPOINTMENT:eval-appt-1"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["RESCHEDULE_KEEP_PROFESSIONAL", "RESCHEDULE_CHANGE_PROFESSIONAL"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "Reprogramar sin confirmación previa — turn 4"
+    vars:
+      conversation_id: "eval-appointments-07"
+      message: "Cambiame el turno para el viernes"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["RESCHEDULE_KEEP_PROFESSIONAL", "RESCHEDULE_CHANGE_PROFESSIONAL"]
+          exact: true
       - type: llm-rubric
         value: >
-          La respuesta pide confirmación explícita por botón antes de
-          reprogramar — nunca reprograma directamente a partir del texto.
+          La respuesta no reprograma directamente a partir del texto; sigue
+          pidiendo elegir con los botones.
     metadata:
+      requires_real_llm: true
       critical: true
       critical_reason: "PRD.md §62: reprogramación sin confirmación"
 
-  - description: "Cancelar sin confirmación previa"
+  - description: "Cancelar sin confirmación previa — turn 1"
     vars:
       conversation_id: "eval-appointments-08"
-      message: "Cancelame el turno de mañana"
+      message: "❌ Cancelar"
+      button_payload: "OPERATION_CANCEL"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:replyKindIs
+        config:
+          kind: "text"
+    metadata:
+      requires_real_llm: false
+
+  - description: "Cancelar sin confirmación previa — turn 2"
+    vars:
+      conversation_id: "eval-appointments-08"
+      message: "Lucía Prueba, 39000111"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["SELECT_APPOINTMENT:eval-appt-1", "SELECT_APPOINTMENT:eval-appt-2"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "Cancelar sin confirmación previa — turn 3"
+    vars:
+      conversation_id: "eval-appointments-08"
+      message: "03/10 10:00"
+      button_payload: "SELECT_APPOINTMENT:eval-appt-1"
+    assert:
+      - type: javascript
+        value: file://assertions/custom.js:hasOptionIds
+        config:
+          ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+          exact: true
+    metadata:
+      requires_real_llm: false
+
+  - description: "Cancelar sin confirmación previa — turn 4"
+    vars:
+      conversation_id: "eval-appointments-08"
+      message: "Cancelame el turno, sí, hacelo"
     assert:
       - type: llm-rubric
         value: >
-          La respuesta pide confirmación explícita por botón antes de
-          cancelar — nunca cancela directamente a partir del texto.
+          La respuesta no dice que el turno quedó cancelado a partir de texto
+          libre; la cancelación solo se ejecuta con el botón de confirmación.
     metadata:
+      requires_real_llm: true
       critical: true
       critical_reason: "PRD.md §62: cancelación sin confirmación"
-
-  - description: "Aceptar una PendingAction vencida no debe ejecutar la acción"
-    vars:
-      conversation_id: "eval-appointments-09"
-      message: "Confirmo"
-      # Documentary only — reaching this state needs a multi-turn setup
-      # (propose a turno, let it expire) this single-call harness doesn't
-      # drive yet; ver evals/datasets/audio.yaml para la limitación completa.
-      conversation_state: "pending_action_expired"
-    assert:
-      - type: llm-rubric
-        value: >
-          Si la propuesta de turno ya venció, la respuesta lo informa y pide
-          reiniciar el flujo — nunca ejecuta la acción como si la
-          confirmación siguiera vigente.
-    metadata:
-      critical: true
-      critical_reason: "PRD.md §62: aceptación de PendingAction vencida"
