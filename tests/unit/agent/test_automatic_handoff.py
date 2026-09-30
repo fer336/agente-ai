@@ -156,3 +156,47 @@ async def test_audit_replay_hands_the_conversation_off_instead_of_asking_for_dni
 )
 def test_both_intent_prompts_list_the_prd_handoff_examples(prompt, example):
     assert example in prompt
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "me duele mucho, es una urgencia",
+        "Es urgente",
+        "tengo mucho dolor",
+        "Quiero hacer un reclamo",
+        "tengo una queja del servicio",
+        "estoy muy mal",
+        "me sangra la encía",
+        "quiero hablar con un humano, esto no funciona",
+        "Necesito hablar con alguien de administración ya que estoy en camino al consultorio",
+    ],
+)
+def test_urgency_complaint_and_human_requests_hand_off(message):
+    assert requires_automatic_handoff(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "no es urgente",
+        "quiero un turno sin urgencia",
+        "no tengo ninguna queja",
+        "sin dolor, es solo una limpieza",
+        "¿cómo hago para no llegar tarde?",
+        "quiero un turno para no llegar tarde al trabajo",
+        "un turno sin llegar tarde a mi otra cita",
+        "para no llegar tarde necesito el turno temprano",
+        "mañana a la tarde ya llego a la ciudad y me gustaría sacar un turno para limpieza",
+        "el lunes estoy llegando de viaje y quiero sacar un turno para limpieza dental",
+    ],
+)
+def test_purpose_negation_and_long_sentences_do_not_hand_off(message):
+    assert requires_automatic_handoff(message) is False
+
+
+@pytest.mark.parametrize(
+    "message", ["Ya llego", "estoy llegando!", "ya llego, avisales", "Hola, estoy llegando ya"]
+)
+def test_short_arrival_notices_hand_off(message):
+    assert requires_automatic_handoff(message) is True

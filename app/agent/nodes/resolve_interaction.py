@@ -1,3 +1,5 @@
+import re
+
 from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
@@ -5,6 +7,13 @@ from app.agent.handoff_offer import (
     HANDOFF_OFFER_KEY,
     is_handoff_offer_acceptance,
     is_main_menu_request,
+    normalize_text,
+)
+from app.agent.nodes.appointment import (
+    STAGE_AWAITING_CONFIRMATION,
+    STAGE_AWAITING_FIRST_VISIT_INTAKE,
+    STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_NEW_PATIENT_DETAILS,
 )
 from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
@@ -31,6 +40,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_VIEW_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
 )
+from app.infrastructure.llm.exceptions import LLMProviderError
 
 _MIN_INTENT_CONFIDENCE = 0.5
 
@@ -49,19 +59,50 @@ POST_ACTION_CLOSE_INTENT = "post_action_close"
 #: Set when a message claims to act for another person (see `third_party_guard.py`): the
 #: router itself answers, so no business node ever sees that person's name or DNI.
 THIRD_PARTY_GUARD_INTENT = "third_party_guard"
-_THIRD_PARTY_STAGES_EXEMPT = frozenset({"awaiting_confirmation"})
+_THIRD_PARTY_STAGES_EXEMPT = frozenset({STAGE_AWAITING_CONFIRMATION})
 
 #: Stages that ask the patient for a specific data field (first-visit intake, name + DNI,
 #: legacy new-patient details). A plain typed answer there ("OSDE 210", "Swiss Medical") is
 #: data for the stage, never an information request for the LLM to route elsewhere.
 _DATA_COLLECTION_STAGES = frozenset(
-    {"awaiting_first_visit_intake", "awaiting_identification", "awaiting_new_patient_details"}
+    {
+        STAGE_AWAITING_FIRST_VISIT_INTAKE,
+        STAGE_AWAITING_IDENTIFICATION,
+        STAGE_AWAITING_NEW_PATIENT_DETAILS,
+    }
 )
+
+#: A message opening with one of these (accent-free) is an inquiry even without "?".
+_INQUIRY_WORDS = frozenset(
+    {
+        "atienden",
+        "trabajan",
+        "aceptan",
+        "cubren",
+        "tienen",
+        "hay",
+        "cuanto",
+        "cuanta",
+        "cual",
+        "que",
+        "como",
+        "donde",
+        "cuando",
+        "horario",
+        "horarios",
+        "direccion",
+    }
+)
+_DATA_SHAPE = re.compile(r"@|\d{6,}")
 
 
 def _looks_like_a_question(text: str) -> bool:
-    """A typed question mark is the deterministic sign of a genuine question mid-collection."""
-    return "?" in text or "¿" in text
+    """A question mark, or an opening inquiry word on a message that carries no data
+    (an email or a DNI-sized number makes it a data answer)."""
+    if "?" in text or "¿" in text:
+        return True
+    words = normalize_text(text).split()
+    return bool(words) and words[0] in _INQUIRY_WORDS and _DATA_SHAPE.search(text) is None
 
 
 #: Every intent `_route_after_resolve_interaction` (graph.py) sends to a real
@@ -358,12 +399,6 @@ async def _resolve(
             return _temporary_result("location", collected_data)
         return {"intent": "location"}
 
-    # A data answer while a stage is collecting data goes to that stage without LLM
-    # routing. A genuine question (typed with a question mark, e.g. "¿atienden por OSDE?")
-    # still reaches the information node as a temporary interruption; the stage is kept.
-    if stage in _DATA_COLLECTION_STAGES and not _looks_like_a_question(state["user_message"]):
-        return {"intent": "appointment"}
-
     context: dict[str, object] = {
         "recent_messages": state["recent_messages"],
         "contact_memory": state["contact_memory_summary"],
@@ -375,6 +410,19 @@ async def _resolve(
         # graph/repository's responsibility.
         "workflow_data": collected_data,
     }
+    if stage in _DATA_COLLECTION_STAGES and not _looks_like_a_question(state["user_message"]):
+        # A data answer stays with the stage. The LLM is still asked, but only its
+        # "handoff" verdict counts (urgencies, complaints, wanting a human); a genuine
+        # question (typed "?" or an inquiry opening) takes the normal routing below and
+        # its answer is a temporary interruption that leaves the stage untouched.
+        try:
+            verdict = await llm_provider.understand(state["user_message"], context=context)
+        except LLMProviderError:
+            return {"intent": "appointment"}
+        if verdict.intent == "handoff" and verdict.confidence >= _MIN_INTENT_CONFIDENCE:
+            return {"intent": "handoff", "interruption": "terminate"}
+        return {"intent": "appointment"}
+
     result = await llm_provider.understand(state["user_message"], context=context)
     carried = _carried_understanding(result)
 

@@ -119,3 +119,118 @@ async def test_trying_other_data_clears_both_name_and_dni():
     assert data["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert not data.get("identification_full_name")
     assert not data.get("identification_dni")
+
+
+class _HandoffLLM(FakeLLMProvider):
+    async def understand(self, message, context):
+        from app.domain.repositories.llm_provider import UnderstandingResult
+
+        return UnderstandingResult(intent="handoff", confidence=0.9)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message", ["no me siento bien, necesito que me atienda alguien ya", "esto es un desastre"]
+)
+@pytest.mark.parametrize(
+    "stage", [STAGE_AWAITING_FIRST_VISIT_INTAKE, STAGE_AWAITING_IDENTIFICATION]
+)
+async def test_the_llm_handoff_intent_still_wins_in_a_data_stage(message, stage):
+    node = create_resolve_interaction_node(_HandoffLLM())
+
+    result = await node(make_agent_state(user_message=message, collected_data={"stage": stage}))
+
+    assert result["intent"] == "handoff"
+    assert result["interruption"] == "terminate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    ["me duele mucho, es una urgencia", "quiero hacer un reclamo", "quiero hablar con un humano"],
+)
+@pytest.mark.parametrize(
+    "stage", [STAGE_AWAITING_FIRST_VISIT_INTAKE, STAGE_AWAITING_IDENTIFICATION]
+)
+async def test_urgency_and_complaints_hand_off_mid_collection(message, stage):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message, collected_data={"stage": stage}))
+
+    assert result["intent"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_only_handoff_is_honoured_from_the_llm_in_a_data_stage():
+    class _InsuranceLLM(FakeLLMProvider):
+        async def understand(self, message, context):
+            from app.domain.repositories.llm_provider import UnderstandingResult
+
+            return UnderstandingResult(intent="insurance", confidence=0.95, answer="x")
+
+    node = create_resolve_interaction_node(_InsuranceLLM())
+
+    result = await node(make_agent_state(user_message="OSDE 210", collected_data=_INTAKE))
+
+    assert result == {"intent": "appointment"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "atienden osde",
+        "trabajan con swiss medical",
+        "cuánto cubre el plan",
+        "hay turnos los sábados",
+    ],
+)
+async def test_an_inquiry_without_a_question_mark_is_answered_and_keeps_the_intake(message):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message, collected_data=_INTAKE))
+
+    assert result["intent"] in {"insurance", "question", "specialties", "unknown", "appointment"}
+    assert result["intent"] != "appointment" or "interruption" not in result
+    assert (
+        "collected_data" not in result
+        or result["collected_data"].get("first_visit_intake") == _INTAKE["first_visit_intake"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_atienden_osde_reaches_the_insurance_node_as_a_temporary_interruption():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="atienden osde", collected_data=_INTAKE))
+
+    assert result["intent"] == "insurance"
+    assert result["interruption"] == "temporary"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["osde 210", "Swiss Medical", "hay 30123456"])
+async def test_data_looking_answers_stay_in_the_intake(answer):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=answer, collected_data=_INTAKE))
+
+    assert result["intent"] == "appointment"
+    assert result.get("interruption") is None
+
+
+def test_the_stage_sets_use_the_stage_constants():
+    from app.agent.nodes import resolve_interaction as module
+    from app.agent.nodes.appointment import (
+        STAGE_AWAITING_CONFIRMATION,
+        STAGE_AWAITING_NEW_PATIENT_DETAILS,
+    )
+
+    assert module._THIRD_PARTY_STAGES_EXEMPT == frozenset({STAGE_AWAITING_CONFIRMATION})
+    assert module._DATA_COLLECTION_STAGES == frozenset(
+        {
+            STAGE_AWAITING_FIRST_VISIT_INTAKE,
+            STAGE_AWAITING_IDENTIFICATION,
+            STAGE_AWAITING_NEW_PATIENT_DETAILS,
+        }
+    )

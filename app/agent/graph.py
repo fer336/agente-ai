@@ -123,6 +123,14 @@ def _route_after_business_node(state: AgentState) -> str:
     return HANDLE_ERROR_NODE if state.get("error") else END
 
 
+def _route_after_appointment(state: AgentState) -> str:
+    """The appointment node may end a stuck flow by setting `intent="handoff"` (e.g. the
+    patient-not-found choice looping): hand over exactly like the handoff button."""
+    if state.get("error"):
+        return HANDLE_ERROR_NODE
+    return HANDOFF_NODE if state.get("intent") == "handoff" else END
+
+
 def build_graph(
     appointment_gateway: AppointmentGateway,
     agreement_gateway: AgreementGateway,
@@ -328,8 +336,12 @@ def build_graph(
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
-    for node_name in (
+    graph.add_conditional_edges(
         APPOINTMENT_NODE,
+        _route_after_appointment,
+        {HANDLE_ERROR_NODE: HANDLE_ERROR_NODE, HANDOFF_NODE: HANDOFF_NODE, END: END},
+    )
+    for node_name in (
         AGREEMENT_NODE,
         SPECIALTIES_NODE,
         HANDOFF_NODE,

@@ -128,7 +128,19 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
   - RED: 6 failures in `tests/unit/agent/nodes/test_data_stage_routing.py` (osde/OSDE 210 routed to insurance,
     retry kept identity); GREEN after the change.
 
+- [x] T7 — Native review findings.
+  - R4 safety: data stages still ask the LLM but honour only `handoff`; matcher gained urgency/complaint cues
+    (negation-guarded). Not-found flow bounded (2 retries ending not-found, or 2 free-text replies -> handoff via
+    `intent="handoff"` from the appointment node and new `_route_after_appointment`). Third-party clitic verbs need a
+    kin noun. "ya llego"/"estoy llegando" only in clauses <= 6 words; delay phrases have negation/purpose guards.
+    Inquiry openers ("atienden osde") without "?" reach the information node unless they carry data (email/DNI-sized
+    number). Stage sets use STAGE_* constants; legacy new-patient-details stage labelled.
+  - RED: 25 failures across `test_automatic_handoff.py`, `test_third_party_guard.py`, `test_data_stage_routing.py`,
+    `test_patient_not_found.py`; GREEN after implementation.
+
 ## Progress
+
+- Native review (high, 2414 lines, 4 lenses): consent granted, approved and acknowledged (lineage review-a0bfb319a0b54692); findings fixed in T7.
 
 - Branch `fix/audit-followups` from origin/fix/no-premature-action-claims (ea7a15b).
 

@@ -180,3 +180,18 @@ async def test_a_patients_own_name_and_dni_pass_through_the_identification_stage
 
 def test_the_guard_reply_ends_the_graph_run():
     assert _route_after_resolve_interaction({"intent": THIRD_PARTY_GUARD_INTENT}) == END  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "anotala en la agenda",
+        "pasame el turno",
+        "quiero agendarle una alarma",
+        "sacame un turno",
+        "cambialo por favor",
+        "Pedro Cassera 30131313",
+    ],
+)
+def test_bare_clitic_verbs_are_not_a_third_party_claim(message):
+    assert claims_to_act_for_someone_else(message) is False

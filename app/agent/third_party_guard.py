@@ -28,7 +28,8 @@ _CLAIM = re.compile(
     r"|\bdni\s+de\s+(?:mi\s+" + _KIN + r"|ella|el)\b"
     r"|\b(?:para|de)\s+mi\s+" + _KIN + r"\b"
     r"|\bmi\s+" + _KIN + r"\s+(?:tiene|tenia|necesita|quiere|debe|va\s+a)\b"
-    r"|\b" + _ACTION_FOR_SOMEONE + r"\b"
+    # A clitic action verb only counts next to a kin noun ("cancelale el turno a mi hija").
+    r"|\b" + _ACTION_FOR_SOMEONE + r"\b[^.?!]{0,40}\b(?:a|para|de)\s+mi\s+" + _KIN + r"\b"
 )
 
 #: Static wording, also the fallback when the LLM-built reply fails the guards.

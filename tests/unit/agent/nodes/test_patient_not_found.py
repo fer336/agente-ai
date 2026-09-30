@@ -208,7 +208,7 @@ async def test_free_text_at_the_choice_only_repeats_the_three_buttons():
     )
 
     assert result["response_buttons"] == not_found["response_buttons"]
-    assert "collected_data" not in result
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
 
 
 @pytest.mark.asyncio
@@ -224,3 +224,55 @@ async def test_the_advisor_button_routes_to_the_handoff_even_mid_choice():
     )
 
     assert result["intent"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_a_second_free_text_reply_in_the_choice_hands_off():
+    node, _, _ = await make_node_and_conversation()
+    not_found = await _not_found_after_existing_patient_answer(node)
+
+    first = await node(
+        make_agent_state(user_message="no sé", collected_data=not_found["collected_data"])
+    )
+    assert first["response_buttons"] == not_found["response_buttons"]
+    second = await node(
+        make_agent_state(user_message="ni idea", collected_data=first["collected_data"])
+    )
+
+    assert second["intent"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_the_third_not_found_after_two_retries_hands_off_instead_of_offering_buttons():
+    node, _, _ = await make_node_and_conversation()
+    result = await _not_found_after_existing_patient_answer(node)
+    for _ in range(2):
+        retry = await _tap(node, result, PATIENT_NOT_FOUND_RETRY_PAYLOAD)
+        result = await node(
+            make_agent_state(user_message=_UNKNOWN, collected_data=retry["collected_data"])
+        )
+        if result.get("intent") == "handoff":
+            break
+
+    assert result["intent"] == "handoff"
+
+
+@pytest.mark.asyncio
+async def test_the_first_not_found_after_one_retry_still_offers_the_choice():
+    node, _, _ = await make_node_and_conversation()
+    result = await _not_found_after_existing_patient_answer(node)
+    retry = await _tap(node, result, PATIENT_NOT_FOUND_RETRY_PAYLOAD)
+
+    again = await node(
+        make_agent_state(user_message=_UNKNOWN, collected_data=retry["collected_data"])
+    )
+
+    assert again.get("intent") != "handoff"
+    assert len(again["response_buttons"]) == 3
+
+
+def test_a_handoff_intent_from_the_appointment_node_reaches_the_handoff_node():
+    from app.agent.graph import HANDOFF_NODE, _route_after_appointment
+
+    assert _route_after_appointment({"intent": "handoff"}) == HANDOFF_NODE  # type: ignore[arg-type]
+    assert _route_after_appointment({"intent": "appointment"}) != HANDOFF_NODE  # type: ignore[arg-type]
