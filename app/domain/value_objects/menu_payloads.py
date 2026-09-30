@@ -66,3 +66,9 @@ PROFESSIONAL_PAYLOAD_PREFIX = "PROFESSIONAL:"
 #: rather than getting its own id — it means the same thing ("pop one level
 #: up") that payload already means everywhere else in this flow.
 CHOOSE_PROFESSIONAL_PAYLOAD = "CHOOSE_PROFESSIONAL"
+
+#: The "no patient found" choice shown when identification finds no Dentalink match:
+#: register as a new patient (first-visit intake, name and DNI prefilled) or retry with
+#: other data. The third option, talking to an advisor, reuses `MENU_ADMIN_PAYLOAD`.
+PATIENT_NOT_FOUND_REGISTER_PAYLOAD = "PATIENT_NOT_FOUND_REGISTER"
+PATIENT_NOT_FOUND_RETRY_PAYLOAD = "PATIENT_NOT_FOUND_RETRY"

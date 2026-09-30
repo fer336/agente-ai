@@ -79,7 +79,18 @@ Failures observed, with the expected behavior taken from PRD.md §22 and the dat
     reads free text). Graph routes the new intent to END.
   - RED: collection error (module missing); GREEN after implementation (one test fixed: `cambié` is not in the
     existing action-claim guard, so the fallback test uses `cancelé`). See git log.
-- [ ] T3 — Patient not found: clear message and alternatives. Route: delegated direct.
+- [x] T3 — Patient not found: clear message and alternatives. Route: delegated direct.
+  - Root cause: `app/agent/nodes/appointment.py` identification stage, `identify_patient.execute(...) is None`
+    branch (was ~line 4154-4191) moved to `STAGE_AWAITING_NEW_PATIENT_DETAILS` and asked "obra social y un mail
+    (OSDE, rosa@gmail.com)" via `_ask_new_patient_details_message`. The "ya soy paciente" path reaches it through
+    `_identify_existing_patient` (~line 1710), so one fix covers both.
+  - Fix: new stage `awaiting_patient_not_found_choice`, `_offer_patient_not_found_choice` (LLM wording, static
+    fallback, deterministic guard against insurance/email asks), buttons Registrarme / Probar otro dato / Asesor
+    (MENU_ADMIN_PAYLOAD), payloads in `menu_payloads.py`. Register re-enters the 5-field intake with name+DNI
+    prefilled (via `identification_*`); retry re-asks identification keeping the remembered pieces. The legacy
+    `awaiting_new_patient_details` stage handler stays for old checkpoints.
+  - RED: import error in `tests/unit/agent/nodes/test_patient_not_found.py`; 4 old tests in
+    `test_appointment_node.py` failed after the change and were updated to the new contract. GREEN: full suite.
 - [ ] T4 — Structured handoff offer flag. Route: delegated direct.
 - [ ] T5 — Eval agreements seed and stale datasets. Route: delegated direct.
 
