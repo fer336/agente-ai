@@ -6,6 +6,7 @@ from app.agent.nodes.llm_response import (
     strip_leading_greeting,
 )
 from app.domain.repositories.llm_provider import ResponseContext
+from app.infrastructure.llm.exceptions import LLMProviderError
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 
 _STARTED = [
@@ -123,5 +124,55 @@ async def test_a_diagnosis_reply_is_replaced_by_the_static_text():
     llm = _ScriptedLLM("Por lo que describís, podría tratarse de una caries.")
 
     text = await generate_or_fallback(llm, "conv-1", "fallback", {}, "STATIC", _STARTED, None)
+
+    assert text == "STATIC"
+
+
+@pytest.mark.asyncio
+async def test_a_validator_that_passes_keeps_the_model_text():
+    llm = _ScriptedLLM("Texto del modelo")
+
+    text = await generate_or_fallback(
+        llm, "conv-1", "x", {}, "STATIC", _STARTED, None, validator=lambda t: True
+    )
+
+    assert text == "Texto del modelo"
+
+
+@pytest.mark.asyncio
+async def test_a_validator_that_fails_replaces_the_text_with_the_static_one():
+    llm = _ScriptedLLM("Texto del modelo")
+    seen: list[str] = []
+
+    def reject(text: str) -> bool:
+        seen.append(text)
+        return False
+
+    text = await generate_or_fallback(
+        llm, "conv-1", "x", {}, "STATIC", _STARTED, None, validator=reject
+    )
+
+    assert text == "STATIC"
+    assert seen == ["Texto del modelo"]
+
+
+@pytest.mark.asyncio
+async def test_without_a_validator_the_model_text_is_unchanged():
+    llm = _ScriptedLLM("Texto del modelo")
+
+    text = await generate_or_fallback(llm, "conv-1", "x", {}, "STATIC", _STARTED, None)
+
+    assert text == "Texto del modelo"
+
+
+@pytest.mark.asyncio
+async def test_a_provider_error_still_falls_back_when_a_validator_is_given():
+    class _Failing(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            raise LLMProviderError("boom")
+
+    text = await generate_or_fallback(
+        _Failing(), "conv-1", "x", {}, "STATIC", _STARTED, None, validator=lambda t: True
+    )
 
     assert text == "STATIC"

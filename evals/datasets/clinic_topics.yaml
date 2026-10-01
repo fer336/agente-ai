@@ -1,7 +1,8 @@
 # Scenarios for the clinic's frequent topics (clinic-topics-faq): the 5 fixed-text topics
 # (blanqueamiento, consulta particular, limpieza particular, brackets por obra social,
 # alineadores) reached by free text and by the menu, plus the OSDE / Medifé / William Hope
-# first-visit text. The fixed texts live in app/agent/clinic_topics.py and never go through
+# first-visit answer (written by the LLM from the clinic's reference text; the fake LLM
+# returns a deterministic text with the same facts). The fixed texts live in app/agent/clinic_topics.py and never go through
 # the LLM, so `requires_real_llm: false` cases hold with the fake LLM; the
 # `requires_real_llm: true` cases need the real LLM to classify a paraphrase or a booking
 # phrase. Figures in the texts are pending the clinic's confirmation.
@@ -259,7 +260,7 @@
   metadata:
     requires_real_llm: false
 
-- description: "Obra social especial: OSDE recibe el texto de primera visita"
+- description: "Obra social especial: OSDE recibe la respuesta de primera visita"
   vars:
     conversation_id: "eval-topics-insurance-01"
     message: "¿Atienden OSDE?"
@@ -271,11 +272,11 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["OSDE", "primera visita", "diagnóstico integral"]
+        terms: ["OSDE", "primera", "diagnóstico", "especialista"]
   metadata:
     requires_real_llm: false
 
-- description: "Obra social especial: Medifé recibe el texto de primera visita"
+- description: "Obra social especial: Medifé recibe la respuesta de primera visita"
   vars:
     conversation_id: "eval-topics-insurance-02"
     message: "Tengo Medifé"
@@ -287,11 +288,11 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["Medifé", "primera visita", "diagnóstico integral"]
+        terms: ["Medifé", "primera", "diagnóstico", "especialista"]
   metadata:
     requires_real_llm: false
 
-- description: "Obra social especial: William Hope recibe el texto de primera visita"
+- description: "Obra social especial: William Hope recibe la respuesta de primera visita"
   vars:
     conversation_id: "eval-topics-insurance-03"
     message: "¿Trabajan con William Hope?"
@@ -303,9 +304,38 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["William Hope", "primera visita", "diagnóstico integral"]
+        terms: ["William Hope", "primera", "diagnóstico", "especialista"]
   metadata:
     requires_real_llm: false
+
+- description: "Obra social especial: dos consultas seguidas mantienen los hechos y varían la redacción — turn 1 (LLM real)"
+  vars:
+    conversation_id: "eval-topics-insurance-llm-01"
+    message: "tengo medifé"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta menciona Medifé y mantiene los cuatro hechos: se puede agendar una primera
+        visita, un profesional hace un diagnóstico integral y personalizado, Medifé cubre esa
+        primera visita y, si hace falta otro tratamiento, derivan al especialista indicado. No
+        inventa porcentajes, copagos, precios, descuentos ni condiciones.
+  metadata:
+    requires_real_llm: true
+
+- description: "Obra social especial: dos consultas seguidas mantienen los hechos y varían la redacción — turn 2 (LLM real)"
+  vars:
+    conversation_id: "eval-topics-insurance-llm-01"
+    message: "y con william hope?"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta menciona William Hope (no Medifé) y mantiene los cuatro hechos: primera
+        visita, diagnóstico integral y personalizado por un profesional, la obra social cubre esa
+        primera visita y derivan al especialista si hace falta otro tratamiento. No inventa
+        porcentajes, copagos, precios ni condiciones, y su redacción es distinta de la respuesta
+        anterior de la conversación (no repite las mismas frases).
+  metadata:
+    requires_real_llm: true
 
 - description: "Cobertura de OSDE: cuánto cubre deriva a administración"
   vars:

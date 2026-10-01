@@ -185,6 +185,13 @@ _PAYMENT_ADMIN_MESSAGE = (
     "Los pagos, anticipos y demás precios se manejan directamente con Administración. "
     "Si querés, te comunico con ellos."
 )
+#: Deterministic stand-in for the LLM-written special-insurance answer: it keeps the clinic's
+#: four facts so it passes `special_insurance_text_is_valid`, and varies with the insurance.
+_SPECIAL_INSURANCE_MESSAGE = (
+    "Con {name} podés agendar una primera visita: un profesional te hace un diagnóstico "
+    "integral y personalizado y {name} la cubre. Si necesitás algún tratamiento adicional, "
+    "te derivan al especialista indicado."
+)
 #: Frequent clinic topics (`faq_topic`): the fake's own keyword stand-in for the real label
 #: (the deterministic fixed-text keywords live in `app.agent.clinic_topics`).
 _FAQ_TOPIC_UNDERSTANDING_KEYWORDS = (
@@ -359,6 +366,9 @@ class FakeLLMProvider:
             return messages[(attempts - 1) % len(messages)]
         if context.intent == "payment_admin":
             return _PAYMENT_ADMIN_MESSAGE
+        if context.intent == "special_insurance":
+            seguro = context.collected_data.get("seguro")
+            return _SPECIAL_INSURANCE_MESSAGE.format(name=seguro or "tu obra social")
         if context.intent == "post_action_close":
             action = context.collected_data.get("accion_completada")
             return _POST_ACTION_CLOSE_MESSAGES.get(str(action), _POST_ACTION_CLOSE_DEFAULT_MESSAGE)

@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 
 from app.agent.action_claims import claims_executed_action, offers_diagnosis
 from app.domain.entities.message import ROLE_ASSISTANT
@@ -62,6 +63,7 @@ async def generate_or_fallback(
     temperature: float | None = None,
     *,
     action_executed: bool = False,
+    validator: Callable[[str], bool] | None = None,
 ) -> str:
     """Calls `LLMProvider.generate_response`, falling back to `static_text`
     on any provider failure (timeout/auth/bad output/etc).
@@ -88,7 +90,8 @@ async def generate_or_fallback(
     reschedule) only runs on the confirmation button, so a text that says or implies
     one already ran is replaced by `static_text`. Pass `action_executed=True` only for
     the message sent after the gateway call really succeeded. A diagnosis (`offers_diagnosis`)
-    is replaced regardless.
+    is replaced regardless. An optional `validator` is the last check: when it rejects the
+    model text (a missing fact, an invented figure), `static_text` is returned instead.
     """
     try:
         text = await llm_provider.generate_response(
@@ -104,6 +107,9 @@ async def generate_or_fallback(
         )
         if offers_diagnosis(text) or (not action_executed and claims_executed_action(text)):
             return static_text
-        return without_mid_conversation_greeting(text, recent_messages)
+        text = without_mid_conversation_greeting(text, recent_messages)
+        if validator is not None and not validator(text):
+            return static_text
+        return text
     except LLMProviderError:
         return static_text

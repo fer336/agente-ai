@@ -127,9 +127,9 @@ DNI 39000111, two upcoming appointments; `app/infrastructure/dentalink/eval_seed
 `datasets/clinic_topics.yaml` covers the clinic's frequent topics (fixed texts in
 `app/agent/clinic_topics.py`): the five topics by free text and by the menu sub-list
 (`MENU_FAQ`, then `FAQ_TOPIC:<id>` payloads), a booking phrase that must not reach the
-`faq_topic` node, the OSDE / Medifé / William Hope first-visit text and "cuánto cubre OSDE"
-deriving to administración. Two cases are `requires_real_llm: true` (a paraphrased price
-question and a booking phrase). Figures in the texts are pending the clinic's confirmation.
+`faq_topic` node, the OSDE / Medifé / William Hope first-visit answer (LLM-written, fact-checked) and "cuánto cubre OSDE"
+deriving to administración. Five cases are `requires_real_llm: true` (a paraphrased price
+question, a payment paraphrase, a booking phrase and the two-turn insurance scenario). Figures in the texts are pending the clinic's confirmation.
 
 ## Production audits
 
