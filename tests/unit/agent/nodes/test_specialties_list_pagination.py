@@ -92,15 +92,9 @@ async def test_list_back_on_the_catalog_returns_to_the_main_menu():
 
 
 @pytest.mark.asyncio
-async def test_specialty_row_tap_from_the_catalog_stays_read_only_without_booking_context():
-    # PR 3 (browse-vs-booking separation): an idle `SPECIALTY:<id>` row tap
-    # from a plain catalog browse (`intent="specialties"`, no booking
-    # intent/context) shows that specialty's professionals but must never
-    # silently start a booking on its own — see
-    # `app.agent.nodes.specialties._has_booking_context`'s own docstring
-    # and `tests/unit/agent/nodes/test_specialties_node.py`'s equivalent
-    # coverage for the other browse-only entry point (named-specialty
-    # free text).
+async def test_specialty_row_tap_from_the_catalog_browse_shows_its_next_slots():
+    # "¿Qué especialidades tienen?" then a tap (no booking context): the next free slots of
+    # that specialty, never a professional list. Picking a slot continues to identification.
     node = _node(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
@@ -114,9 +108,10 @@ async def test_specialty_row_tap_from_the_catalog_stays_read_only_without_bookin
         )
     )
 
-    assert "stage" not in result["collected_data"]
-    assert "chosen_specialty_id" not in result["collected_data"]
-    assert result["response_list"] is not None
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
+    assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
+    assert result["response_list"].section_title == "Horarios disponibles"
+    assert [r.id for r in result["response_list"].rows] == ["SELECT_SLOT:slot-1"]
 
 
 @pytest.mark.asyncio
@@ -139,7 +134,7 @@ async def test_specialty_row_tap_with_booking_context_opens_its_next_slots():
 
 
 @pytest.mark.asyncio
-async def test_professional_listing_from_the_catalog_stays_read_only_without_booking_context():
+async def test_naming_a_specialty_in_the_catalog_never_lists_its_professionals():
     professionals = [
         make_professional(id_=f"prof-{i}", full_name=f"Profesional {i}", specialty_id="spec-1")
         for i in range(12)
@@ -152,8 +147,8 @@ async def test_professional_listing_from_the_catalog_stays_read_only_without_boo
     result = await node(make_agent_state(user_message="ortodoncia", collected_data={}))
 
     ids = [r.id for r in result["response_list"].rows]
-    assert ids[-1] == LIST_MORE_PAYLOAD
-    assert "stage" not in result["collected_data"]
+    assert all(row_id.startswith("SELECT_SLOT:") for row_id in ids)
+    assert result["response_list"].section_title == "Horarios disponibles"
 
 
 @pytest.mark.asyncio

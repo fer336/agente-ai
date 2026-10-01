@@ -49,6 +49,7 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
 
 - [x] T1 — specialty_mention and specialties node show the next 10 slots. Route: delegated direct. Commit: see Progress.
 - [x] T2 — remove the remaining professional-list leaks of the create flow. Route: delegated direct.
+- [x] T3 — catalog browse (specialties node, no booking context) shows slots, never professionals. Route: delegated direct.
 
 ## Acceptance criteria
 
@@ -79,6 +80,10 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
   Explicit professional mention (appointment node and specialties node) -> that professional's slots; no slots ->
   aggregated slots of the same specialty with an LLM-worded notice (static fallback). No-slots fallback buttons:
   Otra especialidad / Menu principal / Administracion. Read-only catalog browse in the specialties node keeps its list.
+- T3 done. RED observed: 4 failures (specialty named or tapped from the catalog browse, professional named
+  without booking context) before the implementation. GREEN: full suite passed (3 known redis-lock tests
+  deselected), ruff check and mypy clean. `_has_booking_context` removed: every specialties-node path that resolves a
+  specialty or professional now hands off to the slots flow; picking a slot continues to identification.
 
 ## Next step
 
