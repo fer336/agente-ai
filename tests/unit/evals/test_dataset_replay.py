@@ -37,6 +37,7 @@ _DATASETS = [
     "flows",
     "flows_view_appointment",
     "audit_followups",
+    "clinic_topics",
 ]
 
 

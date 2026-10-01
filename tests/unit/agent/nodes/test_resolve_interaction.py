@@ -825,8 +825,11 @@ async def test_free_text_about_a_topic_mid_booking_is_a_temporary_interruption()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stage", ["awaiting_first_visit_intake", "awaiting_identification"])
-@pytest.mark.parametrize("typed", ["blanqueamiento", "osde"])
+@pytest.mark.parametrize(
+    "stage",
+    ["awaiting_first_visit_intake", "awaiting_identification", "awaiting_new_patient_details"],
+)
+@pytest.mark.parametrize("typed", ["blanqueamiento", "osde", "medife", "Medifé", "william hope"])
 async def test_typing_a_topic_or_insurance_name_in_a_data_stage_stays_data(stage, typed):
     node = create_resolve_interaction_node(FakeLLMProvider())
 

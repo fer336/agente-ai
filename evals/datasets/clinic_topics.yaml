@@ -1,0 +1,352 @@
+# Scenarios for the clinic's frequent topics (clinic-topics-faq): the 5 fixed-text topics
+# (blanqueamiento, consulta particular, limpieza particular, brackets por obra social,
+# alineadores) reached by free text and by the menu, plus the OSDE / Medifé / William Hope
+# first-visit text. The fixed texts live in app/agent/clinic_topics.py and never go through
+# the LLM, so `requires_real_llm: false` cases hold with the fake LLM; the two
+# `requires_real_llm: true` cases need the real LLM to classify a paraphrase or a booking
+# phrase. Figures in the texts are pending the clinic's confirmation.
+
+- description: "Tema frecuente por texto libre: blanqueamiento"
+  vars:
+    conversation_id: "eval-topics-text-01"
+    message: "¿Cuánto sale el blanqueamiento?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["450.000", "360.000"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente por texto libre: consulta_particular"
+  vars:
+    conversation_id: "eval-topics-text-02"
+    message: "Quiero saber el valor de la consulta particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["60.000"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente por texto libre: limpieza_particular"
+  vars:
+    conversation_id: "eval-topics-text-03"
+    message: "¿Cuánto cuesta una limpieza?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Limpieza particular", "administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente por texto libre: brackets_obra_social"
+  vars:
+    conversation_id: "eval-topics-text-04"
+    message: "¿Hacen brackets por obra social?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Brackets", "administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente por texto libre: alineadores"
+  vars:
+    conversation_id: "eval-topics-text-05"
+    message: "Info de alineadores"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["USD 2.500", "Smilesecret"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente desde la lista: blanqueamiento"
+  vars:
+    conversation_id: "eval-topics-row-01"
+    message: "Blanqueamiento dental"
+    button_payload: "FAQ_TOPIC:blanqueamiento"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["450.000", "360.000"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente desde la lista: consulta_particular"
+  vars:
+    conversation_id: "eval-topics-row-02"
+    message: "Consulta particular"
+    button_payload: "FAQ_TOPIC:consulta_particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["60.000"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente desde la lista: limpieza_particular"
+  vars:
+    conversation_id: "eval-topics-row-03"
+    message: "Limpieza particular"
+    button_payload: "FAQ_TOPIC:limpieza_particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Limpieza particular", "administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente desde la lista: brackets_obra_social"
+  vars:
+    conversation_id: "eval-topics-row-04"
+    message: "Brackets por obra social"
+    button_payload: "FAQ_TOPIC:brackets_obra_social"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Brackets", "administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Tema frecuente desde la lista: alineadores"
+  vars:
+    conversation_id: "eval-topics-row-05"
+    message: "Alineadores"
+    button_payload: "FAQ_TOPIC:alineadores"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["USD 2.500", "Smilesecret"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Menú: Consultas frecuentes abre la lista de temas"
+  vars:
+    conversation_id: "eval-topics-menu-01"
+    message: "ℹ️ Consultas frecuentes"
+    button_payload: "MENU_FAQ"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "list"
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["FAQ_TOPIC:blanqueamiento", "FAQ_TOPIC:consulta_particular", "FAQ_TOPIC:limpieza_particular", "FAQ_TOPIC:brackets_obra_social", "FAQ_TOPIC:alineadores"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Pedido de turno que nombra un tema no usa el texto fijo"
+  vars:
+    conversation_id: "eval-topics-booking-01"
+    message: "Quiero un turno para limpieza"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "faq_topic"
+  metadata:
+    requires_real_llm: false
+
+- description: "Obra social especial: OSDE recibe el texto de primera visita"
+  vars:
+    conversation_id: "eval-topics-insurance-01"
+    message: "¿Atienden OSDE?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "agreement"
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["OSDE", "primera visita", "diagnóstico integral"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Obra social especial: Medifé recibe el texto de primera visita"
+  vars:
+    conversation_id: "eval-topics-insurance-02"
+    message: "Tengo Medifé"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "agreement"
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Medifé", "primera visita", "diagnóstico integral"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Obra social especial: William Hope recibe el texto de primera visita"
+  vars:
+    conversation_id: "eval-topics-insurance-03"
+    message: "¿Trabajan con William Hope?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "agreement"
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["William Hope", "primera visita", "diagnóstico integral"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Cobertura de OSDE: cuánto cubre deriva a administración"
+  vars:
+    conversation_id: "eval-topics-insurance-04"
+    message: "¿Cuánto cubre OSDE?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "agreement"
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Paráfrasis de precio: blanqueamiento (LLM real)"
+  vars:
+    conversation_id: "eval-topics-llm-01"
+    message: "¿Cuánto me sale aclararme los dientes?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: llm-rubric
+      value: >
+        La respuesta informa el valor y la promo del blanqueamiento dental con las cifras
+        del texto de la clínica ($450.000 y $360.000) sin inventar otros montos.
+  metadata:
+    requires_real_llm: true
+
+- description: "Pedido de turno que nombra un tema (LLM real)"
+  vars:
+    conversation_id: "eval-topics-llm-02"
+    message: "Quiero un turno para limpieza"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "faq_topic"
+    - type: llm-rubric
+      value: >
+        La respuesta avanza con el pedido de turno (identificación o próximo paso de la
+        reserva) y no contesta con precios ni con el texto informativo de la limpieza.
+  metadata:
+    requires_real_llm: true

@@ -120,6 +120,13 @@ Response shape: `reply_text`, `reply_kind` (`text|buttons|list|flow|null`),
 `datasets/flows_view_appointment.yaml` uses the seeded eval patient (Lucía Prueba,
 DNI 39000111, two upcoming appointments; `app/infrastructure/dentalink/eval_seed.py`).
 
+`datasets/clinic_topics.yaml` covers the clinic's frequent topics (fixed texts in
+`app/agent/clinic_topics.py`): the five topics by free text and by the menu sub-list
+(`MENU_FAQ`, then `FAQ_TOPIC:<id>` payloads), a booking phrase that must not reach the
+`faq_topic` node, the OSDE / Medifé / William Hope first-visit text and "cuánto cubre OSDE"
+deriving to administración. Two cases are `requires_real_llm: true` (a paraphrased price
+question and a booking phrase). Figures in the texts are pending the clinic's confirmation.
+
 ## Production audits
 
 The production endpoint (`https://agent.qeva-ai.com`) is an always-on posture, not a

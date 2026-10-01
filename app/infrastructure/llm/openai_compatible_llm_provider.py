@@ -103,7 +103,8 @@ Leé el mensaje del paciente y devolvé SOLO un JSON con esta forma exacta, sin 
 
 - appointment: quiere sacar, cambiar o cancelar un turno, o pregunta por horarios o por los \
 médicos de una especialidad.
-- insurance: pregunta por obra social, prepaga o convenios.
+- insurance: pregunta por obra social, prepaga o convenios, o nombra una (OSDE, Medifé, \
+William Hope).
 - specialties: pregunta qué especialidades atiende la clínica, sin pedir turno.
 - handoff: pide hablar con una persona, urgencias, reclamos o quejas, avisa que llega tarde \
 ("voy a llegar tarde", "estoy llegando", "ya llego") o tiene un problema con un turno ("no \

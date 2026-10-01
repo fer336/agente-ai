@@ -29,6 +29,14 @@ async def test_classify_intent_recognizes_insurance_keyword():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Tengo Medifé", "tengo medife", "¿Trabajan con William Hope?"])
+async def test_classify_intent_recognizes_the_special_insurance_names(message: str):
+    result = await make_llm_provider().classify_intent(message, context={})
+
+    assert result == IntentResult(intent="insurance", confidence=0.9)
+
+
+@pytest.mark.asyncio
 async def test_classify_intent_recognizes_specialty_keyword():
     provider = make_llm_provider()
 

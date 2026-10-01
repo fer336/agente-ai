@@ -29,6 +29,7 @@ _DATASET_NAMES = [
     "flows",
     "flows_view_appointment",
     "audit_followups",
+    "clinic_topics",
 ]
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
@@ -553,6 +554,35 @@ def test_audit_followups_dataset_covers_each_task_with_deterministic_asserts():
     assert {"nodeVisited", "hasButtons", "hasOptionIds", "handoffOfferHasButtons"} <= helpers
     payloads = {t["vars"].get("button_payload") for t in tests}
     assert {"PATIENT_NOT_FOUND_REGISTER", "PATIENT_NOT_FOUND_RETRY", "MENU_ADMIN"} <= payloads
+
+
+def test_clinic_topics_dataset_covers_topics_menu_booking_and_special_insurances():
+    tests = _load_test_cases("clinic_topics")
+    payloads = {t["vars"].get("button_payload") for t in tests}
+    messages = " | ".join(t["vars"]["message"].casefold() for t in tests)
+
+    assert "MENU_FAQ" in payloads
+    assert {
+        f"FAQ_TOPIC:{t}"
+        for t in [
+            "blanqueamiento",
+            "consulta_particular",
+            "limpieza_particular",
+            "brackets_obra_social",
+            "alineadores",
+        ]
+    } <= payloads
+    for phrase in [
+        "quiero un turno para limpieza",
+        "osde",
+        "medifé",
+        "william hope",
+        "cuánto cubre osde",
+    ]:
+        assert phrase in messages
+    real_llm = [t for t in tests if t["metadata"]["requires_real_llm"] is True]
+    assert len(real_llm) == 2
+    assert all(any(a["type"] == "llm-rubric" for a in t["assert"]) for t in real_llm)
 
 
 def test_datasets_no_longer_expect_the_old_slot_list_after_a_free_text_message():

@@ -139,7 +139,16 @@ _VIEW_APPOINTMENT_KEYWORDS = (
     "tengo turno",
     "turnos tengo",
 )
-_INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
+_INSURANCE_KEYWORDS = (
+    "obra social",
+    "prepaga",
+    "convenio",
+    "cobertura",
+    "osde",
+    "medife",
+    "medifé",
+    "william hope",
+)
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
 #: T3 (free-text menu-intents parity): phrasings the deterministic
 #: `asks_for_location` substring pre-check (`app.agent.nodes.location`)
