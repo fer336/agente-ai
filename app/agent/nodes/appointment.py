@@ -405,17 +405,13 @@ _AGREEMENT_ALREADY_LINKED_NOTICE = (
     "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno."
 )
 _ADMIN_CHANGES_HINT = 'Si querés actualizar algún dato, escribí "administración".'
-_EXISTING_PATIENT_SAME_AGREEMENT_NOTICE = (
-    "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno. "
-    + _ADMIN_CHANGES_HINT
+_EXISTING_PATIENT_ON_RECORD_NOTICE = (
+    "Ya figurás en nuestro sistema, así que seguimos con tu turno. "
+    'Si querés actualizar algún dato (por ejemplo tu obra social), escribí "administración".'
 )
 _EXISTING_PATIENT_AGREEMENT_LINKED_NOTICE = (
     "Ya figurás en nuestro sistema y te cargamos la obra social, así que seguimos con tu "
     "turno. " + _ADMIN_CHANGES_HINT
-)
-_EXISTING_PATIENT_OTHER_AGREEMENT_NOTICE = (
-    "Ya figurás en nuestro sistema con otra obra social. Para cambiarla o actualizar algún "
-    'dato, escribí "administración"; mientras tanto seguimos con tu turno.'
 )
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
@@ -1148,8 +1144,10 @@ async def _attach_agreement(
     A patient created a moment ago just gets the agreement linked. An existing
     (recovered) patient is identified only by name + DNI, and Dentalink's
     `POST /pacientes/{id}/convenios` REPLACES the active agreement, so an existing record is
-    never written blindly: it is linked only when it has no agreement at all, and a
-    different one is left untouched (changes go through Administración). Gateway failures
+    never written blindly: it is linked only when it has no agreement on record at all.
+    `GET /pacientes/{id}/convenios` lists agreements the patient has OR HAS HAD and flags
+    none as active, so any non-empty list may hide a current one: we write nothing, say
+    nothing about which agreement they have, and point to Administración. Gateway failures
     propagate so each call site keeps its own failure handling.
     """
     if not recovered:
@@ -1159,10 +1157,8 @@ async def _attach_agreement(
             return _AGREEMENT_ALREADY_LINKED_NOTICE
         return None
     held = await agreement_gateway.get_patient_agreements(patient.id)
-    if any(item.id == agreement.id for item in held):
-        return _EXISTING_PATIENT_SAME_AGREEMENT_NOTICE
     if held:
-        return _EXISTING_PATIENT_OTHER_AGREEMENT_NOTICE
+        return _EXISTING_PATIENT_ON_RECORD_NOTICE
     await agreement_gateway.link_patient_agreement(patient.id, agreement.id)
     return _EXISTING_PATIENT_AGREEMENT_LINKED_NOTICE
 

@@ -816,17 +816,13 @@ _EXISTING_ID = "pat-existing"
 _OSDE = make_agreement(id_="osde", name="OSDE")
 _OTHER = make_agreement(id_="other", name="Swiss Medical")
 _ADMIN_HINT = 'Si querés actualizar algún dato, escribí "administración".'
-_NOTICE_ALREADY_HAS = (
-    "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno. "
-    + _ADMIN_HINT
+_NOTICE_ON_RECORD = (
+    "Ya figurás en nuestro sistema, así que seguimos con tu turno. "
+    'Si querés actualizar algún dato (por ejemplo tu obra social), escribí "administración".'
 )
 _NOTICE_LINKED_NOW = (
     "Ya figurás en nuestro sistema y te cargamos la obra social, así que seguimos con tu "
     f"turno. {_ADMIN_HINT}"
-)
-_NOTICE_OTHER_AGREEMENT = (
-    "Ya figurás en nuestro sistema con otra obra social. Para cambiarla o actualizar algún "
-    'dato, escribí "administración"; mientras tanto seguimos con tu turno.'
 )
 
 
@@ -4870,9 +4866,9 @@ _SITE_RUNNERS = [
 @pytest.mark.parametrize(
     ("held", "expect_link", "notice"),
     [
-        ([_OSDE], False, _NOTICE_ALREADY_HAS),
+        ([_OSDE], False, _NOTICE_ON_RECORD),
         ([], True, _NOTICE_LINKED_NOW),
-        ([_OTHER], False, _NOTICE_OTHER_AGREEMENT),
+        ([_OTHER], False, _NOTICE_ON_RECORD),
     ],
     ids=["same-agreement", "no-agreement", "different-agreement"],
 )
