@@ -53,6 +53,15 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   settings `public_base_url` / `location_image_url`, eval stack `image_url`, dataset
   `evals/datasets/location.yaml`. Commit c099a60. Route: delegated direct (single writer).
 
+- [ ] T6 — Alineadores answer = clinic image + 3 buttons (Opción 1/2/3); each option starts the
+  booking (first-visit question first, then straight to the General specialty) and the chosen option
+  is remembered and shown in the confirmation. Route: delegated direct.
+- [ ] T7 — Payment, advance and installment questions get "se manejan directamente con
+  Administración" (deterministic detector + LLM-worded answer + question-node backstop).
+  Route: delegated direct.
+- [ ] T8 — OSDE / Medifé / William Hope answer written by the LLM each time, facts guarded by a
+  validator with the fixed text as fallback. Route: delegated direct.
+
 ## Acceptance criteria
 
 - Each topic returns its exact fixed text with Agendar / Menú principal / Asesor buttons.
