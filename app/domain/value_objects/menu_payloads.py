@@ -72,3 +72,14 @@ CHOOSE_PROFESSIONAL_PAYLOAD = "CHOOSE_PROFESSIONAL"
 #: other data. The third option, talking to an advisor, reuses `MENU_ADMIN_PAYLOAD`.
 PATIENT_NOT_FOUND_REGISTER_PAYLOAD = "PATIENT_NOT_FOUND_REGISTER"
 PATIENT_NOT_FOUND_RETRY_PAYLOAD = "PATIENT_NOT_FOUND_RETRY"
+
+#: "Consultas frecuentes" (clinic FAQ topics). `MENU_FAQ_PAYLOAD` opens the sub-list of
+#: topics; each topic row carries `FAQ_TOPIC_PAYLOAD_PREFIX` + the topic id defined in
+#: `app.agent.clinic_topics`, which round-trips through WhatsApp's `list_reply.id`.
+MENU_FAQ_PAYLOAD = "MENU_FAQ"
+FAQ_TOPIC_PAYLOAD_PREFIX = "FAQ_TOPIC:"
+FAQ_TOPIC_BLANQUEAMIENTO_PAYLOAD = "FAQ_TOPIC:blanqueamiento"
+FAQ_TOPIC_CONSULTA_PAYLOAD = "FAQ_TOPIC:consulta_particular"
+FAQ_TOPIC_LIMPIEZA_PAYLOAD = "FAQ_TOPIC:limpieza_particular"
+FAQ_TOPIC_BRACKETS_PAYLOAD = "FAQ_TOPIC:brackets_obra_social"
+FAQ_TOPIC_ALINEADORES_PAYLOAD = "FAQ_TOPIC:alineadores"

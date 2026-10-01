@@ -76,9 +76,7 @@ async def test_a_turn_with_the_real_provider_completes_and_calls_the_llm_endpoin
     provider = internal_eval.get_eval_use_case_provider()
     conversation_id = ConversationId("eval-real-llm-turn-1")
 
-    result = await provider(conversation_id).execute(
-        conversation_id, "quiero un turno para limpieza", now=_NOW
-    )
+    result = await provider(conversation_id).execute(conversation_id, "quiero un turno", now=_NOW)
 
     assert result.agent_run is not None
     assert result.agent_run.status != "failed"

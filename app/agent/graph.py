@@ -9,6 +9,7 @@ from app.agent.nodes.appointment import create_appointment_node
 from app.agent.nodes.check_conversation_mode import create_check_conversation_mode_node
 from app.agent.nodes.error_handling import with_error_handling
 from app.agent.nodes.fallback import create_fallback_node
+from app.agent.nodes.faq_topic import create_faq_topic_node
 from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, fresh_restart_node
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
@@ -64,6 +65,7 @@ SPECIALTIES_NODE = "specialties"
 HANDOFF_NODE = "handoff"
 QUESTION_NODE = "question"
 LOCATION_NODE = "location"
+FAQ_TOPIC_NODE = "faq_topic"
 FALLBACK_NODE = "fallback"
 HANDLE_ERROR_NODE = "handle_error"
 
@@ -116,6 +118,8 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return QUESTION_NODE
     if intent == "location":
         return LOCATION_NODE
+    if intent == "faq_topic":
+        return FAQ_TOPIC_NODE
     return FALLBACK_NODE
 
 
@@ -160,6 +164,7 @@ def build_graph(
                                              |-- handoff
                                              |-- question
                                              |-- location
+                                             |-- faq_topic
                                              `-- fallback
     (any node's exception) -> handle_error -> END
     ```
@@ -297,6 +302,17 @@ def build_graph(
         ),
     )
     graph.add_node(
+        FAQ_TOPIC_NODE,
+        with_error_handling(
+            FAQ_TOPIC_NODE,
+            create_faq_topic_node(),
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
         FALLBACK_NODE,
         with_error_handling(
             FALLBACK_NODE,
@@ -333,6 +349,7 @@ def build_graph(
             HANDOFF_NODE: HANDOFF_NODE,
             QUESTION_NODE: QUESTION_NODE,
             LOCATION_NODE: LOCATION_NODE,
+            FAQ_TOPIC_NODE: FAQ_TOPIC_NODE,
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
@@ -347,6 +364,7 @@ def build_graph(
         HANDOFF_NODE,
         QUESTION_NODE,
         LOCATION_NODE,
+        FAQ_TOPIC_NODE,
         FALLBACK_NODE,
     ):
         graph.add_conditional_edges(

@@ -530,3 +530,26 @@ async def test_understand_parses_the_boolean_handoff_offer_flag(raw, expected) -
     result = await provider.understand("¿aceptan obra social?", context={})
 
     assert result.handoff_offer is expected
+
+
+@pytest.mark.asyncio
+async def test_understand_accepts_the_faq_topic_label() -> None:
+    client = _StubClient(
+        '{"intent": "faq_topic", "confidence": 0.9, "answer": null,'
+        ' "specialty_mention": null, "professional_mention": null,'
+        ' "operation_mention": null, "navigation_target": null}'
+    )
+    provider = _make_provider(client)
+
+    result = await provider.understand("cuánto sale el blanqueamiento", context={})
+
+    assert result.intent == "faq_topic"
+
+
+def test_the_understand_prompt_routes_priced_topics_to_faq_topic_not_question() -> None:
+    from app.infrastructure.llm.openai_compatible_llm_provider import DEFAULT_UNDERSTAND_PROMPT
+
+    assert "faq_topic" in DEFAULT_UNDERSTAND_PROMPT
+    question_definition = DEFAULT_UNDERSTAND_PROMPT.split("- question:")[1].split("- unknown:")[0]
+    for claimed in ("blanqueamiento", "limpieza", "alineadores"):
+        assert claimed not in question_definition

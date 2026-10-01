@@ -153,6 +153,15 @@ _LOCATION_UNDERSTANDING_KEYWORDS = (
     "donde los encuentro",
     "dónde los encuentro",
 )
+#: Frequent clinic topics (`faq_topic`): the fake's own keyword stand-in for the real label
+#: (the deterministic fixed-text keywords live in `app.agent.clinic_topics`).
+_FAQ_TOPIC_UNDERSTANDING_KEYWORDS = (
+    "blanqueamiento",
+    "limpieza",
+    "alineador",
+    "bracket",
+    "consulta particular",
+)
 #: T3: "volver al menú principal"-shaped free text — the fake's own
 #: equivalent of the real `navigation_target` field ("main" case only; the
 #: other targets — specialty/professional/slot — aren't reachable from a
@@ -221,6 +230,9 @@ class FakeLLMProvider:
         # reports it, matching the real provider's `understand`-only label.
         if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
             intent = "location"
+            confidence = 0.9
+        elif any(keyword in lowered for keyword in _FAQ_TOPIC_UNDERSTANDING_KEYWORDS):
+            intent = "faq_topic"
             confidence = 0.9
         else:
             intent_result = await self.classify_intent(message, context)
