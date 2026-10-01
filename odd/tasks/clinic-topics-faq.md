@@ -135,7 +135,7 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 
 ## Next step
 
-Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
+PR #163 is open; merge is the user's decision (squash, `feat(...)` title).
 
 - Prices (owner decision 2026-10-01): only consulta particular ($60.000) and blanqueamiento
   ($450.000, promo dropped) state figures; alineadores, limpieza and brackets state none. The
@@ -163,3 +163,12 @@ Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workf
   full `uv run pytest`: 2553 passed, only the 3 known test_redis_debounce_lock.py failures/errors.
   `ruff check .` clean, `mypy app/` clean. Decisions: temperature 0.9; node passes only seguro,
   situacion, instruccion (not the state's collected_data); eval dataset now has 5 real-LLM cases.
+- T7 follow-up, commit 58a12b5: the detector now ignores the insurance card ("tarjeta de mi obra
+  social") and also catches "pagar" / "abonar". RED: 6 detector cases failed; GREEN: 2518 passed.
+- Native review of T6-T8 (high, 43 files, 1815 lines, 4 lenses): consent granted, approved and
+  acknowledged (lineage review-3de5d0bef1099bfa). The first capture attempts failed before
+  starting (provider session limit, `mutation_outcome: not_started`) and were relaunched. Advisory:
+  R4-001 the aligners options would show with no prices when the image cannot load -> the caption
+  now says what to do when the image is not visible (RED: 1 test; GREEN: 2554 passed, only the 3
+  known redis failures). R2-1 duplicated "Opción n" label, R2-2 `ALIGNER_OPTION_KEY` naming, R2-3
+  insurance prompt facts duplicated in the validator: recorded as follow-ups.

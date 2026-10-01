@@ -80,7 +80,8 @@ _ALINEADORES_TEXT = (
     "😁 *Alineadores Smilesecret*\n\n"
     "Estas son las opciones de pago. Elegí la que más te convenga y seguimos con tu "
     "turno.\n\n"
-    'Si preferís otra cosa, escribí "menú" o "administración".'
+    'Si no ves la imagen o preferís otra cosa, escribí "administración" (o "menú") y te '
+    "ayudamos."
 )
 
 CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
