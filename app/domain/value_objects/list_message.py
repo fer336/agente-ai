@@ -27,6 +27,10 @@ class ListRow:
 #: dropping every message that uses it in production.
 _BUTTON_LABEL_MAX_CHARS = 20
 
+#: WhatsApp's hard cap on rows per interactive list. Longer catalogs are paginated
+#: (see `paginated_list`) before they ever reach a `ListMessage`.
+MAX_LIST_ROWS = 10
+
 
 @dataclass(frozen=True, slots=True)
 class ListMessage:
@@ -46,4 +50,9 @@ class ListMessage:
                 f"ListMessage.button_label exceeds WhatsApp's "
                 f"{_BUTTON_LABEL_MAX_CHARS}-char cap ({len(self.button_label)} chars): "
                 f"{self.button_label!r}"
+            )
+        if len(self.rows) > MAX_LIST_ROWS:
+            raise ValueError(
+                f"ListMessage.rows exceed WhatsApp's {MAX_LIST_ROWS}-row cap "
+                f"({len(self.rows)} rows)"
             )

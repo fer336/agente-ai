@@ -349,11 +349,13 @@ async def test_brand_new_conversation_gets_the_welcome_menu():
         "📍 Cómo llegar",
         "💬 Hablar con un asesor",
         "📋 Ver mi cita",
+        "ℹ️ Consultas frecuentes",
     ]
     # Meta's own row limits (title <=24 chars, description <=72) — a row
     # that silently grows past either gets rejected by WhatsApp itself,
     # not by us, so this must be caught here instead.
     assert all(len(row.title) <= 24 for row in list_message.rows)
+    assert all(len(row.description or "") <= 72 for row in list_message.rows)
 
 
 @pytest.mark.asyncio

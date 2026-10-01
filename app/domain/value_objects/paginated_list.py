@@ -16,7 +16,7 @@ converts entities to `ListRow`s here and ships the result through
 
 from app.domain.entities.professional import Professional
 from app.domain.entities.specialty import Specialty
-from app.domain.value_objects.list_message import ListMessage, ListRow
+from app.domain.value_objects.list_message import MAX_LIST_ROWS, ListMessage, ListRow
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -25,7 +25,7 @@ from app.domain.value_objects.menu_payloads import (
 )
 
 #: Meta's hard cap on rows per interactive list.
-MAX_ROWS = 10
+MAX_ROWS = MAX_LIST_ROWS
 #: Real item rows per page (one slot always reserved for Ver más/Volver atrás).
 PAGE_SIZE = MAX_ROWS - 1
 #: Meta's row-title cap, in characters (not code points).

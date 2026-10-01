@@ -790,6 +790,7 @@ async def test_handle_seeds_the_fresh_restart_flag_when_the_conversation_await_o
         "MENU_LOCATION",
         "MENU_ADMIN",
         "OPERATION_VIEW",
+        "MENU_FAQ",
     ]
     # Consumed: the flag is back to False so the menu renders once.
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))

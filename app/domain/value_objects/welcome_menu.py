@@ -3,6 +3,7 @@
 from app.domain.value_objects.list_message import ListMessage, ListRow
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
+    MENU_FAQ_PAYLOAD,
     MENU_LOCATION_PAYLOAD,
     OPERATION_CANCEL_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
@@ -27,5 +28,10 @@ WELCOME_LIST = ListMessage(
         ListRow(id=MENU_LOCATION_PAYLOAD, title="📍 Cómo llegar"),
         ListRow(id=MENU_ADMIN_PAYLOAD, title="💬 Hablar con un asesor"),
         ListRow(id=OPERATION_VIEW_PAYLOAD, title="📋 Ver mi cita"),
+        ListRow(
+            id=MENU_FAQ_PAYLOAD,
+            title="ℹ️ Consultas frecuentes",
+            description="Precios y tratamientos más consultados",
+        ),
     ],
 )
