@@ -1,4 +1,5 @@
 from app.domain.entities.agreement import Agreement
+from app.domain.exceptions.errors import AgreementAlreadyLinkedError
 
 
 class FakeAgreementGateway:
@@ -30,5 +31,6 @@ class FakeAgreementGateway:
         if agreement is None:
             return
         linked = self._patient_agreements.setdefault(patient_id, [])
-        if agreement not in linked:
-            linked.append(agreement)
+        if agreement in linked:
+            raise AgreementAlreadyLinkedError(patient_id, agreement_id)
+        linked.append(agreement)

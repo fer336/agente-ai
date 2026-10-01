@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.exceptions.errors import AgreementAlreadyLinkedError
 from app.domain.repositories.gateways import AgreementGateway
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
 from tests.fixtures.gateways import make_agreement_gateway
@@ -72,12 +73,13 @@ async def test_link_patient_agreement_adds_the_agreement_to_that_patient():
 
 
 @pytest.mark.asyncio
-async def test_link_patient_agreement_is_idempotent():
+async def test_linking_the_same_agreement_twice_raises_already_linked():
     osde = make_agreement(id_="agr-1", name="OSDE")
     gateway = make_agreement_gateway(agreements=[osde])
 
     await gateway.link_patient_agreement("pat-1", "agr-1")
-    await gateway.link_patient_agreement("pat-1", "agr-1")
+    with pytest.raises(AgreementAlreadyLinkedError):
+        await gateway.link_patient_agreement("pat-1", "agr-1")
 
     assert await gateway.get_patient_agreements("pat-1") == [osde]
 

@@ -123,6 +123,9 @@ class AgreementGateway(Protocol):
         uses for Q&A), then linked here — Dentalink models convenio
         membership as its own relationship, never a plain field on the
         patient record itself (`POST /pacientes/{id}/convenios`).
+
+        Raises `AgreementAlreadyLinkedError` when the patient already has
+        that agreement, so the caller can tell them and carry on.
         """
         ...
 

@@ -2,6 +2,7 @@ import logging
 import re
 
 from app.domain.entities.agreement import Agreement
+from app.domain.exceptions.errors import AgreementAlreadyLinkedError
 from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.exceptions import DentalinkAPIError
 from app.infrastructure.dentalink.schemas import agreement_from_convenio, as_list
@@ -58,9 +59,9 @@ class DentalinkAgreementGateway:
 
     async def link_patient_agreement(self, patient_id: str, agreement_id: str) -> None:
         # The endpoint and the `id_convenio` body field are confirmed by a live Dentalink
-        # response (its 400 below). Linking is idempotent for the caller: a patient who
-        # already has the agreement (a DNI that was already registered, or a retry after
-        # a partial failure) is the desired end state, not an error.
+        # response (its 400 below). A patient who already has the agreement (a DNI that
+        # was already registered, or a retry after a partial failure) is not a failure,
+        # but the caller decides how to tell them, so it gets a typed signal.
         try:
             await self._client.post(
                 f"/v1/pacientes/{patient_id}/convenios", json={"id_convenio": agreement_id}
@@ -73,3 +74,4 @@ class DentalinkAgreementGateway:
                 patient_id,
                 agreement_id,
             )
+            raise AgreementAlreadyLinkedError(patient_id, agreement_id) from exc

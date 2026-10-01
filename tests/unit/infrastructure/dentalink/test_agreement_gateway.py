@@ -1,5 +1,6 @@
 import pytest
 
+from app.domain.exceptions.errors import AgreementAlreadyLinkedError
 from app.domain.repositories.gateways import AgreementGateway
 from app.infrastructure.dentalink.agreement_gateway import DentalinkAgreementGateway
 from app.infrastructure.dentalink.exceptions import (
@@ -111,14 +112,18 @@ _ALREADY_LINKED = (
 
 
 @pytest.mark.asyncio
-async def test_link_patient_agreement_is_idempotent_when_the_patient_already_has_it():
+async def test_link_patient_agreement_raises_the_domain_error_when_the_patient_already_has_it():
     # Seen in production: re-registering a patient whose DNI already exists, or retrying
     # after a partial failure, makes Dentalink answer 400 "ya tiene el convenio".
     client = _RejectingPostClient(400, _ALREADY_LINKED)
     gateway = DentalinkAgreementGateway(client)
 
-    await gateway.link_patient_agreement("4532", "6")
+    with pytest.raises(AgreementAlreadyLinkedError) as raised:
+        await gateway.link_patient_agreement("4532", "6")
 
+    assert raised.value.patient_id == "4532"
+    assert raised.value.agreement_id == "6"
+    assert isinstance(raised.value.__cause__, DentalinkAPIError)
     assert client.post_calls == [("/v1/pacientes/4532/convenios", {"id_convenio": "6"})]
 
 
@@ -126,8 +131,10 @@ async def test_link_patient_agreement_is_idempotent_when_the_patient_already_has
 async def test_link_patient_agreement_still_raises_when_the_message_names_another_agreement():
     gateway = DentalinkAgreementGateway(_RejectingPostClient(400, _ALREADY_LINKED))
 
-    with pytest.raises(DentalinkAPIError):
+    with pytest.raises(DentalinkAPIError) as raised:
         await gateway.link_patient_agreement("4532", "9")
+
+    assert not isinstance(raised.value, AgreementAlreadyLinkedError)
 
 
 @pytest.mark.asyncio
@@ -142,8 +149,10 @@ async def test_link_patient_agreement_still_raises_when_the_message_names_anothe
 async def test_link_patient_agreement_raises_on_any_other_failure(status_code, body):
     gateway = DentalinkAgreementGateway(_RejectingPostClient(status_code, body))
 
-    with pytest.raises(DentalinkAPIError):
+    with pytest.raises(DentalinkAPIError) as raised:
         await gateway.link_patient_agreement("4532", "6")
+
+    assert not isinstance(raised.value, AgreementAlreadyLinkedError)
 
 
 def test_dentalink_agreement_gateway_satisfies_agreement_gateway_protocol():

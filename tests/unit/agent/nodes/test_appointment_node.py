@@ -54,6 +54,7 @@ from app.agent.nodes.appointment import (
     create_appointment_node,
     should_use_appointment_decision_subgraph,
 )
+from app.domain.exceptions.errors import AgreementAlreadyLinkedError
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
@@ -551,6 +552,21 @@ async def test_partial_intake_reply_re_asks_only_the_missing_fields():
     assert collecting["response_buttons"] is None
 
 
+_ALREADY_LINKED_NOTICE = (
+    "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno."
+)
+_NO_ERROR_WORDS = ("error", "falló", "pendiente", "no pudimos")
+
+
+def _assert_notice_then_same_next_step(result, success):
+    assert result["response_text"] == f"{_ALREADY_LINKED_NOTICE}\n\n{success['response_text']}"
+    assert result["response_buttons"] == success["response_buttons"]
+    assert result.get("response_list") == success.get("response_list")
+    assert result["collected_data"].get("stage") == success["collected_data"].get("stage")
+    lowered = result["response_text"].casefold()
+    assert not any(word in lowered for word in _NO_ERROR_WORDS)
+
+
 async def _complete_new_patient_intake(node, coverage: str = "OSDE 210"):
     result = await _confirm_first_visit(
         node, await _start_create(node, _CONTACT_CONVERSATION_ID), _CONTACT_CONVERSATION_ID
@@ -792,6 +808,47 @@ async def test_agreement_link_failure_keeps_confirmed_intake_retryable():
         FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
         FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
         FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
+    }
+
+
+async def _first_visit_confirm_with_link(link):
+    agreement_gateway = make_agreement_gateway(agreements=[make_agreement(id_="osde", name="OSDE")])
+    if link is not None:
+        agreement_gateway.link_patient_agreement = link
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=make_patient_gateway(patients=[]),
+        agreement_gateway=agreement_gateway,
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+    return await _complete_new_patient_intake(node)
+
+
+@pytest.mark.asyncio
+async def test_first_visit_already_linked_agreement_tells_the_patient_and_continues():
+    success = await _first_visit_confirm_with_link(None)
+
+    result = await _first_visit_confirm_with_link(
+        AsyncMock(side_effect=AgreementAlreadyLinkedError("pat-1", "osde"))
+    )
+
+    _assert_notice_then_same_next_step(result, success)
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert "first_visit_intake" not in result["collected_data"]
+    assert result["collected_data"]["insurance_provider"] == "OSDE"
+
+
+@pytest.mark.asyncio
+async def test_first_visit_generic_link_failure_still_shows_the_pending_message():
+    result = await _first_visit_confirm_with_link(AsyncMock(side_effect=RuntimeError("down")))
+
+    assert "El alta quedó pendiente" in result["response_text"]
+    assert _ALREADY_LINKED_NOTICE not in result["response_text"]
+    assert {button.title for button in result["response_buttons"]} == {
+        "✅ Reintentar",
+        "✏️ Modificar",
+        "❌ Cancelar",
     }
 
 
@@ -4656,3 +4713,102 @@ async def test_a_patient_found_by_the_verification_flow_is_not_remembered_until_
     assert result["collected_data"]["stage"] == STAGE_AWAITING_VERIFICATION_CONFIRMATION
     assert result["collected_data"]["patient"]["dni"] == "30123456"
     assert "patient_identity" not in result
+
+
+async def _confirm_create_patient(link):
+    repositories_provider = make_proposal_repositories_provider()
+    conversation_repository = make_conversation_repository()
+    agreement_gateway = make_agreement_gateway(agreements=[make_agreement(id_="osde", name="OSDE")])
+    if link is not None:
+        agreement_gateway.link_patient_agreement = link
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    node = create_appointment_node(
+        appointment_gateway=make_dentalink_gateway(),
+        patient_gateway=make_patient_gateway(patients=[]),
+        proposal_repositories_provider=repositories_provider,
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        agreement_gateway=agreement_gateway,
+    )
+    payload = {
+        "full_name": "Maria Soto",
+        "dni": "30111222",
+        "phone": "+5491122334455",
+        "obra_social": "OSDE",
+        "email": "maria@gmail.com",
+    }
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1",
+                conversation_id="ycloud-+5491122334455",
+                action_type=CREATE_PATIENT_ACTION,
+                status="pending",
+                payload=payload,
+            )
+        )
+    return await node(
+        make_agent_state(
+            conversation_id="ycloud-+5491122334455",
+            button_payload=CONFIRM_APPOINTMENT_PAYLOAD,
+            pending_action_id="pa-1",
+            collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirmed_new_patient_already_linked_agreement_tells_the_patient_and_continues():
+    success = await _confirm_create_patient(None)
+
+    result = await _confirm_create_patient(
+        AsyncMock(side_effect=AgreementAlreadyLinkedError("pat-1", "osde"))
+    )
+
+    _assert_notice_then_same_next_step(result, success)
+
+
+async def _submit_registration_flow(link):
+    slot = _future_slot()
+    agreement_gateway = make_agreement_gateway(
+        agreements=[make_agreement(id_="agr-1", name="OSDE")]
+    )
+    if link is not None:
+        agreement_gateway.link_patient_agreement = link
+    node, _, _ = await _make_node_and_conversation(
+        available_slots=[slot],
+        patients=[],
+        agreement_gateway=agreement_gateway,
+        conversation_id="ycloud-+5491122334455",
+    )
+    payload = (
+        f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Rosa Gomez", "dni": "30123456", '
+        f'"email": "rosa@example.com", "obra_social": "OSDE"}}'
+    )
+    return await node(
+        make_agent_state(
+            conversation_id="ycloud-+5491122334455",
+            button_payload=payload,
+            collected_data={
+                "stage": STAGE_AWAITING_REGISTRATION_FLOW,
+                "operation": CREATE_APPOINTMENT_ACTION,
+                "pending_selected_slot": slot,
+            },
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_already_linked_agreement_tells_the_patient_and_continues():
+    success = await _submit_registration_flow(None)
+
+    result = await _submit_registration_flow(
+        AsyncMock(side_effect=AgreementAlreadyLinkedError("pat-1", "agr-1"))
+    )
+
+    _assert_notice_then_same_next_step(result, success)
