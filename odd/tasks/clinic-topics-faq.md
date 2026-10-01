@@ -56,7 +56,7 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 - [x] T6 — Alineadores answer = clinic image + 3 buttons (Opción 1/2/3); each option starts the
   booking (first-visit question first, then straight to the General specialty) and the chosen option
   is remembered and shown in the confirmation. Route: delegated direct.
-- [ ] T7 — Payment, advance and installment questions get "se manejan directamente con
+- [x] T7 — Payment, advance and installment questions get "se manejan directamente con
   Administración" (deterministic detector + LLM-worded answer + question-node backstop).
   Route: delegated direct.
 - [ ] T8 — OSDE / Medifé / William Hope answer written by the LLM each time, facts guarded by a
@@ -148,3 +148,11 @@ Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workf
   `mypy app/` clean. `ALIGNERS_IMAGE_URL` / `effective_aligners_image_url` reach the `faq_topic`
   node like the location URL; the options replace the Agendar/Menú/Administración trio; the
   confirmation shows "Consulta por alineadores: Opción n" and nothing is sent to Dentalink.
+
+- T7 done, commit 8fd84d0 (route: delegated direct). RED: the detector and node test modules failed
+  at collection (no `app.agent.payment_questions`, no `nodes.payment_admin`), plus router, graph,
+  question-backstop, fake-LLM and prompt tests. GREEN: `uv run pytest` 2512 passed, only the 3 known
+  redis_debounce_lock failures (plus their 3 setup errors); `ruff check .` and `mypy app/` clean.
+  Payment terms win over a topic keyword except alineadores; not applied in data stages; backstop in
+  `question.py` and `fallback.py`; understand prompt no longer lists payments under `faq_topic` or as
+  a free `question` answer; dataset got 3 deterministic cases and 1 real-LLM case; PRD scope rule added.
