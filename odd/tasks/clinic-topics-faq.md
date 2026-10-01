@@ -1,0 +1,85 @@
+# Clinic topics FAQ
+
+## Objective
+
+Answer the clinic's 5 frequent topics (blanqueamiento, consulta particular, limpieza particular,
+brackets por obra social, alineadores) and the OSDE / Medifé / William Hope first-visit case with
+fixed clinic-authored text, reachable from the main menu and from free text.
+
+## Problem
+
+~90% of the clinic's inquiries are about those topics. The agent has no price/FAQ knowledge:
+`question.py` depends on the `understand()` LLM answer, so prices could be invented.
+
+## Scope
+
+- Texts live as code constants (user decision), in one module, easy to edit.
+- Source of the content: clinic WhatsApp screenshot (2026-09-30). Figures are TO BE CONFIRMED by
+  the clinic before release: consulta particular $60.000; blanqueamiento $450.000, promo 20% off
+  = $360.000; alineadores in USD (2.500 contado; 1.000 + 3x600; 1.100 + 6x300).
+- OSDE / Medifé / William Hope text is final (clinic version of 16:02).
+
+## Constraints
+
+- Branch `feat/clinic-topics-faq` from origin/main (ab57678), worktree
+  `../agente-ai-worktrees/clinic-topics-faq`.
+- Strict TDD (RED -> GREEN -> REFACTOR). Runner: `uv run pytest`; also `uv run ruff check .`,
+  `uv run mypy app/`, `uv run ruff format --check <changed files>`.
+- Known environmental failures: `tests/integration/test_redis_debounce_lock.py` (3).
+- English artifacts, Spanish patient copy, no AI attribution in commits.
+- ~400 authored changed lines per task is a planning heuristic only.
+- Delivery: `docs/pr-release-workflow.md`, `feat(...)` title (minor release).
+- Plan: `/home/lucy/.claude/plans/merry-sniffing-kurzweil.md`.
+
+## Tasks
+
+- [x] T1 — Content module `app/agent/clinic_topics.py` + `faq_topic` node + routing (payloads,
+  deterministic keyword pre-check, not in data-collection stages) + graph wiring + understand
+  prompt/fake keywords. Route: delegated direct (writer trigger).
+- [x] T2 — Menu: `ℹ️ Consultas frecuentes` row + 5-row sub-list; update menu tests; add a
+  `ListMessage` 10-row validation. Route: delegated direct.
+- [x] T3 — Special insurances fixed text in `agreement.py` (precedence vs "cuánto cubre" derive),
+  eval dataset `evals/datasets/clinic_topics.yaml` + replay registration, PRD §7 update.
+  Route: delegated direct.
+
+## Acceptance criteria
+
+- Each topic returns its exact fixed text with Agendar / Menú principal / Asesor buttons.
+- Free text and menu taps reach the node; a mid-booking question keeps the stage.
+- Typing "OSDE" in intake/identification stays data.
+- "¿Cuánto cubre OSDE?" still defers to administración.
+
+## Progress
+
+- Worktree created (2026-10-01).
+- T1 done, commit 42c0be2 (route: delegated direct). RED: new test modules failed at collection
+  (no `app.agent.clinic_topics`, no `FAQ_TOPIC_NODE`) and 15 resolve/LLM tests failed. GREEN:
+  `uv run pytest` 2322 passed, 83 skipped, only the 3 known redis_debounce_lock failures;
+  `ruff check .` clean; `mypy app/` clean. Changed `test_internal_eval_real_llm.py` message to
+  "quiero un turno" (the old "limpieza" text is now answered by the deterministic pre-check
+  before the LLM). `MENU_FAQ_PAYLOAD` is defined but not routed (sub-list is T2).
+
+- T1 follow-up, commit 8b26d0f: a booking request naming a topic ("turno para limpieza") skips
+  the fixed answer (`_asks_to_book` guard; fake LLM and understand prompt aligned). RED: 3 new
+  tests failed; GREEN: 2325 passed, only the 3 known redis failures; ruff and mypy clean.
+
+- T2 done, commit 0f7f3d7 (route: delegated direct). RED: 11 new tests failed (no menu row, no
+  sub-list, no 10-row validation). GREEN: `uv run pytest` 2337 passed, only the 3 known redis
+  failures; `ruff check .` and `mypy app/` clean. MENU_FAQ routes to `faq_topic` via
+  `_GLOBAL_BUTTON_INTENTS`; the node returns the 5-row list when `button_payload == MENU_FAQ`.
+  `ListMessage` caps rows at 10 (`MAX_LIST_ROWS`, reused by `paginated_list.MAX_ROWS`); all
+  existing lists go through `paginate_rows` (max 10) or are fixed menus (7 / 5 rows). PRD §7 updated.
+
+- T3 done, commit 3b68a8c (route: delegated direct). RED: 7 agreement-node tests failed (no special
+  text, coverage questions about Medife/William Hope fell to not_found), 3 fake-LLM tests failed
+  (Medife / William Hope not classified as insurance) and the `clinic_topics` replay failed
+  (Medife / William Hope never reached `agreement`). GREEN: `uv run pytest` 2363 passed, only
+  the 3 known redis_debounce_lock failures; `ruff check .` and `mypy app/` clean. The agreement
+  node sends no buttons today for a found agreement, so the special text has none either.
+  Intake/identification/new-patient-details regression tests cover medife / william hope.
+  PRD section 7 was already updated in T2. Pre-existing unformatted lines in agreement.py and
+  two test files were left untouched.
+
+## Next step
+
+Open the PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
