@@ -1,6 +1,30 @@
+import logging
+import re
+
 from app.domain.entities.agreement import Agreement
 from app.infrastructure.dentalink.client import DentalinkClient
+from app.infrastructure.dentalink.exceptions import DentalinkAPIError
 from app.infrastructure.dentalink.schemas import agreement_from_convenio, as_list
+
+logger = logging.getLogger(__name__)
+
+_ALREADY_LINKED_MESSAGE = "ya tiene el convenio"
+_LINKED_AGREEMENT_ID = re.compile(r"convenio id\s+(\d+)", re.IGNORECASE)
+
+
+def _is_already_linked(error: DentalinkAPIError, agreement_id: str) -> bool:
+    """True when Dentalink says the patient already has this very agreement.
+
+    Seen in production: `400 {"error": {"message": "Paciente ID 4532 ya tiene el convenio
+    ID 6 asociado"}}`. The message names the agreement, which must be the requested one.
+    """
+    if error.status_code != 400:
+        return False
+    body = error.body.casefold()
+    if _ALREADY_LINKED_MESSAGE not in body:
+        return False
+    named = _LINKED_AGREEMENT_ID.search(error.body)
+    return named is None or named.group(1) == str(agreement_id)
 
 
 class DentalinkAgreementGateway:
@@ -33,12 +57,19 @@ class DentalinkAgreementGateway:
         return [agreement_from_convenio(raw) for raw in as_list(raw_convenios)]
 
     async def link_patient_agreement(self, patient_id: str, agreement_id: str) -> None:
-        # UNVERIFIED against a live Dentalink account: `id_convenio` follows
-        # the `id_<entidad>` naming Dentalink uses everywhere else in this
-        # codebase (`id_especialidad`, `id_profesional`, `id_sucursal`), but
-        # the docs page for this exact endpoint was never reachable in full
-        # (truncated before the request-body section) — confirm against a
-        # real response before relying on this in production.
-        await self._client.post(
-            f"/v1/pacientes/{patient_id}/convenios", json={"id_convenio": agreement_id}
-        )
+        # The endpoint and the `id_convenio` body field are confirmed by a live Dentalink
+        # response (its 400 below). Linking is idempotent for the caller: a patient who
+        # already has the agreement (a DNI that was already registered, or a retry after
+        # a partial failure) is the desired end state, not an error.
+        try:
+            await self._client.post(
+                f"/v1/pacientes/{patient_id}/convenios", json={"id_convenio": agreement_id}
+            )
+        except DentalinkAPIError as exc:
+            if not _is_already_linked(exc, agreement_id):
+                raise
+            logger.info(
+                "dentalink.agreement_already_linked patient_id=%s agreement_id=%s",
+                patient_id,
+                agreement_id,
+            )
