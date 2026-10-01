@@ -1311,9 +1311,9 @@ def build_appointment_decision_graph(
     # `choose_specialty`'s valid-selection branch always calls
     # `_offer_any_professional_slots` directly in the same turn (see its
     # docstring comment above) and `choose_browse_mode` only ever renders
-    # its own fallback screen or inline-delegates to `_offer_professionals`/
-    # `_offer_specialties` — neither node ever returns a `next_node` that
-    # routes elsewhere, so both are plain unconditional exits, not routing
+    # its own fallback screen or inline-delegates to
+    # `_offer_any_professional_slots`/`_offer_specialties` — neither node ever returns a
+    # `next_node` that routes elsewhere, so both are plain unconditional exits, not routing
     # decisions.
     graph.add_edge("choose_specialty", END)
     graph.add_edge("choose_browse_mode", END)

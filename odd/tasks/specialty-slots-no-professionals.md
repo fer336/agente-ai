@@ -47,10 +47,10 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
 
 ## Tasks
 
-- [x] T1 — specialty_mention and specialties node show the next 10 slots. Route: delegated direct. Commit: see Progress.
-- [x] T2 — remove the remaining professional-list leaks of the create flow. Route: delegated direct.
-- [x] T3 — catalog browse (specialties node, no booking context) shows slots, never professionals. Route: delegated direct.
-- [x] T4 — reschedule shows slots too; the RESCHEDULE exception is removed. Route: delegated direct.
+- [x] T1 — specialty_mention and specialties node show the next 10 slots. Route: delegated direct. Commit: 1951040.
+- [x] T2 — remove the remaining professional-list leaks of the create flow. Route: delegated direct. Commit: 4b463c7.
+- [x] T3 — catalog browse (specialties node, no booking context) shows slots, never professionals. Route: delegated direct. Commit: 6552a41.
+- [x] T4 — reschedule shows slots too; the RESCHEDULE exception is removed. Route: delegated direct. Commit: 18d3da7.
 
 ## Acceptance criteria
 
