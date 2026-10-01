@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import cast
 
 from app.domain.entities.appointment_slot import AppointmentSlot
-from app.domain.value_objects.list_message import ListMessage, ListRow
+from app.domain.value_objects.list_message import MAX_LIST_ROWS, ListMessage, ListRow
 from app.domain.value_objects.paginated_list import paginate_rows, truncate_title
 
 #: `datetime.strftime('%A')` is locale-dependent, and this codebase never
@@ -275,6 +275,22 @@ def slots_list_message(
         rows=slot_rows(slots, page, include_back),
         section_title="Horarios disponibles",
     )
+
+
+def is_single_page_slots(slots: list[AppointmentSlot], collected_data: dict[str, object]) -> bool:
+    """The next-slots screen (no professional chosen) holds at most `MAX_LIST_ROWS` rows: one
+    page, no "Ver más"/"Volver" row. A longer list (an old checkpoint, or one specific
+    professional's agenda) keeps the paginated layout with its back row."""
+    return collected_data.get("chosen_professional_id") is None and len(slots) <= MAX_LIST_ROWS
+
+
+def slots_screen(
+    slots: list[AppointmentSlot], page: int, collected_data: dict[str, object]
+) -> ListMessage:
+    """Slot list for the current stage data (see `is_single_page_slots`)."""
+    if is_single_page_slots(slots, collected_data):
+        return slots_list_message(slots, page=0, include_back=False)
+    return slots_list_message(slots, page=page, include_back=True)
 
 
 def slot_payload_id(button_payload: str | None) -> str | None:

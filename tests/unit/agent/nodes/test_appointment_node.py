@@ -1736,8 +1736,7 @@ async def test_an_in_flight_professional_selection_without_slots_offers_the_fall
 
 
 @pytest.mark.asyncio
-async def test_a_reschedule_professional_selection_still_handles_its_professional_list():
-    # OUT OF SCOPE on purpose: "cambiar profesional" of a RESCHEDULE keeps its professional list.
+async def test_a_reschedule_in_flight_professional_selection_converts_to_slots_too():
     chosen = _future_slot(id_="slot-mine", professional_id="prof-1")
     node, _, _ = await _make_node_and_conversation(available_slots=[chosen])
     state = make_agent_state(
@@ -1751,10 +1750,11 @@ async def test_a_reschedule_professional_selection_still_handles_its_professiona
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert result["collected_data"]["rescheduling_appointment_id"] == "appt-1"
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert result["collected_data"].get("chosen_professional_id") is None
     assert [row.id for row in result["response_list"].rows] == [
-        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine",
-        LIST_BACK_PAYLOAD,
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-mine"
     ]
 
 
@@ -2184,8 +2184,7 @@ async def test_a_professional_without_slots_in_the_create_flow_offers_the_fallba
 
 
 @pytest.mark.asyncio
-async def test_a_reschedule_professional_without_slots_still_offers_other_professionals():
-    # OUT OF SCOPE on purpose: the RESCHEDULE flow keeps "Otros profesionales".
+async def test_a_reschedule_without_slots_never_offers_other_professionals():
     node, conversation_repository, _ = await _make_node_and_conversation(available_slots=[])
     state = make_agent_state(
         conversation_id="conv-1",
@@ -2197,10 +2196,8 @@ async def test_a_reschedule_professional_without_slots_still_offers_other_profes
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
-    assert [(button.id, button.title) for button in result["response_buttons"]] == [
-        (_VIEW_OTHER_PROFESSIONALS_PAYLOAD, "Otros profesionales"),
-    ]
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert _VIEW_OTHER_PROFESSIONALS_PAYLOAD not in [b.id for b in result["response_buttons"]]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
@@ -2289,20 +2286,22 @@ async def test_a_legacy_no_slots_choice_checkpoint_without_a_specialty_shows_the
 
 
 @pytest.mark.asyncio
-async def test_a_reschedule_no_slots_choice_still_offers_other_professionals_on_button_tap():
-    # Regression, seen live: the professional just confirmed to have zero availability
-    # (prof-1) was re-listed among the "other professionals". OUT OF SCOPE on purpose: the
-    # RESCHEDULE flow keeps this professional list.
+@pytest.mark.parametrize(
+    ("payload", "text"),
+    [(_VIEW_OTHER_PROFESSIONALS_PAYLOAD, "Ver otros profesionales"), (None, "no entiendo")],
+)
+async def test_a_reschedule_no_slots_choice_checkpoint_converts_to_the_slots_screen(payload, text):
     node, _, _ = await _make_node_and_conversation(
         professionals=[
             make_professional(id_="prof-1", specialty_id="cleaning"),
             make_professional(id_="prof-2", specialty_id="cleaning"),
         ],
+        available_slots=[_future_slot(id_="slot-2", professional_id="prof-2")],
     )
     state = make_agent_state(
         conversation_id="conv-1",
-        user_message="Ver otros profesionales",
-        button_payload=_VIEW_OTHER_PROFESSIONALS_PAYLOAD,
+        user_message=text,
+        button_payload=payload,
         collected_data={
             "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
             "operation": RESCHEDULE_APPOINTMENT_ACTION,
@@ -2315,31 +2314,10 @@ async def test_a_reschedule_no_slots_choice_still_offers_other_professionals_on_
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    assert [p.id for p in result["collected_data"]["professional_options"]] == ["prof-2"]
-
-
-@pytest.mark.asyncio
-async def test_a_reschedule_no_slots_choice_reminds_on_unrecognized_input():
-    node, _, _ = await _make_node_and_conversation()
-    state = make_agent_state(
-        conversation_id="conv-1",
-        user_message="no entiendo",
-        collected_data={
-            "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
-            "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "chosen_specialty_name": "Ortodoncia",
-            "chosen_professional_id": "prof-1",
-        },
-    )
-
-    result = await node(state)
-
-    assert "collected_data" not in result
-    button_ids = [b.id for b in result["response_buttons"]]
-    assert button_ids == [_VIEW_OTHER_PROFESSIONALS_PAYLOAD]
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["rescheduling_appointment_id"] == "appt-1"
+    assert result["collected_data"]["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert [r.id for r in result["response_list"].rows] == [f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-2"]
 
 
 @pytest.mark.asyncio
@@ -3913,13 +3891,32 @@ async def test_confirmation_stage_thanks_the_patient_by_name_on_cancel_success()
     assert "Juan Perez" in result["response_text"]
 
 
+def _stale_reschedule_choice_data(**overrides):
+    return {
+        "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
+        "patient": _PATIENT_PRIMITIVES,
+        "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        "rescheduling_appointment_id": "appt-1",
+        "rescheduling_professional_id": "prof-1",
+        **overrides,
+    }
+
+
 @pytest.mark.asyncio
-async def test_appointment_selection_stage_asks_to_keep_or_change_professional_for_reschedule():
-    # Regression: reschedule used to search availability across every
-    # professional in the clinic (seen live offering a completely
-    # different specialty) — now the patient is asked first.
+async def test_rescheduling_shows_the_next_slots_of_the_appointments_specialty():
+    # Professionals are never shown: rescheduling goes straight to the next slots of the
+    # appointment's specialty across all of its professionals (no keep/change question).
     old_slot = _future_slot(id_="slot-old", professional_id="prof-1")
-    node, conversation_repository, appointment_gateway = await _make_node_and_conversation()
+    mine = _future_slot(id_="slot-new", days=2, professional_id="prof-1")
+    theirs = _future_slot(id_="slot-other", days=3, professional_id="prof-2")
+    node, conversation_repository, appointment_gateway = await _make_node_and_conversation(
+        available_slots=[mine, theirs],
+        professionals=[
+            make_professional(id_="prof-1", specialty_id="cleaning"),
+            make_professional(id_="prof-2", specialty_id="cleaning"),
+            make_professional(id_="prof-9", specialty_id="whitening"),
+        ],
+    )
     appointment = await appointment_gateway.create_appointment(
         patient=make_patient(id_="pat-1"), slot=old_slot, idempotency_key="seed-1"
     )
@@ -3937,55 +3934,65 @@ async def test_appointment_selection_stage_asks_to_keep_or_change_professional_f
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE
-    assert result["collected_data"]["rescheduling_appointment_id"] == str(appointment.id)
-    assert result["collected_data"]["rescheduling_professional_id"] == "prof-1"
-    assert "Jonathan Kafruni El Khoury" in result["response_text"]
-    button_ids = [b.id for b in result["response_buttons"]]
-    assert RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD in button_ids
-    assert RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD in button_ids
+    data = result["collected_data"]
+    assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert data["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert data["rescheduling_appointment_id"] == str(appointment.id)
+    assert data["chosen_specialty_id"] == "cleaning"
+    assert data.get("chosen_professional_id") is None
+    assert data["patient"] == _PATIENT_PRIMITIVES
+    assert [r.id for r in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-new",
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-other",
+    ]
+    assert result["response_buttons"] is None
+    assert "Jonathan" not in result["response_text"]
+    assert "menú" in result["response_text"]
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
 
 
 @pytest.mark.asyncio
-async def test_reschedule_professional_choice_keeps_same_professional_searches_only_them():
-    same_professional_slot = _future_slot(id_="slot-new", days=2, professional_id="prof-1")
-    other_professional_slot = _future_slot(id_="slot-other", days=2, professional_id="prof-2")
-    node, conversation_repository, _ = await _make_node_and_conversation(
-        available_slots=[same_professional_slot, other_professional_slot],
-        professionals=[
-            make_professional(id_="prof-1", specialty_id="cleaning"),
-            make_professional(id_="prof-2", specialty_id="cleaning"),
-        ],
+async def test_rescheduling_without_slots_in_the_specialty_offers_the_fallback_buttons():
+    old_slot = _future_slot(id_="slot-old", professional_id="prof-1")
+    node, _, appointment_gateway = await _make_node_and_conversation(available_slots=[])
+    appointment = await appointment_gateway.create_appointment(
+        patient=make_patient(id_="pat-1"), slot=old_slot, idempotency_key="seed-1"
     )
     state = make_agent_state(
         conversation_id="conv-1",
-        button_payload=RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD,
+        button_payload=f"{SELECT_APPOINTMENT_PAYLOAD_PREFIX}{appointment.id}",
         collected_data={
-            "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
+            "stage": STAGE_AWAITING_APPOINTMENT_SELECTION,
             "patient": _PATIENT_PRIMITIVES,
+            "patient_appointments": [appointment],
+            "professional_names": {},
             "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            "rescheduling_appointment_id": "appt-1",
-            "rescheduling_professional_id": "prof-1",
         },
     )
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
-    assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
-    assert result["collected_data"]["available_slots"] == [same_professional_slot]
-    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
-    assert conversation is not None
-    assert conversation.input_state == "INTERACTIVE_SELECTION"
+    assert result.get("response_list") is None
+    assert {b.id for b in result["response_buttons"]} == {
+        LIST_BACK_PAYLOAD,
+        MENU_MAIN_PAYLOAD,
+        MENU_ADMIN_PAYLOAD,
+    }
 
 
 @pytest.mark.asyncio
-async def test_reschedule_professional_choice_changing_offers_other_professionals():
+@pytest.mark.parametrize(
+    "payload", [RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD, RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD, None]
+)
+async def test_a_stale_reschedule_professional_choice_converts_to_the_slots_screen(payload):
+    # Old checkpoints offered "Mismo profesional"/"Elegir otro": every reply now shows the next
+    # slots of the appointment's specialty, never a professional list.
+    mine = _future_slot(id_="slot-new", days=2, professional_id="prof-1")
+    theirs = _future_slot(id_="slot-other", days=3, professional_id="prof-2")
     node, _, _ = await _make_node_and_conversation(
+        available_slots=[mine, theirs],
         professionals=[
             make_professional(id_="prof-1", specialty_id="cleaning"),
             make_professional(id_="prof-2", specialty_id="cleaning"),
@@ -3994,25 +4001,39 @@ async def test_reschedule_professional_choice_changing_offers_other_professional
     )
     state = make_agent_state(
         conversation_id="conv-1",
-        button_payload=RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD,
-        collected_data={
-            "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
-            "patient": _PATIENT_PRIMITIVES,
-            "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            "rescheduling_appointment_id": "appt-1",
-            "rescheduling_professional_id": "prof-1",
-        },
+        user_message="otro",
+        button_payload=payload,
+        collected_data=_stale_reschedule_choice_data(),
     )
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
-    assert [p.id for p in result["collected_data"]["professional_options"]] == [
-        "prof-1",
-        "prof-2",
+    data = result["collected_data"]
+    assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert data["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert data["rescheduling_appointment_id"] == "appt-1"
+    assert data["chosen_specialty_id"] == "cleaning"
+    assert data.get("professional_options") is None
+    assert data["patient"] == _PATIENT_PRIMITIVES
+    assert [r.id for r in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-new",
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-other",
     ]
-    assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
+
+
+@pytest.mark.asyncio
+async def test_a_stale_reschedule_choice_for_an_unknown_professional_shows_the_specialties():
+    node, _, _ = await _make_node_and_conversation()
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD,
+        collected_data=_stale_reschedule_choice_data(rescheduling_professional_id="prof-gone"),
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"].section_title == "Especialidades"
 
 
 @pytest.mark.asyncio

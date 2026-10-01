@@ -106,10 +106,8 @@
         allowed:
           - "SELECT_SLOT:eval-free-*"
           - "SPECIALTY:eval-spec-*"
-          - "PROFESSIONAL:eval-prof-*"
           - "LIST_BACK"
           - "LIST_MORE"
-          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         La respuesta no toma la transcripción como si fuera la selección del
@@ -275,10 +273,8 @@
         allowed:
           - "SELECT_SLOT:eval-free-*"
           - "SPECIALTY:eval-spec-*"
-          - "PROFESSIONAL:eval-prof-*"
           - "LIST_BACK"
           - "LIST_MORE"
-          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         Ante una transcripción ambigua, la respuesta no elige un horario ni

@@ -29,7 +29,7 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
   "Otra especialidad" (and the menu / administration), not "Elegir profesional"; an explicit
   professional mention ("turno con la Dra. X") goes straight to that doctor's slots instead of a
   one-row professional list (decision: honors the patient's request and still shows only slots).
-- Out of scope: the reschedule flow ("cambiar profesional"), deleting the old stage constants.
+- Out of scope: deleting the old stage constants (the reschedule flow is no longer an exception, see T4).
   Old in-flight checkpoints (`STAGE_AWAITING_PROFESSIONAL_SELECTION`,
   `STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE`, `STAGE_AWAITING_NO_SLOTS_CHOICE`) must keep resolving:
   keep the constants and mappings and make those stages convert to the slots screen.
@@ -50,6 +50,7 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
 - [x] T1 — specialty_mention and specialties node show the next 10 slots. Route: delegated direct. Commit: see Progress.
 - [x] T2 — remove the remaining professional-list leaks of the create flow. Route: delegated direct.
 - [x] T3 — catalog browse (specialties node, no booking context) shows slots, never professionals. Route: delegated direct.
+- [x] T4 — reschedule shows slots too; the RESCHEDULE exception is removed. Route: delegated direct.
 
 ## Acceptance criteria
 
@@ -84,6 +85,13 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
   without booking context) before the implementation. GREEN: full suite passed (3 known redis-lock tests
   deselected), ruff check and mypy clean. `_has_booking_context` removed: every specialties-node path that resolves a
   specialty or professional now hands off to the slots flow; picking a slot continues to identification.
+- T4 done (owner: the rule is total). RED observed: 17 failures (reschedule shows slots, no slots in the
+  specialty, stale RESCHEDULE_KEEP/CHANGE taps, in-flight reschedule checkpoints, view-appointments reschedule)
+  before the implementation; the `appointments` eval replay also failed until its dataset moved to slots.
+  GREEN: full suite passed (3 known redis-lock tests deselected), ruff check and mypy clean.
+  Decisions: `_begin_reschedule` shows the appointment's specialty slots (no keep/change question);
+  `_offer_professionals` (appointment.py and subgraph) deleted; `RESCHEDULE_*` payloads, old stage constants and
+  `_VIEW_OTHER_PROFESSIONALS_PAYLOAD` kept so stale taps convert to slots.
 
 ## Next step
 

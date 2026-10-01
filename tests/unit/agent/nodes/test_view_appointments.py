@@ -12,7 +12,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_APPOINTMENT_SELECTION,
     STAGE_AWAITING_CONFIRMATION,
     STAGE_AWAITING_IDENTIFICATION,
-    STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
+    STAGE_AWAITING_SLOT_SELECTION,
     STAGE_AWAITING_VIEW_ACTION,
     VIEW_APPOINTMENTS_ACTION,
     VIEW_CANCEL_PAYLOAD,
@@ -245,13 +245,15 @@ def _action_state(collected_data, **kwargs):
         {"user_message": "quiero reprogramar"},
     ],
 )
-async def test_reschedule_with_one_appointment_goes_straight_to_the_professional_choice(kwargs):
+async def test_reschedule_with_one_appointment_goes_straight_to_the_next_slots(kwargs):
     node, _, data = await _awaiting_view_action(1)
 
     result = await node(_action_state(data, **kwargs))
 
     out = result["collected_data"]
-    assert out["stage"] == STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE
+    assert out["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert out.get("chosen_professional_id") is None
+    assert result["response_list"].section_title == "Horarios disponibles"
     assert out["operation"] == RESCHEDULE_APPOINTMENT_ACTION
     assert out["rescheduling_appointment_id"] == str(data["patient_appointments"][0].id)
 

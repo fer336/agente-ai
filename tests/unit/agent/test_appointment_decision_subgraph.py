@@ -24,7 +24,6 @@ from app.agent.appointment_decision_subgraph import (
 )
 from app.agent.nodes.appointment_selection import (
     SELECT_SLOT_PAYLOAD_PREFIX,
-    STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SLOT_SELECTION,
     STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
@@ -138,28 +137,6 @@ async def test_route_entry_from_specialty_selection_resolves_the_valid_choice():
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
     assert result["response_buttons"] is None
     assert result["response_list"] is not None
-
-
-@pytest.mark.asyncio
-async def test_route_entry_from_professional_selection_resolves_a_choice_for_a_reschedule():
-    slot = _future_slot()
-    graph, _, _ = await _make_graph(available_slots=[slot])
-    state = _decision_state(
-        user_message="1",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "operation": _CREATE_APPOINTMENT_ACTION,
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
 
 
 @pytest.mark.asyncio
@@ -512,97 +489,6 @@ async def test_stale_specialty_row_tap_is_rejected():
 
 
 # --- PROFESSIONAL: payload handling -------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_valid_professional_row_tap_advances_to_search_for_a_reschedule():
-    slot = _future_slot()
-    graph, _, _ = await _make_graph(available_slots=[slot])
-    state = _decision_state(
-        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
-    assert result["response_buttons"] is None
-    assert [row.id for row in result["response_list"].rows] == [
-        f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-        LIST_BACK_PAYLOAD,
-    ]
-
-
-@pytest.mark.asyncio
-async def test_invalid_professional_choice_reprompts_the_same_list_for_a_reschedule():
-    graph, _, _ = await _make_graph()
-    state = _decision_state(
-        user_message="nada que ver",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    assert result["collected_data"]["professional_retry_count"] == 1
-    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
-
-
-@pytest.mark.asyncio
-async def test_a_second_invalid_professional_choice_escalates_for_a_reschedule():
-    graph, _, _ = await _make_graph()
-    state = _decision_state(
-        user_message="nada que ver",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-            "professional_retry_count": 1,
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"] == {}
-    assert result.get("response_list") is None
-    assert {b.id for b in result["response_buttons"]} == {MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD}
-    admin_button = next(b for b in result["response_buttons"] if b.id == MENU_ADMIN_PAYLOAD)
-    assert admin_button.title == "💬 Administración"
-
-
-@pytest.mark.asyncio
-async def test_stale_professional_row_tap_is_rejected_for_a_reschedule():
-    graph, _, _ = await _make_graph()
-    state = _decision_state(
-        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-old",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    assert result["collected_data"]["professional_retry_count"] == 1
 
 
 # --- SELECT_SLOT: payload handling --------------------------------------
@@ -1004,61 +890,6 @@ async def test_specialty_payload_during_reschedule_slot_selection_does_not_rerou
 # --- Availability outcomes -----------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_availability_with_slots_renders_as_a_list_for_a_reschedule():
-    # Regression: slots used to render as reply buttons, capped at 3 by
-    # WhatsApp — any 4th+ available slot simply never showed.
-    slots = [_future_slot(id_=f"slot-{i}") for i in range(5)]
-    graph, conversation_repository, _ = await _make_graph(available_slots=slots)
-    state = _decision_state(
-        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-    assert result["response_buttons"] is None
-    # 5 real slot rows plus the "Volver atrás" row.
-    assert len(result["response_list"].rows) == 6
-    assert result["response_list"].rows[-1].id == LIST_BACK_PAYLOAD
-    assert result["exit_reason"] == "none"
-
-
-@pytest.mark.asyncio
-async def test_no_availability_exits_to_legacy_no_slots_choice_for_a_reschedule():
-    # This session's own brief: a known specialty must offer "ver otros
-    # profesionales" instead of discarding it and sending the patient back
-    # to the main menu.
-    graph, conversation_repository, _ = await _make_graph(available_slots=[])
-    state = _decision_state(
-        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_NO_SLOTS_CHOICE
-    assert result["exit_reason"] == "legacy_no_slots"
-    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
-    assert conversation is not None
-    assert conversation.input_state == "INTERACTIVE_SELECTION"
-
-
-
-
 # --- Pre-identification slot selection safety -----------------------------
 
 
@@ -1399,27 +1230,6 @@ async def test_a_valid_specialty_pick_with_no_availability_offers_the_fallback_s
 
 
 @pytest.mark.asyncio
-async def test_search_availability_decision_node_is_attributed_for_a_reschedule():
-    slot = _future_slot()
-    graph, _, _ = await _make_graph(available_slots=[slot])
-    state = _decision_state(
-        button_payload=f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1",
-        collected_data={
-            "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-            # The professional list only remains in the RESCHEDULE flow ("cambiar profesional").
-            "rescheduling_appointment_id": "appt-1",
-            "chosen_specialty_id": "cleaning",
-            "professional_options": [make_professional(id_="prof-1")],
-        },
-    )
-
-    result = await graph.ainvoke(state)
-
-    assert result["decision_node"] == "search_availability"
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
-
-
-@pytest.mark.asyncio
 async def test_choose_slot_decision_node_is_attributed():
     slot = _future_slot()
     graph, _, _ = await _make_graph(available_slots=[slot])
@@ -1754,25 +1564,6 @@ async def test_an_in_flight_professional_selection_without_a_specialty_shows_the
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
 
 
-@pytest.mark.asyncio
-async def test_a_reschedule_professional_selection_still_lists_professionals():
-    # OUT OF SCOPE on purpose: "cambiar profesional" of a reschedule keeps its professional list.
-    graph, _, _ = await _make_graph(**_slots_graph_kwargs(_many_future_slots(3)))
-
-    result = await graph.ainvoke(
-        _decision_state(
-            collected_data={
-                "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-                "rescheduling_appointment_id": "appt-1",
-                "chosen_specialty_id": "cleaning",
-                "chosen_specialty_name": "Ortodoncia",
-            },
-        )
-    )
-
-    assert result["response_list"].section_title == "Profesionales"
-
-
 def _explicit_professional_data(**overrides):
     return {
         "operation": _CREATE_APPOINTMENT_ACTION,
@@ -1832,3 +1623,61 @@ async def test_a_professional_without_slots_and_a_specialty_without_slots_offers
         MENU_MAIN_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
     }
+
+
+# --- RESCHEDULE: professionals are never shown either ---------------------
+
+
+def _reschedule_professional_selection(**overrides):
+    return {
+        "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+        "operation": "reschedule_appointment",
+        "rescheduling_appointment_id": "appt-1",
+        "chosen_specialty_id": "cleaning",
+        "chosen_specialty_name": "Ortodoncia",
+        "professional_options": [make_professional(id_="prof-1")],
+        **overrides,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [None, f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-1", f"{PROFESSIONAL_PAYLOAD_PREFIX}old"]
+)
+async def test_a_reschedule_professional_selection_converts_to_the_slots_screen(payload):
+    graph, _, _ = await _make_graph(**_slots_graph_kwargs(_many_future_slots(5)))
+
+    result = await graph.ainvoke(
+        _decision_state(
+            user_message="nada que ver",
+            button_payload=payload,
+            collected_data=_reschedule_professional_selection(),
+        )
+    )
+
+    data = result["collected_data"]
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert data["rescheduling_appointment_id"] == "appt-1"
+    assert data["operation"] == "reschedule_appointment"
+    assert "professional_options" not in data
+    assert "professional_retry_count" not in data
+    # One page of slots, no navigation row, no professional rows.
+    assert len(result["response_list"].rows) == 5
+    assert all(r.id.startswith(SELECT_SLOT_PAYLOAD_PREFIX) for r in result["response_list"].rows)
+
+
+@pytest.mark.asyncio
+async def test_a_reschedule_without_slots_offers_the_fallback_not_other_professionals():
+    graph, conversation_repository, _ = await _make_graph(**_slots_graph_kwargs([]))
+
+    result = await graph.ainvoke(
+        _decision_state(user_message="1", collected_data=_reschedule_professional_selection())
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE
+    assert result["decision_node"] == "choose_browse_mode"
+    assert CHOOSE_PROFESSIONAL_PAYLOAD not in {b.id for b in result["response_buttons"]}
+    conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
+    assert conversation is not None
+    assert conversation.input_state == "INTERACTIVE_SELECTION"

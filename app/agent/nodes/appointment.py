@@ -67,13 +67,16 @@ from app.agent.nodes.appointment_selection import (
     format_confirmation_datetime as _format_confirmation_datetime,
 )
 from app.agent.nodes.appointment_selection import (
+    is_single_page_slots as _is_single_page_slots,
+)
+from app.agent.nodes.appointment_selection import (
     numbered_list as _numbered_list,
 )
 from app.agent.nodes.appointment_selection import (
     resolve_by_name as _resolve_by_name,
 )
 from app.agent.nodes.appointment_selection import (
-    slots_list_message as _slots_list_message,
+    slots_screen as _slots_screen,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
@@ -147,7 +150,6 @@ from app.domain.value_objects.menu_payloads import (
     PATIENT_NOT_FOUND_RETRY_PAYLOAD,
 )
 from app.domain.value_objects.paginated_list import (
-    professionals_list_message,
     specialties_list_message,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -374,13 +376,6 @@ _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
     "Querés que te comunique con administración?"
 )
-_CHOOSE_PROFESSIONAL_PROMPT = (
-    "Con qué profesional preferís atenderte? Elegí una opción de la lista:"
-)
-_NO_PROFESSIONALS_MESSAGE = (
-    "No tengo profesionales cargados para esa especialidad. "
-    "Querés que te comunique con administración?"
-)
 _OPERATION_MENU_MESSAGE = "Qué querés hacer?"
 _MAIN_MENU_RESET_MESSAGE = "Listo, volvemos al principio. Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
@@ -466,10 +461,6 @@ _FLOW_REMINDER_MESSAGE = (
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
     "Querés que te comunique con administración?"
-)
-_NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE = (
-    "No encontramos horarios disponibles con ese profesional en los próximos días. "
-    "¿Querés ver otros profesionales de la misma especialidad?"
 )
 #: `STAGE_AWAITING_NO_AVAILABILITY_CHOICE` used to have no dedicated
 #: handler at all — ANY button tap that wasn't literally `MENU_MAIN_
@@ -569,20 +560,11 @@ _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS = 2
 _IDENTIFICATION_ESCAPE_BUTTONS = [
     InteractiveButton(id=MENU_APPOINTMENT_PAYLOAD, title="🔄 Empezar de nuevo"),
 ]
+#: Old "Otros profesionales" button of in-flight checkpoints (kept so stale taps still resolve).
 _VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
-_NO_SLOTS_CHOICE_BUTTONS = [
-    InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="Otros profesionales"),
-]
 _NO_AVAILABILITY_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
 ]
-_RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS = [
-    InteractiveButton(id=RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD, title="✅ Mismo profesional"),
-    InteractiveButton(id=RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD, title="🔄 Elegir otro"),
-]
-_RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER = (
-    "Por favor, elegí una opción tocando un botón: mantener el mismo profesional o elegir otro."
-)
 
 
 #: The field name asked of `LLMProvider.extract_information` to judge
@@ -797,7 +779,7 @@ async def _merge_identification(
     )
 
 
-#: `_format_slot_option` and `_slots_list_message` now live in
+#: `_format_slot_option` and `slots_screen` now live in
 #: `appointment_selection.py` (imported above) — same no-behavior-change
 #: extraction as the payload/pagination helpers.
 
@@ -1640,9 +1622,10 @@ def create_appointment_node(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object]:
-        """The CREATE flow never lists professionals: shows the specialty's next free
-        slots (soonest first, across all of its professionals) through the decision
-        subgraph. Any professional chosen or listed earlier is dropped."""
+        """Professionals are never shown (create and reschedule alike): shows the specialty's
+        next free slots (soonest first, across all of its professionals) through the decision
+        subgraph. Any professional chosen or listed earlier is dropped. A reschedule in flight
+        (`rescheduling_appointment_id`) keeps its operation and its appointment."""
         decision_state: AppointmentDecisionState = {
             "conversation_id": str(conversation_id),
             "user_message": "",
@@ -1652,7 +1635,11 @@ def create_appointment_node(
             "pending_action_id": None,
             "collected_data": {
                 **invalidate_from(collected_data, "professional"),
-                "operation": CREATE_APPOINTMENT_ACTION,
+                "operation": (
+                    RESCHEDULE_APPOINTMENT_ACTION
+                    if collected_data.get("rescheduling_appointment_id") is not None
+                    else CREATE_APPOINTMENT_ACTION
+                ),
                 "chosen_specialty_id": specialty_id,
                 "chosen_specialty_name": specialty_name,
                 SPECIALTY_SLOTS_REQUEST_KEY: True,
@@ -2229,99 +2216,6 @@ def create_appointment_node(
         }
         return updates
 
-    async def _offer_professionals(
-        conversation_id: ConversationId,
-        specialty_id: str,
-        specialty_name: str,
-        collected_data: dict[str, object],
-        recent_messages: list[dict[str, str]],
-        contact_memory: str | None,
-        exclude_professional_id: str | None = None,
-    ) -> dict[str, object]:
-        if collected_data.get("rescheduling_appointment_id") is None:
-            # The CREATE flow never shows a professional list: the specialty's next slots
-            # instead. The RESCHEDULE flow ("cambiar profesional") is out of scope and keeps
-            # listing professionals below — the one intentional leak left.
-            return await _offer_next_slots(
-                conversation_id,
-                specialty_id,
-                specialty_name,
-                collected_data,
-                recent_messages,
-                contact_memory,
-            )
-        professionals = await appointment_gateway.list_professionals(specialty_id=specialty_id)
-        if exclude_professional_id is not None:
-            # Seen live: "ver otros profesionales" (reached after a
-            # professional was just confirmed to have zero availability)
-            # kept re-listing that exact same professional — the patient
-            # picked them again, got told the same "no hay lugares" a
-            # second time, for no reason. Only ever passed from
-            # STAGE_AWAITING_NO_SLOTS_CHOICE's own handler, never from
-            # this function's other call sites (a fresh specialty pick has
-            # nothing to exclude).
-            professionals = [p for p in professionals if p.id != exclude_professional_id]
-        if not professionals:
-            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_professionals",
-                {
-                    "situacion": (
-                        f"No hay profesionales cargados para la especialidad {specialty_name}."
-                    ),
-                },
-                _NO_PROFESSIONALS_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
-            return {
-                "response_text": text,
-                "response_buttons": None,
-                "requires_handoff": False,
-                "collected_data": {},
-            }
-
-        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        page = current_page(collected_data, "doctors_page")
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "choose_professional",
-            {
-                "situacion": (
-                    "Hay que preguntarle con qué profesional prefiere atenderse; le vamos a "
-                    "mostrar una lista para elegir."
-                ),
-                "instruccion": (
-                    "Le vamos a mostrar la lista de profesionales debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno."
-                ),
-            },
-            _CHOOSE_PROFESSIONAL_PROMPT,
-            recent_messages,
-            contact_memory,
-        )
-        if text_leaks_a_name(text, [p.full_name for p in professionals]):
-            text = _CHOOSE_PROFESSIONAL_PROMPT
-        return {
-            "response_text": text,
-            "response_buttons": None,
-            "response_list": professionals_list_message(
-                professionals, page=page, include_back=True
-            ),
-            "requires_handoff": False,
-            "collected_data": {
-                **collected_data,
-                "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-                "chosen_specialty_id": specialty_id,
-                "chosen_specialty_name": specialty_name,
-                "professional_options": professionals,
-                "doctors_page": page,
-            },
-        }
-
     async def _offer_slots(
         conversation_id: ConversationId,
         patient: dict[str, object] | None,
@@ -2340,53 +2234,17 @@ def create_appointment_node(
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
             limit=_MAX_SLOTS_SEARCHED,
         )
-        if (
-            not slots
-            and collected_data.get("chosen_specialty_id") is not None
-            and collected_data.get("rescheduling_appointment_id") is None
-        ):
-            # CREATE flow: the chosen professional has no slots — show the specialty's next
-            # slots instead of offering a professional list.
+        if not slots and collected_data.get("chosen_specialty_id") is not None:
+            # The chosen professional has no slots — show the specialty's next slots instead
+            # (professionals are never shown, create and reschedule alike).
             return await _offer_next_slots(
                 conversation_id,
                 str(collected_data["chosen_specialty_id"]),
                 str(collected_data.get("chosen_specialty_name", "esa especialidad")),
-                collected_data,
+                {**collected_data, "patient": patient or collected_data.get("patient")},
                 recent_messages,
                 contact_memory,
             )
-        if not slots and collected_data.get("chosen_specialty_id") is not None:
-            # RESCHEDULE flow only (out of scope: it keeps "Otros profesionales"). A specialty
-            # is already known — offer another professional in
-            # it before falling back to "start over from scratch" (this
-            # session's own brief: a professional with zero availability
-            # used to only offer "Menú principal", discarding the
-            # specialty the patient already picked).
-            await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_slots_other_professionals",
-                {
-                    "situacion": (
-                        "No hay horarios disponibles con ese profesional en los próximos "
-                        "días; ofrecele ver otros profesionales de la misma especialidad."
-                    ),
-                },
-                _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
-            return {
-                "response_text": text,
-                "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
-                "requires_handoff": False,
-                "pending_action_id": None,
-                "collected_data": {
-                    **collected_data,
-                    "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
-                },
-            }
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
             text = await generate_or_fallback(
@@ -2438,7 +2296,7 @@ def create_appointment_node(
         return {
             "response_text": text,
             "response_buttons": None,
-            "response_list": _slots_list_message(slots, page=page, include_back=True),
+            "response_list": _slots_screen(slots, page, collected_data),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
@@ -2741,32 +2599,55 @@ def create_appointment_node(
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
         }
 
+    async def _offer_reschedule_slots(
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        rescheduling_professional_id: str,
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> dict[str, object]:
+        """Rescheduling shows the next free slots of the appointment's specialty across all of
+        its professionals (never a professional list); the specialty list when the
+        appointment's professional or specialty cannot be resolved."""
+        professionals = await appointment_gateway.list_professionals()
+        current = next((p for p in professionals if p.id == rescheduling_professional_id), None)
+        if current is None or not current.specialty_id:
+            return await _offer_specialties(
+                conversation_id, collected_data, recent_messages, contact_memory
+            )
+        specialties = await list_specialties.execute()
+        specialty_name = next(
+            (s.name for s in specialties if s.id == current.specialty_id), "esa especialidad"
+        )
+        return await _offer_next_slots(
+            conversation_id,
+            current.specialty_id,
+            specialty_name,
+            collected_data,
+            recent_messages,
+            contact_memory,
+        )
+
     async def _begin_reschedule(
         conversation_id: ConversationId,
         collected_data: dict[str, object],
         appointment: Appointment,
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
     ) -> dict[str, object]:
-        """Ask whether to keep the appointment's professional when rescheduling it."""
-        professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
+        """Starts rescheduling `appointment`: shows the next slots of its specialty."""
         rescheduling_professional_id = appointment.slot.professional_id
-        professional_name = professional_names.get(
-            rescheduling_professional_id, "tu profesional actual"
-        )
-        await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        return {
-            "response_text": (
-                f"Tu turno es con {professional_name}. ¿Querés mantener el mismo "
-                "profesional o elegir otro?"
-            ),
-            "response_buttons": _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS,
-            "requires_handoff": False,
-            "collected_data": {
+        return await _offer_reschedule_slots(
+            conversation_id,
+            {
                 **collected_data,
-                "stage": STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE,
                 "rescheduling_appointment_id": str(appointment.id),
                 "rescheduling_professional_id": rescheduling_professional_id,
             },
-        }
+            rescheduling_professional_id,
+            recent_messages,
+            contact_memory,
+        )
 
     async def _offer_patient_not_found_choice(
         state: AgentState,
@@ -2868,7 +2749,7 @@ def create_appointment_node(
                 repaired = invalidate_from(navigation_data, "professional")
                 specialty_id = cast(str | None, repaired.get("chosen_specialty_id"))
                 if specialty_id is not None:
-                    return await _offer_professionals(
+                    return await _offer_next_slots(
                         conversation_id,
                         specialty_id,
                         str(repaired.get("chosen_specialty_name", "esa especialidad")),
@@ -2895,7 +2776,7 @@ def create_appointment_node(
                     )
                 specialty_id = cast(str | None, repaired.get("chosen_specialty_id"))
                 if specialty_id is not None:
-                    return await _offer_professionals(
+                    return await _offer_next_slots(
                         conversation_id,
                         specialty_id,
                         str(repaired.get("chosen_specialty_name", "esa especialidad")),
@@ -3517,7 +3398,7 @@ def create_appointment_node(
                     )
                 specialty_id = cast(str | None, repaired.get("chosen_specialty_id"))
                 if specialty_id is not None:
-                    return await _offer_professionals(
+                    return await _offer_next_slots(
                         conversation_id,
                         specialty_id,
                         str(repaired.get("chosen_specialty_name", "esa especialidad")),
@@ -3545,6 +3426,9 @@ def create_appointment_node(
 
             if button_payload == LIST_MORE_PAYLOAD:
                 updated_page = next_page(collected_data, "slots_page")
+                if _is_single_page_slots(available_slots, collected_data):
+                    # Single-page screen (a stale tap): there is no next page.
+                    updated_page = current_page(collected_data, "slots_page")
                 more_text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
@@ -3566,20 +3450,16 @@ def create_appointment_node(
                 return {
                     "response_text": more_text,
                     "response_buttons": None,
-                    "response_list": _slots_list_message(
-                        available_slots, page=updated_page, include_back=True
-                    ),
+                    "response_list": _slots_screen(available_slots, updated_page, collected_data),
                     "requires_handoff": False,
                     "collected_data": {**collected_data, "slots_page": updated_page},
                 }
             if button_payload == LIST_BACK_PAYLOAD:
-                specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
-                if specialty_id is not None:
-                    return await _offer_professionals(
+                if collected_data.get("chosen_specialty_id") is not None:
+                    # Back goes up to the specialty list (there is no professional list).
+                    return await _offer_specialties(
                         conversation_id,
-                        specialty_id,
-                        str(collected_data.get("chosen_specialty_name", "esa especialidad")),
-                        invalidate_from(collected_data, "professional"),
+                        invalidate_from(collected_data, "specialty"),
                         state["recent_messages"],
                         state["contact_memory_summary"],
                     )
@@ -3633,9 +3513,7 @@ def create_appointment_node(
                 return {
                     "response_text": message,
                     "response_buttons": None,
-                    "response_list": _slots_list_message(
-                        available_slots, page=page, include_back=True
-                    ),
+                    "response_list": _slots_screen(available_slots, page, collected_data),
                     "requires_handoff": False,
                 }
 
@@ -3663,9 +3541,7 @@ def create_appointment_node(
                 return {
                     "response_text": stale_slot_text,
                     "response_buttons": None,
-                    "response_list": _slots_list_message(
-                        available_slots, page=page, include_back=True
-                    ),
+                    "response_list": _slots_screen(available_slots, page, collected_data),
                     "requires_handoff": False,
                 }
 
@@ -3785,7 +3661,13 @@ def create_appointment_node(
                 )
             if cancelling:
                 return await _begin_cancel(state, operation_data, view_appointments[0])
-            return await _begin_reschedule(conversation_id, operation_data, view_appointments[0])
+            return await _begin_reschedule(
+                conversation_id,
+                operation_data,
+                view_appointments[0],
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
 
         if stage == STAGE_AWAITING_APPOINTMENT_SELECTION:
             button_payload = state["button_payload"]
@@ -3891,7 +3773,11 @@ def create_appointment_node(
 
             if operation == RESCHEDULE_APPOINTMENT_ACTION:
                 return await _begin_reschedule(
-                    conversation_id, collected_data, selected_appointment
+                    conversation_id,
+                    collected_data,
+                    selected_appointment,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
                 )
 
             raise AssertionError(  # pragma: no cover - impossible by construction
@@ -3899,74 +3785,21 @@ def create_appointment_node(
             )
 
         if stage == STAGE_AWAITING_RESCHEDULE_PROFESSIONAL_CHOICE:
-            button_payload = state["button_payload"]
-            rescheduling_professional_id = cast(
-                str, collected_data.get("rescheduling_professional_id", "")
-            )
-            patient = cast(dict[str, object] | None, collected_data.get("patient"))
-            if button_payload in (
-                RESCHEDULE_KEEP_PROFESSIONAL_PAYLOAD,
-                RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD,
-            ):
-                professionals = await appointment_gateway.list_professionals()
-                current = next(
-                    (p for p in professionals if p.id == rescheduling_professional_id), None
-                )
-                specialty_id = current.specialty_id if current is not None else None
-                specialty_name = "esa especialidad"
-                if current is not None:
-                    specialties = await list_specialties.execute()
-                    specialty_name = next(
-                        (s.name for s in specialties if s.id == current.specialty_id),
-                        specialty_name,
-                    )
-                if button_payload == RESCHEDULE_CHANGE_PROFESSIONAL_PAYLOAD and specialty_id:
-                    return await _offer_professionals(
-                        conversation_id,
-                        specialty_id,
-                        specialty_name,
-                        collected_data,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
-                    )
-                extra: dict[str, object] = {"chosen_professional_id": rescheduling_professional_id}
-                if specialty_id:
-                    extra["chosen_specialty_id"] = specialty_id
-                    extra["chosen_specialty_name"] = specialty_name
-                return await _offer_slots(
-                    conversation_id,
-                    patient,
-                    {**collected_data, **extra},
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-            reschedule_choice_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "reschedule_professional_choice_reminder",
-                {
-                    "situacion": (
-                        "El paciente escribió texto libre pero en este paso solo se puede "
-                        "elegir tocando uno de los 2 botones: mantener el mismo profesional "
-                        "o elegir otro."
-                    ),
-                },
-                _RESCHEDULE_PROFESSIONAL_CHOICE_REMINDER,
+            # Old in-flight checkpoint that asked "mismo profesional / elegir otro" (and the
+            # old `RESCHEDULE_KEEP/CHANGE_PROFESSIONAL` payloads): professionals are never
+            # shown, so every reply shows the appointment's specialty's next slots.
+            return await _offer_reschedule_slots(
+                conversation_id,
+                collected_data,
+                cast(str, collected_data.get("rescheduling_professional_id", "")),
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
-            return {
-                "response_text": reschedule_choice_text,
-                "response_buttons": _RESCHEDULE_PROFESSIONAL_CHOICE_BUTTONS,
-                "requires_handoff": False,
-            }
 
-        if stage == STAGE_AWAITING_NO_SLOTS_CHOICE and (
-            collected_data.get("rescheduling_appointment_id") is None
-        ):
-            # Old in-flight CREATE checkpoint that offered "Otros profesionales": the create
-            # flow never lists professionals now, so whatever arrives shows the specialty's
-            # next slots (or the specialty list when the specialty is unknown).
+        if stage == STAGE_AWAITING_NO_SLOTS_CHOICE:
+            # Old in-flight checkpoint that offered "Otros profesionales" (create or
+            # reschedule): professionals are never shown, so whatever arrives shows the
+            # specialty's next slots (or the specialty list when the specialty is unknown).
             legacy_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
             if legacy_specialty_id is None:
                 return await _offer_specialties(
@@ -3983,43 +3816,6 @@ def create_appointment_node(
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
-
-        if stage == STAGE_AWAITING_NO_SLOTS_CHOICE:
-            # RESCHEDULE flow only (out of scope: "cambiar profesional" keeps its list).
-            if state["button_payload"] == _VIEW_OTHER_PROFESSIONALS_PAYLOAD:
-                no_slots_specialty_id = cast(str, collected_data.get("chosen_specialty_id", ""))
-                no_slots_specialty_name = cast(str, collected_data.get("chosen_specialty_name", ""))
-                no_slots_professional_id = cast(
-                    str | None, collected_data.get("chosen_professional_id")
-                )
-                return await _offer_professionals(
-                    conversation_id,
-                    no_slots_specialty_id,
-                    no_slots_specialty_name,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                    exclude_professional_id=no_slots_professional_id,
-                )
-            no_slots_choice_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_slots_other_professionals_reminder",
-                {
-                    "situacion": (
-                        "El paciente escribió texto libre pero en este paso solo se puede "
-                        "elegir tocando el botón para ver otros profesionales."
-                    ),
-                },
-                _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
-            return {
-                "response_text": no_slots_choice_text,
-                "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
-                "requires_handoff": False,
-            }
 
         if stage == STAGE_AWAITING_NO_AVAILABILITY_CHOICE:
             # `MENU_MAIN_PAYLOAD` is already intercepted unconditionally
@@ -4274,7 +4070,7 @@ def create_appointment_node(
                     )
                 specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
                 if specialty_id is not None:
-                    return await _offer_professionals(
+                    return await _offer_next_slots(
                         conversation_id,
                         specialty_id,
                         str(collected_data.get("chosen_specialty_name", "esa especialidad")),
