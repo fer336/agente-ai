@@ -23,6 +23,9 @@ from app.agent.payment_questions import asks_about_payments
         "pagan con débito?",
         "cuándo se paga",
         "cuotas para el blanqueamiento",
+        "quiero pagar la consulta",
+        "dónde puedo abonar",
+        "tengo que pagar antes?",
     ],
 )
 def test_payment_questions_are_detected(text):
@@ -37,6 +40,9 @@ def test_payment_questions_are_detected(text):
         "tengo osde",
         "quiero un turno",
         "me pagan el sueldo",
+        "tengo la tarjeta de mi obra social",
+        "perdí la tarjeta de la prepaga",
+        "mi tarjeta de osde está vencida",
         "hola",
         "el senado",
         "",

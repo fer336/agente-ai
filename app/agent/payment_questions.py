@@ -31,6 +31,8 @@ _PAYMENT_TERMS = (
     "como se paga",
     "como pago",
     "como abono",
+    "pagar",
+    "abonar",
     "puedo pagar",
     "se puede pagar",
     "aceptan tarjeta",
@@ -50,7 +52,14 @@ _PAYMENT_PATTERN = re.compile(
     r"\b(?:" + "|".join(re.escape(term) for term in _PAYMENT_TERMS) + r")\b"
 )
 
+#: The insurance card ("la tarjeta de mi obra social") is not a payment card.
+_INSURANCE_CARD_PATTERN = re.compile(
+    r"\btarjetas? de (?:mi |la |su |nuestra )?"
+    r"(?:obra social|prepaga|cobertura|osde|medife|swiss medical|galeno|william hope)\b"
+)
+
 
 def asks_about_payments(text: str) -> bool:
     """True when the message names payments, advances, installments or payment methods."""
-    return _PAYMENT_PATTERN.search(normalize_text(text)) is not None
+    normalized = _INSURANCE_CARD_PATTERN.sub(" ", normalize_text(text))
+    return _PAYMENT_PATTERN.search(normalized) is not None
