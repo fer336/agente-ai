@@ -46,6 +46,12 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   text), subgraph consumes the one-shot `preselected_specialty_name` (exact accent-insensitive
   match, fallback to the list), eval seed "General" + replay scenario. Commit f8b2ddf. Route:
   delegated direct (single writer).
+- [x] T5 — Location answer with the clinic image: a location question (free text, the menu
+  row, or after a finished booking) sends `app/static/public/clinic-location.jpg` (served by this
+  app under `/public`) with a caption and one `Cómo llegar` button (`LOCATION_DETAIL`); tapping it
+  returns the native location card. `response_image_url` in the state, `create_location_node(image_url)`,
+  settings `public_base_url` / `location_image_url`, eval stack `image_url`, dataset
+  `evals/datasets/location.yaml`. Commit c099a60. Route: delegated direct (single writer).
 
 ## Acceptance criteria
 
@@ -102,6 +108,14 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   unresolved-topic path now shows the topic list instead of a handoff offer (intended, no other
   caller depended on it); R3-2 the slot-search exception branch of the preselected offer has no
   test that makes the gateway raise (follow-up).
+
+- T5 done, commit c099a60 (route: delegated direct). RED: new node/resolve/settings/invoker/static
+  tests failed at collection (no `LOCATION_DETAIL_PAYLOAD`), then 46 unit tests failed with the
+  payload alone (invoker `location_image_url`, node factory, settings property, mount, eval
+  `image_url`). GREEN: `uv run pytest` 2434 passed, only the 3 known redis_debounce_lock failures
+  (plus their 3 setup errors); `ruff check .` and `mypy app/` clean. With no image URL configured
+  the node falls back to the native card. The post-booking location question is proven both at
+  the router (`post_action_context` set) and end to end (invoker and eval dataset).
 
 ## Next step
 
