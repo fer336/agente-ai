@@ -1632,6 +1632,45 @@ def create_appointment_node(
             updates["pending_action_id"] = result.get("pending_action_id")
         return updates
 
+    async def _offer_next_slots(
+        conversation_id: ConversationId,
+        specialty_id: str,
+        specialty_name: str,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> dict[str, object]:
+        """The CREATE flow never lists professionals: shows the specialty's next free
+        slots (soonest first, across all of its professionals) through the decision
+        subgraph. Any professional chosen or listed earlier is dropped."""
+        decision_state: AppointmentDecisionState = {
+            "conversation_id": str(conversation_id),
+            "user_message": "",
+            "button_payload": None,
+            "recent_messages": recent_messages,
+            "contact_memory_summary": contact_memory,
+            "pending_action_id": None,
+            "collected_data": {
+                **invalidate_from(collected_data, "professional"),
+                "operation": CREATE_APPOINTMENT_ACTION,
+                "chosen_specialty_id": specialty_id,
+                "chosen_specialty_name": specialty_name,
+                SPECIALTY_SLOTS_REQUEST_KEY: True,
+            },
+        }
+        result = await appointment_decision_graph.ainvoke(decision_state)
+        updates: dict[str, object] = {
+            "response_text": result.get("response_text"),
+            "response_buttons": result.get("response_buttons"),
+            "requires_handoff": result.get("requires_handoff", False),
+            "collected_data": result.get("collected_data"),
+        }
+        if result.get("response_list") is not None:
+            updates["response_list"] = result["response_list"]
+        if "pending_action_id" in result:
+            updates["pending_action_id"] = result["pending_action_id"]
+        return updates
+
     async def _welcome_reset_response(conversation_id: ConversationId) -> dict[str, object]:
         """`MENU_MAIN_PAYLOAD`'s own response shape — the ONE place that
         builds it, so a real button tap, a mid-flow `navigation_target ==
@@ -2199,6 +2238,18 @@ def create_appointment_node(
         contact_memory: str | None,
         exclude_professional_id: str | None = None,
     ) -> dict[str, object]:
+        if collected_data.get("rescheduling_appointment_id") is None:
+            # The CREATE flow never shows a professional list: the specialty's next slots
+            # instead. The RESCHEDULE flow ("cambiar profesional") is out of scope and keeps
+            # listing professionals below — the one intentional leak left.
+            return await _offer_next_slots(
+                conversation_id,
+                specialty_id,
+                specialty_name,
+                collected_data,
+                recent_messages,
+                contact_memory,
+            )
         professionals = await appointment_gateway.list_professionals(specialty_id=specialty_id)
         if exclude_professional_id is not None:
             # Seen live: "ver otros profesionales" (reached after a
@@ -2289,8 +2340,24 @@ def create_appointment_node(
             date_range=DateTimeRange(now, now + _SEARCH_WINDOW),
             limit=_MAX_SLOTS_SEARCHED,
         )
+        if (
+            not slots
+            and collected_data.get("chosen_specialty_id") is not None
+            and collected_data.get("rescheduling_appointment_id") is None
+        ):
+            # CREATE flow: the chosen professional has no slots — show the specialty's next
+            # slots instead of offering a professional list.
+            return await _offer_next_slots(
+                conversation_id,
+                str(collected_data["chosen_specialty_id"]),
+                str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                collected_data,
+                recent_messages,
+                contact_memory,
+            )
         if not slots and collected_data.get("chosen_specialty_id") is not None:
-            # A specialty is already known — offer another professional in
+            # RESCHEDULE flow only (out of scope: it keeps "Otros profesionales"). A specialty
+            # is already known — offer another professional in
             # it before falling back to "start over from scratch" (this
             # session's own brief: a professional with zero availability
             # used to only offer "Menú principal", discarding the
@@ -3894,7 +3961,31 @@ def create_appointment_node(
                 "requires_handoff": False,
             }
 
+        if stage == STAGE_AWAITING_NO_SLOTS_CHOICE and (
+            collected_data.get("rescheduling_appointment_id") is None
+        ):
+            # Old in-flight CREATE checkpoint that offered "Otros profesionales": the create
+            # flow never lists professionals now, so whatever arrives shows the specialty's
+            # next slots (or the specialty list when the specialty is unknown).
+            legacy_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+            if legacy_specialty_id is None:
+                return await _offer_specialties(
+                    conversation_id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            return await _offer_next_slots(
+                conversation_id,
+                legacy_specialty_id,
+                str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+
         if stage == STAGE_AWAITING_NO_SLOTS_CHOICE:
+            # RESCHEDULE flow only (out of scope: "cambiar profesional" keeps its list).
             if state["button_payload"] == _VIEW_OTHER_PROFESSIONALS_PAYLOAD:
                 no_slots_specialty_id = cast(str, collected_data.get("chosen_specialty_id", ""))
                 no_slots_specialty_name = cast(str, collected_data.get("chosen_specialty_name", ""))
@@ -4553,13 +4644,14 @@ def create_appointment_node(
 
         if stage == STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE:
             # Fully owned by `app.agent.appointment_decision_subgraph` — the
-            # "ver próximos turnos vs elegir profesional" screen a valid
-            # specialty choice now lands on.
+            # no-slots fallback screen (another specialty / menu / administration).
             return await _delegate_to_decision_subgraph(state, collected_data)
 
         if stage == STAGE_AWAITING_PROFESSIONAL_SELECTION:
             # Fully owned by `app.agent.appointment_decision_subgraph` (PR 2)
-            # — same reasoning as `STAGE_AWAITING_SPECIALTY_SELECTION` above.
+            # — same reasoning as `STAGE_AWAITING_SPECIALTY_SELECTION` above. A CREATE
+            # checkpoint stored here by an old version converts to the specialty's slots;
+            # only a reschedule's "cambiar profesional" still lists professionals.
             return await _delegate_to_decision_subgraph(state, collected_data)
 
         if stage == STAGE_AWAITING_OPERATION_SELECTION:
@@ -4660,42 +4752,20 @@ def create_appointment_node(
                     (s.name for s in specialties if s.id == matched_professional.specialty_id),
                     "esa especialidad",
                 )
-                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                professional_prompt_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "choose_professional",
+                # Straight to that professional's slots (never a professional list). With no
+                # slots the subgraph offers the specialty's next slots instead.
+                return await _delegate_to_decision_subgraph(
+                    state,
                     {
-                        "situacion": (
-                            "Hay que preguntarle con qué profesional prefiere atenderse; le "
-                            "vamos a mostrar una lista para elegir."
-                        ),
-                        "instruccion": (
-                            "Le vamos a mostrar la lista de profesionales debajo de tu mensaje "
-                            "— NO los menciones ni los repitas, solo invitá a elegir uno."
-                        ),
-                    },
-                    _CHOOSE_PROFESSIONAL_PROMPT,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-                return {
-                    "response_text": professional_prompt_text,
-                    "response_buttons": None,
-                    "response_list": professionals_list_message(
-                        [matched_professional], include_back=True
-                    ),
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **collected_data,
-                        "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
+                        **{k: v for k, v in collected_data.items() if k != "professional_mention"},
                         "operation": CREATE_APPOINTMENT_ACTION,
                         "chosen_specialty_id": matched_professional.specialty_id,
                         "chosen_specialty_name": specialty_name,
-                        "professional_options": [matched_professional],
-                        "doctors_page": 0,
+                        "chosen_professional_id": matched_professional.id,
+                        "chosen_professional_name": matched_professional.full_name,
+                        SPECIALTY_SLOTS_REQUEST_KEY: True,
                     },
-                }
+                )
 
         if operation == CREATE_APPOINTMENT_ACTION:
             create_context = {**collected_data, "operation": operation}

@@ -2,7 +2,6 @@ import pytest
 
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
-    STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SLOT_SELECTION,
 )
 from app.agent.nodes.specialties import create_specialties_node
@@ -118,12 +117,36 @@ async def test_naming_a_professional_with_booking_context_skips_the_specialty_qu
         )
     )
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    # Straight to that professional's slots: no professional list in the create flow.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
-    assert result["response_list"] is not None
-    assert "Carlos Adahenao" in result["response_list"].rows[0].title
-    assert "Camila Carasatorre" not in [r.title for r in result["response_list"].rows]
+    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert result["response_list"].section_title == "Horarios disponibles"
+    assert all(r.id.startswith("SELECT_SLOT:") for r in result["response_list"].rows[:1])
+
+
+@pytest.mark.asyncio
+async def test_naming_a_professional_without_slots_offers_the_specialtys_next_slots():
+    node = _node(
+        specialties=[make_specialty(id_="spec-1", name="Implantología")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Carlos Adahenao", specialty_id="spec-1"),
+            make_professional(id_="prof-2", full_name="Camila Carasatorre", specialty_id="spec-1"),
+        ],
+        available_slots=[future_slot(id_="slot-other", professional_id="prof-2")],
+    )
+
+    result = await node(
+        make_agent_state(
+            user_message="Quiero un turno con el doctor Carlos adahenao",
+            collected_data={"operation_mention": "create"},
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"].get("chosen_professional_id") is None
+    assert [r.id for r in result["response_list"].rows] == ["SELECT_SLOT:slot-other"]
 
 
 @pytest.mark.asyncio

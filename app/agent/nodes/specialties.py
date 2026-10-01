@@ -7,7 +7,6 @@ from app.agent.appointment_decision_subgraph import (
 )
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
-    STAGE_AWAITING_PROFESSIONAL_SELECTION,
     match_named_professional,
     resolve_by_name,
     staffed_specialty_ids,
@@ -223,23 +222,18 @@ def create_specialties_node(
                 (s.name for s in specialties if s.id == matched_professional.specialty_id),
                 "esa especialidad",
             )
-            return {
-                "response_text": None,
-                "response_buttons": None,
-                "response_list": professionals_list_message(
-                    [matched_professional], include_back=True
-                ),
-                "requires_handoff": False,
-                "collected_data": {
-                    **state["collected_data"],
-                    "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-                    "operation": CREATE_APPOINTMENT_ACTION,
+            # Booking: straight to that professional's slots (never a professional list); with
+            # no slots the subgraph offers the specialty's next slots instead.
+            return await _show_next_slots(
+                state,
+                {
+                    **collected_data,
                     "chosen_specialty_id": matched_professional.specialty_id,
                     "chosen_specialty_name": specialty_name,
-                    "professional_options": [matched_professional],
-                    "doctors_page": 0,
+                    "chosen_professional_id": matched_professional.id,
+                    "chosen_professional_name": matched_professional.full_name,
                 },
-            }
+            )
 
         chosen_index = row_tap_index if row_tap_index is not None else index
         if chosen_index is None:

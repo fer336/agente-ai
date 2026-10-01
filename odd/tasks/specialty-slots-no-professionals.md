@@ -48,7 +48,7 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
 ## Tasks
 
 - [x] T1 — specialty_mention and specialties node show the next 10 slots. Route: delegated direct. Commit: see Progress.
-- [ ] T2 — remove the remaining professional-list leaks of the create flow. Route: delegated direct.
+- [x] T2 — remove the remaining professional-list leaks of the create flow. Route: delegated direct.
 
 ## Acceptance criteria
 
@@ -69,7 +69,17 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
   is appended verbatim to the LLM text; aggregated screen = one page, no nav row when <= 10 slots;
   FakeLLMProvider now reports a `specialty_mention` for common specialty names so the eval can replay the live bug.
   Read-only catalog browse in the specialties node (no booking context) still lists professionals on purpose.
+- T2 done. RED observed: 13 failures in the subgraph tests (fallback buttons, stale CHOOSE_PROFESSIONAL tap,
+  in-flight PROFESSIONAL_SELECTION conversion, explicit professional straight to slots) and 10 in the appointment
+  node tests (explicit professional, no-slots checkpoint, nav target, repair path) before the implementation.
+  GREEN: full suite 2586 passed (3 known redis-lock tests deselected), ruff check and mypy clean.
+  Decisions: create flow never lists professionals (`_offer_professionals` in appointment.py and `choose_professional`,
+  `search_availability_node`, `NO_SLOTS_CHOICE` handler convert to the specialty's next slots when
+  `rescheduling_appointment_id` is absent); RESCHEDULE keeps its professional list on purpose (commented where it remains).
+  Explicit professional mention (appointment node and specialties node) -> that professional's slots; no slots ->
+  aggregated slots of the same specialty with an LLM-worded notice (static fallback). No-slots fallback buttons:
+  Otra especialidad / Menu principal / Administracion. Read-only catalog browse in the specialties node keeps its list.
 
 ## Next step
 
-T1.
+Review and PR (`fix(appointments)` per docs/pr-release-workflow.md); push and PR are the owner's decision.

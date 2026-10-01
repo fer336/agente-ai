@@ -161,7 +161,9 @@ async def test_list_back_from_specialties_returns_to_the_main_menu():
 
 
 @pytest.mark.asyncio
-async def test_professional_selection_by_row_id_advances_the_flow():
+async def test_a_professional_row_tap_on_an_old_list_shows_the_specialtys_slots():
+    # An old in-flight checkpoint's professional list: the create flow converts it to the
+    # specialty's next slots (a professional is never chosen from a list any more).
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=[
@@ -182,7 +184,9 @@ async def test_professional_selection_by_row_id_advances_the_flow():
 
     result = await node(state)
 
-    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert "chosen_professional_id" not in result["collected_data"]
+    assert [r.id for r in result["response_list"].rows] == ["SELECT_SLOT:slot-1"]
 
 
 @pytest.mark.asyncio
@@ -243,7 +247,7 @@ async def test_specialty_row_tap_with_many_slots_shows_exactly_ten_in_one_page()
 
 
 @pytest.mark.asyncio
-async def test_professional_list_more_tap_sends_the_next_page():
+async def test_a_list_more_tap_on_an_old_professional_list_shows_the_specialtys_slots():
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=_professionals(20),
@@ -265,10 +269,10 @@ async def test_professional_list_more_tap_sends_the_next_page():
 
     message = result["response_list"]
     ids = [r.id for r in message.rows]
-    assert ids[:9] == [f"{PROFESSIONAL_PAYLOAD_PREFIX}prof-{i}" for i in range(9, 18)]
-    assert ids[-1] == LIST_MORE_PAYLOAD
-    assert result["collected_data"]["doctors_page"] == 1
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert ids == ["SELECT_SLOT:slot-1"]
+    assert not any(row_id.startswith(PROFESSIONAL_PAYLOAD_PREFIX) for row_id in ids)
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert "doctors_page" not in result["collected_data"]
 
 
 @pytest.mark.asyncio
