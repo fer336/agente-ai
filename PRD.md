@@ -342,6 +342,17 @@ Lista de opciones (mensaje interactivo de WhatsApp, 7 filas; el límite de Meta 
 alineadores). Cada tema se responde con un texto fijo redactado por la clínica, sin intervención
 del LLM, y ofrece los botones Agendar cita, Menú principal y Administración.
 
+**Regla de alcance: pagos, anticipos y precios.** Los pagos, anticipos ("anticipo", "seña"), cuotas,
+financiación, medios de pago (tarjeta, efectivo, transferencia, Mercado Pago, etc.) y cualquier
+otro precio que no figure en los textos fijos de la clínica los maneja directamente Administración;
+el agente nunca improvisa sobre ellos. Un detector determinístico (`app/agent/payment_questions.py`)
+enruta esas consultas, antes del LLM y también en medio de una reserva (interrupción temporal), al
+nodo `payment_admin`, que responde (redactado por el LLM, con texto fijo de respaldo) que esos temas
+se manejan con Administración y ofrece los botones Administración / Menú principal. No se aplica
+mientras se piden datos (primera visita, identificación, alta de paciente). Si el mensaje nombra
+alineadores, gana el tema (su imagen ya trae las opciones de pago). Como respaldo, si la respuesta
+libre del LLM menciona términos de pago, se reemplaza por ese mismo mensaje.
+
 **Alineadores.** La respuesta de este tema (por texto libre, por la lista de consultas
 frecuentes o por cualquier ruta que llegue al nodo del tema) envía la imagen con las opciones de
 pago (`app/static/public/alineadores-opciones.jpg`, URL efectiva `ALIGNERS_IMAGE_URL` o

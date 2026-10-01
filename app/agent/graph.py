@@ -14,6 +14,7 @@ from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, fresh_restart
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.location import create_location_node
+from app.agent.nodes.payment_admin import create_payment_admin_node
 from app.agent.nodes.question import create_question_node
 from app.agent.nodes.resolve_interaction import (
     POST_ACTION_CLOSE_INTENT,
@@ -66,6 +67,7 @@ HANDOFF_NODE = "handoff"
 QUESTION_NODE = "question"
 LOCATION_NODE = "location"
 FAQ_TOPIC_NODE = "faq_topic"
+PAYMENT_ADMIN_NODE = "payment_admin"
 FALLBACK_NODE = "fallback"
 HANDLE_ERROR_NODE = "handle_error"
 
@@ -120,6 +122,8 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return LOCATION_NODE
     if intent == "faq_topic":
         return FAQ_TOPIC_NODE
+    if intent == "payment_admin":
+        return PAYMENT_ADMIN_NODE
     return FALLBACK_NODE
 
 
@@ -167,6 +171,7 @@ def build_graph(
                                              |-- question
                                              |-- location
                                              |-- faq_topic
+                                             |-- payment_admin
                                              `-- fallback
     (any node's exception) -> handle_error -> END
     ```
@@ -315,6 +320,17 @@ def build_graph(
         ),
     )
     graph.add_node(
+        PAYMENT_ADMIN_NODE,
+        with_error_handling(
+            PAYMENT_ADMIN_NODE,
+            create_payment_admin_node(llm_provider),
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
         FALLBACK_NODE,
         with_error_handling(
             FALLBACK_NODE,
@@ -352,6 +368,7 @@ def build_graph(
             QUESTION_NODE: QUESTION_NODE,
             LOCATION_NODE: LOCATION_NODE,
             FAQ_TOPIC_NODE: FAQ_TOPIC_NODE,
+            PAYMENT_ADMIN_NODE: PAYMENT_ADMIN_NODE,
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
@@ -367,6 +384,7 @@ def build_graph(
         QUESTION_NODE,
         LOCATION_NODE,
         FAQ_TOPIC_NODE,
+        PAYMENT_ADMIN_NODE,
         FALLBACK_NODE,
     ):
         graph.add_conditional_edges(

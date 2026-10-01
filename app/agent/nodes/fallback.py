@@ -13,6 +13,8 @@ from app.agent.nodes.llm_response import (
 )
 from app.agent.nodes.location import asks_for_location, clinic_location_reply
 from app.agent.nodes.node_protocol import AgentNode
+from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
+from app.agent.payment_questions import asks_about_payments
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.interactive_button import InteractiveButton
@@ -94,6 +96,10 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
                 # The guard swapped the answer for a safe one: the flag described the
                 # discarded text, not this one.
                 flagged_offer = None
+            if asks_about_payments(answer):
+                # Payments and prices belong to Administración: never improvised.
+                answer = PAYMENT_ADMIN_STATIC_MESSAGE
+                flagged_offer = True
             offers_handoff = answer_offers_handoff(answer, flagged=flagged_offer)
             if offers_handoff:
                 remaining[HANDOFF_OFFER_KEY] = True

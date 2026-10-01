@@ -147,3 +147,20 @@ async def test_the_unknown_answer_offering_administration_carries_the_handoff_bu
 
     assert result["response_buttons"] is not None
     assert result["collected_data"]["handoff_offer_pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_question_replaces_an_llm_answer_that_improvises_about_payments():
+    from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS, HANDOFF_OFFER_KEY
+    from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
+
+    node = create_question_node(FakeLLMProvider())
+    state = make_agent_state(
+        collected_data={"stage": None, "pending_answer": "Podés pagar en 6 cuotas con tarjeta."}
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == PAYMENT_ADMIN_STATIC_MESSAGE
+    assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
+    assert result["collected_data"][HANDOFF_OFFER_KEY] is True

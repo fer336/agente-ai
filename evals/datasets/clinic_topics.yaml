@@ -2,7 +2,7 @@
 # (blanqueamiento, consulta particular, limpieza particular, brackets por obra social,
 # alineadores) reached by free text and by the menu, plus the OSDE / Medifé / William Hope
 # first-visit text. The fixed texts live in app/agent/clinic_topics.py and never go through
-# the LLM, so `requires_real_llm: false` cases hold with the fake LLM; the two
+# the LLM, so `requires_real_llm: false` cases hold with the fake LLM; the
 # `requires_real_llm: true` cases need the real LLM to classify a paraphrase or a booking
 # phrase. Figures in the texts are pending the clinic's confirmation.
 
@@ -322,6 +322,77 @@
         terms: ["administración"]
   metadata:
     requires_real_llm: false
+
+- description: "Pagos van a Administración: tarjeta"
+  vars:
+    conversation_id: "eval-topics-pay-01"
+    message: "¿Aceptan tarjeta?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "payment_admin"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["💬 Administración", "Menú principal"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Pagos van a Administración: anticipo"
+  vars:
+    conversation_id: "eval-topics-pay-02"
+    message: "¿Cuánto es el anticipo?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "payment_admin"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["💬 Administración", "Menú principal"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Un precio sin términos de pago sigue siendo un tema frecuente"
+  vars:
+    conversation_id: "eval-topics-pay-03"
+    message: "cuánto sale el blanqueamiento"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "payment_admin"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paráfrasis de pago deriva a Administración (LLM real)"
+  vars:
+    conversation_id: "eval-topics-llm-03"
+    message: "¿Puedo pagar en cuotas sin interés?"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta dice que los pagos, cuotas y demás precios se manejan directamente con
+        Administración (puede ofrecer comunicarlo) y no inventa cuotas, intereses, medios de
+        pago, montos ni condiciones.
+  metadata:
+    requires_real_llm: true
 
 - description: "Paráfrasis de precio: blanqueamiento (LLM real)"
   vars:

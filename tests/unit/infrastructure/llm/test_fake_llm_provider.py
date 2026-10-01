@@ -223,3 +223,14 @@ async def test_understand_recognizes_frequent_clinic_topics(message):
 
     assert result.intent == "faq_topic"
     assert result.confidence >= 0.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["aceptan tarjeta?", "cuánto es el anticipo", "hay cuotas"])
+async def test_understand_answers_payment_words_with_the_administration_message(message):
+    result = await FakeLLMProvider().understand(message, context={})
+
+    assert result.intent == "question"
+    assert result.answer is not None
+    assert "Administración" in result.answer
+    assert result.handoff_offer is True
