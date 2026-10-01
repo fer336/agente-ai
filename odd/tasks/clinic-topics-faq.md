@@ -53,7 +53,7 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   settings `public_base_url` / `location_image_url`, eval stack `image_url`, dataset
   `evals/datasets/location.yaml`. Commit c099a60. Route: delegated direct (single writer).
 
-- [ ] T6 — Alineadores answer = clinic image + 3 buttons (Opción 1/2/3); each option starts the
+- [x] T6 — Alineadores answer = clinic image + 3 buttons (Opción 1/2/3); each option starts the
   booking (first-visit question first, then straight to the General specialty) and the chosen option
   is remembered and shown in the confirmation. Route: delegated direct.
 - [ ] T7 — Payment, advance and installment questions get "se manejan directamente con
@@ -141,3 +141,10 @@ Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workf
   ($450.000, promo dropped) state figures; alineadores, limpieza and brackets state none. The
   Dentalink specialty is confirmed to be named "General". RED: 2 tests failed; GREEN: 2437 passed,
   only the 3 known redis failures; ruff and mypy clean.
+
+- T6 done, commit cdabf0c (route: delegated direct). RED: the new `test_faq_option.py` failed at
+  collection (no `ALIGNER_OPTION_KEY`, `faq_option_payload`). GREEN: `uv run pytest` 2468 passed,
+  only the 3 known redis_debounce_lock failures (plus their 3 setup errors); `ruff check .` and
+  `mypy app/` clean. `ALIGNERS_IMAGE_URL` / `effective_aligners_image_url` reach the `faq_topic`
+  node like the location URL; the options replace the Agendar/Menú/Administración trio; the
+  confirmation shows "Consulta por alineadores: Opción n" and nothing is sent to Dentalink.
