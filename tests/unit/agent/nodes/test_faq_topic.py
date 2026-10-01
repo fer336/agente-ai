@@ -11,7 +11,9 @@ from tests.fixtures.agent_state import make_agent_state
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("topic", CLINIC_TOPICS, ids=lambda topic: topic.id)
+@pytest.mark.parametrize(
+    "topic", [t for t in CLINIC_TOPICS if t.id != "alineadores"], ids=lambda topic: topic.id
+)
 async def test_each_topic_returns_its_exact_text_and_the_three_buttons(topic):
     node = create_faq_topic_node()
 

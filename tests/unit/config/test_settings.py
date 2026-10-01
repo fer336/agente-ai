@@ -426,3 +426,36 @@ def test_location_image_url_env_var_overrides_the_derived_url(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.effective_location_image_url == "https://cdn.example.com/location.jpg"
+
+
+def test_aligners_image_url_defaults_to_the_public_mount_of_this_app(monkeypatch):
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("ALIGNERS_IMAGE_URL", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.aligners_image_url == ""
+    assert (
+        settings.effective_aligners_image_url
+        == "https://agent.qeva-ai.com/public/alineadores-opciones.jpg"
+    )
+
+
+def test_aligners_image_url_derives_from_a_public_base_url_with_a_trailing_slash(monkeypatch):
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com/")
+    monkeypatch.delenv("ALIGNERS_IMAGE_URL", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert (
+        settings.effective_aligners_image_url
+        == "https://example.com/public/alineadores-opciones.jpg"
+    )
+
+
+def test_aligners_image_url_env_var_overrides_the_derived_url(monkeypatch):
+    monkeypatch.setenv("ALIGNERS_IMAGE_URL", "https://cdn.example.com/aligners.jpg")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.effective_aligners_image_url == "https://cdn.example.com/aligners.jpg"

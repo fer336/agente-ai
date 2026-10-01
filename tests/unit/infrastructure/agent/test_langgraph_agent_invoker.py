@@ -110,6 +110,7 @@ def _make_invoker(
     trace_repositories_provider=None,
     checkpointer=None,
     location_image_url="",
+    aligners_image_url="",
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     contact_repository = contact_repository or make_contact_repository()
@@ -160,6 +161,7 @@ def _make_invoker(
         telegram_alert_cooldown_seconds=900,
         checkpointer_provider=_make_checkpointer_provider(checkpointer),
         location_image_url=location_image_url,
+        aligners_image_url=aligners_image_url,
     )
     return (
         invoker,
@@ -1348,3 +1350,37 @@ async def test_a_location_question_after_a_finished_booking_sends_the_clinic_ima
     _, _, buttons, image_url = messaging_gateway.sent_buttons[0]
     assert image_url == _LOCATION_IMAGE_URL
     assert [b.id for b in buttons] == [LOCATION_DETAIL_PAYLOAD]
+
+
+_ALIGNERS_IMAGE_URL = "https://agent.example.com/public/alineadores-opciones.jpg"
+
+
+@pytest.mark.asyncio
+async def test_an_aligners_question_sends_the_image_and_an_option_tap_starts_the_booking():
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        aligners_image_url=_ALIGNERS_IMAGE_URL,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["m1"], "cuánto salen los alineadores", None)
+
+    assert len(messaging_gateway.sent_buttons) == 1
+    _, caption, buttons, image_url = messaging_gateway.sent_buttons[0]
+    assert image_url == _ALIGNERS_IMAGE_URL
+    assert "Smilesecret" in caption
+    assert [b.title for b in buttons] == ["Opción 1", "Opción 2", "Opción 3"]
+
+    await invoker.handle(ConversationId("conv-1"), ["m2"], "Opción 2", buttons[1].id)
+
+    # The first-visit question comes first for a patient who is not known yet.
+    assert [b.id for b in messaging_gateway.sent_buttons[-1][2]] == [
+        FIRST_VISIT_CONFIRM_PAYLOAD,
+        FIRST_VISIT_CANCEL_PAYLOAD,
+    ]

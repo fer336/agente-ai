@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     #: means the copy this app serves itself at `/public/clinic-location.jpg`; set it
     #: to point at a CDN instead. Read it through `effective_location_image_url`.
     location_image_url: str = ""
+    #: Alineadores price list sent with the three `Opción n` buttons. `""` means the copy
+    #: this app serves at `/public/alineadores-opciones.jpg`. Read it through
+    #: `effective_aligners_image_url`.
+    aligners_image_url: str = ""
 
     dentalink_api_url: str = "https://api.dentalink.healthatom.com/api"
     dentalink_access_token: str = ""
@@ -339,6 +343,12 @@ class Settings(BaseSettings):
         if self.location_image_url:
             return self.location_image_url
         return f"{self.public_base_url.rstrip('/')}/public/clinic-location.jpg"
+
+    @property
+    def effective_aligners_image_url(self) -> str:
+        if self.aligners_image_url:
+            return self.aligners_image_url
+        return f"{self.public_base_url.rstrip('/')}/public/alineadores-opciones.jpg"
 
 
 @lru_cache

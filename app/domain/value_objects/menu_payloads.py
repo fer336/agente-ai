@@ -87,6 +87,9 @@ FAQ_TOPIC_ALINEADORES_PAYLOAD = "FAQ_TOPIC:alineadores"
 #: (consulta particular -> "General"): `FAQ_BOOK:` + the topic id. Distinct from
 #: `OPERATION_CREATE_PAYLOAD`, which starts a booking with no specialty chosen.
 FAQ_BOOK_PAYLOAD_PREFIX = "FAQ_BOOK:"
+#: One of a topic's option buttons (alineadores -> `Opción 1..3`): `FAQ_OPTION:` + the
+#: topic id + `:` + the option. Choosing one starts the booking and remembers the option.
+FAQ_OPTION_PAYLOAD_PREFIX = "FAQ_OPTION:"
 _MAX_PAYLOAD_LENGTH = 256
 
 
@@ -95,3 +98,20 @@ def faq_book_payload(topic_id: str) -> str:
     if len(payload) > _MAX_PAYLOAD_LENGTH:
         raise ValueError(f"button id longer than {_MAX_PAYLOAD_LENGTH} characters: {payload}")
     return payload
+
+
+def faq_option_payload(topic_id: str, option: str) -> str:
+    payload = f"{FAQ_OPTION_PAYLOAD_PREFIX}{topic_id}:{option}"
+    if len(payload) > _MAX_PAYLOAD_LENGTH:
+        raise ValueError(f"button id longer than {_MAX_PAYLOAD_LENGTH} characters: {payload}")
+    return payload
+
+
+def parse_faq_option_payload(payload: str) -> tuple[str, str] | None:
+    """`(topic_id, option)` of a `FAQ_OPTION:<topic>:<option>` payload, else None."""
+    if not payload.startswith(FAQ_OPTION_PAYLOAD_PREFIX):
+        return None
+    topic_id, separator, option = payload.removeprefix(FAQ_OPTION_PAYLOAD_PREFIX).partition(":")
+    if not separator or not topic_id or not option:
+        return None
+    return topic_id, option

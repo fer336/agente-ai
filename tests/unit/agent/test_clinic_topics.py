@@ -87,6 +87,12 @@ def test_topics_without_a_confirmed_price_state_no_figures():
         assert "administración" in text
 
 
+def test_alineadores_caption_has_no_prices_and_fits_a_whatsapp_caption():
+    text = topic_by_id("alineadores").text  # type: ignore[union-attr]
+    assert not any(char.isdigit() for char in text)
+    assert len(text) <= 1024
+
+
 def test_alineadores_text_names_the_brand_without_prices():
     text = topic_by_id("alineadores").text  # type: ignore[union-attr]
     assert "Smilesecret" in text

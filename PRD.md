@@ -342,6 +342,18 @@ Lista de opciones (mensaje interactivo de WhatsApp, 7 filas; el límite de Meta 
 alineadores). Cada tema se responde con un texto fijo redactado por la clínica, sin intervención
 del LLM, y ofrece los botones Agendar cita, Menú principal y Administración.
 
+**Alineadores.** La respuesta de este tema (por texto libre, por la lista de consultas
+frecuentes o por cualquier ruta que llegue al nodo del tema) envía la imagen con las opciones de
+pago (`app/static/public/alineadores-opciones.jpg`, URL efectiva `ALIGNERS_IMAGE_URL` o
+`PUBLIC_BASE_URL/public/alineadores-opciones.jpg`) con un texto corto sin precios y exactamente tres
+botones: `Opción 1`, `Opción 2` y `Opción 3` (WhatsApp admite 3 botones, por eso reemplazan a
+Agendar cita / Menú principal / Administración; el texto invita a escribir "menú" o
+"administración"). Elegir una opción inicia la reserva: primero la pregunta de primera visita
+(si el paciente no es conocido) y luego el flujo normal, yendo directo a la especialidad "General"
+de Dentalink. La opción elegida se recuerda y se muestra en el mensaje de confirmación del turno
+("Consulta por alineadores: Opción 2"); no se envía a Dentalink. Sin URL de imagen configurada se
+envía el mismo texto con los tres botones, sin imagen.
+
 ---
 
 # 8. Flujo principal

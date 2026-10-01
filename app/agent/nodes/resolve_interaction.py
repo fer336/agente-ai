@@ -2,6 +2,7 @@ import re
 
 from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.clinic_topics import (
+    ALIGNER_OPTION_KEY,
     PRESELECTED_SPECIALTY_KEY,
     match_clinic_topic,
     topic_by_id,
@@ -33,6 +34,7 @@ from app.agent.third_party_guard import (
 from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
+    FAQ_OPTION_PAYLOAD_PREFIX,
     FAQ_TOPIC_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -49,6 +51,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
+    parse_faq_option_payload,
 )
 from app.infrastructure.llm.exceptions import LLMProviderError
 
@@ -323,6 +326,29 @@ def _faq_book_result(
     data = dict(collected_data)
     if topic is not None and topic.book_specialty is not None:
         data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    return _create_flow_result(data, collected_data, has_active_stage)
+
+
+def _faq_option_result(
+    payload: str, collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object] | None:
+    """A tapped option of a topic answer (`Opción 2` of the alineadores image): the same
+    create flow as `_faq_book_result`, plus the one-shot chosen option. None when the
+    topic or the option is unknown, so the payload is handled like any unknown one."""
+    parsed = parse_faq_option_payload(payload)
+    topic = topic_by_id(parsed[0]) if parsed is not None else None
+    if parsed is None or topic is None or parsed[1] not in topic.options:
+        return None
+    data = dict(collected_data)
+    if topic.book_specialty is not None:
+        data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    data[ALIGNER_OPTION_KEY] = parsed[1]
+    return _create_flow_result(data, collected_data, has_active_stage)
+
+
+def _create_flow_result(
+    data: dict[str, object], collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object]:
     result: dict[str, object] = {"intent": "appointment", "collected_data": data}
     if has_active_stage:
         result.update(
@@ -391,6 +417,10 @@ async def _resolve(
             return _faq_topic_result(topic.id, collected_data, has_active_stage)
         if payload.startswith(FAQ_BOOK_PAYLOAD_PREFIX):
             return _faq_book_result(payload, collected_data, has_active_stage)
+        if payload.startswith(FAQ_OPTION_PAYLOAD_PREFIX):
+            option_result = _faq_option_result(payload, collected_data, has_active_stage)
+            if option_result is not None:
+                return option_result
         global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
         if global_intent is not None:
             if global_intent == "handoff":
