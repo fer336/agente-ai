@@ -404,6 +404,19 @@ _ASK_NAME_ONLY_MESSAGE = "Gracias! Ahora decime tu *nombre completo*, por ejempl
 _AGREEMENT_ALREADY_LINKED_NOTICE = (
     "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno."
 )
+_ADMIN_CHANGES_HINT = 'Si querés actualizar algún dato, escribí "administración".'
+_EXISTING_PATIENT_SAME_AGREEMENT_NOTICE = (
+    "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno. "
+    + _ADMIN_CHANGES_HINT
+)
+_EXISTING_PATIENT_AGREEMENT_LINKED_NOTICE = (
+    "Ya figurás en nuestro sistema y te cargamos la obra social, así que seguimos con tu "
+    "turno. " + _ADMIN_CHANGES_HINT
+)
+_EXISTING_PATIENT_OTHER_AGREEMENT_NOTICE = (
+    "Ya figurás en nuestro sistema con otra obra social. Para cambiarla o actualizar algún "
+    'dato, escribí "administración"; mientras tanto seguimos con tu turno.'
+)
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
@@ -1121,6 +1134,37 @@ def _with_notice(result: dict[str, object], notice: str) -> dict[str, object]:
     if has_payload:
         return result
     return {**result, "response_text": notice}
+
+
+async def _attach_agreement(
+    agreement_gateway: AgreementGateway,
+    patient: Patient,
+    agreement: Agreement,
+    *,
+    recovered: bool,
+) -> str | None:
+    """Links `agreement` to a patient and returns the notice to show, if any.
+
+    A patient created a moment ago just gets the agreement linked. An existing
+    (recovered) patient is identified only by name + DNI, and Dentalink's
+    `POST /pacientes/{id}/convenios` REPLACES the active agreement, so an existing record is
+    never written blindly: it is linked only when it has no agreement at all, and a
+    different one is left untouched (changes go through Administración). Gateway failures
+    propagate so each call site keeps its own failure handling.
+    """
+    if not recovered:
+        try:
+            await agreement_gateway.link_patient_agreement(patient.id, agreement.id)
+        except AgreementAlreadyLinkedError:
+            return _AGREEMENT_ALREADY_LINKED_NOTICE
+        return None
+    held = await agreement_gateway.get_patient_agreements(patient.id)
+    if any(item.id == agreement.id for item in held):
+        return _EXISTING_PATIENT_SAME_AGREEMENT_NOTICE
+    if held:
+        return _EXISTING_PATIENT_OTHER_AGREEMENT_NOTICE
+    await agreement_gateway.link_patient_agreement(patient.id, agreement.id)
+    return _EXISTING_PATIENT_AGREEMENT_LINKED_NOTICE
 
 
 def _patient_to_primitives(patient: Patient) -> dict[str, object]:
@@ -1982,6 +2026,7 @@ def create_appointment_node(
                         "response_buttons": None,
                     }
                 else:
+                    patient_recovered = False
                     try:
                         new_patient = await patient_gateway.create_patient(
                             details["full_name"],
@@ -2009,6 +2054,7 @@ def create_appointment_node(
                             new_patient = None
                         else:
                             new_patient = recovered
+                            patient_recovered = True
                     except Exception as exc:  # noqa: BLE001 -- external gateway boundary
                         logger.warning("first-visit patient creation failed", exc_info=exc)
                         result = {
@@ -2039,13 +2085,14 @@ def create_appointment_node(
 
                     if new_patient is not None:
                         link_failed = False
-                        already_linked = False
+                        link_notice: str | None = None
                         try:
-                            await agreement_gateway.link_patient_agreement(
-                                new_patient.id, agreement.id
+                            link_notice = await _attach_agreement(
+                                agreement_gateway,
+                                new_patient,
+                                agreement,
+                                recovered=patient_recovered,
                             )
-                        except AgreementAlreadyLinkedError:
-                            already_linked = True
                         except Exception as exc:  # noqa: BLE001 -- external gateway boundary
                             link_failed = True
                             logger.warning("first-visit agreement linking failed", exc_info=exc)
@@ -2097,8 +2144,8 @@ def create_appointment_node(
                                 },
                             )
                             resumed = await node(resumed_state)
-                            if already_linked:
-                                return _with_notice(resumed, _AGREEMENT_ALREADY_LINKED_NOTICE)
+                            if link_notice is not None:
+                                return _with_notice(resumed, link_notice)
                             return resumed
 
         response_buttons = result.get("response_buttons")
@@ -3155,6 +3202,7 @@ def create_appointment_node(
                     email = str(confirmed_payload.get("email") or "") or None
                     obra_social_name = str(confirmed_payload.get("obra_social") or "")
                     already_linked_notice: str | None = None
+                    patient_recovered = False
                     try:
                         new_patient = await patient_gateway.create_patient(
                             full_name, dni, phone, email=email
@@ -3206,16 +3254,17 @@ def create_appointment_node(
                                 },
                             }
                         new_patient = recovered
+                        patient_recovered = True
 
                     if obra_social_name:
                         agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                         if agreement is not None:
-                            try:
-                                await agreement_gateway.link_patient_agreement(
-                                    new_patient.id, agreement.id
-                                )
-                            except AgreementAlreadyLinkedError:
-                                already_linked_notice = _AGREEMENT_ALREADY_LINKED_NOTICE
+                            already_linked_notice = await _attach_agreement(
+                                agreement_gateway,
+                                new_patient,
+                                agreement,
+                                recovered=patient_recovered,
+                            )
 
                     if collected_data.get("pending_selected_slot") is None:
                         # Registration reached from reschedule/cancel: there
@@ -4040,6 +4089,7 @@ def create_appointment_node(
                 )
             contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
             registration_notice: str | None = None
+            registration_recovered = False
             try:
                 new_patient = await patient_gateway.create_patient(
                     full_name, validated_dni.value, contact_phone, email=email
@@ -4057,13 +4107,16 @@ def create_appointment_node(
                         state["contact_memory_summary"],
                     )
                 new_patient = recovered
+                registration_recovered = True
             if obra_social_name:
                 agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                 if agreement is not None:
-                    try:
-                        await agreement_gateway.link_patient_agreement(new_patient.id, agreement.id)
-                    except AgreementAlreadyLinkedError:
-                        registration_notice = _AGREEMENT_ALREADY_LINKED_NOTICE
+                    registration_notice = await _attach_agreement(
+                        agreement_gateway,
+                        new_patient,
+                        agreement,
+                        recovered=registration_recovered,
+                    )
             patient_primitives = _patient_to_primitives(new_patient)
             if _is_create_flow(collected_data):
                 registration_next = await _continue_booking_with_patient(
