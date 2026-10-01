@@ -90,7 +90,7 @@
   metadata:
     requires_real_llm: false
 
-- description: "Tema frecuente por texto libre: alineadores"
+- description: "Tema frecuente por texto libre: alineadores (imagen con tres opciones)"
   vars:
     conversation_id: "eval-topics-text-05"
     message: "Info de alineadores"
@@ -102,8 +102,10 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        titles: ["Opción 1", "Opción 2", "Opción 3"]
         exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
@@ -212,8 +214,10 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        titles: ["Opción 1", "Opción 2", "Opción 3"]
         exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
@@ -413,6 +417,89 @@
     message: "Horario de General"
     button_payload: "SELECT_SLOT:eval-free-4"
   assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+# Alineadores: the price image with three option buttons; choosing one starts the booking
+# (first-visit question first, then straight to the "General" specialty). Consecutive cases
+# share one conversation_id.
+- description: "Alineadores por texto libre: imagen con Opción 1, 2 y 3 — turn 1"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "cuánto salen los alineadores"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Opción 1", "Opción 2", "Opción 3"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["FAQ_OPTION:alineadores:1", "FAQ_OPTION:alineadores:2", "FAQ_OPTION:alineadores:3"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: elegir la Opción 2 pide primero la primera visita — turn 2"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "Opción 2"
+    button_payload: "FAQ_OPTION:alineadores:2"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: paciente existente se identifica — turn 3"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: muestra los horarios de General sin la lista de especialidades — turn 4"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SELECT_SLOT:eval-free-4", "LIST_BACK"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: la confirmación menciona la opción elegida — turn 5"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "Horario de General"
+    button_payload: "SELECT_SLOT:eval-free-4"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Consulta por alineadores: Opción 2"]
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:

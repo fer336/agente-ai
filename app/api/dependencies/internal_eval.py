@@ -173,6 +173,7 @@ def get_evaluate_chat_turn_use_case() -> EvaluateChatTurnUseCase:
         telegram_alert_cooldown_seconds=settings.telegram_alert_cooldown_seconds,
         checkpointer_provider=checkpointer_provider,
         location_image_url=settings.effective_location_image_url,
+        aligners_image_url=settings.effective_aligners_image_url,
     )
 
     return EvaluateChatTurnUseCase(

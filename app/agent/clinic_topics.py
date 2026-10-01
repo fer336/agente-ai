@@ -15,6 +15,10 @@ from app.domain.value_objects.menu_payloads import FAQ_TOPIC_PAYLOAD_PREFIX
 #: straight to (see `ClinicTopic.book_specialty`). Set by the router, consumed (popped) by
 #: the decision subgraph when it would otherwise show the specialty list.
 PRESELECTED_SPECIALTY_KEY = "preselected_specialty_name"
+#: `collected_data` key: the option ("1", "2" or "3") the patient chose on a topic's option
+#: buttons. Set by the router, kept through the booking, shown in the confirmation message
+#: and dropped when the booking ends or the flow resets. Never sent to Dentalink.
+ALIGNER_OPTION_KEY = "aligner_option"
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,11 @@ class ClinicTopic:
     text: str
     #: Dentalink specialty a booking of this topic goes to, skipping the specialty list.
     book_specialty: str | None = None
+    #: File under `app/static/public/` sent with the answer (needs a configured image URL).
+    image_filename: str | None = None
+    #: Option buttons (`Opción n`) that replace the usual Agendar / Menú / Administración
+    #: trio, since WhatsApp allows 3 reply buttons. Each starts the booking.
+    options: tuple[str, ...] = ()
 
     @property
     def payload(self) -> str:
@@ -66,16 +75,12 @@ _BRACKETS_OBRA_SOCIAL_TEXT = (
     "Si querés, te comunico con administración."
 )
 
+# The prices are in the image (`alineadores-opciones.jpg`), never in the text.
 _ALINEADORES_TEXT = (
     "😁 *Alineadores Smilesecret*\n\n"
-    "Es un tratamiento completo para los 2 maxilares. Incluye:\n"
-    "• Escaneo intraoral y seguimiento personalizado\n"
-    "• Diseño digital 3D y planificación integral\n"
-    "• Honorarios profesionales\n"
-    "• Todos los alineadores necesarios\n"
-    "• Retención final para cada maxilar\n\n"
-    "Los valores y las formas de pago te los confirma administración.\n\n"
-    "Si querés, te comunico con administración."
+    "Estas son las opciones de pago. Elegí la que más te convenga y seguimos con tu "
+    "turno.\n\n"
+    'Si preferís otra cosa, escribí "menú" o "administración".'
 )
 
 CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
@@ -133,6 +138,9 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "ortodoncia invisible",
         ),
         text=_ALINEADORES_TEXT,
+        book_specialty="General",
+        image_filename="alineadores-opciones.jpg",
+        options=("1", "2", "3"),
     ),
 )
 

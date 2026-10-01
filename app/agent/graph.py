@@ -154,6 +154,7 @@ def build_graph(
     registration_flow_id: str = "",
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     location_image_url: str = "",
+    aligners_image_url: str = "",
 ) -> StateGraph[AgentState, None, AgentState, AgentState]:
     """Builds the (uncompiled) agent graph (PRD.md §29):
 
@@ -306,7 +307,7 @@ def build_graph(
         FAQ_TOPIC_NODE,
         with_error_handling(
             FAQ_TOPIC_NODE,
-            create_faq_topic_node(),
+            create_faq_topic_node(aligners_image_url),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,
@@ -398,6 +399,7 @@ def compile_graph(
     registration_flow_id: str = "",
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     location_image_url: str = "",
+    aligners_image_url: str = "",
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Compiles the graph, optionally with a checkpointer.
 
@@ -427,6 +429,7 @@ def compile_graph(
         registration_flow_id=registration_flow_id,
         mirror_to_chatwoot=mirror_to_chatwoot,
         location_image_url=location_image_url,
+        aligners_image_url=aligners_image_url,
     ).compile(checkpointer=checkpointer)
 
 

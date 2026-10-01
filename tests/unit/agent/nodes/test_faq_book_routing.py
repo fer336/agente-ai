@@ -31,7 +31,7 @@ def test_the_payload_helper_builds_a_short_prefixed_id():
     assert all(len(faq_book_payload(topic.id)) <= 256 for topic in CLINIC_TOPICS)
 
 
-def test_only_the_consulta_particular_topic_books_a_fixed_specialty():
+def test_only_consulta_particular_and_alineadores_book_a_fixed_specialty():
     booking = {topic.id: topic.book_specialty for topic in CLINIC_TOPICS}
 
     assert booking == {
@@ -39,12 +39,14 @@ def test_only_the_consulta_particular_topic_books_a_fixed_specialty():
         "consulta_particular": "General",
         "limpieza_particular": None,
         "brackets_obra_social": None,
-        "alineadores": None,
+        "alineadores": "General",
     }
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("topic", CLINIC_TOPICS, ids=lambda topic: topic.id)
+@pytest.mark.parametrize(
+    "topic", [t for t in CLINIC_TOPICS if t.id != "alineadores"], ids=lambda topic: topic.id
+)
 async def test_the_topic_node_offers_the_book_button_only_for_a_topic_with_a_specialty(topic):
     result = await create_faq_topic_node()(
         make_agent_state(collected_data={"faq_topic_id": topic.id})

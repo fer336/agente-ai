@@ -9,6 +9,7 @@ from app.domain.value_objects.menu_payloads import (
     MENU_MAIN_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
     faq_book_payload,
+    faq_option_payload,
 )
 
 #: `collected_data` key the router sets with the chosen topic id (one-turn carrier).
@@ -26,6 +27,13 @@ def _topic_buttons(topic: ClinicTopic) -> list[InteractiveButton]:
     ]
 
 
+def _option_buttons(topic: ClinicTopic) -> list[InteractiveButton]:
+    return [
+        InteractiveButton(id=faq_option_payload(topic.id, option), title=f"Opción {option}")
+        for option in topic.options
+    ]
+
+
 _SUB_LIST_TEXT = "Estos son los temas que más nos consultan. ¿Sobre cuál querés saber?"
 
 _SUB_LIST = ListMessage(
@@ -39,7 +47,7 @@ def _resolve_topic(topic_id: object, user_message: str) -> ClinicTopic | None:
     return topic_by_id(topic_id) or match_clinic_topic(user_message)
 
 
-def create_faq_topic_node() -> AgentNode:
+def create_faq_topic_node(aligners_image_url: str = "") -> AgentNode:
     async def node(state: AgentState) -> dict[str, object]:
         """Answer a frequent clinic topic with its fixed text, never LLM-written.
 
@@ -61,6 +69,18 @@ def create_faq_topic_node() -> AgentNode:
                 "response_text": _SUB_LIST_TEXT,
                 "response_list": _SUB_LIST,
                 "response_buttons": None,
+                "requires_handoff": False,
+                "collected_data": collected_data,
+            }
+        if topic.options:
+            # The options replace the usual trio (3 reply buttons at most) and each one
+            # starts the booking. The image carries the prices; without a configured URL
+            # the text still goes out with the options.
+            image_url = aligners_image_url if topic.image_filename else ""
+            return {
+                "response_text": topic.text,
+                "response_buttons": _option_buttons(topic),
+                "response_image_url": image_url or None,
                 "requires_handoff": False,
                 "collected_data": collected_data,
             }

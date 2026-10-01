@@ -50,6 +50,8 @@ PUBLIC_BASE_URL=https://agent.qeva-ai.com
 # Optional override of the whole image URL (e.g. a CDN) — leave empty to use the
 # URL derived from PUBLIC_BASE_URL.
 LOCATION_IMAGE_URL=
+# Same for the alineadores price list (<PUBLIC_BASE_URL>/public/alineadores-opciones.jpg).
+ALIGNERS_IMAGE_URL=
 
 MESSAGE_DEBOUNCE_SECONDS=6
 
