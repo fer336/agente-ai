@@ -12,6 +12,7 @@ from app.domain.value_objects.menu_payloads import (
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import future_slot
 from tests.fixtures.seed_objects import make_professional, make_specialty
 from tests.unit.agent.nodes.test_specialties_node import _node
 
@@ -119,7 +120,7 @@ async def test_specialty_row_tap_from_the_catalog_stays_read_only_without_bookin
 
 
 @pytest.mark.asyncio
-async def test_specialty_row_tap_with_booking_context_opens_its_professionals():
+async def test_specialty_row_tap_with_booking_context_opens_its_next_slots():
     node = _node(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
@@ -133,8 +134,8 @@ async def test_specialty_row_tap_with_booking_context_opens_its_professionals():
         )
     )
 
-    assert result["collected_data"]["stage"] == "awaiting_professional_selection"
-    assert result["response_list"] is not None
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
+    assert result["response_list"].section_title == "Horarios disponibles"
 
 
 @pytest.mark.asyncio
@@ -156,25 +157,26 @@ async def test_professional_listing_from_the_catalog_stays_read_only_without_boo
 
 
 @pytest.mark.asyncio
-async def test_professional_listing_from_the_catalog_with_booking_context_is_a_paginated_list():
+async def test_specialty_with_many_professionals_and_booking_context_shows_one_page_of_slots():
     professionals = [
         make_professional(id_=f"prof-{i}", full_name=f"Profesional {i}", specialty_id="spec-1")
         for i in range(12)
     ]
+    slots = [future_slot(id_=f"slot-{i}", professional_id=f"prof-{i % 12}") for i in range(15)]
     node = _node(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
         professionals=professionals,
+        available_slots=slots,
     )
 
     result = await node(
-        make_agent_state(
-            user_message="ortodoncia", collected_data={"operation_mention": "create"}
-        )
+        make_agent_state(user_message="ortodoncia", collected_data={"operation_mention": "create"})
     )
 
     ids = [r.id for r in result["response_list"].rows]
-    assert ids[-1] == LIST_MORE_PAYLOAD
-    assert result["collected_data"]["stage"] == "awaiting_professional_selection"
+    assert len(ids) == 10
+    assert all(row_id.startswith("SELECT_SLOT:") for row_id in ids)
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
 
 
 def _resolver(button_payload):

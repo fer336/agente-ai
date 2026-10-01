@@ -214,6 +214,35 @@ async def test_specialty_row_tap_advances_directly_to_the_slot_list():
 
 
 @pytest.mark.asyncio
+async def test_specialty_row_tap_with_many_slots_shows_exactly_ten_in_one_page():
+    # WhatsApp lists hold 10 rows: 10 slots fill the list, so there is no
+    # "Ver más"/"Volver atrás" row on the next-slots screen.
+    node, _, _ = await _make_node_and_conversation(
+        specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="spec-1")],
+        available_slots=[
+            _future_slot(id_=f"slot-{i}", professional_id="prof-1") for i in range(15)
+        ],
+    )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}spec-1",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "specialty_options": [make_specialty(id_="spec-1", name="Ortodoncia")],
+        },
+    )
+
+    result = await node(state)
+
+    ids = [row.id for row in result["response_list"].rows]
+    assert ids == [f"SELECT_SLOT:slot-{i}" for i in range(10)]
+    assert LIST_MORE_PAYLOAD not in ids
+    assert LIST_BACK_PAYLOAD not in ids
+
+
+@pytest.mark.asyncio
 async def test_professional_list_more_tap_sends_the_next_page():
     node, _, _ = await _make_node_and_conversation(
         specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],

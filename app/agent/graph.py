@@ -269,7 +269,9 @@ def build_graph(
         SPECIALTIES_NODE,
         with_error_handling(
             SPECIALTIES_NODE,
-            create_specialties_node(specialty_gateway, appointment_gateway, llm_provider),
+            create_specialties_node(
+                specialty_gateway, appointment_gateway, llm_provider, conversation_repository
+            ),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,

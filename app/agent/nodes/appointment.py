@@ -8,6 +8,7 @@ from typing import cast
 from redis.asyncio import Redis
 
 from app.agent.appointment_decision_subgraph import (
+    SPECIALTY_SLOTS_REQUEST_KEY,
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
@@ -4630,13 +4631,17 @@ def create_appointment_node(
                 # A named specialty only ever means booking — you don't
                 # cancel "an ortodoncia".
                 chosen = specialties[index]
-                return await _offer_professionals(
-                    conversation_id,
-                    chosen.id,
-                    chosen.name,
-                    {**collected_data, "operation": CREATE_APPOINTMENT_ACTION},
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                # The agent never asks the patient to choose a professional: the
+                # specialty alone shows its next slots across all of its professionals.
+                return await _delegate_to_decision_subgraph(
+                    state,
+                    {
+                        **{k: v for k, v in collected_data.items() if k != "specialty_mention"},
+                        "operation": CREATE_APPOINTMENT_ACTION,
+                        "chosen_specialty_id": chosen.id,
+                        "chosen_specialty_name": chosen.name,
+                        SPECIALTY_SLOTS_REQUEST_KEY: True,
+                    },
                 )
 
         if professional_mention is not None:

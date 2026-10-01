@@ -996,30 +996,100 @@ async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the
     assert "instruccion" in captured[0].collected_data
 
 
-@pytest.mark.asyncio
-async def test_a_named_specialty_skips_straight_to_that_specialtys_doctors():
-    # "quiero un turno de ortodoncia" already answered both menus, so the
-    # patient must not be walked back through either of them.
-    node, _, _ = await _make_node_and_conversation(
-        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
-        professionals=[
+def _assert_next_slots_screen(result, *, max_rows: int = 10) -> None:
+    """The create flow shows slots only: no professional list, no professional names."""
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    assert result["collected_data"].get("professional_options") is None
+    response_list = result["response_list"]
+    assert response_list is not None
+    assert response_list.section_title == "Horarios disponibles"
+    assert 0 < len(response_list.rows) <= max_rows
+    assert all(row.id.startswith(SELECT_SLOT_PAYLOAD_PREFIX) for row in response_list.rows)
+    assert "profesional" not in result["response_text"].lower().replace("[fake-response", "")
+    assert "Dra. Laura Pérez" not in result["response_text"]
+    assert all("Laura" not in row.title for row in response_list.rows)
+
+
+def _ortodoncia_node_kwargs(slot_count: int = 12):
+    return {
+        "specialties": [make_specialty(id_="cleaning", name="Ortodoncia")],
+        "professionals": [
             make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="cleaning")
         ],
-    )
+        "available_slots": [_future_slot(id_=f"slot-{i}") for i in range(slot_count)],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_named_specialty_shows_the_next_ten_slots_not_a_professional_list():
+    # Live bug (2026-10-01): "Quería un turno de ortodoncia" -> first-visit question ->
+    # Cancelar -> name + DNI -> the agent asked "con qué profesional preferís atenderte".
+    node, _, _ = await _make_node_and_conversation(**_ortodoncia_node_kwargs())
     state = make_agent_state(
         conversation_id="conv-1",
-        user_message="quiero un turno de ortodoncia",
+        user_message="Quería un turno de ortodoncia",
         collected_data={"specialty_mention": "ortodoncia", "operation_mention": "create"},
     )
 
     intake = await node(state)
+    assert intake["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert intake.get("response_list") is None
     result = await _answer_as_existing_patient(node, intake)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
-    assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
-    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
-    assert result["response_list"] is not None
-    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
+    _assert_next_slots_screen(result)
+    assert len(result["response_list"].rows) == 10
+    assert "menú" in result["response_text"]
+    assert "administración" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_known_patient_naming_a_specialty_gets_the_slots_immediately():
+    node, _, _ = await _make_node_and_conversation(**_ortodoncia_node_kwargs(slot_count=3))
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="Quería un turno de ortodoncia",
+        collected_data={
+            "specialty_mention": "ortodoncia",
+            "operation_mention": "create",
+            "first_visit_completed": True,
+            "patient": _PATIENT_PRIMITIVES,
+        },
+    )
+
+    result = await node(state)
+
+    _assert_next_slots_screen(result)
+    assert len(result["response_list"].rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_slot_picked_after_naming_a_specialty_proposes_that_slot():
+    node, _, _ = await _make_node_and_conversation(**_ortodoncia_node_kwargs(slot_count=3))
+    shown = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="quiero un turno de ortodoncia",
+            collected_data={
+                "specialty_mention": "ortodoncia",
+                "operation_mention": "create",
+                "first_visit_completed": True,
+                "patient": _PATIENT_PRIMITIVES,
+            },
+        )
+    )
+
+    picked = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=shown["response_list"].rows[1].id,
+            collected_data=shown["collected_data"],
+        )
+    )
+
+    assert picked["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert picked["collected_data"]["pending_selected_slot"].id == "slot-1"
 
 
 @pytest.mark.asyncio
@@ -2768,9 +2838,9 @@ async def test_slot_selection_stage_reminds_instead_of_advancing_on_free_text():
     assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
     assert "collected_data" not in result
     assert result["response_buttons"] is None
+    # Aggregated next-slots screen: one page, no navigation row.
     assert [row.id for row in result["response_list"].rows] == [
         f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-        LIST_BACK_PAYLOAD,
     ]
 
 

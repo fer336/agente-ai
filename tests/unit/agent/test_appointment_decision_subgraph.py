@@ -19,6 +19,7 @@ import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
 from app.agent.appointment_decision_subgraph import (
     _AGGREGATE_SEARCH_WINDOW,
     _AGGREGATE_TARGET_SLOTS,
+    SPECIALTY_SLOTS_REQUEST_KEY,
     build_appointment_decision_graph,
 )
 from app.agent.nodes.appointment_selection import (
@@ -35,6 +36,7 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
@@ -429,9 +431,9 @@ async def test_valid_specialty_row_tap_advances_directly_to_the_slot_list():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
     assert result["response_buttons"] is None
+    # One page of next slots: no "Volver" row.
     assert [row.id for row in result["response_list"].rows] == [
         f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-        LIST_BACK_PAYLOAD,
     ]
     # No professional name anywhere in the row title — the patient's own
     # ask: only date, day, time and the clock emoji.
@@ -602,9 +604,9 @@ async def test_missing_slot_payload_reminds_with_the_current_options():
 
     assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
     assert result["response_buttons"] is None
+    # Aggregated screen (no professional chosen): one page, no navigation row.
     assert [row.id for row in result["response_list"].rows] == [
         f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}",
-        LIST_BACK_PAYLOAD,
     ]
 
 
@@ -1328,7 +1330,7 @@ async def test_offer_any_professional_slots_passes_a_clinic_local_range_and_the_
 
     assert len(captured) == 1
     date_range, target_slot_count = captured[0]
-    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 18
+    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 10
     # Starts at "now", in the CLINIC timezone (not UTC — its utcoffset is
     # the clinic's, distinguishing this from the pre-fix UTC-anchored range).
     assert before <= date_range.start <= after
@@ -1458,3 +1460,121 @@ def test_subgraph_module_never_imports_sensitive_write_use_cases():
     }
 
     assert forbidden_symbols.isdisjoint(vars(subgraph_module))
+
+
+# --- Next 10 slots, never a professional list ---------------------------
+
+
+def _many_future_slots(count: int, professional_id: str = "prof-1") -> list[AppointmentSlot]:
+    # Same calendar day, 20-minute spacing: always inside the aggregated search window.
+    start = datetime.now(UTC) + timedelta(hours=1)
+    return [
+        AppointmentSlot(
+            id=f"{professional_id}-slot-{index}",
+            professional_id=professional_id,
+            specialty_id="cleaning",
+            time_range=DateTimeRange(
+                start + timedelta(minutes=20 * index), start + timedelta(minutes=20 * index + 20)
+            ),
+        )
+        for index in range(count)
+    ]
+
+
+async def _aggregated_result(slot_count: int = 14, llm_provider=None):
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        available_slots=_many_future_slots(slot_count),
+        llm_provider=llm_provider,
+    )
+    return await graph.ainvoke(
+        _decision_state(
+            button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+            collected_data={
+                "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+                "specialty_options": [make_specialty(id_="cleaning", name="Ortodoncia")],
+            },
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_aggregated_screen_is_one_page_of_ten_slots_with_no_navigation_row():
+    result = await _aggregated_result(slot_count=14)
+
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert len(row_ids) == 10
+    assert all(row_id.startswith(SELECT_SLOT_PAYLOAD_PREFIX) for row_id in row_ids)
+    assert LIST_MORE_PAYLOAD not in row_ids
+    assert LIST_BACK_PAYLOAD not in row_ids
+    assert len(result["collected_data"]["available_slots"]) == 10
+    assert result["collected_data"]["slots_page"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_aggregated_screen_text_tells_how_to_escape_without_naming_a_professional():
+    result = await _aggregated_result(slot_count=3)
+
+    assert "menú" in result["response_text"]
+    assert "administración" in result["response_text"]
+    assert "Prof" not in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_list_more_tap_on_the_single_page_aggregated_screen_reshows_the_same_slots():
+    first = await _aggregated_result(slot_count=14)
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+
+    result = await graph.ainvoke(
+        _decision_state(button_payload=LIST_MORE_PAYLOAD, collected_data=first["collected_data"])
+    )
+
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert row_ids == [row.id for row in first["response_list"].rows]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_list_back_tap_on_the_aggregated_screen_goes_to_the_specialty_list():
+    first = await _aggregated_result(slot_count=14)
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+
+    result = await graph.ainvoke(
+        _decision_state(button_payload=LIST_BACK_PAYLOAD, collected_data=first["collected_data"])
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["response_list"].section_title == "Especialidades"
+
+
+@pytest.mark.asyncio
+async def test_a_requested_specialty_goes_straight_to_its_next_slots():
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        available_slots=_many_future_slots(12),
+    )
+
+    result = await graph.ainvoke(
+        _decision_state(
+            collected_data={
+                "operation": _CREATE_APPOINTMENT_ACTION,
+                "chosen_specialty_id": "cleaning",
+                "chosen_specialty_name": "Ortodoncia",
+                SPECIALTY_SLOTS_REQUEST_KEY: True,
+            }
+        )
+    )
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["chosen_specialty_id"] == "cleaning"
+    assert SPECIALTY_SLOTS_REQUEST_KEY not in result["collected_data"]
+    assert len(result["response_list"].rows) == 10
+    assert result["response_list"].section_title == "Horarios disponibles"

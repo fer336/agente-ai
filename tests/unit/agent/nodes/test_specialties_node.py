@@ -3,22 +3,34 @@ import pytest
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
+    STAGE_AWAITING_SLOT_SELECTION,
 )
 from app.agent.nodes.specialties import create_specialties_node
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import future_slot
 from tests.fixtures.gateways import (
+    make_conversation_repository,
     make_dentalink_gateway,
     make_llm_provider,
     make_specialty_gateway,
 )
-from tests.fixtures.seed_objects import make_professional, make_specialty
+from tests.fixtures.seed_objects import make_conversation, make_professional, make_specialty
 
 
-def _node(specialties=None, professionals=None, llm_provider=None):
+def _node(specialties=None, professionals=None, llm_provider=None, available_slots=None):
+    conversation_repository = make_conversation_repository()
+    # Seeded synchronously: the node flips the input state of the conversation it replies to.
+    conversation_repository._conversations_by_id["conv-1"] = make_conversation(  # noqa: SLF001
+        id_="conv-1"
+    )
     return create_specialties_node(
         make_specialty_gateway(specialties=specialties),
-        make_dentalink_gateway(professionals=professionals),
+        make_dentalink_gateway(
+            professionals=professionals,
+            available_slots=available_slots if available_slots is not None else [future_slot()],
+        ),
         llm_provider or make_llm_provider(),
+        conversation_repository,
     )
 
 
@@ -47,12 +59,15 @@ async def test_naming_a_specialty_with_booking_context_continues_the_booking():
         )
     )
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    # The agent never shows a professional list in the create flow: the specialty alone
+    # shows its next free slots.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-2"
-    assert result["response_list"] is not None
-    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
-    assert "Dr. Otro" not in [r.title for r in result["response_list"].rows]
+    assert result["response_list"].section_title == "Horarios disponibles"
+    assert [r.id for r in result["response_list"].rows] == ["SELECT_SLOT:slot-1"]
+    assert "Dra. Laura Pérez" not in result["response_text"]
+    assert "menú" in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -151,8 +166,9 @@ async def test_active_appointment_stage_counts_as_booking_context():
         )
     )
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["response_list"].section_title == "Horarios disponibles"
 
 
 @pytest.mark.asyncio

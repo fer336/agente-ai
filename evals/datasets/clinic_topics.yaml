@@ -507,7 +507,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-4", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-4"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -586,7 +586,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-4", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-4"]
         exact: true
   metadata:
     requires_real_llm: false

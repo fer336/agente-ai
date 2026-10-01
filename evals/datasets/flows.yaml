@@ -183,3 +183,58 @@
         node: "handoff"
   metadata:
     requires_real_llm: false
+
+# Live bug (2026-10-01): "Quería un turno de ortodoncia" -> first-visit question -> Cancelar ->
+# name + DNI -> the agent asked "con qué profesional preferís atenderte" and showed an
+# "Elegí profesional" list. The agent never asks to choose a professional: a specialty request
+# shows the next free slots (seed: Ortodoncia has Dra. Ana Ejemplo with two free slots).
+- description: "Turno de una especialidad: solo horarios, nunca profesionales — turn 1"
+  vars:
+    conversation_id: "flows-specialty-slots-only"
+    message: "Quería un turno de ortodoncia"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Turno de una especialidad: solo horarios, nunca profesionales — turn 2"
+  vars:
+    conversation_id: "flows-specialty-slots-only"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Turno de una especialidad: solo horarios, nunca profesionales — turn 3"
+  vars:
+    conversation_id: "flows-specialty-slots-only"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "list"
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:onlyOptionIds
+      config:
+        allowed: ["SELECT_SLOT:*"]
+  metadata:
+    requires_real_llm: false
