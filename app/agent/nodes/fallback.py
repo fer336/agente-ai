@@ -11,11 +11,11 @@ from app.agent.nodes.llm_response import (
     generate_or_fallback,
     without_mid_conversation_greeting,
 )
+from app.agent.nodes.location import asks_for_location, clinic_location_reply
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.interactive_button import InteractiveButton
-from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
 
 #: A confused patient gets exactly two ways forward (user decision, this
@@ -40,38 +40,6 @@ _CONFUSED_PATIENT_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 
-#: The clinic's real coordinates/address (given by the clinic owner) —
-#: sent as a native WhatsApp location card (a tap opens Maps directly),
-#: never handed to the LLM to describe: it has no reliable way to know
-#: the real address, and a model "retyping" coordinates risks a mangled
-#: pin.
-_CLINIC_NAME = "Smiling Pilar"
-_CLINIC_LATITUDE = -34.437762
-_CLINIC_LONGITUDE = -58.7917857
-_CLINIC_ADDRESS = "Las Camelias 3324 Ofi 207, B1669 Pilar, Buenos Aires"
-#: Free-text triggers for "where are you / how do I get there" — same
-#: substring-match idiom `agreement.py` uses for coverage-detail keywords.
-_LOCATION_KEYWORDS = (
-    "ubicacion",
-    "ubicación",
-    "donde queda",
-    "dónde queda",
-    "donde quedan",
-    "donde estan",
-    "dónde están",
-    "direccion",
-    "dirección",
-    "como llego",
-    "cómo llego",
-    "como llegar",
-    "cómo llegar",
-)
-
-
-def _asks_for_location(text: str) -> bool:
-    lowered = text.casefold()
-    return any(keyword in lowered for keyword in _LOCATION_KEYWORDS)
-
 
 def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
     """Offers a direct way out for an unrecognized/low-confidence turn (PRD.md §8, §29).
@@ -95,7 +63,7 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
     async def node(state: AgentState) -> dict[str, object]:
         collected_data = state["collected_data"]
 
-        if _asks_for_location(state["user_message"]):
+        if asks_for_location(state["user_message"]):
             # Checked before `pending_answer`: the model's own free-text
             # "question" answer might describe an address from memory (or
             # nothing at all) instead of the clinic's real, verified
@@ -104,18 +72,7 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             # no accompanying text (WhatsApp shows name/address on the
             # card itself), so this is the one reply with no LLM step.
             remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
-            return {
-                "response_text": None,
-                "response_buttons": None,
-                "response_location": LocationRequest(
-                    latitude=_CLINIC_LATITUDE,
-                    longitude=_CLINIC_LONGITUDE,
-                    name=_CLINIC_NAME,
-                    address=_CLINIC_ADDRESS,
-                ),
-                "requires_handoff": False,
-                "collected_data": remaining,
-            }
+            return {**clinic_location_reply(), "collected_data": remaining}
 
         pending_answer = collected_data.get("pending_answer")
         if isinstance(pending_answer, str) and pending_answer.strip():

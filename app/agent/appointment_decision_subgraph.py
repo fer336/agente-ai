@@ -34,6 +34,8 @@ from typing import Literal, Protocol, TypedDict, cast
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from app.agent.clinic_topics import PRESELECTED_SPECIALTY_KEY
+from app.agent.handoff_offer import normalize_text
 from app.agent.nodes.appointment_selection import (
     STAGE_AWAITING_NO_SLOTS_CHOICE,
     STAGE_AWAITING_PROFESSIONAL_SELECTION,
@@ -662,7 +664,34 @@ def build_appointment_decision_graph(
         collected_data: dict[str, object],
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
+        prefetched: tuple[list[AppointmentSlot], dict[str, str]] | None = None,
     ) -> dict[str, object]:
+        if prefetched is None:
+            prefetched = await _search_any_professional_slots(specialty_id)
+        slots, professional_names = prefetched
+        if not slots:
+            return await _offer_browse_choice(
+                conversation_id,
+                specialty_id,
+                specialty_name,
+                collected_data,
+                recent_messages,
+                contact_memory,
+            )
+        return await _show_slots(
+            conversation_id,
+            specialty_id,
+            specialty_name,
+            collected_data,
+            recent_messages,
+            contact_memory,
+            slots,
+            professional_names,
+        )
+
+    async def _search_any_professional_slots(
+        specialty_id: str,
+    ) -> tuple[list[AppointmentSlot], dict[str, str]]:
         # CLINIC-LOCAL `now`, not UTC (regression fixed here, T5a): a
         # calendar "day" only means what Dentalink itself means by one —
         # the clinic's own local date — and `SearchAvailabilityAnyProfessionalUseCase`
@@ -687,17 +716,22 @@ def build_appointment_decision_graph(
         # not 8.
         today_midnight = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
         search_range = DateTimeRange(now, today_midnight + _AGGREGATE_SEARCH_WINDOW)
-        slots, professional_names = await search_availability_any_professional.execute(
+        return await search_availability_any_professional.execute(
             specialty_id=specialty_id,
             date_range=search_range,
             target_slot_count=_AGGREGATE_TARGET_SLOTS,
         )
-        if not slots:
-            return await _offer_browse_choice(
-                conversation_id, specialty_id, specialty_name, collected_data,
-                recent_messages, contact_memory,
-            )
 
+    async def _show_slots(
+        conversation_id: ConversationId,
+        specialty_id: str,
+        specialty_name: str,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+        slots: list[AppointmentSlot],
+        professional_names: dict[str, str],
+    ) -> dict[str, object]:
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         text = await generate_or_fallback(
             llm_provider,
@@ -739,6 +773,51 @@ def build_appointment_decision_graph(
             "decision_node": "search_availability_any_professional",
             "exit_reason": "none",
         }
+
+    async def _offer_preselected_specialty(
+        conversation_id: ConversationId,
+        specialty_name: str,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> dict[str, object] | None:
+        """Slots of the specialty a topic books (a consulta particular -> "General"),
+        skipping the specialty list. `None` means "show the normal list": the specialty
+        is not in the catalog, or has no slots (never a dead end)."""
+        wanted = normalize_text(specialty_name)
+        catalog = await _specialty_catalog_for_reroute_safe(list_specialties)
+        # Exact name, not a substring: "Odontología general" must never match "General".
+        chosen = next(
+            (s for s in catalog or [] if normalize_text(s.name) == wanted),
+            None,
+        )
+        if chosen is None:
+            logger.warning(
+                "preselected specialty %r not found in the Dentalink catalog; "
+                "showing the specialty list",
+                specialty_name,
+            )
+            return None
+        try:
+            found = await _search_any_professional_slots(chosen.id)
+        except Exception as exc:  # noqa: BLE001 -- external gateway boundary
+            logger.warning(
+                "slot search for the preselected specialty %r failed; showing the list",
+                specialty_name,
+                exc_info=exc,
+            )
+            return None
+        if not found[0]:
+            return None
+        return await _offer_any_professional_slots(
+            conversation_id,
+            chosen.id,
+            chosen.name,
+            collected_data,
+            recent_messages,
+            contact_memory,
+            prefetched=found,
+        )
 
     async def route_entry(state: AppointmentDecisionState) -> dict[str, object]:
         collected_data = state.get("collected_data", {})
@@ -816,6 +895,13 @@ def build_appointment_decision_graph(
         contact_memory = state.get("contact_memory_summary")
 
         if not options:
+            preselected = collected_data.pop(PRESELECTED_SPECIALTY_KEY, None)
+            if isinstance(preselected, str):
+                shown = await _offer_preselected_specialty(
+                    conversation_id, preselected, collected_data, recent_messages, contact_memory
+                )
+                if shown is not None:
+                    return shown
             return await _offer_specialties(
                 conversation_id, collected_data, recent_messages, contact_memory
             )

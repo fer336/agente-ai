@@ -116,6 +116,14 @@ app.mount(
     StaticFiles(directory=Path(__file__).resolve().parent / "static" / "admin"),
     name="admin-static",
 )
+#: Public files WhatsApp's servers fetch by URL (e.g. the clinic location image sent with
+#: the "Cómo llegar" button). Serves only `app/static/public`; no auth, no directory
+#: listing (`html=False`), nothing outside that folder.
+app.mount(
+    "/public",
+    StaticFiles(directory=Path(__file__).resolve().parent / "static" / "public", html=False),
+    name="public-static",
+)
 
 
 if __name__ == "__main__":

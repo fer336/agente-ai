@@ -1,6 +1,11 @@
 import re
 
 from app.agent.automatic_handoff import requires_automatic_handoff
+from app.agent.clinic_topics import (
+    PRESELECTED_SPECIALTY_KEY,
+    match_clinic_topic,
+    topic_by_id,
+)
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_FLAG_KEY,
@@ -15,6 +20,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_NEW_PATIENT_DETAILS,
 )
+from app.agent.nodes.faq_topic import FAQ_TOPIC_ID_KEY
 from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
@@ -26,10 +32,14 @@ from app.agent.third_party_guard import (
 )
 from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
+    FAQ_BOOK_PAYLOAD_PREFIX,
+    FAQ_TOPIC_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LOCATION_DETAIL_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
+    MENU_FAQ_PAYLOAD,
     MENU_INSURANCE_PAYLOAD,
     MENU_LOCATION_PAYLOAD,
     MENU_MAIN_PAYLOAD,
@@ -111,7 +121,9 @@ def _looks_like_a_question(text: str) -> bool:
 #: with nothing else is exactly the shape the live misclassification took
 #: (see `POST_ACTION_CLOSE_INTENT`'s own docstring), so it alone is not
 #: enough evidence of a genuinely new request during a post-action window.
-_ROUTABLE_INTENTS = frozenset({"insurance", "specialties", "handoff", "question", "location"})
+_ROUTABLE_INTENTS = frozenset(
+    {"insurance", "specialties", "handoff", "question", "location", "faq_topic"}
+)
 
 
 def _is_genuine_new_request(result: UnderstandingResult) -> bool:
@@ -164,6 +176,9 @@ _GLOBAL_BUTTON_INTENTS = {
     MENU_ADMIN_PAYLOAD: "handoff",
     MENU_SPECIALTIES_PAYLOAD: "specialties",
     MENU_LOCATION_PAYLOAD: "location",
+    LOCATION_DETAIL_PAYLOAD: "location",
+    # No topic id: the faq_topic node answers with the sub-list of topics.
+    MENU_FAQ_PAYLOAD: "faq_topic",
     MENU_MAIN_PAYLOAD: "appointment",
     OPERATION_CREATE_PAYLOAD: "appointment",
     OPERATION_RESCHEDULE_PAYLOAD: "appointment",
@@ -181,7 +196,16 @@ _OPERATION_PAYLOADS = frozenset(
     }
 )
 
-_INFORMATION_INTENTS = frozenset({"insurance", "specialties", "question", "location"})
+_INFORMATION_INTENTS = frozenset({"insurance", "specialties", "question", "location", "faq_topic"})
+
+_BOOKING_WORDS = frozenset({"turno", "turnos", "cita", "citas", "agendar", "agendarme", "reservar"})
+
+
+def _asks_to_book(text: str) -> bool:
+    """True when the message asks for an appointment rather than for information."""
+    return any(word in _BOOKING_WORDS for word in normalize_text(text).split())
+
+
 _NAVIGATION_TARGETS = frozenset({"specialty", "service", "professional", "slot", "main"})
 
 # Only used when there is no active workflow. During a workflow these are
@@ -229,6 +253,7 @@ _PER_TURN_UNDERSTANDING_KEYS = (
     "navigation_target",
     HANDOFF_OFFER_KEY,
     HANDOFF_OFFER_FLAG_KEY,
+    FAQ_TOPIC_ID_KEY,
 )
 
 
@@ -279,6 +304,38 @@ def _temporary_result(
     return result
 
 
+def _faq_topic_result(
+    topic_id: str, collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object]:
+    carried: dict[str, object] = {FAQ_TOPIC_ID_KEY: topic_id}
+    if has_active_stage:
+        return _temporary_result("faq_topic", collected_data, carried)
+    return {"intent": "faq_topic", "collected_data": {**collected_data, **carried}}
+
+
+def _faq_book_result(
+    payload: str, collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object]:
+    """A tapped "Agendar cita" of a topic answer: the create flow, with the topic's
+    Dentalink specialty preselected. Mid-flow it replaces the flow like OPERATION_CREATE
+    (the appointment node resets the stale stage data and keeps only this one-shot key)."""
+    topic = topic_by_id(payload.removeprefix(FAQ_BOOK_PAYLOAD_PREFIX))
+    data = dict(collected_data)
+    if topic is not None and topic.book_specialty is not None:
+        data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    result: dict[str, object] = {"intent": "appointment", "collected_data": data}
+    if has_active_stage:
+        result.update(
+            {
+                "active_flow": "appointment",
+                "active_node": str(collected_data.get("stage")),
+                "resume_node": None,
+                "interruption": "replace",
+            }
+        )
+    return result
+
+
 def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
     """Global conversational router in front of the operational workflow.
 
@@ -325,6 +382,15 @@ async def _resolve(
     payload = state["button_payload"]
 
     if payload is not None:
+        if payload.startswith(FAQ_TOPIC_PAYLOAD_PREFIX):
+            # A tapped FAQ row names its topic; it is an information request that may
+            # interrupt a booking without losing the stage.
+            topic = topic_by_id(payload.removeprefix(FAQ_TOPIC_PAYLOAD_PREFIX))
+            if topic is None:
+                return {"intent": "appointment" if has_active_stage else "unknown"}
+            return _faq_topic_result(topic.id, collected_data, has_active_stage)
+        if payload.startswith(FAQ_BOOK_PAYLOAD_PREFIX):
+            return _faq_book_result(payload, collected_data, has_active_stage)
         global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
         if global_intent is not None:
             if global_intent == "handoff":
@@ -399,6 +465,17 @@ async def _resolve(
             return _temporary_result("location", collected_data)
         return {"intent": "location"}
 
+    # A frequent clinic topic named in free text gets its fixed answer. Inside a data
+    # stage the same word ("blanqueamiento", "osde") is the patient's data, not a query.
+    # A booking request that merely names the service ("turno para limpieza") goes on to
+    # the LLM and the appointment flow instead of the fixed answer.
+    if stage not in _DATA_COLLECTION_STAGES and not _asks_to_book(state["user_message"]):
+        topic = match_clinic_topic(state["user_message"])
+        if topic is not None:
+            # A consumed post-action window is dropped, like on any genuine new request.
+            fresh = {k: v for k, v in collected_data.items() if k != "post_action_context"}
+            return _faq_topic_result(topic.id, fresh, has_active_stage)
+
     context: dict[str, object] = {
         "recent_messages": state["recent_messages"],
         "contact_memory": state["contact_memory_summary"],
@@ -425,6 +502,12 @@ async def _resolve(
 
     result = await llm_provider.understand(state["user_message"], context=context)
     carried = _carried_understanding(result)
+    if result.intent == "appointment" and not has_active_stage:
+        # "Quiero un turno para consulta particular": a consulta particular is always
+        # booked on its fixed specialty. Never mid-flow, where nothing would consume it.
+        topic = match_clinic_topic(state["user_message"])
+        if topic is not None and topic.book_specialty is not None:
+            carried[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
 
     if post_action_context is not None and not _is_genuine_new_request(result):
         text = await generate_or_fallback(

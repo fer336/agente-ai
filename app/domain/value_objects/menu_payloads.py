@@ -21,13 +21,12 @@ MENU_MAIN_PAYLOAD = "MENU_MAIN"
 #: not-yet-built specialties lookup, distinct from `MENU_INSURANCE_PAYLOAD`'s
 #: separate, already-built obra social/prepaga flow.
 MENU_SPECIALTIES_PAYLOAD = "MENU_SPECIALTIES"
-#: The welcome list's "Cómo llegar / horarios" row (this session's own
-#: brief). Deliberately NOT added to `resolve_interaction.py`'s
-#: `_MENU_BUTTON_INTENTS` — falling through as "unknown" routes it to
-#: `fallback.py`, whose `_asks_for_location` keyword match already fires
-#: on this exact row title ("cómo llegar"), sending the real location
-#: card. A dedicated intent would just duplicate that.
+#: The welcome list's "Cómo llegar / horarios" row. Routed to the `location` intent
+#: (`resolve_interaction.py`), which answers with the clinic image and a "Cómo llegar" button.
 MENU_LOCATION_PAYLOAD = "MENU_LOCATION"
+#: The "Cómo llegar" button under the clinic image: tapping it returns the native
+#: WhatsApp location card (a tap opens the map).
+LOCATION_DETAIL_PAYLOAD = "LOCATION_DETAIL"
 
 #: Button payload contract for `app.agent.nodes.appointment`'s operation
 #: selection (PRD.md §6: deterministic, never LLM-classified) — living
@@ -72,3 +71,27 @@ CHOOSE_PROFESSIONAL_PAYLOAD = "CHOOSE_PROFESSIONAL"
 #: other data. The third option, talking to an advisor, reuses `MENU_ADMIN_PAYLOAD`.
 PATIENT_NOT_FOUND_REGISTER_PAYLOAD = "PATIENT_NOT_FOUND_REGISTER"
 PATIENT_NOT_FOUND_RETRY_PAYLOAD = "PATIENT_NOT_FOUND_RETRY"
+
+#: "Consultas frecuentes" (clinic FAQ topics). `MENU_FAQ_PAYLOAD` opens the sub-list of
+#: topics; each topic row carries `FAQ_TOPIC_PAYLOAD_PREFIX` + the topic id defined in
+#: `app.agent.clinic_topics`, which round-trips through WhatsApp's `list_reply.id`.
+MENU_FAQ_PAYLOAD = "MENU_FAQ"
+FAQ_TOPIC_PAYLOAD_PREFIX = "FAQ_TOPIC:"
+FAQ_TOPIC_BLANQUEAMIENTO_PAYLOAD = "FAQ_TOPIC:blanqueamiento"
+FAQ_TOPIC_CONSULTA_PAYLOAD = "FAQ_TOPIC:consulta_particular"
+FAQ_TOPIC_LIMPIEZA_PAYLOAD = "FAQ_TOPIC:limpieza_particular"
+FAQ_TOPIC_BRACKETS_PAYLOAD = "FAQ_TOPIC:brackets_obra_social"
+FAQ_TOPIC_ALINEADORES_PAYLOAD = "FAQ_TOPIC:alineadores"
+
+#: "Agendar cita" button of a topic answer that books a fixed Dentalink specialty
+#: (consulta particular -> "General"): `FAQ_BOOK:` + the topic id. Distinct from
+#: `OPERATION_CREATE_PAYLOAD`, which starts a booking with no specialty chosen.
+FAQ_BOOK_PAYLOAD_PREFIX = "FAQ_BOOK:"
+_MAX_PAYLOAD_LENGTH = 256
+
+
+def faq_book_payload(topic_id: str) -> str:
+    payload = f"{FAQ_BOOK_PAYLOAD_PREFIX}{topic_id}"
+    if len(payload) > _MAX_PAYLOAD_LENGTH:
+        raise ValueError(f"button id longer than {_MAX_PAYLOAD_LENGTH} characters: {payload}")
+    return payload

@@ -87,6 +87,8 @@ class ChatTurnResult:
     buttons: list[EvalOption] = field(default_factory=list)
     list_rows: list[EvalOption] = field(default_factory=list)
     flow: EvalFlow | None = None
+    #: Header image of an image + buttons reply (e.g. the clinic location poster).
+    image_url: str | None = None
 
 
 @dataclass
@@ -96,6 +98,7 @@ class _Reply:
     buttons: list[EvalOption] = field(default_factory=list)
     list_rows: list[EvalOption] = field(default_factory=list)
     flow: EvalFlow | None = None
+    image_url: str | None = None
 
 
 class EvaluateChatTurnUseCase:
@@ -173,6 +176,7 @@ class EvaluateChatTurnUseCase:
             buttons=reply.buttons,
             list_rows=reply.list_rows,
             flow=reply.flow,
+            image_url=reply.image_url,
         )
 
     def _captured(self, kind: ReplyKind) -> list[Any]:
@@ -212,6 +216,7 @@ class EvaluateChatTurnUseCase:
         if kind == "buttons":
             reply.text = entry[1]
             reply.buttons = [EvalOption(id=b.id, title=b.title) for b in entry[2]]
+            reply.image_url = entry[3]
         elif kind == "list":
             reply.text = entry[1]
             reply.list_rows = [

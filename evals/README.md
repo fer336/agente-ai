@@ -113,12 +113,23 @@ promptfoo run them in order and `cache: false` stops it from replaying stored
 replies. The provider appends `EVAL_RUN_ID` to every conversation id. A test
 that taps a button sets `button_payload` (the id) and `message` (the title).
 
-Response shape: `reply_text`, `reply_kind` (`text|buttons|list|flow|null`),
-`buttons[{id,title}]`, `list_rows[{id,title,description}]`, `flow`,
-`node_names`, `tool_names`, `agent_run_id`, `agent_run_status`.
+Response shape: `reply_text`, `reply_kind` (`text|buttons|list|flow|location|null`),
+`buttons[{id,title}]`, `list_rows[{id,title,description}]`, `flow`, `image_url`
+(header image of an image + buttons reply, e.g. the clinic location poster; `null`
+otherwise), `node_names`, `tool_names`, `agent_run_id`, `agent_run_status`. The
+`hasImage` helper in `assertions/custom.js` asserts a non-empty `image_url`;
+`datasets/location.yaml` covers the location answer (image + "Cómo llegar" button, the
+button tap returning the native location card, and the same after a finished booking).
 
 `datasets/flows_view_appointment.yaml` uses the seeded eval patient (Lucía Prueba,
 DNI 39000111, two upcoming appointments; `app/infrastructure/dentalink/eval_seed.py`).
+
+`datasets/clinic_topics.yaml` covers the clinic's frequent topics (fixed texts in
+`app/agent/clinic_topics.py`): the five topics by free text and by the menu sub-list
+(`MENU_FAQ`, then `FAQ_TOPIC:<id>` payloads), a booking phrase that must not reach the
+`faq_topic` node, the OSDE / Medifé / William Hope first-visit text and "cuánto cubre OSDE"
+deriving to administración. Two cases are `requires_real_llm: true` (a paraphrased price
+question and a booking phrase). Figures in the texts are pending the clinic's confirmation.
 
 ## Production audits
 

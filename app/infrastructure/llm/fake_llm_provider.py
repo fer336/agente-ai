@@ -139,7 +139,16 @@ _VIEW_APPOINTMENT_KEYWORDS = (
     "tengo turno",
     "turnos tengo",
 )
-_INSURANCE_KEYWORDS = ("obra social", "prepaga", "convenio", "cobertura", "osde")
+_INSURANCE_KEYWORDS = (
+    "obra social",
+    "prepaga",
+    "convenio",
+    "cobertura",
+    "osde",
+    "medife",
+    "medifé",
+    "william hope",
+)
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
 #: T3 (free-text menu-intents parity): phrasings the deterministic
 #: `asks_for_location` substring pre-check (`app.agent.nodes.location`)
@@ -152,6 +161,15 @@ _LOCATION_UNDERSTANDING_KEYWORDS = (
     "cómo hago para llegar",
     "donde los encuentro",
     "dónde los encuentro",
+)
+#: Frequent clinic topics (`faq_topic`): the fake's own keyword stand-in for the real label
+#: (the deterministic fixed-text keywords live in `app.agent.clinic_topics`).
+_FAQ_TOPIC_UNDERSTANDING_KEYWORDS = (
+    "blanqueamiento",
+    "limpieza",
+    "alineador",
+    "bracket",
+    "consulta particular",
 )
 #: T3: "volver al menú principal"-shaped free text — the fake's own
 #: equivalent of the real `navigation_target` field ("main" case only; the
@@ -221,6 +239,11 @@ class FakeLLMProvider:
         # reports it, matching the real provider's `understand`-only label.
         if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
             intent = "location"
+            confidence = 0.9
+        elif any(keyword in lowered for keyword in _FAQ_TOPIC_UNDERSTANDING_KEYWORDS) and not any(
+            word in lowered for word in (*_APPOINTMENT_KEYWORDS, "agendar")
+        ):
+            intent = "faq_topic"
             confidence = 0.9
         else:
             intent_result = await self.classify_intent(message, context)

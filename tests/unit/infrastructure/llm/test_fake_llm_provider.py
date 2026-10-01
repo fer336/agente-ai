@@ -29,6 +29,14 @@ async def test_classify_intent_recognizes_insurance_keyword():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Tengo Medifé", "tengo medife", "¿Trabajan con William Hope?"])
+async def test_classify_intent_recognizes_the_special_insurance_names(message: str):
+    result = await make_llm_provider().classify_intent(message, context={})
+
+    assert result == IntentResult(intent="insurance", confidence=0.9)
+
+
+@pytest.mark.asyncio
 async def test_classify_intent_recognizes_specialty_keyword():
     provider = make_llm_provider()
 
@@ -204,3 +212,14 @@ async def test_understand_reads_a_reschedule_request_as_reschedule():
     result = await provider.understand("quiero reagendar", context={})
 
     assert result.operation_mention == "reschedule"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message", ["info del blanqueamiento", "hacen limpieza?", "alineadores", "tienen brackets?"]
+)
+async def test_understand_recognizes_frequent_clinic_topics(message):
+    result = await FakeLLMProvider().understand(message, context={})
+
+    assert result.intent == "faq_topic"
+    assert result.confidence >= 0.5

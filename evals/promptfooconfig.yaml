@@ -83,3 +83,5 @@ tests:
   - file://datasets/flows.yaml
   - file://datasets/flows_view_appointment.yaml
   - file://datasets/audit_followups.yaml
+  - file://datasets/clinic_topics.yaml
+  - file://datasets/location.yaml

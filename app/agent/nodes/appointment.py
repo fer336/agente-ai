@@ -11,6 +11,7 @@ from app.agent.appointment_decision_subgraph import (
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
+from app.agent.clinic_topics import PRESELECTED_SPECIALTY_KEY
 from app.agent.first_visit_intake_extraction import (
     extract_intake_reply,
     extract_question_reply,
@@ -123,6 +124,7 @@ from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
+    FAQ_BOOK_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
@@ -1156,6 +1158,10 @@ def _cancel_proposal_payload(appointment: Appointment) -> dict[str, object]:
         "slot_start": appointment.slot.time_range.start.isoformat(),
         "slot_end": appointment.slot.time_range.end.isoformat(),
     }
+
+
+def _without_preselected_specialty(collected_data: dict[str, object]) -> dict[str, object]:
+    return {k: v for k, v in collected_data.items() if k != PRESELECTED_SPECIALTY_KEY}
 
 
 def _is_create_flow(collected_data: dict[str, object]) -> bool:
@@ -2643,6 +2649,14 @@ def create_appointment_node(
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
 
+        preselected_specialty: object = None
+        faq_book_tap = (state["button_payload"] or "").startswith(FAQ_BOOK_PAYLOAD_PREFIX)
+        if faq_book_tap:
+            # "Agendar cita" of a topic that books a fixed specialty: a create tap, with
+            # the router's one-shot specialty kept across the reset below.
+            preselected_specialty = collected_data.get(PRESELECTED_SPECIALTY_KEY)
+            state = cast(AgentState, {**state, "button_payload": OPERATION_CREATE_PAYLOAD})
+
         # A navigation request comes from the global router. Move back only as
         # far as requested and invalidate dependent selections, never patient
         # identity or independent workflow data.
@@ -2731,7 +2745,15 @@ def create_appointment_node(
             # and the agent went right on asking for their DNI. Every
             # per-stage counter is dropped with the stage, so an abandoned
             # flow's retry history never follows them into the next one.
+            stage_data = collected_data
             collected_data = {}
+            if faq_book_tap:
+                # Only the one-shot specialty and an already known patient survive.
+                kept = {PRESELECTED_SPECIALTY_KEY: preselected_specialty}
+                if stage_data.get("first_visit_completed") and stage_data.get("patient"):
+                    kept["first_visit_completed"] = True
+                    kept["patient"] = stage_data["patient"]
+                collected_data = {k: v for k, v in kept.items() if v is not None}
             stage = None
             returned_to_main_menu = True
 
@@ -4422,6 +4444,8 @@ def create_appointment_node(
                 return await _delegate_to_first_visit_intake(
                     state, {**collected_data, "operation": operation}
                 )
+            # Only a booking goes to the preselected specialty.
+            collected_data = _without_preselected_specialty(collected_data)
             return await _identify_for_operation(state, {**collected_data, "operation": operation})
 
         # No stage yet. A button tap wins outright (PRD.md §6: deterministic
@@ -4539,7 +4563,7 @@ def create_appointment_node(
             return result
         if operation is not None:
             identification_result = await _identify_for_operation(
-                state, {**collected_data, "operation": operation}
+                state, {**_without_preselected_specialty(collected_data), "operation": operation}
             )
             if returned_to_main_menu:
                 # Mirrors the CREATE branch just above: abandoning

@@ -61,6 +61,8 @@ class EvalChatResponse(BaseModel):
     buttons: list[EvalButtonOut] = []
     list_rows: list[EvalOptionOut] = []
     flow: EvalFlowOut | None = None
+    #: Header image of an image + buttons reply, or null.
+    image_url: str | None = None
 
 
 def _option_out(option: EvalOption) -> EvalOptionOut:
@@ -105,4 +107,5 @@ async def eval_chat(
         buttons=[EvalButtonOut(id=b.id, title=b.title) for b in result.buttons],
         list_rows=[_option_out(r) for r in result.list_rows],
         flow=_flow_out(result.flow),
+        image_url=result.image_url,
     )

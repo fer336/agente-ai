@@ -727,3 +727,135 @@ async def test_a_typed_main_menu_request_routes_like_the_main_menu_button(stage)
     )
 
     assert result["intent"] == button_result["intent"] == "appointment"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "topic_id"),
+    [
+        ("FAQ_TOPIC:blanqueamiento", "blanqueamiento"),
+        ("FAQ_TOPIC:consulta_particular", "consulta_particular"),
+        ("FAQ_TOPIC:limpieza_particular", "limpieza_particular"),
+        ("FAQ_TOPIC:brackets_obra_social", "brackets_obra_social"),
+        ("FAQ_TOPIC:alineadores", "alineadores"),
+    ],
+)
+async def test_faq_topic_payload_routes_to_the_faq_topic_intent(payload, topic_id):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(button_payload=payload))
+
+    assert result["intent"] == "faq_topic"
+    assert result["collected_data"]["faq_topic_id"] == topic_id
+
+
+@pytest.mark.asyncio
+async def test_unknown_faq_payload_id_is_not_routed_to_the_topic_node():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(button_payload="FAQ_TOPIC:nope"))
+
+    assert result["intent"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_faq_topic_payload_mid_booking_interrupts_and_preserves_the_stage():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+    state = make_agent_state(
+        button_payload="FAQ_TOPIC:alineadores",
+        collected_data={"stage": "awaiting_slot_selection", "chosen_professional_id": "p1"},
+    )
+
+    result = await node(state)
+
+    assert result["intent"] == "faq_topic"
+    assert result["interruption"] == "temporary"
+    assert result["resume_node"] == "awaiting_slot_selection"
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
+    assert result["collected_data"]["chosen_professional_id"] == "p1"
+    assert result["collected_data"]["faq_topic_id"] == "alineadores"
+
+
+@pytest.mark.asyncio
+async def test_free_text_about_a_topic_routes_to_faq_topic_before_the_llm():
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            raise AssertionError("the deterministic pre-check must answer first")
+
+    node = create_resolve_interaction_node(_ExplodingLLMProvider())
+
+    result = await node(make_agent_state(user_message="cuánto sale el blanqueamiento?"))
+
+    assert result["intent"] == "faq_topic"
+    assert result["collected_data"]["faq_topic_id"] == "blanqueamiento"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "quiero un turno para limpieza",
+        "necesito sacar una cita para blanqueamiento",
+        "me quiero agendar para alineadores",
+    ],
+)
+async def test_a_booking_request_that_names_a_topic_is_not_answered_with_the_topic_text(message):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    assert result["intent"] != "faq_topic"
+
+
+@pytest.mark.asyncio
+async def test_free_text_about_a_topic_mid_booking_is_a_temporary_interruption():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+    state = make_agent_state(
+        user_message="y los alineadores cuánto salen?",
+        collected_data={"stage": "awaiting_slot_selection"},
+    )
+
+    result = await node(state)
+
+    assert result["intent"] == "faq_topic"
+    assert result["interruption"] == "temporary"
+    assert result["resume_node"] == "awaiting_slot_selection"
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
+    assert result["collected_data"]["faq_topic_id"] == "alineadores"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage",
+    ["awaiting_first_visit_intake", "awaiting_identification", "awaiting_new_patient_details"],
+)
+@pytest.mark.parametrize("typed", ["blanqueamiento", "osde", "medife", "Medifé", "william hope"])
+async def test_typing_a_topic_or_insurance_name_in_a_data_stage_stays_data(stage, typed):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=typed, collected_data={"stage": stage}))
+
+    assert result["intent"] == "appointment"
+    assert "faq_topic_id" not in result.get("collected_data", {})
+
+
+@pytest.mark.asyncio
+async def test_the_llm_faq_topic_label_routes_like_the_other_information_intents():
+    class _FaqLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="faq_topic", confidence=0.9)
+
+    node = create_resolve_interaction_node(_FaqLLMProvider())
+
+    idle = await node(make_agent_state(user_message="info de tratamientos estéticos"))
+    mid_booking = await node(
+        make_agent_state(
+            user_message="info de tratamientos estéticos",
+            collected_data={"stage": "awaiting_slot_selection"},
+        )
+    )
+
+    assert idle["intent"] == "faq_topic"
+    assert mid_booking["intent"] == "faq_topic"
+    assert mid_booking["interruption"] == "temporary"
+    assert mid_booking["resume_node"] == "awaiting_slot_selection"

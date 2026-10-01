@@ -15,7 +15,7 @@
 // `POST /internal/eval/chat` (see app/api/routes/internal_eval.py):
 // `{ reply_text, agent_run_id, agent_run_status, node_names, tool_names,
 // reply_kind, buttons: [{id, title}], list_rows: [{id, title, description}],
-// flow }`.
+// flow, image_url }`.
 
 function parseOutput(output) {
   if (typeof output === "string") {
@@ -141,6 +141,18 @@ function hasButtons(output, context) {
     return fail(`expected exactly ${JSON.stringify(titles)}; got ${JSON.stringify(actual)}`);
   }
   return ok(`buttons ${JSON.stringify(actual)}`);
+}
+
+// Reply carries a header image: `image_url` is a non-empty http(s) URL (an image + caption +
+// button message, e.g. the clinic location poster).
+function hasImage(output) {
+  const parsed = parseOutput(output);
+  if (!parsed) return fail("eval response is not JSON");
+  const url = parsed.image_url;
+  if (typeof url !== "string" || !/^https?:\/\/\S+$/.test(url)) {
+    return fail(`image_url is ${JSON.stringify(url)}, expected an http(s) URL`);
+  }
+  return ok(`image_url ${url}`);
 }
 
 // The reply's options (buttons and list rows) carry every id in `config.ids`;
@@ -311,6 +323,7 @@ module.exports = {
   noSensitiveValuesInReply,
   replyKindIs,
   hasButtons,
+  hasImage,
   hasOptionIds,
   noListRows,
   noBulletList,

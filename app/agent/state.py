@@ -72,6 +72,10 @@ class AgentState(TypedDict):
     #: its own, so `response_text` is ignored on this path. `None` sends
     #: a normal reply.
     response_location: LocationRequest | None
+    #: Publicly reachable image sent as the header of the `response_buttons` message,
+    #: with `response_text` as its caption. `None` sends no image. Reset fresh every turn
+    #: by `AgentInvoker.handle`.
+    response_image_url: str | None
     #: An interactive list to send instead of plain text/buttons — for a
     #: menu with more than 3 options but still within WhatsApp's 10-row
     #: cap. `None` sends a normal reply.

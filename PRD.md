@@ -325,15 +325,22 @@ Soy el asistente virtual de la clínica.
 ¿En qué podemos ayudarte?
 ```
 
-Botones:
+Lista de opciones (mensaje interactivo de WhatsApp, 7 filas; el límite de Meta es 10):
 
 ```text
-📅 Turnos
-🏥 Obras sociales
-💬 Administración
+📅 Agendar una cita
+🔄 Reprogramar mi cita
+❌ Cancelar mi cita
+📍 Cómo llegar
+💬 Hablar con un asesor
+📋 Ver mi cita
+ℹ️ Consultas frecuentes
 ```
 
-Estos botones representan las tres funciones del MVP.
+"ℹ️ Consultas frecuentes" abre una segunda lista con los temas que más consulta la clínica
+(blanqueamiento dental, consulta particular, limpieza particular, brackets por obra social y
+alineadores). Cada tema se responde con un texto fijo redactado por la clínica, sin intervención
+del LLM, y ofrece los botones Agendar cita, Menú principal y Administración.
 
 ---
 

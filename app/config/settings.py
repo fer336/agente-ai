@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     #: before this existed.
     welcome_image_url: str = ""
 
+    #: Public origin of this app, used to build the URL of the files served under
+    #: `/public` (WhatsApp's servers fetch them, so it must be reachable from outside).
+    public_base_url: str = "https://agent.qeva-ai.com"
+    #: Clinic location image sent with the "Cómo llegar" button. `""` (the default)
+    #: means the copy this app serves itself at `/public/clinic-location.jpg`; set it
+    #: to point at a CDN instead. Read it through `effective_location_image_url`.
+    location_image_url: str = ""
+
     dentalink_api_url: str = "https://api.dentalink.healthatom.com/api"
     dentalink_access_token: str = ""
     dentalink_timeout_seconds: float = 15
@@ -325,6 +333,12 @@ class Settings(BaseSettings):
         if self.redis_password:
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/0"
         return f"redis://{self.redis_host}:{self.redis_port}/0"
+
+    @property
+    def effective_location_image_url(self) -> str:
+        if self.location_image_url:
+            return self.location_image_url
+        return f"{self.public_base_url.rstrip('/')}/public/clinic-location.jpg"
 
 
 @lru_cache

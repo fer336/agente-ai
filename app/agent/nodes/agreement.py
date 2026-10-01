@@ -1,3 +1,4 @@
+from app.agent.clinic_topics import match_special_insurance, special_insurance_message
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -50,6 +51,19 @@ def create_agreement_node(
 
     async def node(state: AgentState) -> dict[str, object]:
         lowered = state["user_message"].casefold()
+        asks_coverage_detail = any(keyword in lowered for keyword in _COVERAGE_DETAIL_KEYWORDS)
+
+        # OSDE, Medifé and William Hope get the clinic's fixed first-visit text, verbatim
+        # (no LLM). A coverage-detail question still derives to administración first (PRD §20).
+        special_insurance = match_special_insurance(state["user_message"])
+        if special_insurance is not None:
+            if asks_coverage_detail:
+                return {"response_text": _DERIVE_TO_ADMIN_MESSAGE, "requires_handoff": False}
+            return {
+                "response_text": special_insurance_message(special_insurance),
+                "requires_handoff": False,
+            }
+
         agreements = await list_agreements.execute()
         matched = next((a for a in agreements if a.name.casefold() in lowered), None)
 
@@ -74,7 +88,7 @@ def create_agreement_node(
                 "requires_handoff": False,
             }
 
-        if any(keyword in lowered for keyword in _COVERAGE_DETAIL_KEYWORDS):
+        if asks_coverage_detail:
             return {"response_text": _DERIVE_TO_ADMIN_MESSAGE, "requires_handoff": False}
 
         text = await generate_or_fallback(

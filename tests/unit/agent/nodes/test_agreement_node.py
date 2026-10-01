@@ -1,5 +1,6 @@
 import pytest
 
+from app.agent.clinic_topics import special_insurance_message
 from app.agent.nodes.agreement import create_agreement_node
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
@@ -9,12 +10,12 @@ from tests.fixtures.seed_objects import make_agreement
 
 @pytest.mark.asyncio
 async def test_confirms_when_the_agreement_is_configured():
-    gateway = make_agreement_gateway(agreements=[make_agreement(name="OSDE")])
+    gateway = make_agreement_gateway(agreements=[make_agreement(name="Galeno")])
     node = create_agreement_node(gateway, FakeLLMProvider())
 
-    result = await node(make_agent_state(user_message="¿Trabajan con OSDE?"))
+    result = await node(make_agent_state(user_message="¿Trabajan con Galeno?"))
 
-    assert result["response_text"] == "[fake-response for intent=agreement_found] con OSDE"
+    assert result["response_text"] == "[fake-response for intent=agreement_found] con Galeno"
     assert result["requires_handoff"] is False
 
 
@@ -55,3 +56,42 @@ async def test_never_invents_a_match_for_an_unconfigured_agreement_percentage_qu
     )
 
     assert result["response_text"] == "[fake-response for intent=agreement_not_found]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "display_name"),
+    [
+        ("¿Atienden OSDE?", "OSDE"),
+        ("tengo osde 210", "OSDE"),
+        ("Tengo Medifé", "Medifé"),
+        ("tengo medife", "Medifé"),
+        ("¿Trabajan con William Hope?", "William Hope"),
+    ],
+)
+async def test_special_insurances_get_the_fixed_first_visit_text(message: str, display_name: str):
+    # Even when the clinic's agreements list has no such entry: the text is fixed.
+    gateway = make_agreement_gateway(agreements=[make_agreement(name="Galeno")])
+    node = create_agreement_node(gateway, FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    assert result["response_text"] == special_insurance_message(display_name)
+    assert result["requires_handoff"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    ["¿Cuánto cubre OSDE?", "qué porcentaje cubre medife", "¿Cuánto me cubre William Hope?"],
+)
+async def test_coverage_questions_about_special_insurances_still_derive_to_admin(message: str):
+    gateway = make_agreement_gateway(agreements=[make_agreement(name="OSDE")])
+    node = create_agreement_node(gateway, FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    assert result["response_text"] == (
+        "Esta consulta necesita ser revisada por administración.\n"
+        "Querés que te comunique con ellos?"
+    )

@@ -114,6 +114,52 @@ async def test_send_reply_forwards_the_image_url_to_the_gateway():
     ]
 
 
+class _ImageRejectingGateway(FakeYCloudMessagingGateway):
+    """WhatsApp could not fetch the image: only a send carrying one fails."""
+
+    async def send_buttons(self, to, text, buttons, image_url=None):
+        if image_url is not None:
+            raise RuntimeError("image could not be fetched")
+        return await super().send_buttons(to, text, buttons, image_url)
+
+
+@pytest.mark.asyncio
+async def test_send_reply_resends_without_the_image_when_the_image_send_fails():
+    messaging_gateway = _ImageRejectingGateway()
+    use_case, sent_messages = _make_use_case(messaging_gateway)
+    buttons = [InteractiveButton(id="LOCATION_DETAIL", title="Cómo llegar")]
+
+    external_id = await use_case.execute(
+        conversation_id=_CONVERSATION_ID,
+        to=PhoneNumber("+5491122334455"),
+        text="📍 Así llegás",
+        buttons=buttons,
+        image_url="https://example.com/clinic-location.jpg",
+    )
+
+    assert messaging_gateway.sent_buttons == [
+        (PhoneNumber("+5491122334455"), "📍 Así llegás", buttons, None)
+    ]
+    assert external_id == "fake-msg-1"
+
+
+@pytest.mark.asyncio
+async def test_send_reply_still_raises_when_the_send_fails_without_an_image():
+    class _FailingGateway(FakeYCloudMessagingGateway):
+        async def send_buttons(self, to, text, buttons, image_url=None):
+            raise RuntimeError("provider down")
+
+    use_case, _ = _make_use_case(_FailingGateway())
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await use_case.execute(
+            conversation_id=_CONVERSATION_ID,
+            to=PhoneNumber("+5491122334455"),
+            text="Hola",
+            buttons=[InteractiveButton(id="A", title="A")],
+        )
+
+
 @pytest.mark.asyncio
 async def test_send_reply_sends_a_flow_when_given():
     messaging_gateway = FakeYCloudMessagingGateway()
@@ -164,9 +210,7 @@ async def test_send_reply_prefers_flow_over_buttons_when_both_are_given():
 async def test_send_reply_sends_a_location_when_given():
     messaging_gateway = FakeYCloudMessagingGateway()
     use_case, _ = _make_use_case(messaging_gateway)
-    location = LocationRequest(
-        latitude=-34.437762, longitude=-58.7917857, name="Smiling Pilar"
-    )
+    location = LocationRequest(latitude=-34.437762, longitude=-58.7917857, name="Smiling Pilar")
 
     await use_case.execute(
         conversation_id=_CONVERSATION_ID,
@@ -237,9 +281,7 @@ async def test_send_reply_prefers_list_message_over_buttons_when_both_are_given(
         list_message=list_message,
     )
 
-    assert messaging_gateway.sent_lists == [
-        (PhoneNumber("+5491122334455"), "Hola", list_message)
-    ]
+    assert messaging_gateway.sent_lists == [(PhoneNumber("+5491122334455"), "Hola", list_message)]
     assert messaging_gateway.sent_buttons == []
 
 
@@ -255,9 +297,7 @@ async def test_send_reply_sends_plain_text_when_buttons_is_an_empty_list():
         buttons=[],
     )
 
-    assert messaging_gateway.sent_messages == [
-        (PhoneNumber("+5491122334455"), "Turno confirmado")
-    ]
+    assert messaging_gateway.sent_messages == [(PhoneNumber("+5491122334455"), "Turno confirmado")]
     assert messaging_gateway.sent_buttons == []
 
 
@@ -310,6 +350,39 @@ async def test_send_reply_mirrors_the_text_reply_to_chatwoot():
 
     assert len(chatwoot_gateway.sent_outgoing) == 1
     assert chatwoot_gateway.sent_outgoing[0][1] == "Tu turno fue confirmado"
+
+
+@pytest.mark.asyncio
+async def test_send_reply_sends_an_image_with_caption_and_button_and_mirrors_the_caption():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case, sent_messages = _make_use_case(
+        messaging_gateway, mirror_to_chatwoot=mirror_to_chatwoot
+    )
+    buttons = [InteractiveButton(id="LOCATION_DETAIL", title="Cómo llegar")]
+
+    external_id = await use_case.execute(
+        conversation_id=_CONVERSATION_ID,
+        to=PhoneNumber("+5491122334455"),
+        text="📍 Así llegás a Smiling Pilar",
+        buttons=buttons,
+        image_url="https://example.com/clinic-location.jpg",
+    )
+    await asyncio.sleep(0.05)
+
+    assert messaging_gateway.sent_buttons == [
+        (
+            PhoneNumber("+5491122334455"),
+            "📍 Así llegás a Smiling Pilar",
+            buttons,
+            "https://example.com/clinic-location.jpg",
+        )
+    ]
+    recorded = await sent_messages.get_by_id(external_id)
+    assert recorded is not None
+    assert recorded.conversation_id == str(_CONVERSATION_ID)
+    assert [m[1] for m in chatwoot_gateway.sent_outgoing] == ["📍 Así llegás a Smiling Pilar"]
 
 
 @pytest.mark.asyncio

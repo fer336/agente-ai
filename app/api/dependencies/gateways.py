@@ -497,6 +497,7 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         verification_flow_id=get_settings().ycloud_verification_flow_id,
         registration_flow_id=get_settings().ycloud_registration_flow_id,
         mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
+        location_image_url=get_settings().effective_location_image_url,
     )
 
 
