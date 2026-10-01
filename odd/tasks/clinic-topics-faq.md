@@ -97,6 +97,12 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   and identification. Free-text preselection applies only with no active stage (nothing would
   consume it mid-flow). Added keywords "turno particular" / "cita particular" to the topic.
 
+- Native review of T4 + phrasing fix (medium, 14 files, 902 lines, 1 consolidated lens): consent
+  granted, approved and acknowledged (lineage review-a0d1416822f76fe5). Advisory: R3-1 the
+  unresolved-topic path now shows the topic list instead of a handoff offer (intended, no other
+  caller depended on it); R3-2 the slot-search exception branch of the preselected offer has no
+  test that makes the gateway raise (follow-up).
+
 ## Next step
 
 The clinic confirms the prices (`TODO(clinic)` in `app/agent/clinic_topics.py`), then push, issue
