@@ -30,6 +30,7 @@ _DATASET_NAMES = [
     "flows_view_appointment",
     "audit_followups",
     "clinic_topics",
+    "location",
 ]
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
@@ -172,6 +173,7 @@ def test_custom_assertions_js_exports_the_expected_functions():
         "noSensitiveValuesInReply",
         "replyKindIs",
         "hasButtons",
+        "hasImage",
         "hasOptionIds",
         "noListRows",
         "noBulletList",
@@ -237,6 +239,15 @@ def test_has_buttons_requires_an_interactive_reply_with_every_title():
         )["pass"]
         is False
     )
+
+
+def test_has_image_requires_an_http_image_url():
+    with_image = {**_ASK_REPLY, "image_url": "https://agent.example.com/public/clinic-location.jpg"}
+
+    assert _run_helper("hasImage", with_image)["pass"] is True
+    assert _run_helper("hasImage", {**_ASK_REPLY, "image_url": None})["pass"] is False
+    assert _run_helper("hasImage", {**_ASK_REPLY, "image_url": ""})["pass"] is False
+    assert _run_helper("hasImage", {**_ASK_REPLY})["pass"] is False
 
 
 def test_has_option_ids_checks_buttons_and_list_rows_and_can_forbid_extras():

@@ -313,6 +313,39 @@ async def test_send_reply_mirrors_the_text_reply_to_chatwoot():
 
 
 @pytest.mark.asyncio
+async def test_send_reply_sends_an_image_with_caption_and_button_and_mirrors_the_caption():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    use_case, sent_messages = _make_use_case(
+        messaging_gateway, mirror_to_chatwoot=mirror_to_chatwoot
+    )
+    buttons = [InteractiveButton(id="LOCATION_DETAIL", title="Cómo llegar")]
+
+    external_id = await use_case.execute(
+        conversation_id=_CONVERSATION_ID,
+        to=PhoneNumber("+5491122334455"),
+        text="📍 Así llegás a Smiling Pilar",
+        buttons=buttons,
+        image_url="https://example.com/clinic-location.jpg",
+    )
+    await asyncio.sleep(0.05)
+
+    assert messaging_gateway.sent_buttons == [
+        (
+            PhoneNumber("+5491122334455"),
+            "📍 Así llegás a Smiling Pilar",
+            buttons,
+            "https://example.com/clinic-location.jpg",
+        )
+    ]
+    recorded = await sent_messages.get_by_id(external_id)
+    assert recorded is not None
+    assert recorded.conversation_id == str(_CONVERSATION_ID)
+    assert [m[1] for m in chatwoot_gateway.sent_outgoing] == ["📍 Así llegás a Smiling Pilar"]
+
+
+@pytest.mark.asyncio
 async def test_send_reply_skips_the_mirror_for_blank_text():
     messaging_gateway = FakeYCloudMessagingGateway()
     chatwoot_gateway = FakeChatwootGateway()

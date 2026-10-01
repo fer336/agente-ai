@@ -38,6 +38,7 @@ _DATASETS = [
     "flows_view_appointment",
     "audit_followups",
     "clinic_topics",
+    "location",
 ]
 
 
@@ -91,6 +92,7 @@ async def test_deterministic_cases_hold_against_the_current_flow(name: str):
                 "reply_kind": result.reply_kind,
                 "node_names": [n.node_name for n in result.node_executions],
                 "tool_names": [t.tool_name for t in result.tool_executions],
+                "image_url": result.image_url,
                 "buttons": [{"id": b.id, "title": b.title} for b in result.buttons],
                 "list_rows": [
                     {"id": r.id, "title": r.title, "description": r.description}

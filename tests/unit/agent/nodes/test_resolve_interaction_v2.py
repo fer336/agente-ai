@@ -7,6 +7,7 @@ from app.agent.nodes.resolve_interaction import (
     create_resolve_interaction_node,
 )
 from app.domain.repositories.llm_provider import UnderstandingResult
+from app.domain.value_objects.menu_payloads import LOCATION_DETAIL_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 
@@ -192,3 +193,60 @@ async def test_navigation_request_is_carried_to_appointment_without_resetting_id
     assert result["interruption"] == "navigation"
     assert result["collected_data"]["navigation_target"] == "professional"
     assert result["collected_data"]["patient"] == {"id": "patient-1"}
+
+
+@pytest.mark.asyncio
+async def test_location_detail_button_routes_to_location_when_idle():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(button_payload=LOCATION_DETAIL_PAYLOAD))
+
+    assert result == {"intent": "location"}
+
+
+@pytest.mark.asyncio
+async def test_location_detail_button_temporarily_interrupts_an_active_stage_and_keeps_it():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+    collected = {"stage": "awaiting_slot_selection", "chosen_professional_id": "p1"}
+
+    result = await node(
+        make_agent_state(button_payload=LOCATION_DETAIL_PAYLOAD, collected_data=collected)
+    )
+
+    assert result["intent"] == "location"
+    assert result["interruption"] == "temporary"
+    assert result["resume_node"] == "awaiting_slot_selection"
+    assert result.get("collected_data", collected) == collected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["dónde queda la clínica", "cómo llegar?"])
+async def test_a_location_question_after_a_finished_booking_works_the_same(message):
+    class ExplodingLLM(FakeLLMProvider):
+        async def understand(self, message, context):
+            raise AssertionError("location must be resolved before the LLM")
+
+    node = create_resolve_interaction_node(ExplodingLLM())
+
+    result = await node(
+        make_agent_state(
+            user_message=message,
+            collected_data={"post_action_context": "create_appointment"},
+        )
+    )
+
+    assert result["intent"] == "location"
+
+
+@pytest.mark.asyncio
+async def test_the_location_detail_button_after_a_finished_booking_routes_to_location():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            button_payload=LOCATION_DETAIL_PAYLOAD,
+            collected_data={"post_action_context": "create_appointment"},
+        )
+    )
+
+    assert result["intent"] == "location"

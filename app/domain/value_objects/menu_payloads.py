@@ -21,13 +21,12 @@ MENU_MAIN_PAYLOAD = "MENU_MAIN"
 #: not-yet-built specialties lookup, distinct from `MENU_INSURANCE_PAYLOAD`'s
 #: separate, already-built obra social/prepaga flow.
 MENU_SPECIALTIES_PAYLOAD = "MENU_SPECIALTIES"
-#: The welcome list's "Cómo llegar / horarios" row (this session's own
-#: brief). Deliberately NOT added to `resolve_interaction.py`'s
-#: `_MENU_BUTTON_INTENTS` — falling through as "unknown" routes it to
-#: `fallback.py`, whose `_asks_for_location` keyword match already fires
-#: on this exact row title ("cómo llegar"), sending the real location
-#: card. A dedicated intent would just duplicate that.
+#: The welcome list's "Cómo llegar / horarios" row. Routed to the `location` intent
+#: (`resolve_interaction.py`), which answers with the clinic image and a "Cómo llegar" button.
 MENU_LOCATION_PAYLOAD = "MENU_LOCATION"
+#: The "Cómo llegar" button under the clinic image: tapping it returns the native
+#: WhatsApp location card (a tap opens the map).
+LOCATION_DETAIL_PAYLOAD = "LOCATION_DETAIL"
 
 #: Button payload contract for `app.agent.nodes.appointment`'s operation
 #: selection (PRD.md §6: deterministic, never LLM-classified) — living

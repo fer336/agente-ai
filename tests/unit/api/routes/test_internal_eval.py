@@ -141,6 +141,7 @@ async def test_enabled_and_authenticated_evaluates_the_turn(stub_use_case: _Stub
     assert body["buttons"] == []
     assert body["list_rows"] == []
     assert body["flow"] is None
+    assert body["image_url"] is None
 
 
 @pytest.mark.asyncio
@@ -170,6 +171,7 @@ async def test_response_exposes_interactive_options():
             buttons=[EvalOption(id="FIRST_VISIT_CONFIRM", title="✅ Confirmar")],
             list_rows=[EvalOption(id="SPECIALTY:1", title="Ortodoncia", description="Brackets")],
             flow=EvalFlow(flow_id="f1", screen_id="S1", cta="Completar"),
+            image_url="https://example.com/clinic.jpg",
         )
     )
     app.dependency_overrides[get_settings] = lambda: _override_settings(internal_eval_enabled=True)
@@ -186,6 +188,7 @@ async def test_response_exposes_interactive_options():
         {"id": "SPECIALTY:1", "title": "Ortodoncia", "description": "Brackets"}
     ]
     assert body["flow"] == {"flow_id": "f1", "screen_id": "S1", "cta": "Completar"}
+    assert body["image_url"] == "https://example.com/clinic.jpg"
 
 
 @pytest.mark.asyncio

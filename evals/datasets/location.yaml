@@ -1,0 +1,152 @@
+# Scenarios for the clinic location answer: a location question (free text or the menu row)
+# returns the clinic image with a short caption and ONE "Cómo llegar" button; tapping the
+# button returns the native WhatsApp location card. The same holds right after a finished
+# booking. Everything is deterministic (never goes through the LLM), so every case holds with
+# the fake LLM. Consecutive cases of a conversation share one conversation_id.
+
+- description: "Ubicación por texto libre: imagen con el botón Cómo llegar"
+  vars:
+    conversation_id: "eval-location-01"
+    message: "dónde queda la clínica"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "location"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Cómo llegar"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación: tocar Cómo llegar devuelve la tarjeta de ubicación"
+  vars:
+    conversation_id: "eval-location-01"
+    message: "Cómo llegar"
+    button_payload: "LOCATION_DETAIL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "location"
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación desde la fila del menú: imagen con el botón Cómo llegar"
+  vars:
+    conversation_id: "eval-location-02"
+    message: "📍 Cómo llegar"
+    button_payload: "MENU_LOCATION"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Cómo llegar"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
+  metadata:
+    requires_real_llm: false
+
+# A finished booking (consulta particular on "General"), then the same location question.
+- description: "Ubicación tras un turno: la consulta particular propone Agendar cita — turn 1"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "Consulta particular"
+    button_payload: "FAQ_TOPIC:consulta_particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["FAQ_BOOK:consulta_particular", "MENU_MAIN", "MENU_ADMIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: Agendar cita pide la primera visita — turn 2"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "Agendar cita"
+    button_payload: "FAQ_BOOK:consulta_particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: paciente existente se identifica — turn 3"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: muestra los horarios de General — turn 4"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SELECT_SLOT:eval-free-4", "LIST_BACK"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: elegir el horario propone la confirmación — turn 5"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "Horario de General"
+    button_payload: "SELECT_SLOT:eval-free-4"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: confirmar agenda el turno — turn 6"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "✅ Confirmar"
+    button_payload: "CONFIRM_APPOINTMENT"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: la pregunta de ubicación responde igual — turn 7"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "dónde queda la clínica"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "location"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Cómo llegar"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
+  metadata:
+    requires_real_llm: false

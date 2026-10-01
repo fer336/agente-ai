@@ -13,7 +13,7 @@ from app.agent.nodes.faq_topic import create_faq_topic_node
 from app.agent.nodes.fresh_restart import FRESH_RESTART_STATE_KEY, fresh_restart_node
 from app.agent.nodes.handle_error import handle_error_node
 from app.agent.nodes.handoff import create_handoff_node
-from app.agent.nodes.location import location_node
+from app.agent.nodes.location import create_location_node
 from app.agent.nodes.question import create_question_node
 from app.agent.nodes.resolve_interaction import (
     POST_ACTION_CLOSE_INTENT,
@@ -153,6 +153,7 @@ def build_graph(
     verification_flow_id: str = "",
     registration_flow_id: str = "",
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
+    location_image_url: str = "",
 ) -> StateGraph[AgentState, None, AgentState, AgentState]:
     """Builds the (uncompiled) agent graph (PRD.md §29):
 
@@ -294,7 +295,7 @@ def build_graph(
         LOCATION_NODE,
         with_error_handling(
             LOCATION_NODE,
-            location_node,
+            create_location_node(location_image_url),
             node_execution_repository,
             agent_run_id,
             tool_execution_repository,
@@ -396,6 +397,7 @@ def compile_graph(
     verification_flow_id: str = "",
     registration_flow_id: str = "",
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
+    location_image_url: str = "",
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Compiles the graph, optionally with a checkpointer.
 
@@ -424,6 +426,7 @@ def compile_graph(
         verification_flow_id=verification_flow_id,
         registration_flow_id=registration_flow_id,
         mirror_to_chatwoot=mirror_to_chatwoot,
+        location_image_url=location_image_url,
     ).compile(checkpointer=checkpointer)
 
 

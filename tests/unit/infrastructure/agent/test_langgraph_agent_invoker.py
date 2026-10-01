@@ -27,7 +27,10 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact_memory import ContactMemory
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
-from app.domain.value_objects.menu_payloads import CHOOSE_PROFESSIONAL_PAYLOAD
+from app.domain.value_objects.menu_payloads import (
+    CHOOSE_PROFESSIONAL_PAYLOAD,
+    LOCATION_DETAIL_PAYLOAD,
+)
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
@@ -106,6 +109,7 @@ def _make_invoker(
     proposal_repositories_provider=None,
     trace_repositories_provider=None,
     checkpointer=None,
+    location_image_url="",
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     contact_repository = contact_repository or make_contact_repository()
@@ -155,6 +159,7 @@ def _make_invoker(
         incident_threshold_window_seconds=300,
         telegram_alert_cooldown_seconds=900,
         checkpointer_provider=_make_checkpointer_provider(checkpointer),
+        location_image_url=location_image_url,
     )
     return (
         invoker,
@@ -1262,3 +1267,84 @@ async def test_an_idle_rotation_after_a_booking_forgets_the_patient():
         FIRST_VISIT_CONFIRM_PAYLOAD,
         FIRST_VISIT_CANCEL_PAYLOAD,
     ]
+
+
+_LOCATION_IMAGE_URL = "https://agent.example.com/public/clinic-location.jpg"
+
+
+@pytest.mark.asyncio
+async def test_a_location_question_sends_the_clinic_image_with_a_button_and_the_tap_the_card():
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        location_image_url=_LOCATION_IMAGE_URL,
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "dónde queda la clínica", None)
+
+    assert len(messaging_gateway.sent_buttons) == 1
+    _, caption, buttons, image_url = messaging_gateway.sent_buttons[0]
+    assert image_url == _LOCATION_IMAGE_URL
+    assert "Las Camelias 3324" in caption
+    assert [(b.id, b.title) for b in buttons] == [(LOCATION_DETAIL_PAYLOAD, "Cómo llegar")]
+    assert messaging_gateway.sent_locations == []
+
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2"], "Cómo llegar", LOCATION_DETAIL_PAYLOAD
+    )
+
+    assert len(messaging_gateway.sent_locations) == 1
+    assert messaging_gateway.sent_locations[0][1].name == "Smiling Pilar"
+    assert len(messaging_gateway.sent_buttons) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_location_question_after_a_finished_booking_sends_the_clinic_image():
+    checkpointer = MemorySaver()
+    slot = _future_slot()
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    patient_gateway = make_patient_gateway(
+        patients=[make_patient(id_="pat-1", full_name="Juan Perez", dni="30123456")]
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot], professionals=[make_professional(id_="prof-1")]
+        ),
+        patient_gateway=patient_gateway,
+        specialty_gateway=make_specialty_gateway(specialties=[make_specialty(id_="cleaning")]),
+        checkpointer=checkpointer,
+        location_image_url=_LOCATION_IMAGE_URL,
+    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "Quiero un turno", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2"], "Sacar turno", OPERATION_CREATE_PAYLOAD
+    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-2b"], "", FIRST_VISIT_CANCEL_PAYLOAD)
+    await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD)
+    await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
+    await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-7"], "", "CONFIRM_APPOINTMENT")
+    messaging_gateway.sent_buttons.clear()
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-8"], "dónde queda la clínica?", None)
+
+    assert len(messaging_gateway.sent_buttons) == 1
+    _, _, buttons, image_url = messaging_gateway.sent_buttons[0]
+    assert image_url == _LOCATION_IMAGE_URL
+    assert [b.id for b in buttons] == [LOCATION_DETAIL_PAYLOAD]

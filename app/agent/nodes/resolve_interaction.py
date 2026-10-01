@@ -36,6 +36,7 @@ from app.domain.value_objects.menu_payloads import (
     FAQ_TOPIC_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LOCATION_DETAIL_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_FAQ_PAYLOAD,
@@ -175,6 +176,7 @@ _GLOBAL_BUTTON_INTENTS = {
     MENU_ADMIN_PAYLOAD: "handoff",
     MENU_SPECIALTIES_PAYLOAD: "specialties",
     MENU_LOCATION_PAYLOAD: "location",
+    LOCATION_DETAIL_PAYLOAD: "location",
     # No topic id: the faq_topic node answers with the sub-list of topics.
     MENU_FAQ_PAYLOAD: "faq_topic",
     MENU_MAIN_PAYLOAD: "appointment",

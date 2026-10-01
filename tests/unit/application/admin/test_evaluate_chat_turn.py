@@ -219,6 +219,24 @@ async def test_execute_exposes_reply_buttons_with_their_ids_and_titles():
     ]
     assert result.list_rows == []
     assert result.flow is None
+    assert result.image_url is None
+
+
+@pytest.mark.asyncio
+async def test_execute_exposes_the_image_url_of_an_image_button_reply():
+    messaging_gateway = FakeYCloudMessagingGateway()
+    await messaging_gateway.send_buttons(
+        _PHONE,
+        "📍 Así llegás a Smiling Pilar",
+        [InteractiveButton(id="LOCATION_DETAIL", title="Cómo llegar")],
+        image_url="https://example.com/clinic.jpg",
+    )
+    use_case = _use_case(messaging_gateway=messaging_gateway)
+
+    result = await use_case.execute(ConversationId("eval-image"), "dónde queda", now=_NOW)
+
+    assert result.reply_kind == "buttons"
+    assert result.image_url == "https://example.com/clinic.jpg"
 
 
 @pytest.mark.asyncio

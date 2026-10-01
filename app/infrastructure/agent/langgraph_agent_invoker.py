@@ -154,6 +154,7 @@ class LangGraphAgentInvoker:
         verification_flow_id: str = "",
         registration_flow_id: str = "",
         mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
+        location_image_url: str = "",
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
@@ -182,6 +183,7 @@ class LangGraphAgentInvoker:
         self._verification_flow_id = verification_flow_id
         self._registration_flow_id = registration_flow_id
         self._mirror_to_chatwoot = mirror_to_chatwoot
+        self._location_image_url = location_image_url
 
     async def handle(
         self,
@@ -263,6 +265,7 @@ class LangGraphAgentInvoker:
                     verification_flow_id=self._verification_flow_id,
                     registration_flow_id=self._registration_flow_id,
                     mirror_to_chatwoot=self._mirror_to_chatwoot,
+                    location_image_url=self._location_image_url,
                 )
 
                 previous_values: dict[str, Any] = {}
@@ -352,6 +355,7 @@ class LangGraphAgentInvoker:
                     "response_buttons": None,
                     "response_flow": None,
                     "response_location": None,
+                    "response_image_url": None,
                     "response_list": None,
                     "requires_handoff": False,
                     "error": None,
@@ -392,6 +396,7 @@ class LangGraphAgentInvoker:
                 response_flow = result.get("response_flow")
                 response_location = result.get("response_location")
                 response_list = result.get("response_list")
+                response_image_url = result.get("response_image_url")
                 if (
                     not response_text
                     and response_flow is None
@@ -440,6 +445,7 @@ class LangGraphAgentInvoker:
                 flow=response_flow,
                 location=response_location,
                 list_message=response_list,
+                image_url=response_image_url,
             )
         except Exception as exc:  # noqa: BLE001 - reported below, never left unobserved
             # This call happens AFTER `compiled_graph.ainvoke()` returns, so
