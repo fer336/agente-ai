@@ -80,6 +80,11 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   PRD section 7 was already updated in T2. Pre-existing unformatted lines in agreement.py and
   two test files were left untouched.
 
+- Native review (high, 31 files, 1462 lines, 4 lenses): consent granted, approved and
+  acknowledged (lineage review-17fb8cffe48f78bb). Advisory, non-blocking: R2-1 menu_payloads
+  readability, R2-2 faq_topic, R2-3 clinic_topics, R4 unconfirmed prices (TODO(clinic)).
+
 ## Next step
 
-Open the PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
+The clinic confirms the prices (`TODO(clinic)` in `app/agent/clinic_topics.py`), then push, issue
+and PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
