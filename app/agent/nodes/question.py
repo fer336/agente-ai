@@ -12,6 +12,8 @@ from app.agent.nodes.llm_response import (
     without_mid_conversation_greeting,
 )
 from app.agent.nodes.node_protocol import AgentNode
+from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
+from app.agent.payment_questions import asks_about_payments
 from app.agent.state import AgentState
 from app.domain.repositories.llm_provider import LLMProvider
 
@@ -72,6 +74,11 @@ def create_question_node(llm_provider: LLMProvider) -> AgentNode:
         if stripped_answer and _looks_off_topic(stripped_answer):
             text = _OFF_TOPIC_ANSWER
             flagged_offer = None
+        elif stripped_answer and asks_about_payments(stripped_answer):
+            # Payments, advances and prices belong to Administración: whatever the model
+            # improvised about them never reaches the patient.
+            text = PAYMENT_ADMIN_STATIC_MESSAGE
+            flagged_offer = True
         elif stripped_answer:
             model_answer = without_mid_conversation_greeting(
                 stripped_answer, state["recent_messages"]

@@ -53,6 +53,15 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   settings `public_base_url` / `location_image_url`, eval stack `image_url`, dataset
   `evals/datasets/location.yaml`. Commit c099a60. Route: delegated direct (single writer).
 
+- [x] T6 — Alineadores answer = clinic image + 3 buttons (Opción 1/2/3); each option starts the
+  booking (first-visit question first, then straight to the General specialty) and the chosen option
+  is remembered and shown in the confirmation. Route: delegated direct.
+- [x] T7 — Payment, advance and installment questions get "se manejan directamente con
+  Administración" (deterministic detector + LLM-worded answer + question-node backstop).
+  Route: delegated direct.
+- [x] T8 — OSDE / Medifé / William Hope answer written by the LLM each time, facts guarded by a
+  validator with the fixed text as fallback. Route: delegated direct. Commit 3f348ae.
+
 ## Acceptance criteria
 
 - Each topic returns its exact fixed text with Agendar / Menú principal / Asesor buttons.
@@ -126,9 +135,40 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 
 ## Next step
 
-Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
+PR #163 is open; merge is the user's decision (squash, `feat(...)` title).
 
 - Prices (owner decision 2026-10-01): only consulta particular ($60.000) and blanqueamiento
   ($450.000, promo dropped) state figures; alineadores, limpieza and brackets state none. The
   Dentalink specialty is confirmed to be named "General". RED: 2 tests failed; GREEN: 2437 passed,
   only the 3 known redis failures; ruff and mypy clean.
+
+- T6 done, commit cdabf0c (route: delegated direct). RED: the new `test_faq_option.py` failed at
+  collection (no `ALIGNER_OPTION_KEY`, `faq_option_payload`). GREEN: `uv run pytest` 2468 passed,
+  only the 3 known redis_debounce_lock failures (plus their 3 setup errors); `ruff check .` and
+  `mypy app/` clean. `ALIGNERS_IMAGE_URL` / `effective_aligners_image_url` reach the `faq_topic`
+  node like the location URL; the options replace the Agendar/Menú/Administración trio; the
+  confirmation shows "Consulta por alineadores: Opción n" and nothing is sent to Dentalink.
+
+- T7 done, commit 8fd84d0 (route: delegated direct). RED: the detector and node test modules failed
+  at collection (no `app.agent.payment_questions`, no `nodes.payment_admin`), plus router, graph,
+  question-backstop, fake-LLM and prompt tests. GREEN: `uv run pytest` 2512 passed, only the 3 known
+  redis_debounce_lock failures (plus their 3 setup errors); `ruff check .` and `mypy app/` clean.
+  Payment terms win over a topic keyword except alineadores; not applied in data stages; backstop in
+  `question.py` and `fallback.py`; understand prompt no longer lists payments under `faq_topic` or as
+  a free `question` answer; dataset got 3 deterministic cases and 1 real-LLM case; PRD scope rule added.
+- T8 done, commit 3f348ae (route: delegated direct). RED observed: test_clinic_topics.py failed at
+  collection (ImportError special_insurance_text_is_valid); test_llm_response.py with the old
+  llm_response.py: 3 failed (TypeError on `validator`); test_agreement_node.py: 7 failed (verbatim
+  text, no `special_insurance` context, no second call). GREEN: tests/unit/agent + llm 1177 passed;
+  full `uv run pytest`: 2553 passed, only the 3 known test_redis_debounce_lock.py failures/errors.
+  `ruff check .` clean, `mypy app/` clean. Decisions: temperature 0.9; node passes only seguro,
+  situacion, instruccion (not the state's collected_data); eval dataset now has 5 real-LLM cases.
+- T7 follow-up, commit 58a12b5: the detector now ignores the insurance card ("tarjeta de mi obra
+  social") and also catches "pagar" / "abonar". RED: 6 detector cases failed; GREEN: 2518 passed.
+- Native review of T6-T8 (high, 43 files, 1815 lines, 4 lenses): consent granted, approved and
+  acknowledged (lineage review-3de5d0bef1099bfa). The first capture attempts failed before
+  starting (provider session limit, `mutation_outcome: not_started`) and were relaunched. Advisory:
+  R4-001 the aligners options would show with no prices when the image cannot load -> the caption
+  now says what to do when the image is not visible (RED: 1 test; GREEN: 2554 passed, only the 3
+  known redis failures). R2-1 duplicated "Opción n" label, R2-2 `ALIGNER_OPTION_KEY` naming, R2-3
+  insurance prompt facts duplicated in the validator: recorded as follow-ups.

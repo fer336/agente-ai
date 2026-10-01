@@ -13,6 +13,14 @@ def test_the_clinic_location_image_is_served_publicly_as_a_jpeg():
     assert response.content[:3] == b"\xff\xd8\xff"
 
 
+def test_the_aligners_options_image_is_served_publicly_as_a_jpeg():
+    response = client.get("/public/alineadores-opciones.jpg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.content[:3] == b"\xff\xd8\xff"
+
+
 def test_the_public_folder_has_no_directory_listing():
     assert client.get("/public/").status_code == 404
     assert client.get("/public").status_code in (404, 307)

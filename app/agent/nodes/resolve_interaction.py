@@ -2,6 +2,7 @@ import re
 
 from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.clinic_topics import (
+    ALIGNER_OPTION_KEY,
     PRESELECTED_SPECIALTY_KEY,
     match_clinic_topic,
     topic_by_id,
@@ -24,6 +25,7 @@ from app.agent.nodes.faq_topic import FAQ_TOPIC_ID_KEY
 from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
+from app.agent.payment_questions import asks_about_payments
 from app.agent.state import AgentState
 from app.agent.third_party_guard import (
     THIRD_PARTY_CONTEXT,
@@ -33,6 +35,7 @@ from app.agent.third_party_guard import (
 from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
+    FAQ_OPTION_PAYLOAD_PREFIX,
     FAQ_TOPIC_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -49,6 +52,7 @@ from app.domain.value_objects.menu_payloads import (
     OPERATION_RESCHEDULE_PAYLOAD,
     OPERATION_VIEW_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
+    parse_faq_option_payload,
 )
 from app.infrastructure.llm.exceptions import LLMProviderError
 
@@ -122,7 +126,7 @@ def _looks_like_a_question(text: str) -> bool:
 #: (see `POST_ACTION_CLOSE_INTENT`'s own docstring), so it alone is not
 #: enough evidence of a genuinely new request during a post-action window.
 _ROUTABLE_INTENTS = frozenset(
-    {"insurance", "specialties", "handoff", "question", "location", "faq_topic"}
+    {"insurance", "specialties", "handoff", "question", "location", "faq_topic", "payment_admin"}
 )
 
 
@@ -196,7 +200,9 @@ _OPERATION_PAYLOADS = frozenset(
     }
 )
 
-_INFORMATION_INTENTS = frozenset({"insurance", "specialties", "question", "location", "faq_topic"})
+_INFORMATION_INTENTS = frozenset(
+    {"insurance", "specialties", "question", "location", "faq_topic", "payment_admin"}
+)
 
 _BOOKING_WORDS = frozenset({"turno", "turnos", "cita", "citas", "agendar", "agendarme", "reservar"})
 
@@ -323,6 +329,29 @@ def _faq_book_result(
     data = dict(collected_data)
     if topic is not None and topic.book_specialty is not None:
         data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    return _create_flow_result(data, collected_data, has_active_stage)
+
+
+def _faq_option_result(
+    payload: str, collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object] | None:
+    """A tapped option of a topic answer (`Opción 2` of the alineadores image): the same
+    create flow as `_faq_book_result`, plus the one-shot chosen option. None when the
+    topic or the option is unknown, so the payload is handled like any unknown one."""
+    parsed = parse_faq_option_payload(payload)
+    topic = topic_by_id(parsed[0]) if parsed is not None else None
+    if parsed is None or topic is None or parsed[1] not in topic.options:
+        return None
+    data = dict(collected_data)
+    if topic.book_specialty is not None:
+        data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    data[ALIGNER_OPTION_KEY] = parsed[1]
+    return _create_flow_result(data, collected_data, has_active_stage)
+
+
+def _create_flow_result(
+    data: dict[str, object], collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object]:
     result: dict[str, object] = {"intent": "appointment", "collected_data": data}
     if has_active_stage:
         result.update(
@@ -391,6 +420,10 @@ async def _resolve(
             return _faq_topic_result(topic.id, collected_data, has_active_stage)
         if payload.startswith(FAQ_BOOK_PAYLOAD_PREFIX):
             return _faq_book_result(payload, collected_data, has_active_stage)
+        if payload.startswith(FAQ_OPTION_PAYLOAD_PREFIX):
+            option_result = _faq_option_result(payload, collected_data, has_active_stage)
+            if option_result is not None:
+                return option_result
         global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
         if global_intent is not None:
             if global_intent == "handoff":
@@ -464,6 +497,16 @@ async def _resolve(
         if has_active_stage:
             return _temporary_result("location", collected_data)
         return {"intent": "location"}
+
+    # Payments, advances and prices are handled by Administración and never improvised:
+    # the payment intent wins over a topic keyword, except for alineadores (its image
+    # already carries the payment options). Inside a data stage the same word is data.
+    if stage not in _DATA_COLLECTION_STAGES and asks_about_payments(state["user_message"]):
+        named_topic = match_clinic_topic(state["user_message"])
+        if named_topic is None or named_topic.id != "alineadores":
+            if has_active_stage:
+                return _temporary_result("payment_admin", collected_data)
+            return {"intent": "payment_admin"}
 
     # A frequent clinic topic named in free text gets its fixed answer. Inside a data
     # stage the same word ("blanqueamiento", "osde") is the patient's data, not a query.

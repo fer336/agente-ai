@@ -342,6 +342,40 @@ Lista de opciones (mensaje interactivo de WhatsApp, 7 filas; el límite de Meta 
 alineadores). Cada tema se responde con un texto fijo redactado por la clínica, sin intervención
 del LLM, y ofrece los botones Agendar cita, Menú principal y Administración.
 
+**Regla de alcance: pagos, anticipos y precios.** Los pagos, anticipos ("anticipo", "seña"), cuotas,
+financiación, medios de pago (tarjeta, efectivo, transferencia, Mercado Pago, etc.) y cualquier
+otro precio que no figure en los textos fijos de la clínica los maneja directamente Administración;
+el agente nunca improvisa sobre ellos. Un detector determinístico (`app/agent/payment_questions.py`)
+enruta esas consultas, antes del LLM y también en medio de una reserva (interrupción temporal), al
+nodo `payment_admin`, que responde (redactado por el LLM, con texto fijo de respaldo) que esos temas
+se manejan con Administración y ofrece los botones Administración / Menú principal. No se aplica
+mientras se piden datos (primera visita, identificación, alta de paciente). Si el mensaje nombra
+alineadores, gana el tema (su imagen ya trae las opciones de pago). Como respaldo, si la respuesta
+libre del LLM menciona términos de pago, se reemplaza por ese mismo mensaje.
+
+**Alineadores.** La respuesta de este tema (por texto libre, por la lista de consultas
+frecuentes o por cualquier ruta que llegue al nodo del tema) envía la imagen con las opciones de
+pago (`app/static/public/alineadores-opciones.jpg`, URL efectiva `ALIGNERS_IMAGE_URL` o
+`PUBLIC_BASE_URL/public/alineadores-opciones.jpg`) con un texto corto sin precios y exactamente tres
+botones: `Opción 1`, `Opción 2` y `Opción 3` (WhatsApp admite 3 botones, por eso reemplazan a
+Agendar cita / Menú principal / Administración; el texto invita a escribir "menú" o
+"administración"). Elegir una opción inicia la reserva: primero la pregunta de primera visita
+(si el paciente no es conocido) y luego el flujo normal, yendo directo a la especialidad "General"
+de Dentalink. La opción elegida se recuerda y se muestra en el mensaje de confirmación del turno
+("Consulta por alineadores: Opción 2"); no se envía a Dentalink. Sin URL de imagen configurada se
+envía el mismo texto con los tres botones, sin imagen.
+
+**Obras sociales especiales (OSDE, Medifé, William Hope).** Cuando el paciente dice que tiene una de
+ellas o pregunta si trabajamos con ella, la respuesta la redacta el LLM cada vez, a partir del texto
+de referencia de la clínica, con otras palabras y sin repetir la redacción de respuestas anteriores
+de la conversación. Siempre conserva los hechos: se puede agendar una primera visita, un
+profesional hace un diagnóstico integral y personalizado, la obra social cubre esa primera visita y,
+si hace falta otro tratamiento, derivan al especialista indicado. Un chequeo determinístico
+(`special_insurance_text_is_valid`) exige esos hechos y el nombre de la obra social, y rechaza
+porcentajes, montos, copagos, descuentos y cualquier cifra; si falla, o si el LLM no responde, se
+envía el texto fijo de la clínica. Las preguntas de detalle de cobertura (cuánto, porcentaje, monto,
+cubre) siguen derivándose a Administración (§20).
+
 ---
 
 # 8. Flujo principal

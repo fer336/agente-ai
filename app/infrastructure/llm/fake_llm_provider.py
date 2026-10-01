@@ -162,6 +162,36 @@ _LOCATION_UNDERSTANDING_KEYWORDS = (
     "donde los encuentro",
     "dónde los encuentro",
 )
+#: Payment words (accent-folded stand-in for the real model): payments, advances and prices
+#: are handled by Administración, so the fake answers them as a `question` that defers.
+_PAYMENT_UNDERSTANDING_KEYWORDS = (
+    "anticipo",
+    "seña",
+    "cuota",
+    "financiaci",
+    "forma de pago",
+    "formas de pago",
+    "medios de pago",
+    "tarjeta",
+    "efectivo",
+    "transferencia",
+    "mercado pago",
+    "débito",
+    "debito",
+    "crédito",
+    "credito",
+)
+_PAYMENT_ADMIN_MESSAGE = (
+    "Los pagos, anticipos y demás precios se manejan directamente con Administración. "
+    "Si querés, te comunico con ellos."
+)
+#: Deterministic stand-in for the LLM-written special-insurance answer: it keeps the clinic's
+#: four facts so it passes `special_insurance_text_is_valid`, and varies with the insurance.
+_SPECIAL_INSURANCE_MESSAGE = (
+    "Con {name} podés agendar una primera visita: un profesional te hace un diagnóstico "
+    "integral y personalizado y {name} la cubre. Si necesitás algún tratamiento adicional, "
+    "te derivan al especialista indicado."
+)
 #: Frequent clinic topics (`faq_topic`): the fake's own keyword stand-in for the real label
 #: (the deterministic fixed-text keywords live in `app.agent.clinic_topics`).
 _FAQ_TOPIC_UNDERSTANDING_KEYWORDS = (
@@ -237,6 +267,17 @@ class FakeLLMProvider:
         # "location" is checked here, not inside `classify_intent` (see that
         # method's own comment) — this is the ONLY place this fake ever
         # reports it, matching the real provider's `understand`-only label.
+        if any(keyword in lowered for keyword in _PAYMENT_UNDERSTANDING_KEYWORDS):
+            return UnderstandingResult(
+                intent="question",
+                confidence=0.9,
+                answer=_PAYMENT_ADMIN_MESSAGE,
+                specialty_mention=None,
+                professional_mention=None,
+                operation_mention=None,
+                navigation_target=None,
+                handoff_offer=True,
+            )
         if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
             intent = "location"
             confidence = 0.9
@@ -323,6 +364,11 @@ class FakeLLMProvider:
                 else _DNI_INVALID_MESSAGES
             )
             return messages[(attempts - 1) % len(messages)]
+        if context.intent == "payment_admin":
+            return _PAYMENT_ADMIN_MESSAGE
+        if context.intent == "special_insurance":
+            seguro = context.collected_data.get("seguro")
+            return _SPECIAL_INSURANCE_MESSAGE.format(name=seguro or "tu obra social")
         if context.intent == "post_action_close":
             action = context.collected_data.get("accion_completada")
             return _POST_ACTION_CLOSE_MESSAGES.get(str(action), _POST_ACTION_CLOSE_DEFAULT_MESSAGE)

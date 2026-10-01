@@ -15,6 +15,10 @@ from app.domain.value_objects.menu_payloads import FAQ_TOPIC_PAYLOAD_PREFIX
 #: straight to (see `ClinicTopic.book_specialty`). Set by the router, consumed (popped) by
 #: the decision subgraph when it would otherwise show the specialty list.
 PRESELECTED_SPECIALTY_KEY = "preselected_specialty_name"
+#: `collected_data` key: the option ("1", "2" or "3") the patient chose on a topic's option
+#: buttons. Set by the router, kept through the booking, shown in the confirmation message
+#: and dropped when the booking ends or the flow resets. Never sent to Dentalink.
+ALIGNER_OPTION_KEY = "aligner_option"
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,11 @@ class ClinicTopic:
     text: str
     #: Dentalink specialty a booking of this topic goes to, skipping the specialty list.
     book_specialty: str | None = None
+    #: File under `app/static/public/` sent with the answer (needs a configured image URL).
+    image_filename: str | None = None
+    #: Option buttons (`Opción n`) that replace the usual Agendar / Menú / Administración
+    #: trio, since WhatsApp allows 3 reply buttons. Each starts the booking.
+    options: tuple[str, ...] = ()
 
     @property
     def payload(self) -> str:
@@ -66,16 +75,13 @@ _BRACKETS_OBRA_SOCIAL_TEXT = (
     "Si querés, te comunico con administración."
 )
 
+# The prices are in the image (`alineadores-opciones.jpg`), never in the text.
 _ALINEADORES_TEXT = (
     "😁 *Alineadores Smilesecret*\n\n"
-    "Es un tratamiento completo para los 2 maxilares. Incluye:\n"
-    "• Escaneo intraoral y seguimiento personalizado\n"
-    "• Diseño digital 3D y planificación integral\n"
-    "• Honorarios profesionales\n"
-    "• Todos los alineadores necesarios\n"
-    "• Retención final para cada maxilar\n\n"
-    "Los valores y las formas de pago te los confirma administración.\n\n"
-    "Si querés, te comunico con administración."
+    "Estas son las opciones de pago. Elegí la que más te convenga y seguimos con tu "
+    "turno.\n\n"
+    'Si no ves la imagen o preferís otra cosa, escribí "administración" (o "menú") y te '
+    "ayudamos."
 )
 
 CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
@@ -133,6 +139,9 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "ortodoncia invisible",
         ),
         text=_ALINEADORES_TEXT,
+        book_specialty="General",
+        image_filename="alineadores-opciones.jpg",
+        options=("1", "2", "3"),
     ),
 )
 
@@ -185,3 +194,46 @@ def match_special_insurance(text: str) -> str | None:
 
 def special_insurance_message(display_name: str) -> str:
     return SPECIAL_INSURANCE_TEXT.format(name=display_name)
+
+
+_FIRST_VISIT_TERMS = ("primera visita", "primera consulta", "primer turno", "primera cita")
+_COVERAGE_TERMS = ("cubre", "cubierta", "cubierto", "cobertura", "incluida")
+_REFERRAL_TERMS = ("derivan", "derivar", "derivacion", "especialista")
+#: Words that would state a figure or condition the clinic never confirmed (PRD §20).
+_FORBIDDEN_TERMS = (
+    "copago",
+    "porcentaje",
+    "reintegro",
+    "descuento",
+    "gratis",
+    "sin cargo",
+    "bonificad",
+    "cuota",
+)
+_FORBIDDEN_CHARACTERS = re.compile(r"[%$\d]")
+
+
+def special_insurance_text_is_valid(text: str, name: str) -> bool:
+    """Deterministic fact check for an LLM-written special-insurance answer.
+
+    The answer must keep the clinic's four facts (first visit, integral/personalized
+    diagnosis by a professional, covered by the insurance, referral to a specialist) and
+    must never state a percentage, copay, price or condition.
+    """
+    if _FORBIDDEN_CHARACTERS.search(text):
+        return False
+    normalized = normalize_text(text)
+    if any(_mentions(normalized, term) for term in _FORBIDDEN_TERMS):
+        return False
+    folded_name = normalize_text(name)
+    has_diagnosis = _mentions(normalized, "diagnostico") and (
+        _mentions(normalized, "integral") or _mentions(normalized, "personalizado")
+    )
+    return (
+        _mentions(normalized, folded_name)
+        and any(_mentions(normalized, term) for term in _FIRST_VISIT_TERMS)
+        and has_diagnosis
+        and _mentions(normalized, "profesional")
+        and any(_mentions(normalized, term) for term in _COVERAGE_TERMS)
+        and any(_mentions(normalized, term) for term in _REFERRAL_TERMS)
+    )

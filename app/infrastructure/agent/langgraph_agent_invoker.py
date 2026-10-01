@@ -155,6 +155,7 @@ class LangGraphAgentInvoker:
         registration_flow_id: str = "",
         mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
         location_image_url: str = "",
+        aligners_image_url: str = "",
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
@@ -184,6 +185,7 @@ class LangGraphAgentInvoker:
         self._registration_flow_id = registration_flow_id
         self._mirror_to_chatwoot = mirror_to_chatwoot
         self._location_image_url = location_image_url
+        self._aligners_image_url = aligners_image_url
 
     async def handle(
         self,
@@ -266,6 +268,7 @@ class LangGraphAgentInvoker:
                     registration_flow_id=self._registration_flow_id,
                     mirror_to_chatwoot=self._mirror_to_chatwoot,
                     location_image_url=self._location_image_url,
+                    aligners_image_url=self._aligners_image_url,
                 )
 
                 previous_values: dict[str, Any] = {}

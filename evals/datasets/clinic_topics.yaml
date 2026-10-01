@@ -1,8 +1,9 @@
 # Scenarios for the clinic's frequent topics (clinic-topics-faq): the 5 fixed-text topics
 # (blanqueamiento, consulta particular, limpieza particular, brackets por obra social,
 # alineadores) reached by free text and by the menu, plus the OSDE / Medifé / William Hope
-# first-visit text. The fixed texts live in app/agent/clinic_topics.py and never go through
-# the LLM, so `requires_real_llm: false` cases hold with the fake LLM; the two
+# first-visit answer (written by the LLM from the clinic's reference text; the fake LLM
+# returns a deterministic text with the same facts). The fixed texts live in app/agent/clinic_topics.py and never go through
+# the LLM, so `requires_real_llm: false` cases hold with the fake LLM; the
 # `requires_real_llm: true` cases need the real LLM to classify a paraphrase or a booking
 # phrase. Figures in the texts are pending the clinic's confirmation.
 
@@ -90,7 +91,7 @@
   metadata:
     requires_real_llm: false
 
-- description: "Tema frecuente por texto libre: alineadores"
+- description: "Tema frecuente por texto libre: alineadores (imagen con tres opciones)"
   vars:
     conversation_id: "eval-topics-text-05"
     message: "Info de alineadores"
@@ -102,8 +103,10 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        titles: ["Opción 1", "Opción 2", "Opción 3"]
         exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
@@ -212,8 +215,10 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        titles: ["Opción 1", "Opción 2", "Opción 3"]
         exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
@@ -255,7 +260,7 @@
   metadata:
     requires_real_llm: false
 
-- description: "Obra social especial: OSDE recibe el texto de primera visita"
+- description: "Obra social especial: OSDE recibe la respuesta de primera visita"
   vars:
     conversation_id: "eval-topics-insurance-01"
     message: "¿Atienden OSDE?"
@@ -267,11 +272,11 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["OSDE", "primera visita", "diagnóstico integral"]
+        terms: ["OSDE", "primera", "diagnóstico", "especialista"]
   metadata:
     requires_real_llm: false
 
-- description: "Obra social especial: Medifé recibe el texto de primera visita"
+- description: "Obra social especial: Medifé recibe la respuesta de primera visita"
   vars:
     conversation_id: "eval-topics-insurance-02"
     message: "Tengo Medifé"
@@ -283,11 +288,11 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["Medifé", "primera visita", "diagnóstico integral"]
+        terms: ["Medifé", "primera", "diagnóstico", "especialista"]
   metadata:
     requires_real_llm: false
 
-- description: "Obra social especial: William Hope recibe el texto de primera visita"
+- description: "Obra social especial: William Hope recibe la respuesta de primera visita"
   vars:
     conversation_id: "eval-topics-insurance-03"
     message: "¿Trabajan con William Hope?"
@@ -299,9 +304,38 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["William Hope", "primera visita", "diagnóstico integral"]
+        terms: ["William Hope", "primera", "diagnóstico", "especialista"]
   metadata:
     requires_real_llm: false
+
+- description: "Obra social especial: dos consultas seguidas mantienen los hechos y varían la redacción — turn 1 (LLM real)"
+  vars:
+    conversation_id: "eval-topics-insurance-llm-01"
+    message: "tengo medifé"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta menciona Medifé y mantiene los cuatro hechos: se puede agendar una primera
+        visita, un profesional hace un diagnóstico integral y personalizado, Medifé cubre esa
+        primera visita y, si hace falta otro tratamiento, derivan al especialista indicado. No
+        inventa porcentajes, copagos, precios, descuentos ni condiciones.
+  metadata:
+    requires_real_llm: true
+
+- description: "Obra social especial: dos consultas seguidas mantienen los hechos y varían la redacción — turn 2 (LLM real)"
+  vars:
+    conversation_id: "eval-topics-insurance-llm-01"
+    message: "y con william hope?"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta menciona William Hope (no Medifé) y mantiene los cuatro hechos: primera
+        visita, diagnóstico integral y personalizado por un profesional, la obra social cubre esa
+        primera visita y derivan al especialista si hace falta otro tratamiento. No inventa
+        porcentajes, copagos, precios ni condiciones, y su redacción es distinta de la respuesta
+        anterior de la conversación (no repite las mismas frases).
+  metadata:
+    requires_real_llm: true
 
 - description: "Cobertura de OSDE: cuánto cubre deriva a administración"
   vars:
@@ -318,6 +352,77 @@
         terms: ["administración"]
   metadata:
     requires_real_llm: false
+
+- description: "Pagos van a Administración: tarjeta"
+  vars:
+    conversation_id: "eval-topics-pay-01"
+    message: "¿Aceptan tarjeta?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "payment_admin"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["💬 Administración", "Menú principal"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Pagos van a Administración: anticipo"
+  vars:
+    conversation_id: "eval-topics-pay-02"
+    message: "¿Cuánto es el anticipo?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "payment_admin"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["💬 Administración", "Menú principal"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Administración"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Un precio sin términos de pago sigue siendo un tema frecuente"
+  vars:
+    conversation_id: "eval-topics-pay-03"
+    message: "cuánto sale el blanqueamiento"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "payment_admin"
+  metadata:
+    requires_real_llm: false
+
+- description: "Paráfrasis de pago deriva a Administración (LLM real)"
+  vars:
+    conversation_id: "eval-topics-llm-03"
+    message: "¿Puedo pagar en cuotas sin interés?"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta dice que los pagos, cuotas y demás precios se manejan directamente con
+        Administración (puede ofrecer comunicarlo) y no inventa cuotas, intereses, medios de
+        pago, montos ni condiciones.
+  metadata:
+    requires_real_llm: true
 
 - description: "Paráfrasis de precio: blanqueamiento (LLM real)"
   vars:
@@ -413,6 +518,89 @@
     message: "Horario de General"
     button_payload: "SELECT_SLOT:eval-free-4"
   assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+# Alineadores: the price image with three option buttons; choosing one starts the booking
+# (first-visit question first, then straight to the "General" specialty). Consecutive cases
+# share one conversation_id.
+- description: "Alineadores por texto libre: imagen con Opción 1, 2 y 3 — turn 1"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "cuánto salen los alineadores"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Opción 1", "Opción 2", "Opción 3"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["FAQ_OPTION:alineadores:1", "FAQ_OPTION:alineadores:2", "FAQ_OPTION:alineadores:3"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasImage
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: elegir la Opción 2 pide primero la primera visita — turn 2"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "Opción 2"
+    button_payload: "FAQ_OPTION:alineadores:2"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: paciente existente se identifica — turn 3"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: muestra los horarios de General sin la lista de especialidades — turn 4"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SELECT_SLOT:eval-free-4", "LIST_BACK"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: la confirmación menciona la opción elegida — turn 5"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "Horario de General"
+    button_payload: "SELECT_SLOT:eval-free-4"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["Consulta por alineadores: Opción 2"]
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:

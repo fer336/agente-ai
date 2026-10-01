@@ -11,7 +11,7 @@ from app.agent.appointment_decision_subgraph import (
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
-from app.agent.clinic_topics import PRESELECTED_SPECIALTY_KEY
+from app.agent.clinic_topics import ALIGNER_OPTION_KEY, PRESELECTED_SPECIALTY_KEY
 from app.agent.first_visit_intake_extraction import (
     extract_intake_reply,
     extract_question_reply,
@@ -125,6 +125,7 @@ from app.domain.value_objects.flow_response import parse_flow_response_payload
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
+    FAQ_OPTION_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
@@ -825,6 +826,7 @@ async def _confirmation_message(
     professional_names: dict[str, str],
     recent_messages: list[dict[str, str]],
     contact_memory: str | None,
+    extra_line: str = "",
 ) -> str:
     professional_name = professional_names.get(slot.professional_id, "Profesional")
     datetime_block = _format_confirmation_datetime(slot.time_range.start)
@@ -848,7 +850,9 @@ async def _confirmation_message(
         recent_messages,
         contact_memory,
     )
-    return f"{text}\n\n{datetime_block}"
+    # Like the date block, this line is code-written, never part of the model's text.
+    detail = f"{datetime_block}\n{extra_line}" if extra_line else datetime_block
+    return f"{text}\n\n{detail}"
 
 
 async def _cancel_confirmation_message(
@@ -1160,8 +1164,19 @@ def _cancel_proposal_payload(appointment: Appointment) -> dict[str, object]:
     }
 
 
-def _without_preselected_specialty(collected_data: dict[str, object]) -> dict[str, object]:
-    return {k: v for k, v in collected_data.items() if k != PRESELECTED_SPECIALTY_KEY}
+def _without_booking_presets(collected_data: dict[str, object]) -> dict[str, object]:
+    """Drops the one-shot booking hints (preselected specialty, chosen aligner option):
+    only a booking uses them."""
+    return {
+        k: v
+        for k, v in collected_data.items()
+        if k not in {PRESELECTED_SPECIALTY_KEY, ALIGNER_OPTION_KEY}
+    }
+
+
+def _aligner_option_line(collected_data: dict[str, object]) -> str:
+    option = collected_data.get(ALIGNER_OPTION_KEY)
+    return f"Consulta por alineadores: Opción {option}" if option else ""
 
 
 def _is_create_flow(collected_data: dict[str, object]) -> bool:
@@ -2323,6 +2338,7 @@ def create_appointment_node(
             professional_names,
             recent_messages,
             contact_memory,
+            _aligner_option_line(collected_data),
         )
         return {
             "response_text": confirmation_text,
@@ -2650,11 +2666,16 @@ def create_appointment_node(
         stage = collected_data.get("stage")
 
         preselected_specialty: object = None
-        faq_book_tap = (state["button_payload"] or "").startswith(FAQ_BOOK_PAYLOAD_PREFIX)
+        aligner_option: object = None
+        faq_book_tap = (state["button_payload"] or "").startswith(
+            (FAQ_BOOK_PAYLOAD_PREFIX, FAQ_OPTION_PAYLOAD_PREFIX)
+        )
         if faq_book_tap:
-            # "Agendar cita" of a topic that books a fixed specialty: a create tap, with
-            # the router's one-shot specialty kept across the reset below.
+            # "Agendar cita" of a topic that books a fixed specialty, or one of its option
+            # buttons: a create tap, with the router's one-shot keys kept across the
+            # reset below.
             preselected_specialty = collected_data.get(PRESELECTED_SPECIALTY_KEY)
+            aligner_option = collected_data.get(ALIGNER_OPTION_KEY)
             state = cast(AgentState, {**state, "button_payload": OPERATION_CREATE_PAYLOAD})
 
         # A navigation request comes from the global router. Move back only as
@@ -2748,8 +2769,11 @@ def create_appointment_node(
             stage_data = collected_data
             collected_data = {}
             if faq_book_tap:
-                # Only the one-shot specialty and an already known patient survive.
-                kept = {PRESELECTED_SPECIALTY_KEY: preselected_specialty}
+                # Only the one-shot keys and an already known patient survive.
+                kept = {
+                    PRESELECTED_SPECIALTY_KEY: preselected_specialty,
+                    ALIGNER_OPTION_KEY: aligner_option,
+                }
                 if stage_data.get("first_visit_completed") and stage_data.get("patient"):
                     kept["first_visit_completed"] = True
                     kept["patient"] = stage_data["patient"]
@@ -4445,7 +4469,7 @@ def create_appointment_node(
                     state, {**collected_data, "operation": operation}
                 )
             # Only a booking goes to the preselected specialty.
-            collected_data = _without_preselected_specialty(collected_data)
+            collected_data = _without_booking_presets(collected_data)
             return await _identify_for_operation(state, {**collected_data, "operation": operation})
 
         # No stage yet. A button tap wins outright (PRD.md §6: deterministic
@@ -4563,7 +4587,7 @@ def create_appointment_node(
             return result
         if operation is not None:
             identification_result = await _identify_for_operation(
-                state, {**_without_preselected_specialty(collected_data), "operation": operation}
+                state, {**_without_booking_presets(collected_data), "operation": operation}
             )
             if returned_to_main_menu:
                 # Mirrors the CREATE branch just above: abandoning
