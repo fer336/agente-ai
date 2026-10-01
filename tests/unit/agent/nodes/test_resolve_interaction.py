@@ -791,6 +791,23 @@ async def test_free_text_about_a_topic_routes_to_faq_topic_before_the_llm():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "quiero un turno para limpieza",
+        "necesito sacar una cita para blanqueamiento",
+        "me quiero agendar para alineadores",
+    ],
+)
+async def test_a_booking_request_that_names_a_topic_is_not_answered_with_the_topic_text(message):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    assert result["intent"] != "faq_topic"
+
+
+@pytest.mark.asyncio
 async def test_free_text_about_a_topic_mid_booking_is_a_temporary_interruption():
     node = create_resolve_interaction_node(FakeLLMProvider())
     state = make_agent_state(

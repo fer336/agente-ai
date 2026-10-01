@@ -116,7 +116,9 @@ están", "cómo hago para llegar", "dónde los encuentro").
 - faq_topic: pregunta por precio, promo, forma de pago o cómo funciona uno de estos temas \
 frecuentes de la clínica: blanqueamiento, consulta particular, limpieza particular, brackets \
 por obra social o alineadores. Se responde con un texto fijo escrito por la clínica, nunca con \
-texto armado por vos — por eso NUNCA es "question", aunque se pregunte con otras palabras.
+texto armado por vos — por eso NUNCA es "question", aunque se pregunte con otras palabras. \
+Si el paciente pide agendar o sacar un turno para uno de esos temas (ej.: "quiero un turno \
+para limpieza"), NO es "faq_topic": es "appointment".
 - question: cualquier otra consulta genuina y ACOTADA a esta clínica (horarios de atención, \
 formas de pago, qué tratamientos ofrecen o cuánto cuesta un tratamiento puntual que no sea \
 uno de los temas de faq_topic — ej.: extracciones). NUNCA es \

@@ -187,6 +187,15 @@ _OPERATION_PAYLOADS = frozenset(
 )
 
 _INFORMATION_INTENTS = frozenset({"insurance", "specialties", "question", "location", "faq_topic"})
+
+_BOOKING_WORDS = frozenset({"turno", "turnos", "cita", "citas", "agendar", "agendarme", "reservar"})
+
+
+def _asks_to_book(text: str) -> bool:
+    """True when the message asks for an appointment rather than for information."""
+    return any(word in _BOOKING_WORDS for word in normalize_text(text).split())
+
+
 _NAVIGATION_TARGETS = frozenset({"specialty", "service", "professional", "slot", "main"})
 
 # Only used when there is no active workflow. During a workflow these are
@@ -423,7 +432,9 @@ async def _resolve(
 
     # A frequent clinic topic named in free text gets its fixed answer. Inside a data
     # stage the same word ("blanqueamiento", "osde") is the patient's data, not a query.
-    if stage not in _DATA_COLLECTION_STAGES:
+    # A booking request that merely names the service ("turno para limpieza") goes on to
+    # the LLM and the appointment flow instead of the fixed answer.
+    if stage not in _DATA_COLLECTION_STAGES and not _asks_to_book(state["user_message"]):
         topic = match_clinic_topic(state["user_message"])
         if topic is not None:
             # A consumed post-action window is dropped, like on any genuine new request.

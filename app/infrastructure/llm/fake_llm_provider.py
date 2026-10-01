@@ -231,7 +231,9 @@ class FakeLLMProvider:
         if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
             intent = "location"
             confidence = 0.9
-        elif any(keyword in lowered for keyword in _FAQ_TOPIC_UNDERSTANDING_KEYWORDS):
+        elif any(keyword in lowered for keyword in _FAQ_TOPIC_UNDERSTANDING_KEYWORDS) and not any(
+            word in lowered for word in (*_APPOINTMENT_KEYWORDS, "agendar")
+        ):
             intent = "faq_topic"
             confidence = 0.9
         else:
