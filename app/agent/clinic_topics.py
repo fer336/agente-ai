@@ -33,7 +33,8 @@ class ClinicTopic:
         return f"{FAQ_TOPIC_PAYLOAD_PREFIX}{self.id}"
 
 
-# TODO(clinic): confirm figures (prices, promo and payment options) before release.
+# Only the consulta particular and the blanqueamiento carry a price (confirmed by the clinic).
+# The other topics must not state figures: administration confirms them.
 _BLANQUEAMIENTO_TEXT = (
     "✨ *Blanqueamiento dental*\n\n"
     "El tratamiento se hace en 2 sesiones:\n\n"
@@ -41,8 +42,7 @@ _BLANQUEAMIENTO_TEXT = (
     "tratamiento.\n"
     "2️⃣ Segunda sesión: se realiza el blanqueamiento con luz halógena, dura "
     "aproximadamente 45 minutos.\n\n"
-    "💰 Valor: $450.000\n"
-    "🎉 Promo: 20% OFF, queda en $360.000\n\n"
+    "💰 Valor: $450.000\n\n"
     "Si está todo bien, se hace el mismo día."
 )
 
@@ -68,20 +68,14 @@ _BRACKETS_OBRA_SOCIAL_TEXT = (
 
 _ALINEADORES_TEXT = (
     "😁 *Alineadores Smilesecret*\n\n"
-    "Tratamiento completo para los 2 maxilares. Los pagos son en dólares (USD), "
-    "tenés 3 opciones:\n\n"
-    "1️⃣ Contado: USD 2.500\n"
-    "2️⃣ USD 1.000 de anticipo + 3 cuotas de USD 600\n"
-    "3️⃣ USD 1.100 de anticipo + 6 cuotas de USD 300\n\n"
-    "Incluye:\n"
+    "Es un tratamiento completo para los 2 maxilares. Incluye:\n"
     "• Escaneo intraoral y seguimiento personalizado\n"
     "• Diseño digital 3D y planificación integral\n"
     "• Honorarios profesionales\n"
     "• Todos los alineadores necesarios\n"
     "• Retención final para cada maxilar\n\n"
-    "Los precios incluyen IVA. El anticipo se abona el día del escaneo y las cuotas se "
-    "pagan cada 30 días desde el pago del anticipo. Las ventas con tarjeta de crédito se "
-    "toman al valor del dólar de la fecha del escaneo."
+    "Los valores y las formas de pago te los confirma administración.\n\n"
+    "Si querés, te comunico con administración."
 )
 
 CLINIC_TOPICS: tuple[ClinicTopic, ...] = (

@@ -65,9 +65,13 @@ def test_topic_payloads_follow_the_prefix_and_the_domain_constants():
 def test_blanqueamiento_text_carries_the_clinic_figures():
     text = topic_by_id("blanqueamiento").text  # type: ignore[union-attr]
     assert "$450.000" in text
-    assert "$360.000" in text
-    assert "20%" in text
     assert "45 minutos" in text
+
+
+def test_blanqueamiento_text_does_not_advertise_a_promo():
+    text = topic_by_id("blanqueamiento").text  # type: ignore[union-attr]
+    assert "$360.000" not in text
+    assert "20%" not in text
 
 
 def test_consulta_particular_text_carries_the_price():
@@ -75,17 +79,16 @@ def test_consulta_particular_text_carries_the_price():
     assert "$60.000" in text
 
 
-def test_limpieza_and_brackets_texts_invent_no_figures():
-    for topic_id in ("limpieza_particular", "brackets_obra_social"):
+def test_topics_without_a_confirmed_price_state_no_figures():
+    for topic_id in ("limpieza_particular", "brackets_obra_social", "alineadores"):
         text = topic_by_id(topic_id).text  # type: ignore[union-attr]
         assert "$" not in text
+        assert "USD" not in text
         assert "administración" in text
 
 
-def test_alineadores_text_lists_the_three_usd_options():
+def test_alineadores_text_names_the_brand_without_prices():
     text = topic_by_id("alineadores").text  # type: ignore[union-attr]
-    for figure in ("USD 2.500", "USD 1.000", "USD 600", "USD 1.100", "USD 300"):
-        assert figure in text
     assert "Smilesecret" in text
 
 

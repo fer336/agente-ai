@@ -14,9 +14,9 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 ## Scope
 
 - Texts live as code constants (user decision), in one module, easy to edit.
-- Source of the content: clinic WhatsApp screenshot (2026-09-30). Figures are TO BE CONFIRMED by
-  the clinic before release: consulta particular $60.000; blanqueamiento $450.000, promo 20% off
-  = $360.000; alineadores in USD (2.500 contado; 1.000 + 3x600; 1.100 + 6x300).
+- Source of the content: clinic WhatsApp screenshot (2026-09-30). Only two figures are stated and
+  they are confirmed by the owner: consulta particular $60.000 and blanqueamiento $450.000 (no
+  promo). The other topics carry no prices; administration confirms them.
 - OSDE / Medifé / William Hope text is final (clinic version of 16:02).
 
 ## Constraints
@@ -126,5 +126,9 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 
 ## Next step
 
-The clinic confirms the prices (`TODO(clinic)` in `app/agent/clinic_topics.py`), then push, issue
-and PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
+Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workflow.md`.
+
+- Prices (owner decision 2026-10-01): only consulta particular ($60.000) and blanqueamiento
+  ($450.000, promo dropped) state figures; alineadores, limpieza and brackets state none. The
+  Dentalink specialty is confirmed to be named "General". RED: 2 tests failed; GREEN: 2437 passed,
+  only the 3 known redis failures; ruff and mypy clean.

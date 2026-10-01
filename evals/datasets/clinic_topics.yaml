@@ -23,7 +23,7 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["450.000", "360.000"]
+        terms: ["450.000"]
   metadata:
     requires_real_llm: false
 
@@ -107,7 +107,7 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["USD 2.500", "Smilesecret"]
+        terms: ["Smilesecret", "administración"]
   metadata:
     requires_real_llm: false
 
@@ -129,7 +129,7 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["450.000", "360.000"]
+        terms: ["450.000"]
   metadata:
     requires_real_llm: false
 
@@ -217,7 +217,7 @@
     - type: javascript
       value: file://assertions/custom.js:mentionsAll
       config:
-        terms: ["USD 2.500", "Smilesecret"]
+        terms: ["Smilesecret", "administración"]
   metadata:
     requires_real_llm: false
 
@@ -330,8 +330,8 @@
         node: "faq_topic"
     - type: llm-rubric
       value: >
-        La respuesta informa el valor y la promo del blanqueamiento dental con las cifras
-        del texto de la clínica ($450.000 y $360.000) sin inventar otros montos.
+        La respuesta informa el valor del blanqueamiento dental con la cifra del texto de la
+        clínica ($450.000) sin inventar otros montos ni promociones.
   metadata:
     requires_real_llm: true
 
