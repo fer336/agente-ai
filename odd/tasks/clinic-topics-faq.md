@@ -117,6 +117,13 @@ fixed clinic-authored text, reachable from the main menu and from free text.
   the node falls back to the native card. The post-booking location question is proven both at
   the router (`post_action_context` set) and end to end (invoker and eval dataset).
 
+- Native review of T5 (high, 32 files, 686 lines, 4 lenses): consent granted, approved and
+  acknowledged (lineage review-37a1ed3a76139bc5). Advisory: R3-001/R4-001 an unreachable image
+  left the patient with no location reply -> fixed in the follow-up commit (`SendReplyUseCase`
+  resends the buttons without the image when the image send fails; RED: 1 failing test, GREEN:
+  2436 passed, only the 3 known redis failures). R2-1 caption repeats the address (follow-up),
+  R2-2 `public_base_url` defaults to the production host (documented in the env template).
+
 ## Next step
 
 The clinic confirms the prices (`TODO(clinic)` in `app/agent/clinic_topics.py`), then push, issue

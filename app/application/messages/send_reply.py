@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
@@ -14,9 +15,9 @@ from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
 
-SentMessageRepositoriesProvider = Callable[
-    [], AbstractAsyncContextManager["SentMessageRepository"]
-]
+logger = logging.getLogger(__name__)
+
+SentMessageRepositoriesProvider = Callable[[], AbstractAsyncContextManager["SentMessageRepository"]]
 
 
 class SendReplyUseCase:
@@ -86,7 +87,7 @@ class SendReplyUseCase:
         elif list_message is not None:
             external_id = await self._messaging_gateway.send_list(to, text, list_message)
         elif buttons:
-            external_id = await self._messaging_gateway.send_buttons(to, text, buttons, image_url)
+            external_id = await self._send_buttons(to, text, buttons, image_url)
         else:
             external_id = await self._messaging_gateway.send_text_message(to, text)
 
@@ -110,6 +111,26 @@ class SendReplyUseCase:
             )
 
         return external_id
+
+    async def _send_buttons(
+        self,
+        to: PhoneNumber,
+        text: str,
+        buttons: list[InteractiveButton],
+        image_url: str | None,
+    ) -> str:
+        """Send the buttons; if the image header makes the send fail, resend without it.
+
+        WhatsApp rejects the whole message when it cannot fetch the image, so the
+        patient would get nothing. The caption and the buttons still carry the answer.
+        """
+        try:
+            return await self._messaging_gateway.send_buttons(to, text, buttons, image_url)
+        except Exception:
+            if image_url is None:
+                raise
+            logger.warning("send_reply.image_send_failed_resending_without_image", exc_info=True)
+            return await self._messaging_gateway.send_buttons(to, text, buttons, None)
 
     async def send_typing_indicator(self, wamid: str) -> None:
         await self._messaging_gateway.send_typing_indicator(wamid)
