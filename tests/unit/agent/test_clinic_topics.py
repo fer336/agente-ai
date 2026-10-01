@@ -238,3 +238,12 @@ _VALID = _GOOD_SPECIAL_TEXTS[1]
 )
 def test_special_insurance_text_is_valid_rejects_missing_facts_and_invented_figures(text, name):
     assert special_insurance_text_is_valid(text, name) is False
+
+
+def test_alineadores_caption_tells_what_to_do_when_the_image_is_not_visible():
+    # The prices live only in the image: if WhatsApp cannot show it, the patient must still
+    # have a way to get them (without the text ever stating a figure).
+    text = topic_by_id("alineadores").text  # type: ignore[union-attr]
+    assert "no ves la imagen" in text.lower()
+    assert "administración" in text
+    assert "$" not in text
