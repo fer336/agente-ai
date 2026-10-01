@@ -553,3 +553,15 @@ def test_the_understand_prompt_routes_priced_topics_to_faq_topic_not_question() 
     question_definition = DEFAULT_UNDERSTAND_PROMPT.split("- question:")[1].split("- unknown:")[0]
     for claimed in ("blanqueamiento", "limpieza", "alineadores"):
         assert claimed not in question_definition
+
+
+def test_the_understand_prompt_sends_payments_to_administration_without_conflicts() -> None:
+    from app.infrastructure.llm.openai_compatible_llm_provider import DEFAULT_UNDERSTAND_PROMPT
+
+    faq_definition = DEFAULT_UNDERSTAND_PROMPT.split("- faq_topic:")[1].split("- question:")[0]
+    question_definition = DEFAULT_UNDERSTAND_PROMPT.split("- question:")[1].split("- unknown:")[0]
+    assert "forma de pago" not in faq_definition
+    assert "formas de pago" not in question_definition
+    assert "Administración" in question_definition
+    assert "anticipos" in question_definition
+    assert "handoff_offer en true" in question_definition

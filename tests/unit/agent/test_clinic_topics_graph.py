@@ -15,3 +15,13 @@ def test_faq_topic_errors_still_go_to_handle_error():
         "handle_error"
     )
     assert _route_after_business_node({"error": None}) != "handle_error"  # type: ignore[arg-type]
+
+
+def test_payment_admin_intent_routes_to_the_payment_admin_node():
+    from app.agent.graph import PAYMENT_ADMIN_NODE
+
+    assert PAYMENT_ADMIN_NODE == "payment_admin"
+    assert _route_after_resolve_interaction({"intent": "payment_admin"}) == PAYMENT_ADMIN_NODE  # type: ignore[arg-type]
+    assert _route_after_resolve_interaction({"intent": "payment_admin", "error": "x"}) == (  # type: ignore[arg-type]
+        "handle_error"
+    )

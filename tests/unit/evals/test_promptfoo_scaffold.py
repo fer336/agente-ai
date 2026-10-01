@@ -592,8 +592,10 @@ def test_clinic_topics_dataset_covers_topics_menu_booking_and_special_insurances
     ]:
         assert phrase in messages
     real_llm = [t for t in tests if t["metadata"]["requires_real_llm"] is True]
-    assert len(real_llm) == 2
+    assert len(real_llm) == 3
     assert all(any(a["type"] == "llm-rubric" for a in t["assert"]) for t in real_llm)
+    for phrase in ["aceptan tarjeta", "cuánto es el anticipo", "pagar en cuotas"]:
+        assert phrase in messages
 
 
 def test_datasets_no_longer_expect_the_old_slot_list_after_a_free_text_message():

@@ -25,6 +25,7 @@ from app.agent.nodes.faq_topic import FAQ_TOPIC_ID_KEY
 from app.agent.nodes.llm_response import conversation_started, generate_or_fallback
 from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
+from app.agent.payment_questions import asks_about_payments
 from app.agent.state import AgentState
 from app.agent.third_party_guard import (
     THIRD_PARTY_CONTEXT,
@@ -125,7 +126,7 @@ def _looks_like_a_question(text: str) -> bool:
 #: (see `POST_ACTION_CLOSE_INTENT`'s own docstring), so it alone is not
 #: enough evidence of a genuinely new request during a post-action window.
 _ROUTABLE_INTENTS = frozenset(
-    {"insurance", "specialties", "handoff", "question", "location", "faq_topic"}
+    {"insurance", "specialties", "handoff", "question", "location", "faq_topic", "payment_admin"}
 )
 
 
@@ -199,7 +200,9 @@ _OPERATION_PAYLOADS = frozenset(
     }
 )
 
-_INFORMATION_INTENTS = frozenset({"insurance", "specialties", "question", "location", "faq_topic"})
+_INFORMATION_INTENTS = frozenset(
+    {"insurance", "specialties", "question", "location", "faq_topic", "payment_admin"}
+)
 
 _BOOKING_WORDS = frozenset({"turno", "turnos", "cita", "citas", "agendar", "agendarme", "reservar"})
 
@@ -494,6 +497,16 @@ async def _resolve(
         if has_active_stage:
             return _temporary_result("location", collected_data)
         return {"intent": "location"}
+
+    # Payments, advances and prices are handled by Administración and never improvised:
+    # the payment intent wins over a topic keyword, except for alineadores (its image
+    # already carries the payment options). Inside a data stage the same word is data.
+    if stage not in _DATA_COLLECTION_STAGES and asks_about_payments(state["user_message"]):
+        named_topic = match_clinic_topic(state["user_message"])
+        if named_topic is None or named_topic.id != "alineadores":
+            if has_active_stage:
+                return _temporary_result("payment_admin", collected_data)
+            return {"intent": "payment_admin"}
 
     # A frequent clinic topic named in free text gets its fixed answer. Inside a data
     # stage the same word ("blanqueamiento", "osde") is the patient's data, not a query.

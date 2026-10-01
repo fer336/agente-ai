@@ -859,3 +859,70 @@ async def test_the_llm_faq_topic_label_routes_like_the_other_information_intents
     assert mid_booking["intent"] == "faq_topic"
     assert mid_booking["interruption"] == "temporary"
     assert mid_booking["resume_node"] == "awaiting_slot_selection"
+
+
+class _ExplodingLLMProvider(FakeLLMProvider):
+    async def understand(self, message, context):
+        raise AssertionError("the deterministic payment check must answer first")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    ["aceptan tarjeta?", "cuánto es el anticipo", "cuotas para el blanqueamiento"],
+)
+async def test_a_payment_question_routes_to_payment_admin_before_the_llm(message):
+    node = create_resolve_interaction_node(_ExplodingLLMProvider())
+
+    result = await node(make_agent_state(user_message=message))
+
+    assert result["intent"] == "payment_admin"
+
+
+@pytest.mark.asyncio
+async def test_a_payment_question_mid_booking_is_a_temporary_interruption():
+    node = create_resolve_interaction_node(_ExplodingLLMProvider())
+    state = make_agent_state(
+        user_message="se puede pagar en cuotas?",
+        collected_data={"stage": "awaiting_slot_selection", "chosen_professional_id": "p1"},
+    )
+
+    result = await node(state)
+
+    assert result["intent"] == "payment_admin"
+    assert result["interruption"] == "temporary"
+    assert result["resume_node"] == "awaiting_slot_selection"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage",
+    ["awaiting_first_visit_intake", "awaiting_identification", "awaiting_new_patient_details"],
+)
+async def test_a_payment_word_in_a_data_stage_is_not_routed_to_payment_admin(stage):
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(user_message="transferencia", collected_data={"stage": stage})
+    )
+
+    assert result["intent"] == "appointment"
+
+
+@pytest.mark.asyncio
+async def test_a_price_question_without_payment_terms_still_answers_the_topic():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="cuánto sale el blanqueamiento"))
+
+    assert result["intent"] == "faq_topic"
+
+
+@pytest.mark.asyncio
+async def test_installments_for_aligners_keep_the_aligners_answer():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="cuotas para los alineadores"))
+
+    assert result["intent"] == "faq_topic"
+    assert result["collected_data"]["faq_topic_id"] == "alineadores"
