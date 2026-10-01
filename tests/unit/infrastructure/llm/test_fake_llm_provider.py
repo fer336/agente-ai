@@ -1,5 +1,6 @@
 import pytest
 
+from app.agent.clinic_topics import special_insurance_text_is_valid
 from app.domain.repositories.llm_provider import (
     ExtractionResult,
     IntentResult,
@@ -234,3 +235,18 @@ async def test_understand_answers_payment_words_with_the_administration_message(
     assert result.answer is not None
     assert "Administración" in result.answer
     assert result.handoff_offer is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["OSDE", "Medifé", "William Hope"])
+async def test_generate_response_for_a_special_insurance_passes_the_fact_check(name: str):
+    provider = make_llm_provider()
+
+    text = await provider.generate_response(
+        ResponseContext(
+            conversation_id="c", intent="special_insurance", collected_data={"seguro": name}
+        )
+    )
+
+    assert name in text
+    assert special_insurance_text_is_valid(text, name)

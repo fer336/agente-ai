@@ -193,3 +193,46 @@ def match_special_insurance(text: str) -> str | None:
 
 def special_insurance_message(display_name: str) -> str:
     return SPECIAL_INSURANCE_TEXT.format(name=display_name)
+
+
+_FIRST_VISIT_TERMS = ("primera visita", "primera consulta", "primer turno", "primera cita")
+_COVERAGE_TERMS = ("cubre", "cubierta", "cubierto", "cobertura", "incluida")
+_REFERRAL_TERMS = ("derivan", "derivar", "derivacion", "especialista")
+#: Words that would state a figure or condition the clinic never confirmed (PRD §20).
+_FORBIDDEN_TERMS = (
+    "copago",
+    "porcentaje",
+    "reintegro",
+    "descuento",
+    "gratis",
+    "sin cargo",
+    "bonificad",
+    "cuota",
+)
+_FORBIDDEN_CHARACTERS = re.compile(r"[%$\d]")
+
+
+def special_insurance_text_is_valid(text: str, name: str) -> bool:
+    """Deterministic fact check for an LLM-written special-insurance answer.
+
+    The answer must keep the clinic's four facts (first visit, integral/personalized
+    diagnosis by a professional, covered by the insurance, referral to a specialist) and
+    must never state a percentage, copay, price or condition.
+    """
+    if _FORBIDDEN_CHARACTERS.search(text):
+        return False
+    normalized = normalize_text(text)
+    if any(_mentions(normalized, term) for term in _FORBIDDEN_TERMS):
+        return False
+    folded_name = normalize_text(name)
+    has_diagnosis = _mentions(normalized, "diagnostico") and (
+        _mentions(normalized, "integral") or _mentions(normalized, "personalizado")
+    )
+    return (
+        _mentions(normalized, folded_name)
+        and any(_mentions(normalized, term) for term in _FIRST_VISIT_TERMS)
+        and has_diagnosis
+        and _mentions(normalized, "profesional")
+        and any(_mentions(normalized, term) for term in _COVERAGE_TERMS)
+        and any(_mentions(normalized, term) for term in _REFERRAL_TERMS)
+    )

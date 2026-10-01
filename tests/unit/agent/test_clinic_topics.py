@@ -8,6 +8,7 @@ from app.agent.clinic_topics import (
     match_clinic_topic,
     match_special_insurance,
     special_insurance_message,
+    special_insurance_text_is_valid,
     topic_by_id,
 )
 from app.agent.handoff_offer import normalize_text
@@ -184,3 +185,56 @@ def test_common_free_text_phrasings_reach_their_topic(message, topic_id):
 )
 def test_a_generic_word_alone_is_not_a_topic(message):
     assert match_clinic_topic(message) is None
+
+
+_GOOD_SPECIAL_TEXTS = [
+    special_insurance_message("OSDE"),
+    "Con OSDE podés sacar una primera consulta, donde un profesional te hace un diagnóstico "
+    "integral y personalizado. OSDE la cubre, y si necesitás algún tratamiento más te derivan "
+    "al especialista que corresponda.",
+    "¡Claro! Con Medifé te esperamos para una primera visita: un profesional te va a hacer un "
+    "diagnóstico personalizado e integral, que está cubierto por Medifé. Si hace falta otro "
+    "tratamiento, te derivamos con el especialista indicado.",
+    "William Hope cubre tu primer turno con nosotros: es una primera cita con diagnóstico "
+    "integral y personalizado de un profesional. Después, si necesitás algo más, te derivan al "
+    "especialista.",
+]
+
+
+@pytest.mark.parametrize("text", _GOOD_SPECIAL_TEXTS)
+def test_special_insurance_text_is_valid_accepts_faithful_paraphrases(text):
+    name = next(n for n in ("OSDE", "Medifé", "William Hope") if n in text)
+    assert special_insurance_text_is_valid(text, name) is True
+
+
+_VALID = _GOOD_SPECIAL_TEXTS[1]
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        (_VALID.replace("OSDE", "Galeno"), "OSDE"),  # name missing
+        (_VALID.replace("primera consulta", "consulta"), "OSDE"),  # no first visit
+        (_VALID.replace("integral y personalizado", "completo"), "OSDE"),  # no diagnosis kind
+        (_VALID.replace("diagnóstico", "estudio"), "OSDE"),  # no diagnosis
+        (_VALID.replace("un profesional", "alguien"), "OSDE"),  # no professional
+        (_VALID.replace("la cubre", "la tiene"), "OSDE"),  # no coverage
+        (
+            _VALID.replace("te derivan al especialista que corresponda", "te avisamos"),
+            "OSDE",
+        ),  # no referral
+        (_VALID + " Cubre el 100%.", "OSDE"),  # percent sign
+        (_VALID + " Cuesta $5.000.", "OSDE"),  # currency sign
+        (_VALID + " Tenés 2 turnos.", "OSDE"),  # digit
+        (_VALID + " Sin copago.", "OSDE"),
+        (_VALID + " Con reintegro.", "OSDE"),
+        (_VALID + " Tiene descuento.", "OSDE"),
+        (_VALID + " Es gratis.", "OSDE"),
+        (_VALID + " Va sin cargo.", "OSDE"),
+        (_VALID + " Queda bonificada.", "OSDE"),
+        (_VALID + " Pagás una cuota.", "OSDE"),
+        (_VALID + " Pagás el porcentaje restante.", "OSDE"),
+    ],
+)
+def test_special_insurance_text_is_valid_rejects_missing_facts_and_invented_figures(text, name):
+    assert special_insurance_text_is_valid(text, name) is False

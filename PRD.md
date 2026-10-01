@@ -365,6 +365,17 @@ de Dentalink. La opción elegida se recuerda y se muestra en el mensaje de confi
 ("Consulta por alineadores: Opción 2"); no se envía a Dentalink. Sin URL de imagen configurada se
 envía el mismo texto con los tres botones, sin imagen.
 
+**Obras sociales especiales (OSDE, Medifé, William Hope).** Cuando el paciente dice que tiene una de
+ellas o pregunta si trabajamos con ella, la respuesta la redacta el LLM cada vez, a partir del texto
+de referencia de la clínica, con otras palabras y sin repetir la redacción de respuestas anteriores
+de la conversación. Siempre conserva los hechos: se puede agendar una primera visita, un
+profesional hace un diagnóstico integral y personalizado, la obra social cubre esa primera visita y,
+si hace falta otro tratamiento, derivan al especialista indicado. Un chequeo determinístico
+(`special_insurance_text_is_valid`) exige esos hechos y el nombre de la obra social, y rechaza
+porcentajes, montos, copagos, descuentos y cualquier cifra; si falla, o si el LLM no responde, se
+envía el texto fijo de la clínica. Las preguntas de detalle de cobertura (cuánto, porcentaje, monto,
+cubre) siguen derivándose a Administración (§20).
+
 ---
 
 # 8. Flujo principal

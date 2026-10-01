@@ -1,4 +1,8 @@
-from app.agent.clinic_topics import match_special_insurance, special_insurance_message
+from app.agent.clinic_topics import (
+    match_special_insurance,
+    special_insurance_message,
+    special_insurance_text_is_valid,
+)
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -10,6 +14,9 @@ from app.domain.repositories.llm_provider import LLMProvider
 #: not just "do you work with X" — these can never be answered from a plain
 #: name match and must derive to administración.
 _COVERAGE_DETAIL_KEYWORDS = ("cuánto", "cuanto", "porcentaje", "%", "monto", "cubre")
+
+#: Above the default so two asks about OSDE / Medifé / William Hope read differently.
+_SPECIAL_INSURANCE_TEMPERATURE = 0.9
 
 #: PRD.md §20's exact required message for an unverifiable coverage
 #: question — this specific wording is a documented product requirement
@@ -53,16 +60,45 @@ def create_agreement_node(
         lowered = state["user_message"].casefold()
         asks_coverage_detail = any(keyword in lowered for keyword in _COVERAGE_DETAIL_KEYWORDS)
 
-        # OSDE, Medifé and William Hope get the clinic's fixed first-visit text, verbatim
-        # (no LLM). A coverage-detail question still derives to administración first (PRD §20).
+        # OSDE, Medifé and William Hope: the LLM words the clinic's first-visit message each
+        # time (varied, never repeating earlier wording); a deterministic fact check guards it
+        # and the fixed clinic text is the fallback. A coverage-detail question still derives
+        # to administración first (PRD §20).
         special_insurance = match_special_insurance(state["user_message"])
         if special_insurance is not None:
             if asks_coverage_detail:
                 return {"response_text": _DERIVE_TO_ADMIN_MESSAGE, "requires_handoff": False}
-            return {
-                "response_text": special_insurance_message(special_insurance),
-                "requires_handoff": False,
-            }
+            reference_text = special_insurance_message(special_insurance)
+            text = await generate_or_fallback(
+                llm_provider,
+                state["conversation_id"],
+                "special_insurance",
+                {
+                    "seguro": special_insurance,
+                    "situacion": (
+                        f"El paciente dijo que tiene {special_insurance} o preguntó si "
+                        f"trabajamos con {special_insurance}."
+                    ),
+                    "instruccion": (
+                        "Respondé con tus propias palabras, cálido, natural y breve, sin "
+                        "saludar. Tiene que quedar claro que: (1) puede agendar una primera "
+                        "visita; (2) en esa visita un profesional le hace un diagnóstico "
+                        f"integral y personalizado; (3) {special_insurance} cubre esa primera "
+                        "visita; (4) si necesita algún tratamiento adicional, lo derivan al "
+                        "especialista indicado. NO copies literalmente el texto de referencia "
+                        "ni repitas la redacción que ya usaste antes en esta conversación. "
+                        "Nunca menciones porcentajes, copagos, precios, descuentos ni "
+                        "condiciones. Texto de referencia de la clínica (solo para mantener "
+                        f"los hechos fieles): {reference_text}"
+                    ),
+                },
+                reference_text,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+                temperature=_SPECIAL_INSURANCE_TEMPERATURE,
+                validator=lambda text: special_insurance_text_is_valid(text, special_insurance),
+            )
+            return {"response_text": text, "requires_handoff": False}
 
         agreements = await list_agreements.execute()
         matched = next((a for a in agreements if a.name.casefold() in lowered), None)
