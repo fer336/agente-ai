@@ -20,7 +20,12 @@ async def test_each_topic_returns_its_exact_text_and_the_three_buttons(topic):
     assert result["response_text"] == topic.text
     buttons = result["response_buttons"]
     assert [(button.id, button.title) for button in buttons] == [
-        (OPERATION_CREATE_PAYLOAD, "Agendar cita"),
+        (
+            "FAQ_BOOK:consulta_particular"
+            if topic.id == "consulta_particular"
+            else OPERATION_CREATE_PAYLOAD,
+            "Agendar cita",
+        ),
         (MENU_MAIN_PAYLOAD, "Menú principal"),
         (MENU_ADMIN_PAYLOAD, "💬 Administración"),
     ]

@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from app.agent.handoff_offer import normalize_text
 from app.domain.value_objects.menu_payloads import FAQ_TOPIC_PAYLOAD_PREFIX
 
+#: One-shot `collected_data` key: the name of the Dentalink specialty a booking must go
+#: straight to (see `ClinicTopic.book_specialty`). Set by the router, consumed (popped) by
+#: the decision subgraph when it would otherwise show the specialty list.
+PRESELECTED_SPECIALTY_KEY = "preselected_specialty_name"
+
 
 @dataclass(frozen=True)
 class ClinicTopic:
@@ -20,6 +25,8 @@ class ClinicTopic:
     #: Accent-folded lowercase words/phrases (see `normalize_text`) that name the topic.
     keywords: tuple[str, ...]
     text: str
+    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list.
+    book_specialty: str | None = None
 
     @property
     def payload(self) -> str:
@@ -91,12 +98,16 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "consulta particular",
             "consulta privada",
             "consulta sin obra social",
+            "turno particular",
+            "cita particular",
             "cuanto cuesta la consulta",
             "cuanto sale la consulta",
             "precio de la consulta",
             "valor de la consulta",
         ),
         text=_CONSULTA_PARTICULAR_TEXT,
+        # The clinic books every consulta particular on the "General" specialty.
+        book_specialty="General",
     ),
     ClinicTopic(
         id="limpieza_particular",

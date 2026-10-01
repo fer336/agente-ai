@@ -83,3 +83,16 @@ FAQ_TOPIC_CONSULTA_PAYLOAD = "FAQ_TOPIC:consulta_particular"
 FAQ_TOPIC_LIMPIEZA_PAYLOAD = "FAQ_TOPIC:limpieza_particular"
 FAQ_TOPIC_BRACKETS_PAYLOAD = "FAQ_TOPIC:brackets_obra_social"
 FAQ_TOPIC_ALINEADORES_PAYLOAD = "FAQ_TOPIC:alineadores"
+
+#: "Agendar cita" button of a topic answer that books a fixed Dentalink specialty
+#: (consulta particular -> "General"): `FAQ_BOOK:` + the topic id. Distinct from
+#: `OPERATION_CREATE_PAYLOAD`, which starts a booking with no specialty chosen.
+FAQ_BOOK_PAYLOAD_PREFIX = "FAQ_BOOK:"
+_MAX_PAYLOAD_LENGTH = 256
+
+
+def faq_book_payload(topic_id: str) -> str:
+    payload = f"{FAQ_BOOK_PAYLOAD_PREFIX}{topic_id}"
+    if len(payload) > _MAX_PAYLOAD_LENGTH:
+        raise ValueError(f"button id longer than {_MAX_PAYLOAD_LENGTH} characters: {payload}")
+    return payload

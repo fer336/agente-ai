@@ -350,3 +350,73 @@
         reserva) y no contesta con precios ni con el texto informativo de la limpieza.
   metadata:
     requires_real_llm: true
+
+# Consulta particular booking: "Agendar cita" on the topic answer books the "General"
+# specialty (eval-spec-3): after the first-visit question and identification the patient
+# sees General's slots directly, never the specialty list. Consecutive cases share one
+# conversation_id.
+- description: "Consulta particular: la respuesta ofrece Agendar cita con la especialidad General — turn 1"
+  vars:
+    conversation_id: "eval-topics-book-01"
+    message: "Consulta particular"
+    button_payload: "FAQ_TOPIC:consulta_particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["FAQ_BOOK:consulta_particular", "MENU_MAIN", "MENU_ADMIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Consulta particular: Agendar cita pide primero la primera visita — turn 2"
+  vars:
+    conversation_id: "eval-topics-book-01"
+    message: "Agendar cita"
+    button_payload: "FAQ_BOOK:consulta_particular"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["✅ Confirmar", "❌ Cancelar"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Consulta particular: paciente existente se identifica — turn 3"
+  vars:
+    conversation_id: "eval-topics-book-01"
+    message: "❌ Cancelar"
+    button_payload: "FIRST_VISIT_CANCEL"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Consulta particular: muestra los horarios de General sin pasar por la lista de especialidades — turn 4"
+  vars:
+    conversation_id: "eval-topics-book-01"
+    message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["SELECT_SLOT:eval-free-4", "LIST_BACK"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Consulta particular: elegir el horario propone la confirmación — turn 5"
+  vars:
+    conversation_id: "eval-topics-book-01"
+    message: "Horario de General"
+    button_payload: "SELECT_SLOT:eval-free-4"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["CONFIRM_APPOINTMENT", "REJECT_APPOINTMENT"]
+        exact: true
+  metadata:
+    requires_real_llm: false

@@ -1,7 +1,11 @@
 import re
 
 from app.agent.automatic_handoff import requires_automatic_handoff
-from app.agent.clinic_topics import match_clinic_topic, topic_by_id
+from app.agent.clinic_topics import (
+    PRESELECTED_SPECIALTY_KEY,
+    match_clinic_topic,
+    topic_by_id,
+)
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_FLAG_KEY,
@@ -28,6 +32,7 @@ from app.agent.third_party_guard import (
 )
 from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
+    FAQ_BOOK_PAYLOAD_PREFIX,
     FAQ_TOPIC_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -306,6 +311,29 @@ def _faq_topic_result(
     return {"intent": "faq_topic", "collected_data": {**collected_data, **carried}}
 
 
+def _faq_book_result(
+    payload: str, collected_data: dict[str, object], has_active_stage: bool
+) -> dict[str, object]:
+    """A tapped "Agendar cita" of a topic answer: the create flow, with the topic's
+    Dentalink specialty preselected. Mid-flow it replaces the flow like OPERATION_CREATE
+    (the appointment node resets the stale stage data and keeps only this one-shot key)."""
+    topic = topic_by_id(payload.removeprefix(FAQ_BOOK_PAYLOAD_PREFIX))
+    data = dict(collected_data)
+    if topic is not None and topic.book_specialty is not None:
+        data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    result: dict[str, object] = {"intent": "appointment", "collected_data": data}
+    if has_active_stage:
+        result.update(
+            {
+                "active_flow": "appointment",
+                "active_node": str(collected_data.get("stage")),
+                "resume_node": None,
+                "interruption": "replace",
+            }
+        )
+    return result
+
+
 def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
     """Global conversational router in front of the operational workflow.
 
@@ -359,6 +387,8 @@ async def _resolve(
             if topic is None:
                 return {"intent": "appointment" if has_active_stage else "unknown"}
             return _faq_topic_result(topic.id, collected_data, has_active_stage)
+        if payload.startswith(FAQ_BOOK_PAYLOAD_PREFIX):
+            return _faq_book_result(payload, collected_data, has_active_stage)
         global_intent = _GLOBAL_BUTTON_INTENTS.get(payload)
         if global_intent is not None:
             if global_intent == "handoff":
@@ -470,6 +500,12 @@ async def _resolve(
 
     result = await llm_provider.understand(state["user_message"], context=context)
     carried = _carried_understanding(result)
+    if result.intent == "appointment" and not has_active_stage:
+        # "Quiero un turno para consulta particular": a consulta particular is always
+        # booked on its fixed specialty. Never mid-flow, where nothing would consume it.
+        topic = match_clinic_topic(state["user_message"])
+        if topic is not None and topic.book_specialty is not None:
+            carried[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
 
     if post_action_context is not None and not _is_genuine_new_request(result):
         text = await generate_or_fallback(

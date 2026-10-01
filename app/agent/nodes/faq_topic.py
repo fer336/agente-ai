@@ -8,16 +8,23 @@ from app.domain.value_objects.menu_payloads import (
     MENU_FAQ_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     OPERATION_CREATE_PAYLOAD,
+    faq_book_payload,
 )
 
 #: `collected_data` key the router sets with the chosen topic id (one-turn carrier).
 FAQ_TOPIC_ID_KEY = "faq_topic_id"
 
-_TOPIC_BUTTONS = [
-    InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="Agendar cita"),
-    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
-]
+
+def _topic_buttons(topic: ClinicTopic) -> list[InteractiveButton]:
+    # A topic that books a fixed specialty carries its own payload so the router can
+    # preselect it; the others start a plain booking.
+    book_id = faq_book_payload(topic.id) if topic.book_specialty else OPERATION_CREATE_PAYLOAD
+    return [
+        InteractiveButton(id=book_id, title="Agendar cita"),
+        InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
+        InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
+    ]
+
 
 _SUB_LIST_TEXT = "Estos son los temas que más nos consultan. ¿Sobre cuál querés saber?"
 
@@ -59,7 +66,7 @@ def create_faq_topic_node() -> AgentNode:
             }
         return {
             "response_text": topic.text,
-            "response_buttons": _TOPIC_BUTTONS,
+            "response_buttons": _topic_buttons(topic),
             "requires_handoff": False,
             "collected_data": collected_data,
         }

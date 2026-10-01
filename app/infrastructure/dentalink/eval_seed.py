@@ -32,10 +32,13 @@ _EVAL_PATIENT_PHONE = PhoneNumber("+5490000000001")
 _SPECIALTIES = [
     Specialty(id="eval-spec-1", name="Ortodoncia"),
     Specialty(id="eval-spec-2", name="Odontología general"),
+    #: The specialty every consulta particular is booked on (clinic-topics-faq).
+    Specialty(id="eval-spec-3", name="General"),
 ]
 _PROFESSIONALS = [
     Professional(id="eval-prof-1", full_name="Dra. Ana Ejemplo", specialty_id="eval-spec-1"),
     Professional(id="eval-prof-2", full_name="Dr. Bruno Muestra", specialty_id="eval-spec-2"),
+    Professional(id="eval-prof-3", full_name="Dra. Carla Ejemplo", specialty_id="eval-spec-3"),
 ]
 #: Fictional agreements so "osde 210" resolves in the eval stack (first-visit intake and the
 #: insurance lookup match the obra social name against this list).
@@ -88,7 +91,13 @@ def build_eval_seed(now: datetime) -> EvalSeed:
     free = [
         _slot(f"eval-free-{index}", professional, day + timedelta(days=days))
         for index, (professional, days) in enumerate(
-            [(_PROFESSIONALS[0], 5), (_PROFESSIONALS[0], 6), (_PROFESSIONALS[1], 5)], start=1
+            [
+                (_PROFESSIONALS[0], 5),
+                (_PROFESSIONALS[0], 6),
+                (_PROFESSIONALS[1], 5),
+                (_PROFESSIONALS[2], 4),
+            ],
+            start=1,
         )
     ]
     return EvalSeed(

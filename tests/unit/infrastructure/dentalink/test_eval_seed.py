@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.api.dependencies.internal_eval import get_evaluate_chat_turn_use_case
+from app.domain.value_objects.date_time_range import DateTimeRange
 from app.infrastructure.dentalink.eval_seed import (
     EVAL_PATIENT_DNI,
     EVAL_PATIENT_NAME,
@@ -83,3 +84,19 @@ def test_eval_stack_uses_the_seeded_agreements():
     invoker = use_case._agent_invoker  # type: ignore[attr-defined]
 
     assert invoker._agreement_gateway._agreements  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_seed_has_a_staffed_general_specialty_with_availability():
+    seed = build_eval_seed(_NOW)
+
+    specialties = {s.name: s for s in await seed.specialties.list_specialties()}
+    professionals = await seed.dentalink.list_professionals()
+    slots = await seed.dentalink.search_availability(
+        None, None, DateTimeRange(_NOW, _NOW + timedelta(days=30))
+    )
+
+    general = specialties["General"]
+    assert general.id == "eval-spec-3"
+    assert any(p.specialty_id == general.id for p in professionals)
+    assert any(slot.specialty_id == general.id for slot in slots)
