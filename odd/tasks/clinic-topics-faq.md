@@ -41,6 +41,11 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 - [x] T3 — Special insurances fixed text in `agreement.py` (precedence vs "cuánto cubre" derive),
   eval dataset `evals/datasets/clinic_topics.yaml` + replay registration, PRD §7 update.
   Route: delegated direct.
+- [x] T4 — Book a consulta particular on the Dentalink specialty "General": `FAQ_BOOK:<topic>`
+  payload + `ClinicTopic.book_specialty`, router preselection (button idle/mid-flow and free
+  text), subgraph consumes the one-shot `preselected_specialty_name` (exact accent-insensitive
+  match, fallback to the list), eval seed "General" + replay scenario. Commit f8b2ddf. Route:
+  delegated direct (single writer).
 
 ## Acceptance criteria
 
@@ -83,6 +88,14 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 - Native review (high, 31 files, 1462 lines, 4 lenses): consent granted, approved and
   acknowledged (lineage review-17fb8cffe48f78bb). Advisory, non-blocking: R2-1 menu_payloads
   readability, R2-2 faq_topic, R2-3 clinic_topics, R4 unconfirmed prices (TODO(clinic)).
+
+- T4 done, commit f8b2ddf (route: delegated direct). RED: both new test modules failed at
+  collection (no `PRESELECTED_SPECIALTY_KEY`, no `faq_book_payload`) and the new seed test failed
+  (KeyError "General"). GREEN: `uv run pytest` 2411 passed, only the 3 known redis_debounce_lock
+  failures (plus their 3 setup errors); `ruff check .` and `mypy app/` clean. The key is consumed
+  in the decision subgraph's `choose_specialty` (no options yet), after the first-visit question
+  and identification. Free-text preselection applies only with no active stage (nothing would
+  consume it mid-flow). Added keywords "turno particular" / "cita particular" to the topic.
 
 ## Next step
 
