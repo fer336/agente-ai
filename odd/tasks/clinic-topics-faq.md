@@ -59,8 +59,8 @@ fixed clinic-authored text, reachable from the main menu and from free text.
 - [x] T7 — Payment, advance and installment questions get "se manejan directamente con
   Administración" (deterministic detector + LLM-worded answer + question-node backstop).
   Route: delegated direct.
-- [ ] T8 — OSDE / Medifé / William Hope answer written by the LLM each time, facts guarded by a
-  validator with the fixed text as fallback. Route: delegated direct.
+- [x] T8 — OSDE / Medifé / William Hope answer written by the LLM each time, facts guarded by a
+  validator with the fixed text as fallback. Route: delegated direct. Commit 3f348ae.
 
 ## Acceptance criteria
 
@@ -156,3 +156,10 @@ Push, issue and PR (user decision): `feat(...)` title per `docs/pr-release-workf
   Payment terms win over a topic keyword except alineadores; not applied in data stages; backstop in
   `question.py` and `fallback.py`; understand prompt no longer lists payments under `faq_topic` or as
   a free `question` answer; dataset got 3 deterministic cases and 1 real-LLM case; PRD scope rule added.
+- T8 done, commit 3f348ae (route: delegated direct). RED observed: test_clinic_topics.py failed at
+  collection (ImportError special_insurance_text_is_valid); test_llm_response.py with the old
+  llm_response.py: 3 failed (TypeError on `validator`); test_agreement_node.py: 7 failed (verbatim
+  text, no `special_insurance` context, no second call). GREEN: tests/unit/agent + llm 1177 passed;
+  full `uv run pytest`: 2553 passed, only the 3 known test_redis_debounce_lock.py failures/errors.
+  `ruff check .` clean, `mypy app/` clean. Decisions: temperature 0.9; node passes only seguro,
+  situacion, instruccion (not the state's collected_data); eval dataset now has 5 real-LLM cases.
