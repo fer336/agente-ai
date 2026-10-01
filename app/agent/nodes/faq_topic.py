@@ -1,5 +1,4 @@
 from app.agent.clinic_topics import CLINIC_TOPICS, ClinicTopic, match_clinic_topic, topic_by_id
-from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS, HANDOFF_OFFER_KEY
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.domain.value_objects.interactive_button import InteractiveButton
@@ -19,11 +18,6 @@ _TOPIC_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
-
-_UNKNOWN_TOPIC_TEXT = (
-    "Ese dato no lo tengo confirmado. Si querés, te comunico con administración para revisarlo."
-)
-
 
 _SUB_LIST_TEXT = "Estos son los temas que más nos consultan. ¿Sobre cuál querés saber?"
 
@@ -47,20 +41,19 @@ def create_faq_topic_node() -> AgentNode:
         """
 
         collected_data = dict(state["collected_data"])
-        if state["button_payload"] == MENU_FAQ_PAYLOAD:
+        topic = None
+        if state["button_payload"] != MENU_FAQ_PAYLOAD:
+            topic = _resolve_topic(
+                collected_data.pop(FAQ_TOPIC_ID_KEY, None), state["user_message"]
+            )
+        if topic is None:
+            # The menu tap, or a free question the matcher could not pin to one topic:
+            # show the same topic list the menu shows, never an invented answer.
+            collected_data.pop(FAQ_TOPIC_ID_KEY, None)
             return {
                 "response_text": _SUB_LIST_TEXT,
                 "response_list": _SUB_LIST,
                 "response_buttons": None,
-                "requires_handoff": False,
-                "collected_data": collected_data,
-            }
-        topic = _resolve_topic(collected_data.pop(FAQ_TOPIC_ID_KEY, None), state["user_message"])
-        if topic is None:
-            collected_data[HANDOFF_OFFER_KEY] = True
-            return {
-                "response_text": _UNKNOWN_TOPIC_TEXT,
-                "response_buttons": HANDOFF_OFFER_BUTTONS,
                 "requires_handoff": False,
                 "collected_data": collected_data,
             }

@@ -145,3 +145,33 @@ def test_special_insurance_message_formats_the_name_into_the_template():
     assert text.startswith("Si tenés Medifé, lo que te podemos ofrecer")
     assert "Esto lo cubre Medifé." in text
     assert "{name}" not in text
+
+
+@pytest.mark.parametrize(
+    ("message", "topic_id"),
+    [
+        ("cuánto sale el blanqueo", "blanqueamiento"),
+        ("hacen blanqueo dental?", "blanqueamiento"),
+        ("cuánto sale invisalign", "alineadores"),
+        ("tienen ortodoncia invisible", "alineadores"),
+        ("cuánto cuesta una consulta particular", "consulta_particular"),
+        ("cuánto sale la consulta sin obra social", "consulta_particular"),
+        ("cuánto cuesta la consulta", "consulta_particular"),
+        ("hacen ortodoncia con obra social", "brackets_obra_social"),
+        ("ponen frenos con obra social", "brackets_obra_social"),
+        ("limpiezas dentales cuánto salen", "limpieza_particular"),
+    ],
+)
+def test_common_free_text_phrasings_reach_their_topic(message, topic_id):
+    topic = match_clinic_topic(message)
+
+    assert topic is not None
+    assert topic.id == topic_id
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["tengo una consulta", "quiero hacer una consulta sobre un turno", "hola buen día"],
+)
+def test_a_generic_word_alone_is_not_a_topic(message):
+    assert match_clinic_topic(message) is None

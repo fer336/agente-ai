@@ -81,13 +81,21 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
     ClinicTopic(
         id="blanqueamiento",
         title="Blanqueamiento dental",
-        keywords=("blanqueamiento", "blanquear"),
+        keywords=("blanqueamiento", "blanquear", "blanqueo"),
         text=_BLANQUEAMIENTO_TEXT,
     ),
     ClinicTopic(
         id="consulta_particular",
         title="Consulta particular",
-        keywords=("consulta particular", "consulta privada"),
+        keywords=(
+            "consulta particular",
+            "consulta privada",
+            "consulta sin obra social",
+            "cuanto cuesta la consulta",
+            "cuanto sale la consulta",
+            "precio de la consulta",
+            "valor de la consulta",
+        ),
         text=_CONSULTA_PARTICULAR_TEXT,
     ),
     ClinicTopic(
@@ -99,13 +107,26 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
     ClinicTopic(
         id="brackets_obra_social",
         title="Brackets por obra social",
-        keywords=("bracket", "brackets"),
+        keywords=(
+            "bracket",
+            "brackets",
+            "frenos",
+            "ortodoncia con obra social",
+            "ortodoncia por obra social",
+        ),
         text=_BRACKETS_OBRA_SOCIAL_TEXT,
     ),
     ClinicTopic(
         id="alineadores",
         title="Alineadores",
-        keywords=("alineador", "alineadores", "smilesecret", "smile secret"),
+        keywords=(
+            "alineador",
+            "alineadores",
+            "smilesecret",
+            "smile secret",
+            "invisalign",
+            "ortodoncia invisible",
+        ),
         text=_ALINEADORES_TEXT,
     ),
 )

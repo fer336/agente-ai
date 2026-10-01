@@ -1,7 +1,6 @@
 import pytest
 
 from app.agent.clinic_topics import CLINIC_TOPICS
-from app.agent.handoff_offer import HANDOFF_OFFER_KEY
 from app.agent.nodes.faq_topic import create_faq_topic_node
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
@@ -68,16 +67,17 @@ async def test_the_state_id_wins_over_the_message():
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_topic_offers_administration_without_inventing_text():
+async def test_an_unresolved_topic_shows_the_same_topic_list_as_the_menu():
     node = create_faq_topic_node()
 
-    result = await node(make_agent_state(user_message="hola", collected_data={"faq_topic_id": "x"}))
+    result = await node(
+        make_agent_state(user_message="cuánto sale lo de los dientes", collected_data={})
+    )
 
-    assert "administración" in result["response_text"]
     assert "$" not in result["response_text"]
-    assert [button.id for button in result["response_buttons"]] == [
-        MENU_ADMIN_PAYLOAD,
-        MENU_MAIN_PAYLOAD,
+    assert result["response_buttons"] is None
+    assert [row.id for row in result["response_list"].rows] == [
+        topic.payload for topic in CLINIC_TOPICS
     ]
-    assert result["collected_data"][HANDOFF_OFFER_KEY] is True
     assert "faq_topic_id" not in result["collected_data"]
+    assert result["requires_handoff"] is False
