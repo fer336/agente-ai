@@ -11,7 +11,12 @@ from app.agent.appointment_decision_subgraph import (
     AppointmentDecisionState,
     build_appointment_decision_graph,
 )
-from app.agent.clinic_topics import ALIGNER_OPTION_KEY, PRESELECTED_SPECIALTY_KEY
+from app.agent.clinic_topics import (
+    ALIGNER_OPTION_KEY,
+    BOOKING_TOPIC_KEY,
+    PRESELECTED_SPECIALTY_KEY,
+    booking_comment,
+)
 from app.agent.first_visit_intake_extraction import (
     extract_intake_reply,
     extract_question_reply,
@@ -1194,8 +1199,10 @@ def _slot_from_payload(payload: dict[str, object]) -> AppointmentSlot:
     )
 
 
-def _proposal_payload(patient: dict[str, object], slot: AppointmentSlot) -> dict[str, object]:
-    return {
+def _proposal_payload(
+    patient: dict[str, object], slot: AppointmentSlot, comment: str | None = None
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "patient_id": patient["id"],
         "patient_full_name": patient["full_name"],
         "patient_phone": patient["phone"],
@@ -1206,6 +1213,20 @@ def _proposal_payload(patient: dict[str, object], slot: AppointmentSlot) -> dict
         "slot_start": slot.time_range.start.isoformat(),
         "slot_end": slot.time_range.end.isoformat(),
     }
+    if comment is not None:
+        # The appointment comment travels in the payload (not the topic id) so it survives
+        # to the confirmation turn even if `collected_data` is rebuilt in between.
+        payload["comment"] = comment
+    return payload
+
+
+def _booking_topic_comment(collected_data: dict[str, object]) -> str | None:
+    topic_id = collected_data.get(BOOKING_TOPIC_KEY)
+    option = collected_data.get(ALIGNER_OPTION_KEY)
+    return booking_comment(
+        topic_id if isinstance(topic_id, str) else None,
+        option if isinstance(option, str) else None,
+    )
 
 
 def _reschedule_proposal_payload(appointment_id: str, slot: AppointmentSlot) -> dict[str, object]:
@@ -1230,12 +1251,12 @@ def _cancel_proposal_payload(appointment: Appointment) -> dict[str, object]:
 
 
 def _without_booking_presets(collected_data: dict[str, object]) -> dict[str, object]:
-    """Drops the one-shot booking hints (preselected specialty, chosen aligner option):
-    only a booking uses them."""
+    """Drops the one-shot booking hints (preselected specialty, chosen aligner option, chosen
+    frequent topic): only a booking uses them."""
     return {
         k: v
         for k, v in collected_data.items()
-        if k not in {PRESELECTED_SPECIALTY_KEY, ALIGNER_OPTION_KEY}
+        if k not in {PRESELECTED_SPECIALTY_KEY, ALIGNER_OPTION_KEY, BOOKING_TOPIC_KEY}
     }
 
 
@@ -2404,7 +2425,9 @@ def create_appointment_node(
 
         professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
         pending_action = await propose_appointment.execute(
-            conversation_id, CREATE_APPOINTMENT_ACTION, _proposal_payload(patient, selected)
+            conversation_id,
+            CREATE_APPOINTMENT_ACTION,
+            _proposal_payload(patient, selected, _booking_topic_comment(collected_data)),
         )
         await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
         confirmation_text = await _confirmation_message(
@@ -2743,6 +2766,7 @@ def create_appointment_node(
 
         preselected_specialty: object = None
         aligner_option: object = None
+        booking_topic: object = None
         faq_book_tap = (state["button_payload"] or "").startswith(
             (FAQ_BOOK_PAYLOAD_PREFIX, FAQ_OPTION_PAYLOAD_PREFIX)
         )
@@ -2752,6 +2776,7 @@ def create_appointment_node(
             # reset below.
             preselected_specialty = collected_data.get(PRESELECTED_SPECIALTY_KEY)
             aligner_option = collected_data.get(ALIGNER_OPTION_KEY)
+            booking_topic = collected_data.get(BOOKING_TOPIC_KEY)
             state = cast(AgentState, {**state, "button_payload": OPERATION_CREATE_PAYLOAD})
 
         # A navigation request comes from the global router. Move back only as
@@ -2849,6 +2874,7 @@ def create_appointment_node(
                 kept = {
                     PRESELECTED_SPECIALTY_KEY: preselected_specialty,
                     ALIGNER_OPTION_KEY: aligner_option,
+                    BOOKING_TOPIC_KEY: booking_topic,
                 }
                 if stage_data.get("first_visit_completed") and stage_data.get("patient"):
                     kept["first_visit_completed"] = True
