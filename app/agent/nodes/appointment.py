@@ -3168,9 +3168,11 @@ def create_appointment_node(
                     patient_entity = _patient_from_payload(confirmed_payload)
                     slot = _slot_from_payload(confirmed_payload)
                     idempotency_key = f"create:{conversation_id}:{pending_action_id}"
+                    raw_comment = confirmed_payload.get("comment")
+                    booking_comment_text = raw_comment if isinstance(raw_comment, str) else None
                     try:
                         appointment = await revalidate_and_create.execute(
-                            patient_entity, slot, idempotency_key
+                            patient_entity, slot, idempotency_key, comment=booking_comment_text
                         )
                     except AppointmentSlotUnavailableError:
                         offer = await _offer_slots(

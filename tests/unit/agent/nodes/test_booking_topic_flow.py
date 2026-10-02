@@ -351,3 +351,56 @@ async def test_confirming_clears_the_topic_and_the_next_booking_carries_no_comme
         pending = await repos.pending_actions.get_by_id(next_proposal["pending_action_id"])
     assert pending is not None
     assert "comment" not in pending.payload
+
+
+# ---- end to end: what the gateway receives -----------------------------------------------
+
+
+async def _book_and_confirm(**book_overrides):
+    world = _general_world()
+    node, _, gateway = await make_node_and_conversation(
+        available_slots=world["available_slots"],
+        professionals=world["professionals"],
+        specialties=world["specialties"],
+    )
+    proposal = await _proposal(node, **book_overrides)
+    await node(
+        make_agent_state(
+            button_payload="CONFIRM_APPOINTMENT",
+            collected_data=proposal["collected_data"],
+            pending_action_id=proposal["pending_action_id"],
+            patient_identity=_PATIENT,
+        )
+    )
+    return gateway
+
+
+@pytest.mark.asyncio
+async def test_a_topic_booking_reaches_the_gateway_with_its_comment():
+    gateway = await _book_and_confirm()
+
+    assert gateway.get_comment("1") == "Consulta frecuente: Blanqueamiento"
+
+
+@pytest.mark.asyncio
+async def test_an_alineadores_booking_reaches_the_gateway_with_the_option():
+    gateway = await _book_and_confirm(
+        button_payload="FAQ_OPTION:alineadores:3",
+        collected_data={
+            PRESELECTED_SPECIALTY_KEY: "General",
+            BOOKING_TOPIC_KEY: "alineadores",
+            ALIGNER_OPTION_KEY: "3",
+        },
+    )
+
+    assert gateway.get_comment("1") == "Consulta frecuente: Alineadores - Opción 3"
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_booking_reaches_the_gateway_without_a_comment():
+    gateway = await _book_and_confirm(
+        button_payload="OPERATION_CREATE", collected_data={PRESELECTED_SPECIALTY_KEY: "General"}
+    )
+
+    assert gateway.get_appointment("1") is not None
+    assert gateway.get_comment("1") is None

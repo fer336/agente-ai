@@ -52,7 +52,11 @@ class RevalidateAndCreateAppointmentUseCase:
         self._lock_blocking_timeout_seconds = lock_blocking_timeout_seconds
 
     async def execute(
-        self, patient: Patient, slot: AppointmentSlot, idempotency_key: str
+        self,
+        patient: Patient,
+        slot: AppointmentSlot,
+        idempotency_key: str,
+        comment: str | None = None,
     ) -> Appointment:
         lock_name = f"{_LOCK_PREFIX}:{slot.professional_id}:{slot.time_range.start.isoformat()}"
 
@@ -80,4 +84,6 @@ class RevalidateAndCreateAppointmentUseCase:
             if not any(candidate.id == slot.id for candidate in still_available):
                 raise AppointmentSlotUnavailableError(slot.id)
 
-            return await self._create_appointment.execute(patient, slot, idempotency_key)
+            return await self._create_appointment.execute(
+                patient, slot, idempotency_key, comment=comment
+            )

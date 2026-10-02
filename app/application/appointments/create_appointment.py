@@ -20,6 +20,12 @@ class CreateAppointmentUseCase:
         self._gateway = gateway
 
     async def execute(
-        self, patient: Patient, slot: AppointmentSlot, idempotency_key: str
+        self,
+        patient: Patient,
+        slot: AppointmentSlot,
+        idempotency_key: str,
+        comment: str | None = None,
     ) -> Appointment:
-        return await self._gateway.create_appointment(patient, slot, idempotency_key)
+        return await self._gateway.create_appointment(
+            patient, slot, idempotency_key, comment=comment
+        )

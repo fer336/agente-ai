@@ -339,6 +339,7 @@ class DentalinkAppointmentGateway:
         patient: Patient,
         slot: AppointmentSlot,
         idempotency_key: str,
+        comment: str | None = None,
     ) -> Appointment:
         # `idempotency_key` is not sent to Dentalink — it has no idempotency
         # support at this endpoint. Deduplication happens one layer up, via
@@ -357,10 +358,18 @@ class DentalinkAppointmentGateway:
                 "hora_inicio": slot.time_range.start.strftime("%H:%M"),
                 "duracion": duration_minutes,
             }
+            if comment is not None:
+                # Dentalink's docs are inconsistent: the POST example sends `comentario`
+                # (singular) while the response and the PUT use `comentarios` (plural).
+                payload["comentario"] = comment
             raw = await self._client.post("/v1/citas/", json=payload)
-            return appointment_from_cita(
-                as_dict(raw), cancelled_state_ids=None, timezone=self._clinic_timezone
+            created = as_dict(raw)
+            appointment = appointment_from_cita(
+                created, cancelled_state_ids=None, timezone=self._clinic_timezone
             )
+            if comment is not None:
+                await self._ensure_comment(str(appointment.id), created, comment)
+            return appointment
 
         return await traced_call(
             tool_name="CreateAppointmentTool",
@@ -374,6 +383,25 @@ class DentalinkAppointmentGateway:
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
         )
+
+    async def _ensure_comment(
+        self, appointment_id: str, created: dict[str, object], comment: str
+    ) -> None:
+        """Completes the comment with a PUT when the create response does not hold it.
+
+        Best effort: the appointment already exists, so a failure here is only logged and
+        never fails or rolls back the booking."""
+        echoed = created.get("comentarios")
+        if isinstance(echoed, str) and comment.strip() in echoed:
+            return
+        try:
+            await self._client.put(f"/v1/citas/{appointment_id}", json={"comentarios": comment})
+        except Exception as exc:
+            logger.warning(
+                "dentalink.appointment_comment_not_completed appointment_id=%s error_type=%s",
+                appointment_id,
+                type(exc).__name__,
+            )
 
     async def reschedule_appointment(
         self,

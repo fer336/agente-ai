@@ -344,6 +344,20 @@ del LLM, y ofrece los botones Agendar cita, Menú principal y Administración. A
 agendar el tema por texto libre) inicia la reserva yendo directo a la especialidad "General" de
 Dentalink, igual para los cinco temas.
 
+El turno agendado desde Consultas frecuentes lleva el tema elegido en el comentario de la cita de
+Dentalink, para que administración sepa de qué se trata: `Consulta frecuente: <tema>` con los
+nombres Blanqueamiento, Consulta Particular, Limpieza Particular, Brackets por obra social y
+Alineadores (este último con la opción: `Consulta frecuente: Alineadores - Opción 2`). El tema se
+recuerda desde que el paciente lo toca (o lo pide por texto libre) hasta la confirmación, igual que
+la opción de alineadores; se descarta al cancelar, reprogramar, ver citas o volver al menú, y una
+reserva que no nació de un tema no lleva comentario. La documentación de Dentalink es inconsistente:
+el ejemplo de `POST /v1/citas/` envía `comentario` (singular), pero la respuesta devuelve
+`comentarios` y `PUT /v1/citas/{id}` recibe `comentarios` (plural). Por eso la creación envía
+`comentario`, lee `comentarios` de la respuesta y, si no contiene el texto, lo completa con
+`PUT /v1/citas/{id}` (`{"comentarios": texto}`). Si ese paso falla se registra una advertencia y
+la cita queda creada igual: el comentario nunca hace fallar ni revierte la reserva. Reprogramar no
+toca el comentario.
+
 **Regla de alcance: pagos, anticipos y precios.** Los pagos, anticipos ("anticipo", "seña"), cuotas,
 financiación, medios de pago (tarjeta, efectivo, transferencia, Mercado Pago, etc.) y cualquier
 otro precio que no figure en los textos fijos de la clínica los maneja directamente Administración;
