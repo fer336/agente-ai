@@ -71,6 +71,22 @@ class PatientAlreadyExistsError(DomainError):
         super().__init__(f"Patient with RUT {rut} already exists (id={existing_patient_id})")
 
 
+class AgreementAlreadyLinkedError(DomainError):
+    """Raised when linking an agreement the patient already has.
+
+    Seen in production: a DNI that was already registered (or a retry after a
+    partial failure) makes Dentalink reject the link with a 400 "ya tiene el
+    convenio". It is not a failure — the desired end state already holds — so
+    the gateway raises this typed signal and the caller tells the patient and
+    carries on instead of treating it as an integration error.
+    """
+
+    def __init__(self, patient_id: str, agreement_id: str) -> None:
+        self.patient_id = patient_id
+        self.agreement_id = agreement_id
+        super().__init__(f"Patient {patient_id} already has agreement {agreement_id}")
+
+
 class ConversationAlreadyExistsError(DomainError):
     """Raised when two concurrent webhook deliveries for the same brand-new
     contact both try to create the same conversation row.

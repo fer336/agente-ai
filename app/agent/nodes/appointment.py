@@ -104,6 +104,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.exceptions.errors import (
+    AgreementAlreadyLinkedError,
     AppointmentSlotUnavailableError,
     InvalidConfirmationError,
     PatientAlreadyExistsError,
@@ -398,6 +399,20 @@ _NAME_INCOMPLETE_MESSAGE = (
 )
 _ASK_DNI_ONLY_MESSAGE = "Gracias! Ahora decime tu *DNI* (7 u 8 dígitos), por ejemplo: 30123456."
 _ASK_NAME_ONLY_MESSAGE = "Gracias! Ahora decime tu *nombre completo*, por ejemplo: Rosa Gómez."
+#: Shown at the start of the next step when Dentalink says the patient already has the
+#: agreement we tried to link: not an error, they just carry on with their booking.
+_AGREEMENT_ALREADY_LINKED_NOTICE = (
+    "Ya figurás en nuestro sistema con esa obra social, así que seguimos con tu turno."
+)
+_ADMIN_CHANGES_HINT = 'Si querés actualizar algún dato, escribí "administración".'
+_EXISTING_PATIENT_ON_RECORD_NOTICE = (
+    "Ya figurás en nuestro sistema, así que seguimos con tu turno. "
+    'Si querés actualizar algún dato (por ejemplo tu obra social), escribí "administración".'
+)
+_EXISTING_PATIENT_AGREEMENT_LINKED_NOTICE = (
+    "Ya figurás en nuestro sistema y te cargamos la obra social, así que seguimos con tu "
+    "turno. " + _ADMIN_CHANGES_HINT
+)
 _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
@@ -1096,6 +1111,56 @@ async def _cancel_success_message(
         contact_memory,
         action_executed=True,
     )
+
+
+def _with_notice(result: dict[str, object], notice: str) -> dict[str, object]:
+    """Prefixes `notice` to the step's message without touching its buttons or lists.
+
+    When the step has no text of its own, the notice becomes the text only if nothing
+    else (buttons, list, flow, location) would be sent, so no interactive payload is
+    ever replaced or dropped.
+    """
+    text = result.get("response_text")
+    if isinstance(text, str) and text.strip():
+        return {**result, "response_text": f"{notice}\n\n{text}"}
+    has_payload = any(
+        result.get(key) is not None
+        for key in ("response_buttons", "response_list", "response_flow", "response_location")
+    )
+    if has_payload:
+        return result
+    return {**result, "response_text": notice}
+
+
+async def _attach_agreement(
+    agreement_gateway: AgreementGateway,
+    patient: Patient,
+    agreement: Agreement,
+    *,
+    recovered: bool,
+) -> str | None:
+    """Links `agreement` to a patient and returns the notice to show, if any.
+
+    A patient created a moment ago just gets the agreement linked. An existing
+    (recovered) patient is identified only by name + DNI, and Dentalink's
+    `POST /pacientes/{id}/convenios` REPLACES the active agreement, so an existing record is
+    never written blindly: it is linked only when it has no agreement on record at all.
+    `GET /pacientes/{id}/convenios` lists agreements the patient has OR HAS HAD and flags
+    none as active, so any non-empty list may hide a current one: we write nothing, say
+    nothing about which agreement they have, and point to Administración. Gateway failures
+    propagate so each call site keeps its own failure handling.
+    """
+    if not recovered:
+        try:
+            await agreement_gateway.link_patient_agreement(patient.id, agreement.id)
+        except AgreementAlreadyLinkedError:
+            return _AGREEMENT_ALREADY_LINKED_NOTICE
+        return None
+    held = await agreement_gateway.get_patient_agreements(patient.id)
+    if held:
+        return _EXISTING_PATIENT_ON_RECORD_NOTICE
+    await agreement_gateway.link_patient_agreement(patient.id, agreement.id)
+    return _EXISTING_PATIENT_AGREEMENT_LINKED_NOTICE
 
 
 def _patient_to_primitives(patient: Patient) -> dict[str, object]:
@@ -1957,6 +2022,7 @@ def create_appointment_node(
                         "response_buttons": None,
                     }
                 else:
+                    patient_recovered = False
                     try:
                         new_patient = await patient_gateway.create_patient(
                             details["full_name"],
@@ -1984,6 +2050,7 @@ def create_appointment_node(
                             new_patient = None
                         else:
                             new_patient = recovered
+                            patient_recovered = True
                     except Exception as exc:  # noqa: BLE001 -- external gateway boundary
                         logger.warning("first-visit patient creation failed", exc_info=exc)
                         result = {
@@ -2013,11 +2080,17 @@ def create_appointment_node(
                         new_patient = None
 
                     if new_patient is not None:
+                        link_failed = False
+                        link_notice: str | None = None
                         try:
-                            await agreement_gateway.link_patient_agreement(
-                                new_patient.id, agreement.id
+                            link_notice = await _attach_agreement(
+                                agreement_gateway,
+                                new_patient,
+                                agreement,
+                                recovered=patient_recovered,
                             )
                         except Exception as exc:  # noqa: BLE001 -- external gateway boundary
+                            link_failed = True
                             logger.warning("first-visit agreement linking failed", exc_info=exc)
                             result = {
                                 **result,
@@ -2043,7 +2116,7 @@ def create_appointment_node(
                                     ),
                                 ],
                             }
-                        else:
+                        if not link_failed:
                             resumed_data = {
                                 key: value
                                 for key, value in collected_data.items()
@@ -2066,7 +2139,10 @@ def create_appointment_node(
                                     },
                                 },
                             )
-                            return await node(resumed_state)
+                            resumed = await node(resumed_state)
+                            if link_notice is not None:
+                                return _with_notice(resumed, link_notice)
+                            return resumed
 
         response_buttons = result.get("response_buttons")
         await set_conversation_input_state.execute(
@@ -3121,6 +3197,8 @@ def create_appointment_node(
                     phone = PhoneNumber(str(confirmed_payload["phone"]))
                     email = str(confirmed_payload.get("email") or "") or None
                     obra_social_name = str(confirmed_payload.get("obra_social") or "")
+                    already_linked_notice: str | None = None
+                    patient_recovered = False
                     try:
                         new_patient = await patient_gateway.create_patient(
                             full_name, dni, phone, email=email
@@ -3172,12 +3250,16 @@ def create_appointment_node(
                                 },
                             }
                         new_patient = recovered
+                        patient_recovered = True
 
                     if obra_social_name:
                         agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                         if agreement is not None:
-                            await agreement_gateway.link_patient_agreement(
-                                new_patient.id, agreement.id
+                            already_linked_notice = await _attach_agreement(
+                                agreement_gateway,
+                                new_patient,
+                                agreement,
+                                recovered=patient_recovered,
                             )
 
                     if collected_data.get("pending_selected_slot") is None:
@@ -3185,7 +3267,7 @@ def create_appointment_node(
                         # is no slot to propose, and a patient created one
                         # second ago has nothing to reschedule. Booking is
                         # the only thing left that helps them.
-                        return await _offer_specialties(
+                        next_step = await _offer_specialties(
                             conversation_id,
                             {
                                 **collected_data,
@@ -3196,16 +3278,20 @@ def create_appointment_node(
                             state["recent_messages"],
                             state["contact_memory_summary"],
                         )
-                    # The patient already picked their slot before
-                    # identifying, so continue with that exact slot — never
-                    # re-search.
-                    return await _propose_selected_slot(
-                        conversation_id,
-                        _patient_to_primitives(new_patient),
-                        collected_data,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
-                    )
+                    else:
+                        # The patient already picked their slot before
+                        # identifying, so continue with that exact slot — never
+                        # re-search.
+                        next_step = await _propose_selected_slot(
+                            conversation_id,
+                            _patient_to_primitives(new_patient),
+                            collected_data,
+                            state["recent_messages"],
+                            state["contact_memory_summary"],
+                        )
+                    if already_linked_notice is not None:
+                        return _with_notice(next_step, already_linked_notice)
+                    return next_step
 
                 if confirmed_action_type == RESCHEDULE_APPOINTMENT_ACTION:
                     appointment_id = str(confirmed_payload["appointment_id"])
@@ -3998,6 +4084,8 @@ def create_appointment_node(
                     state["contact_memory_summary"],
                 )
             contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
+            registration_notice: str | None = None
+            registration_recovered = False
             try:
                 new_patient = await patient_gateway.create_patient(
                     full_name, validated_dni.value, contact_phone, email=email
@@ -4015,23 +4103,33 @@ def create_appointment_node(
                         state["contact_memory_summary"],
                     )
                 new_patient = recovered
+                registration_recovered = True
             if obra_social_name:
                 agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                 if agreement is not None:
-                    await agreement_gateway.link_patient_agreement(new_patient.id, agreement.id)
+                    registration_notice = await _attach_agreement(
+                        agreement_gateway,
+                        new_patient,
+                        agreement,
+                        recovered=registration_recovered,
+                    )
             patient_primitives = _patient_to_primitives(new_patient)
             if _is_create_flow(collected_data):
-                return await _continue_booking_with_patient(
+                registration_next = await _continue_booking_with_patient(
                     state, collected_data, patient_primitives
                 )
-            return await _offer_appointments(
-                conversation_id,
-                patient_primitives,
-                new_patient.id,
-                collected_data,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
+            else:
+                registration_next = await _offer_appointments(
+                    conversation_id,
+                    patient_primitives,
+                    new_patient.id,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            if registration_notice is not None:
+                return _with_notice(registration_next, registration_notice)
+            return registration_next
 
         if stage == STAGE_AWAITING_IDENTIFICATION:
             # CREATE cannot identify/confirm a booking if the slot dependency

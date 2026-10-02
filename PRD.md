@@ -971,6 +971,18 @@ No permitirá:
 
 Esas operaciones permanecerán en administración.
 
+## 19.1 Alta de pacientes y pacientes existentes
+
+Al registrar a un paciente nuevo, el agente crea el registro y le asocia el convenio indicado.
+
+Si el paciente ya existe en Dentalink (se lo identifica solo por nombre y DNI), el agente nunca
+modifica sus datos. `POST /pacientes/{id}/convenios` reemplaza el convenio activo y
+`GET /pacientes/{id}/convenios` devuelve los convenios que el paciente tiene o ha tenido, sin
+indicar cuál está activo. Por eso, si el paciente ya tiene cualquier convenio registrado, no se
+escribe nada y el agente no afirma cuál es: le avisa que ya figura en el sistema, que los cambios
+de datos o de obra social los hace Administración, y continúa con el turno. Solo si el paciente
+existente no tiene ningún convenio registrado se le asocia el indicado.
+
 ---
 
 # 20. Preguntas sobre cobertura
