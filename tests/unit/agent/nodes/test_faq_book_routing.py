@@ -31,11 +31,11 @@ def test_the_payload_helper_builds_a_short_prefixed_id():
     assert all(len(faq_book_payload(topic.id)) <= 256 for topic in CLINIC_TOPICS)
 
 
-def test_only_consulta_particular_and_alineadores_book_a_fixed_specialty():
+def test_only_consulta_particular_blanqueamiento_and_alineadores_book_a_fixed_specialty():
     booking = {topic.id: topic.book_specialty for topic in CLINIC_TOPICS}
 
     assert booking == {
-        "blanqueamiento": None,
+        "blanqueamiento": "General",
         "consulta_particular": "General",
         "limpieza_particular": None,
         "brackets_obra_social": None,
@@ -53,7 +53,7 @@ async def test_the_topic_node_offers_the_book_button_only_for_a_topic_with_a_spe
     )
 
     first = result["response_buttons"][0]
-    expected_id = _BOOK_CONSULTA if topic.id == "consulta_particular" else OPERATION_CREATE_PAYLOAD
+    expected_id = f"FAQ_BOOK:{topic.id}" if topic.book_specialty else OPERATION_CREATE_PAYLOAD
     assert (first.id, first.title) == (expected_id, "Agendar cita")
 
 
@@ -85,10 +85,22 @@ async def test_a_mid_flow_book_tap_replaces_the_flow_and_carries_the_specialty()
 async def test_a_book_tap_for_a_topic_without_a_specialty_carries_no_key():
     node = create_resolve_interaction_node(FakeLLMProvider())
 
-    result = await node(make_agent_state(button_payload="FAQ_BOOK:blanqueamiento"))
+    result = await node(make_agent_state(button_payload="FAQ_BOOK:limpieza_particular"))
 
     assert result["intent"] == "appointment"
     assert PRESELECTED_SPECIALTY_KEY not in result.get("collected_data", {})
+
+
+@pytest.mark.asyncio
+async def test_a_book_tap_for_the_blanqueamiento_preselects_the_general_specialty():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(button_payload="FAQ_BOOK:blanqueamiento", user_message="Agendar cita")
+    )
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == "General"
 
 
 @pytest.mark.asyncio
@@ -96,6 +108,7 @@ async def test_a_book_tap_for_a_topic_without_a_specialty_carries_no_key():
     "message",
     [
         "quiero un turno para consulta particular",
+        "quiero un turno para blanqueamiento",
         "necesito una cita particular",
         "Quiero agendar una consulta particular",
     ],

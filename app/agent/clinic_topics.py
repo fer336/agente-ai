@@ -90,6 +90,7 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
         title="Blanqueamiento dental",
         keywords=("blanqueamiento", "blanquear", "blanqueo"),
         text=_BLANQUEAMIENTO_TEXT,
+        book_specialty="General",
     ),
     ClinicTopic(
         id="consulta_particular",
