@@ -121,6 +121,8 @@ otherwise), `node_names`, `tool_names`, `agent_run_id`, `agent_run_status`. The
 `datasets/location.yaml` covers the location answer (image + "Cómo llegar" button, the
 button tap returning the native location card, and the same after a finished booking).
 
+`datasets/thanks.yaml` covers thanks and short acknowledgements at any point of the conversation: a pure "Gracias" gets a short LLM-written reply with no buttons and never reaches the confusion `fallback` node, a thanks that also requests something keeps its normal routing, and one `requires_real_llm` pair grades the wording (kind, short, no questions, different on two consecutive thanks).
+
 `datasets/flows_view_appointment.yaml` uses the seeded eval patient (Lucía Prueba,
 DNI 39000111, two upcoming appointments; `app/infrastructure/dentalink/eval_seed.py`).
 

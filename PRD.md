@@ -1068,6 +1068,17 @@ No se intentará modificar automáticamente un turno porque el paciente indique 
 
 Ese caso siempre se deriva.
 
+## 22.1 Agradecimientos
+
+Un mensaje que es solo un agradecimiento o un cierre amable ("Gracias", "Muchas gracias", "ok gracias", 🙏) se responde en cualquier momento de la conversación con una frase corta y cálida escrita por el LLM, distinta cada vez, sin botones, sin saludo y sin volver a preguntar qué necesita. Nunca recibe la respuesta de incomprensión.
+
+- Un reconocimiento sin "gracias" ("ok", "dale", "listo", "perfecto", 👍) cuenta como agradecimiento solo cuando ninguna etapa espera una respuesta; dentro de una etapa puede significar "sí" y sigue su flujo normal.
+- Con una etapa activa (elección de horario, confirmación, etc.) el agradecimiento no modifica ni reinicia el trámite: el paciente puede continuar cuando quiera y los botones anteriores siguen vigentes.
+- Justo después de crear, reprogramar o cancelar un turno, la respuesta se adapta a esa acción.
+- Si el mensaje además pide o pregunta algo ("gracias, quiero un turno") o rechaza ("no gracias"), no es un agradecimiento y sigue su ruta habitual.
+- En las etapas que piden un dato (primera visita, identificación, datos del paciente nuevo) el mensaje se trata como el dato esperado.
+- Si el LLM no está disponible se usa un texto fijo ("De nada! Cualquier cosa, escribime.").
+
 ---
 
 # 23. Estado de conversación

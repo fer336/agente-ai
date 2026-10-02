@@ -27,6 +27,7 @@ from app.agent.nodes.location import asks_for_location
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.payment_questions import asks_about_payments
 from app.agent.state import AgentState
+from app.agent.thanks import is_pure_thanks, llm_thanks_is_safe
 from app.agent.third_party_guard import (
     THIRD_PARTY_CONTEXT,
     THIRD_PARTY_STATIC_MESSAGE,
@@ -69,6 +70,11 @@ _MIN_INTENT_CONFIDENCE = 0.5
 #: a hardcoded keyword list), but only decides "new request or closing
 #: reply", not intent classification from scratch.
 POST_ACTION_CLOSE_INTENT = "post_action_close"
+
+#: A pure thanks or short acknowledgement with no completed action to close ("Gracias" at any
+#: point of the conversation). The router writes the kind reply itself, like
+#: `POST_ACTION_CLOSE_INTENT`, and never touches an active stage.
+THANKS_INTENT = "thanks"
 
 #: Set when a message claims to act for another person (see `third_party_guard.py`): the
 #: router itself answers, so no business node ever sees that person's name or DNI.
@@ -159,6 +165,16 @@ _POST_ACTION_CLOSE_STATIC_MESSAGES = {
     "cancel_appointment": "Listo, quedó cancelado. Cualquier cosa, escribime.",
 }
 _POST_ACTION_CLOSE_DEFAULT_MESSAGE = "De nada! Cualquier otra cosa, decime."
+_THANKS_STATIC_MESSAGE = "De nada! Cualquier cosa, escribime."
+_THANKS_SITUATION = "El paciente solo agradece o se despide amablemente, sin pedir nada."
+_THANKS_INSTRUCTION = (
+    "Respondé en 1 o 2 oraciones cortas, cálidas y naturales, con una redacción distinta a "
+    "tus respuestas anteriores. Sin saludo, sin preguntar qué necesita y sin ofrecer menú ni "
+    "opciones."
+)
+_THANKS_PENDING_PROCEDURE_INSTRUCTION = (
+    " Hay un trámite en curso: aclará que puede seguir con eso cuando quiera."
+)
 
 __all__ = [
     "MENU_ADMIN_PAYLOAD",
@@ -167,6 +183,7 @@ __all__ = [
     "MENU_LOCATION_PAYLOAD",
     "MENU_SPECIALTIES_PAYLOAD",
     "POST_ACTION_CLOSE_INTENT",
+    "THANKS_INTENT",
     "THIRD_PARTY_GUARD_INTENT",
     "create_resolve_interaction_node",
 ]
@@ -402,6 +419,65 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
     return node
 
 
+async def _thanks_reply(
+    state: AgentState,
+    collected_data: dict[str, object],
+    llm_provider: LLMProvider,
+    *,
+    post_action_context: object,
+    has_active_stage: bool,
+) -> dict[str, object]:
+    """The LLM-written reply to a thanks, answered by the router itself (no buttons).
+
+    Right after a completed action the wording fits that action and the consumed window is
+    cleared. With a stage active, `collected_data` and the stage are returned untouched so the
+    patient resumes exactly where they were (the earlier buttons stay valid in the chat).
+    """
+    if post_action_context is not None:
+        text = await generate_or_fallback(
+            llm_provider,
+            state["conversation_id"],
+            POST_ACTION_CLOSE_INTENT,
+            {
+                "accion_completada": post_action_context,
+                "situacion": _THANKS_SITUATION,
+                "instruccion": _THANKS_INSTRUCTION,
+            },
+            _POST_ACTION_CLOSE_STATIC_MESSAGES.get(
+                str(post_action_context), _POST_ACTION_CLOSE_DEFAULT_MESSAGE
+            ),
+            state["recent_messages"],
+            state["contact_memory_summary"],
+            action_executed=True,
+        )
+        return {
+            "intent": POST_ACTION_CLOSE_INTENT,
+            "response_text": text,
+            "response_buttons": None,
+            "requires_handoff": False,
+            "collected_data": {},
+        }
+    instruction = _THANKS_INSTRUCTION
+    if has_active_stage:
+        instruction += _THANKS_PENDING_PROCEDURE_INSTRUCTION
+    text = await generate_or_fallback(
+        llm_provider,
+        state["conversation_id"],
+        THANKS_INTENT,
+        {"situacion": _THANKS_SITUATION, "instruccion": instruction},
+        _THANKS_STATIC_MESSAGE,
+        state["recent_messages"],
+        state["contact_memory_summary"],
+    )
+    return {
+        "intent": THANKS_INTENT,
+        "response_text": text,
+        "response_buttons": None,
+        "requires_handoff": False,
+        "collected_data": collected_data,
+    }
+
+
 async def _resolve(
     state: AgentState, collected_data: dict[str, object], llm_provider: LLMProvider
 ) -> dict[str, object]:
@@ -498,6 +574,20 @@ async def _resolve(
             return _temporary_result("location", collected_data)
         return {"intent": "location"}
 
+    # A pure thanks gets a kind LLM-written reply wherever the conversation is, except while
+    # a data stage is asking for a field. Bare "ok"/"dale" only count with nothing awaiting
+    # an answer (inside a stage they can mean "yes").
+    if stage not in _DATA_COLLECTION_STAGES and is_pure_thanks(
+        state["user_message"], stage_awaits_answer=has_active_stage
+    ):
+        return await _thanks_reply(
+            state,
+            collected_data,
+            llm_provider,
+            post_action_context=post_action_context,
+            has_active_stage=has_active_stage,
+        )
+
     # Payments, advances and prices are handled by Administración and never improvised:
     # the payment intent wins over a topic keyword, except for alineadores (its image
     # already carries the payment options). Inside a data stage the same word is data.
@@ -553,25 +643,26 @@ async def _resolve(
             carried[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
 
     if post_action_context is not None and not _is_genuine_new_request(result):
-        text = await generate_or_fallback(
+        return await _thanks_reply(
+            state,
+            collected_data,
             llm_provider,
-            state["conversation_id"],
-            POST_ACTION_CLOSE_INTENT,
-            {"accion_completada": post_action_context},
-            _POST_ACTION_CLOSE_STATIC_MESSAGES.get(
-                str(post_action_context), _POST_ACTION_CLOSE_DEFAULT_MESSAGE
-            ),
-            state["recent_messages"],
-            state["contact_memory_summary"],
-            action_executed=True,
+            post_action_context=post_action_context,
+            has_active_stage=has_active_stage,
         )
-        return {
-            "intent": POST_ACTION_CLOSE_INTENT,
-            "response_text": text,
-            "response_buttons": None,
-            "requires_handoff": False,
-            "collected_data": {},
-        }
+
+    if (
+        result.intent == THANKS_INTENT
+        and result.confidence >= _MIN_INTENT_CONFIDENCE
+        and llm_thanks_is_safe(state["user_message"], stage_awaits_answer=has_active_stage)
+    ):
+        return await _thanks_reply(
+            state,
+            collected_data,
+            llm_provider,
+            post_action_context=None,
+            has_active_stage=has_active_stage,
+        )
 
     # A genuine new request always drops the now-consumed window,
     # forwarded explicitly below even on the branches that would

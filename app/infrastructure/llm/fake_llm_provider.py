@@ -44,6 +44,15 @@ _POST_ACTION_CLOSE_MESSAGES = {
     "cancel_appointment": "Listo, quedó cancelado. Cualquier cosa, escribime.",
 }
 _POST_ACTION_CLOSE_DEFAULT_MESSAGE = "De nada! Cualquier otra cosa, decime."
+#: The fake's own stand-in for the thanks detector in `app.agent.thanks` (the infrastructure
+#: layer does not import the agent layer): a message that is only a thanks.
+_THANKS_ONLY = re.compile(
+    r"^(?:(?:ok|dale|perfecto|genial|chau)\s+)?(?:(?:muchas|mil|muchisimas|muchísimas)\s+)?"
+    r"gracias(?:\s+por\s+todo)?(?:\s+chau)?$"
+)
+
+#: Stand-in for the LLM-written reply to a thanks with no completed action to close.
+_THANKS_MESSAGE = "De nada! Cualquier cosa, escribime."
 
 #: `extract_information`'s "nombre_completo" field, faked heuristically
 #: (real word here, not a full classifier): words that never appear in a
@@ -281,6 +290,9 @@ class FakeLLMProvider:
         if any(keyword in lowered for keyword in _LOCATION_UNDERSTANDING_KEYWORDS):
             intent = "location"
             confidence = 0.9
+        elif _THANKS_ONLY.match(re.sub(r"[^\w\s]", "", lowered).strip()):
+            intent = "thanks"
+            confidence = 0.9
         elif any(keyword in lowered for keyword in _FAQ_TOPIC_UNDERSTANDING_KEYWORDS) and not any(
             word in lowered for word in (*_APPOINTMENT_KEYWORDS, "agendar")
         ):
@@ -369,6 +381,8 @@ class FakeLLMProvider:
         if context.intent == "special_insurance":
             seguro = context.collected_data.get("seguro")
             return _SPECIAL_INSURANCE_MESSAGE.format(name=seguro or "tu obra social")
+        if context.intent == "thanks":
+            return _THANKS_MESSAGE
         if context.intent == "post_action_close":
             action = context.collected_data.get("accion_completada")
             return _POST_ACTION_CLOSE_MESSAGES.get(str(action), _POST_ACTION_CLOSE_DEFAULT_MESSAGE)

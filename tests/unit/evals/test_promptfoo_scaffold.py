@@ -31,6 +31,7 @@ _DATASET_NAMES = [
     "audit_followups",
     "clinic_topics",
     "location",
+    "thanks",
 ]
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")

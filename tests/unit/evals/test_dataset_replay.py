@@ -39,6 +39,7 @@ _DATASETS = [
     "audit_followups",
     "clinic_topics",
     "location",
+    "thanks",
 ]
 
 
