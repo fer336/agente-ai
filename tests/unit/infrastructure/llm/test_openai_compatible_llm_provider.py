@@ -565,3 +565,23 @@ def test_the_understand_prompt_sends_payments_to_administration_without_conflict
     assert "Administración" in question_definition
     assert "anticipos" in question_definition
     assert "handoff_offer en true" in question_definition
+
+
+@pytest.mark.asyncio
+async def test_understand_accepts_the_thanks_label() -> None:
+    client = _StubClient('{"intent": "thanks", "confidence": 0.93}')
+    provider = _make_provider(client)
+
+    result = await provider.understand("muchísimas gracias por todo", context={})
+
+    assert result.intent == "thanks"
+    assert result.confidence == 0.93
+    assert result.answer is None
+
+
+def test_understand_prompt_describes_the_thanks_label_and_lists_it_in_the_contract() -> None:
+    from app.infrastructure.llm.openai_compatible_llm_provider import DEFAULT_UNDERSTAND_PROMPT
+
+    assert "thanks" in DEFAULT_UNDERSTAND_PROMPT.split("una de:")[1].split(">")[0]
+    assert "- thanks:" in DEFAULT_UNDERSTAND_PROMPT
+    assert "sin pedir nada" in DEFAULT_UNDERSTAND_PROMPT

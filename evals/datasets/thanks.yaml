@@ -1,0 +1,104 @@
+# Scenarios for thanks and short acknowledgements: at any point of the conversation a pure
+# "Gracias" gets a short kind reply written by the LLM (no buttons, never the confusion
+# fallback), a thanks that also asks something keeps its normal routing and "no gracias" is a
+# decline, not thanks. The deterministic cases hold with the fake LLM; the
+# `requires_real_llm: true` case grades the wording. Consecutive cases of a conversation share
+# one conversation_id.
+
+- description: "Gracias suelto al empezar: respuesta amable, no el fallback de confusión"
+  vars:
+    conversation_id: "eval-thanks-01"
+    message: "Gracias"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "fallback"
+  metadata:
+    requires_real_llm: false
+
+- description: "Gracias después de tocar un botón viejo de Confirmar: nunca llega al fallback — turn 1"
+  vars:
+    conversation_id: "eval-thanks-02"
+    message: "Confirmar"
+    button_payload: "CONFIRM_APPOINTMENT"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "handoff"
+  metadata:
+    requires_real_llm: false
+
+- description: "Gracias después de tocar un botón viejo de Confirmar: nunca llega al fallback — turn 2"
+  vars:
+    conversation_id: "eval-thanks-02"
+    message: "Gracias"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "fallback"
+  metadata:
+    requires_real_llm: false
+
+- description: "Ok gracias suelto: respuesta amable sin botones"
+  vars:
+    conversation_id: "eval-thanks-03"
+    message: "ok gracias"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:replyKindIs
+      config:
+        kind: "text"
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "fallback"
+  metadata:
+    requires_real_llm: false
+
+- description: "Gracias que además pide un turno: sigue el flujo de agenda, no un simple de nada"
+  vars:
+    conversation_id: "eval-thanks-04"
+    message: "gracias, quiero un turno"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "appointment"
+  metadata:
+    requires_real_llm: false
+
+- description: "Gracias dos veces seguidas (LLM real): amable, corto, sin preguntas y con redacción distinta — turn 1"
+  vars:
+    conversation_id: "eval-thanks-llm-01"
+    message: "Muchas gracias"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta es un agradecimiento corto y amable (una o dos oraciones), sin saludo, sin
+        botones ni menú y sin hacer ninguna pregunta al paciente. No dice que no entendió.
+  metadata:
+    requires_real_llm: true
+
+- description: "Gracias dos veces seguidas (LLM real): amable, corto, sin preguntas y con redacción distinta — turn 2"
+  vars:
+    conversation_id: "eval-thanks-llm-01"
+    message: "Gracias!"
+  assert:
+    - type: llm-rubric
+      value: >
+        La respuesta es un agradecimiento corto y amable (una o dos oraciones), sin saludo, sin
+        botones ni menú y sin hacer ninguna pregunta al paciente. Su redacción es distinta de la
+        respuesta anterior de la conversación (no repite las mismas frases).
+  metadata:
+    requires_real_llm: true

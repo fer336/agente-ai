@@ -85,3 +85,4 @@ tests:
   - file://datasets/audit_followups.yaml
   - file://datasets/clinic_topics.yaml
   - file://datasets/location.yaml
+  - file://datasets/thanks.yaml

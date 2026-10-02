@@ -18,6 +18,7 @@ from app.agent.nodes.payment_admin import create_payment_admin_node
 from app.agent.nodes.question import create_question_node
 from app.agent.nodes.resolve_interaction import (
     POST_ACTION_CLOSE_INTENT,
+    THANKS_INTENT,
     THIRD_PARTY_GUARD_INTENT,
     create_resolve_interaction_node,
 )
@@ -102,7 +103,7 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
     if state.get("error"):
         return HANDLE_ERROR_NODE
     intent = state.get("intent")
-    if intent in (POST_ACTION_CLOSE_INTENT, THIRD_PARTY_GUARD_INTENT):
+    if intent in (POST_ACTION_CLOSE_INTENT, THANKS_INTENT, THIRD_PARTY_GUARD_INTENT):
         # `resolve_interaction` already produced the full reply itself
         # (see `POST_ACTION_CLOSE_INTENT`'s own docstring) — no business
         # node needed, same "the router IS the answer" shape as

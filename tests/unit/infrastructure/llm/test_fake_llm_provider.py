@@ -250,3 +250,32 @@ async def test_generate_response_for_a_special_insurance_passes_the_fact_check(n
 
     assert name in text
     assert special_insurance_text_is_valid(text, name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["Gracias", "muchas gracias por todo", "chau, gracias"])
+async def test_understand_classifies_obvious_thanks_as_thanks(message):
+    result = await make_llm_provider().understand(message, context={})
+
+    assert result.intent == "thanks"
+    assert result.confidence >= 0.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message", ["gracias, quiero un turno", "no gracias", "gracias, ¿dónde queda?"]
+)
+async def test_understand_does_not_classify_thanks_that_also_asks_or_declines(message):
+    result = await make_llm_provider().understand(message, context={})
+
+    assert result.intent != "thanks"
+
+
+@pytest.mark.asyncio
+async def test_generate_response_for_thanks_is_a_deterministic_spanish_thanks():
+    provider = make_llm_provider()
+    context = ResponseContext(
+        conversation_id="c", intent="thanks", collected_data={}, recent_messages=[]
+    )
+
+    assert await provider.generate_response(context) == "De nada! Cualquier cosa, escribime."
