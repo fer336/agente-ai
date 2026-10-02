@@ -159,6 +159,9 @@ _INSURANCE_KEYWORDS = (
     "william hope",
 )
 _SPECIALTY_KEYWORDS = ("especialidad", "especialidades")
+#: Specialty names the fake reports as a `specialty_mention`, like the real provider does for
+#: "quiero un turno de ortodoncia" (matched against the catalog by the appointment node).
+_SPECIALTY_MENTION_KEYWORDS = ("ortodoncia", "endodoncia", "implantología", "odontopediatría")
 #: T3 (free-text menu-intents parity): phrasings the deterministic
 #: `asks_for_location` substring pre-check (`app.agent.nodes.location`)
 #: does NOT already catch on its own — e.g. it matches "cómo llegar" but
@@ -331,7 +334,9 @@ class FakeLLMProvider:
             intent=intent,
             confidence=confidence,
             answer=None,
-            specialty_mention=None,
+            specialty_mention=next(
+                (name for name in _SPECIALTY_MENTION_KEYWORDS if name in lowered), None
+            ),
             professional_mention=None,
             operation_mention=operation,
             navigation_target=navigation_target,

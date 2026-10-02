@@ -2,23 +2,34 @@ import pytest
 
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
-    STAGE_AWAITING_PROFESSIONAL_SELECTION,
+    STAGE_AWAITING_SLOT_SELECTION,
 )
 from app.agent.nodes.specialties import create_specialties_node
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import future_slot
 from tests.fixtures.gateways import (
+    make_conversation_repository,
     make_dentalink_gateway,
     make_llm_provider,
     make_specialty_gateway,
 )
-from tests.fixtures.seed_objects import make_professional, make_specialty
+from tests.fixtures.seed_objects import make_conversation, make_professional, make_specialty
 
 
-def _node(specialties=None, professionals=None, llm_provider=None):
+def _node(specialties=None, professionals=None, llm_provider=None, available_slots=None):
+    conversation_repository = make_conversation_repository()
+    # Seeded synchronously: the node flips the input state of the conversation it replies to.
+    conversation_repository._conversations_by_id["conv-1"] = make_conversation(  # noqa: SLF001
+        id_="conv-1"
+    )
     return create_specialties_node(
         make_specialty_gateway(specialties=specialties),
-        make_dentalink_gateway(professionals=professionals),
+        make_dentalink_gateway(
+            professionals=professionals,
+            available_slots=available_slots if available_slots is not None else [future_slot()],
+        ),
         llm_provider or make_llm_provider(),
+        conversation_repository,
     )
 
 
@@ -47,20 +58,20 @@ async def test_naming_a_specialty_with_booking_context_continues_the_booking():
         )
     )
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    # The agent never shows a professional list in the create flow: the specialty alone
+    # shows its next free slots.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-2"
-    assert result["response_list"] is not None
-    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
-    assert "Dr. Otro" not in [r.title for r in result["response_list"].rows]
+    assert result["response_list"].section_title == "Horarios disponibles"
+    assert [r.id for r in result["response_list"].rows] == ["SELECT_SLOT:slot-1"]
+    assert "Dra. Laura Pérez" not in result["response_text"]
+    assert "menú" in result["response_text"]
 
 
 @pytest.mark.asyncio
-async def test_naming_a_specialty_without_booking_context_stays_read_only():
-    # Browse-vs-booking separation: the exact same specialty match, with no
-    # booking intent/context at all, must show the professional list
-    # without ever entering `awaiting_professional_selection` or writing
-    # any booking selection field.
+async def test_naming_a_specialty_without_booking_context_shows_its_next_slots():
+    # Absolute rule: professionals are never shown, only slots — also when browsing.
     node = _node(
         specialties=[
             make_specialty(id_="spec-1", name="Ortodoncia"),
@@ -74,12 +85,10 @@ async def test_naming_a_specialty_without_booking_context_stays_read_only():
 
     result = await node(make_agent_state(user_message="Quiero en médico general"))
 
-    assert "stage" not in result["collected_data"]
-    assert "operation" not in result["collected_data"]
-    assert "chosen_specialty_id" not in result["collected_data"]
-    assert "chosen_professional_id" not in result["collected_data"]
-    assert result["response_list"] is not None
-    assert "Dra. Laura Pérez" in result["response_list"].rows[0].title
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["chosen_specialty_id"] == "spec-2"
+    assert result["response_list"].section_title == "Horarios disponibles"
+    assert "Laura" not in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -103,16 +112,40 @@ async def test_naming_a_professional_with_booking_context_skips_the_specialty_qu
         )
     )
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    # Straight to that professional's slots: no professional list in the create flow.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert result["collected_data"]["chosen_specialty_id"] == "spec-1"
-    assert result["response_list"] is not None
-    assert "Carlos Adahenao" in result["response_list"].rows[0].title
-    assert "Camila Carasatorre" not in [r.title for r in result["response_list"].rows]
+    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert result["response_list"].section_title == "Horarios disponibles"
+    assert all(r.id.startswith("SELECT_SLOT:") for r in result["response_list"].rows[:1])
 
 
 @pytest.mark.asyncio
-async def test_naming_a_professional_without_booking_context_stays_read_only():
+async def test_naming_a_professional_without_slots_offers_the_specialtys_next_slots():
+    node = _node(
+        specialties=[make_specialty(id_="spec-1", name="Implantología")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Carlos Adahenao", specialty_id="spec-1"),
+            make_professional(id_="prof-2", full_name="Camila Carasatorre", specialty_id="spec-1"),
+        ],
+        available_slots=[future_slot(id_="slot-other", professional_id="prof-2")],
+    )
+
+    result = await node(
+        make_agent_state(
+            user_message="Quiero un turno con el doctor Carlos adahenao",
+            collected_data={"operation_mention": "create"},
+        )
+    )
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"].get("chosen_professional_id") is None
+    assert [r.id for r in result["response_list"].rows] == ["SELECT_SLOT:slot-other"]
+
+
+@pytest.mark.asyncio
+async def test_naming_a_professional_without_booking_context_shows_that_professionals_slots():
     node = _node(
         specialties=[make_specialty(id_="spec-1", name="Implantología")],
         professionals=[
@@ -125,11 +158,9 @@ async def test_naming_a_professional_without_booking_context_stays_read_only():
         make_agent_state(user_message="Quiero un turno con el doctor Carlos adahenao")
     )
 
-    assert "stage" not in result["collected_data"]
-    assert "operation" not in result["collected_data"]
-    assert "chosen_specialty_id" not in result["collected_data"]
-    assert result["response_list"] is not None
-    assert "Carlos Adahenao" in result["response_list"].rows[0].title
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert result["collected_data"]["chosen_professional_id"] == "prof-1"
+    assert result["response_list"].section_title == "Horarios disponibles"
 
 
 @pytest.mark.asyncio
@@ -151,8 +182,9 @@ async def test_active_appointment_stage_counts_as_booking_context():
         )
     )
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_PROFESSIONAL_SELECTION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
     assert result["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
+    assert result["response_list"].section_title == "Horarios disponibles"
 
 
 @pytest.mark.asyncio

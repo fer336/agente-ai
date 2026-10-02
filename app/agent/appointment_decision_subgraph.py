@@ -37,17 +37,17 @@ from langgraph.graph.state import CompiledStateGraph
 from app.agent.clinic_topics import PRESELECTED_SPECIALTY_KEY
 from app.agent.handoff_offer import normalize_text
 from app.agent.nodes.appointment_selection import (
-    STAGE_AWAITING_NO_SLOTS_CHOICE,
-    STAGE_AWAITING_PROFESSIONAL_SELECTION,
     STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE,
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
     decision_entry_node_for_stage,
+    is_single_page_slots,
     next_page,
     resolve_list_choice,
     slot_by_id,
     slot_payload_id,
     slots_list_message,
+    slots_screen,
     text_leaks_a_name,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
@@ -63,7 +63,6 @@ from app.application.conversations.set_conversation_input_state import (
 )
 from app.application.specialties.list_specialties import ListSpecialtiesUseCase
 from app.domain.entities.appointment_slot import AppointmentSlot
-from app.domain.entities.professional import Professional
 from app.domain.entities.specialty import Specialty
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import AppointmentGateway, SpecialtyGateway
@@ -79,11 +78,9 @@ from app.domain.value_objects.menu_payloads import (
     LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
-    PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
-    professionals_list_message,
     specialties_list_message,
 )
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
@@ -103,31 +100,28 @@ _CREATE_APPOINTMENT_ACTION = "create_appointment"
 _SEARCH_WINDOW = timedelta(days=14)
 _MAX_SLOTS_SEARCHED = 27
 
-#: A valid specialty pick goes straight here now (the user's own ask: most
-#: patients are new and don't know any professional by name, and doctor
-#: names/choice shouldn't appear in the slot-picking list at all — only
-#: date/day/time). Aggregates slots across ALL enabled professionals of
-#: the chosen specialty. One Dentalink request per calendar day in the
-#: window (see `SearchAvailabilityAnyProfessionalUseCase`'s own
-#: docstring), so request volume scales with `_AGGREGATE_SEARCH_WINDOW.days`,
-#: not with the specialty's professional count — worst case is 7
-#: sequential Dentalink requests today, regardless of how many
-#: professionals the specialty has. An earlier version of this use case
-#: looped one `search_availability` call PER professional and hit a live
-#: `429 Too Many Attempts` in production — fixed by walking by day instead
-#: (see the use case's docstring for the full incident). The window is
-#: narrower than the single-professional `_SEARCH_WINDOW` (14 days) on
-#: purpose: a patient asking for "the soonest slot, don't care who" cares
-#: about near-term availability, not two weeks out. 18 slots is 2 full
-#: pages of 9 rows (the WhatsApp list's real 10-row cap minus the "Ver
-#: más"/"Volver" navigation row) — see `_offer_any_professional_slots`
-#: below for why the search `date_range` itself is built from TODAY's
-#: midnight, not from `now` directly: it's what keeps the window at
-#: exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates (today + the
-#: next 6), so the use case's calendar-day-aligned walk never exceeds 7
-#: real Dentalink requests.
-_AGGREGATE_TARGET_SLOTS = 18
+#: A specialty request (a list tap, a typed mention, a topic that books a
+#: fixed specialty) goes straight here: the agent NEVER asks the patient to
+#: choose a professional, it shows the NEXT 10 FREE SLOTS (soonest first)
+#: across ALL enabled professionals of the specialty, with date/day/time only.
+#: 10 is exactly WhatsApp's list cap, so the screen is a single page with no
+#: "Ver más"/"Volver" navigation row (see `slots_screen`). One Dentalink
+#: request per calendar day in the window (see
+#: `SearchAvailabilityAnyProfessionalUseCase`'s own docstring), so request
+#: volume scales with `_AGGREGATE_SEARCH_WINDOW.days`, not with the
+#: specialty's professional count — worst case is 7 sequential Dentalink
+#: requests. An earlier version looped one `search_availability` call PER
+#: professional and hit a live `429 Too Many Attempts` in production. The
+#: window is narrow on purpose: a patient asking for "the soonest slot,
+#: don't care who" cares about near-term availability. The search
+#: `date_range` is built from TODAY's midnight, not from `now` directly, which
+#: keeps the window at exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates.
+_AGGREGATE_TARGET_SLOTS = 10
 _AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
+
+#: One-shot `collected_data` flag: the caller already resolved the specialty
+#: (`chosen_specialty_id`/`chosen_specialty_name`) and wants its next slots now.
+SPECIALTY_SLOTS_REQUEST_KEY = "show_specialty_slots"
 
 #: Maximum time to wait for staffed-specialty filtering before degrading
 #: gracefully to showing all specialties. This prevents the first appointment
@@ -153,51 +147,43 @@ _NO_SPECIALTIES_MESSAGE = (
     "En este momento no tengo las especialidades disponibles. "
     "Querés que te comunique con administración?"
 )
-#: Fallback screen shown only when the aggregated "ver próximos turnos"
-#: search finds nothing (see `_offer_any_professional_slots`) — every
-#: button title here stays under `InteractiveButton`'s 20-char cap.
+#: Fallback screen shown only when the aggregated "próximos turnos" search
+#: finds nothing (see `_offer_any_professional_slots`). It never offers a
+#: professional list (the create flow only ever shows slots): another
+#: specialty, the main menu, or administration — every button title stays
+#: under `InteractiveButton`'s 20-char cap and WhatsApp's 3-button cap.
 _NO_SLOTS_FALLBACK_PROMPT = (
-    "No encontramos turnos próximos con ningún profesional de esa especialidad. "
-    "Podés elegir un profesional puntual para ver su agenda completa, o cambiar "
-    "de especialidad:"
+    "No encontramos turnos próximos disponibles para esa especialidad. Podés elegir "
+    "otra especialidad, volver al menú principal o hablar con administración:"
 )
 _NO_SLOTS_FALLBACK_REMINDER = (
-    "Por favor, elegí una opción tocando un botón: elegir profesional, u otra "
-    "especialidad."
+    "Por favor, elegí una opción tocando un botón: otra especialidad, menú principal "
+    "o administración."
 )
 _NO_SLOTS_FALLBACK_BUTTONS = [
-    InteractiveButton(id=CHOOSE_PROFESSIONAL_PAYLOAD, title="Elegir profesional"),
     InteractiveButton(id=LIST_BACK_PAYLOAD, title="Otra especialidad"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 
-_CHOOSE_PROFESSIONAL_PROMPT = (
-    "Con qué profesional preferís atenderte? Elegí una opción de la lista:"
-)
-_PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE = (
-    "No pude identificar al profesional. Elegí una opción de la lista:"
-)
-_NO_PROFESSIONALS_MESSAGE = (
-    "No tengo profesionales cargados para esa especialidad. "
-    "Querés que te comunique con administración?"
-)
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
     "Querés que te comunique con administración?"
 )
-#: Mirrors `app.agent.nodes.appointment`'s own `_NO_SLOTS_OTHER_
-#: PROFESSIONALS_MESSAGE`/`_VIEW_OTHER_PROFESSIONALS_PAYLOAD`/
-#: `_NO_SLOTS_CHOICE_BUTTONS` — same one-way-dependency duplication this
-#: module already does for `_NO_SLOTS_MESSAGE` above. This session's own
-#: brief: a professional with zero availability used to only offer
-#: "Menú principal" (start over from scratch), discarding the specialty
-#: the patient already picked — offering another professional in that
-#: same specialty first is a much smaller ask.
-_NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE = (
-    "No encontramos horarios disponibles con ese profesional en los próximos días. "
-    "¿Querés ver otros profesionales de la misma especialidad?"
-)
-_VIEW_OTHER_PROFESSIONALS_PAYLOAD = "VIEW_OTHER_PROFESSIONALS"
 _CHOOSE_SLOT_PROMPT = "Elegí un horario tocando uno de los botones:"
+#: Aggregated screen (next slots of a specialty): the escape hint is appended
+#: verbatim to whatever the LLM words, so it can never be dropped.
+_CHOOSE_AGGREGATED_SLOT_PROMPT = "Estos son los próximos turnos disponibles. Elegí uno de la lista."
+#: Shown when the professional the patient asked for has no slots and the specialty's
+#: next slots are offered instead.
+_NO_PROFESSIONAL_SLOTS_PROMPT = (
+    "No encontramos horarios disponibles con ese profesional en los próximos días. "
+    "Estos son los próximos turnos disponibles de la misma especialidad. Elegí uno de la lista."
+)
+_AGGREGATED_SLOT_ESCAPE_HINT = (
+    "Si ninguno te sirve, escribí 'menú' para volver al inicio o 'administración' "
+    "para hablar con el equipo."
+)
 _SLOT_SELECTION_REMINDER = (
     "Por favor, elegí uno de los horarios tocando un botón — todavía no puedo "
     "tomar la selección por texto."
@@ -209,9 +195,6 @@ _SESSION_LOST_MESSAGE = (
 
 _NO_AVAILABILITY_BUTTONS = [
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
-]
-_NO_SLOTS_CHOICE_BUTTONS = [
-    InteractiveButton(id=_VIEW_OTHER_PROFESSIONALS_PAYLOAD, title="Otros profesionales"),
 ]
 
 #: After this many consecutive invalid picks from the specialty/professional
@@ -258,6 +241,7 @@ class AppointmentDecisionState(TypedDict, total=False):
         "choose_specialty",
         "choose_browse_mode",
         "choose_professional",
+        "search_availability",
         "choose_slot",
         "legacy_exit",
     ]
@@ -474,82 +458,6 @@ def build_appointment_decision_graph(
             "exit_reason": "none",
         }
 
-    async def _offer_professionals(
-        conversation_id: ConversationId,
-        specialty_id: str,
-        specialty_name: str,
-        collected_data: dict[str, object],
-        recent_messages: list[dict[str, str]],
-        contact_memory: str | None,
-    ) -> dict[str, object]:
-        professionals = await appointment_gateway.list_professionals(specialty_id=specialty_id)
-        if not professionals:
-            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_professionals",
-                {
-                    "situacion": (
-                        f"No hay profesionales cargados para la especialidad {specialty_name}."
-                    ),
-                },
-                _NO_PROFESSIONALS_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
-            return {
-                "response_text": text,
-                "response_buttons": None,
-                "requires_handoff": False,
-                "collected_data": {},
-                "next_node": "end",
-                "decision_node": "choose_professional",
-                "exit_reason": "none",
-            }
-
-        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        page = current_page(collected_data, "doctors_page")
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "choose_professional",
-            {
-                "situacion": (
-                    "Hay que preguntarle con qué profesional prefiere atenderse; le vamos a "
-                    "mostrar una lista para elegir."
-                ),
-                "instruccion": (
-                    "Le vamos a mostrar la lista de profesionales debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno."
-                ),
-            },
-            _CHOOSE_PROFESSIONAL_PROMPT,
-            recent_messages,
-            contact_memory,
-        )
-        if text_leaks_a_name(text, [p.full_name for p in professionals]):
-            text = _CHOOSE_PROFESSIONAL_PROMPT
-        return {
-            "response_text": text,
-            "response_buttons": None,
-            "response_list": professionals_list_message(
-                professionals, page=page, include_back=True
-            ),
-            "requires_handoff": False,
-            "collected_data": {
-                **collected_data,
-                "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-                "chosen_specialty_id": specialty_id,
-                "chosen_specialty_name": specialty_name,
-                "professional_options": professionals,
-                "doctors_page": page,
-            },
-            "next_node": "end",
-            "decision_node": "choose_professional",
-            "exit_reason": "none",
-        }
-
     async def _offer_browse_choice(
         conversation_id: ConversationId,
         specialty_id: str,
@@ -558,12 +466,12 @@ def build_appointment_decision_graph(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object]:
-        """Fallback screen shown only when the aggregated "ver próximos
-        turnos" search (`_offer_any_professional_slots`) finds nothing for
-        the specialty in the window: lets the patient pick a specific
-        professional's full agenda instead, or go back to choose a
-        different specialty. Also re-shown verbatim by `choose_browse_mode`
-        when the patient's next reply isn't one of these 2 buttons."""
+        """Fallback screen shown only when the aggregated "próximos turnos"
+        search (`_offer_any_professional_slots`) finds nothing for the
+        specialty in the window: another specialty, the main menu or
+        administration — never a professional list. Also re-shown verbatim
+        by `choose_browse_mode` when the patient's next reply isn't one of
+        these buttons."""
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         text = await generate_or_fallback(
             llm_provider,
@@ -571,13 +479,13 @@ def build_appointment_decision_graph(
             "choose_browse_mode",
             {
                 "situacion": (
-                    "No encontramos turnos próximos con ningún profesional de esa "
-                    "especialidad; hay que ofrecerle elegir un profesional puntual para "
-                    "ver su agenda completa, o cambiar de especialidad."
+                    "No encontramos turnos próximos para esa especialidad; hay que "
+                    "ofrecerle cambiar de especialidad, volver al menú principal o hablar "
+                    "con administración."
                 ),
                 "instruccion": (
-                    "Le vamos a mostrar 2 botones debajo de tu mensaje — no los repitas "
-                    "en el texto, solo planteá la pregunta."
+                    "Le vamos a mostrar 3 botones debajo de tu mensaje — no los repitas "
+                    "en el texto y NO ofrezcas elegir un profesional, solo planteá la pregunta."
                 ),
             },
             _NO_SLOTS_FALLBACK_PROMPT,
@@ -626,9 +534,15 @@ def build_appointment_decision_graph(
                 contact_memory,
             )
         if button_payload == CHOOSE_PROFESSIONAL_PAYLOAD:
-            return await _offer_professionals(
-                conversation_id, specialty_id, specialty_name, collected_data,
-                recent_messages, contact_memory,
+            # A stale tap of the old "Elegir profesional" button (the create flow never
+            # lists professionals any more): search the specialty's next slots again.
+            return await _offer_any_professional_slots(
+                conversation_id,
+                specialty_id,
+                specialty_name,
+                collected_data,
+                recent_messages,
+                contact_memory,
             )
 
         reminder_text = await generate_or_fallback(
@@ -638,7 +552,7 @@ def build_appointment_decision_graph(
             {
                 "situacion": (
                     "El paciente escribió texto libre o tocó algo inválido en este paso; "
-                    "solo puede elegir tocando uno de los 2 botones."
+                    "solo puede elegir tocando uno de los 3 botones."
                 ),
                 "instruccion": (
                     "Pedile que toque uno de los botones — no los repitas en el texto."
@@ -665,6 +579,7 @@ def build_appointment_decision_graph(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
         prefetched: tuple[list[AppointmentSlot], dict[str, str]] | None = None,
+        requested_professional_has_no_slots: bool = False,
     ) -> dict[str, object]:
         if prefetched is None:
             prefetched = await _search_any_professional_slots(specialty_id)
@@ -687,6 +602,7 @@ def build_appointment_decision_graph(
             contact_memory,
             slots,
             professional_names,
+            requested_professional_has_no_slots=requested_professional_has_no_slots,
         )
 
     async def _search_any_professional_slots(
@@ -731,33 +647,54 @@ def build_appointment_decision_graph(
         contact_memory: str | None,
         slots: list[AppointmentSlot],
         professional_names: dict[str, str],
+        requested_professional_has_no_slots: bool = False,
     ) -> dict[str, object]:
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        static_prompt = (
+            _NO_PROFESSIONAL_SLOTS_PROMPT
+            if requested_professional_has_no_slots
+            else _CHOOSE_AGGREGATED_SLOT_PROMPT
+        )
         text = await generate_or_fallback(
             llm_provider,
             str(conversation_id),
-            "choose_slot",
+            "no_slots_professional_next_slots"
+            if requested_professional_has_no_slots
+            else "choose_slot",
             {
                 "situacion": (
-                    "Hay horarios disponibles y hay que invitar al paciente a elegir uno."
+                    "El profesional que pidió el paciente no tiene horarios en los próximos "
+                    "días; le mostramos los próximos horarios libres de la misma "
+                    "especialidad y hay que invitarlo a elegir uno."
+                    if requested_professional_has_no_slots
+                    else "Hay horarios disponibles y hay que invitar al paciente a elegir uno."
                 ),
                 "instruccion": (
                     "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
                     "los menciones ni los repitas, y NO nombres ningún profesional: el "
                     "paciente todavía no eligió con quién atenderse, eso se confirma "
-                    "recién después de elegir un horario."
+                    "recién después de elegir un horario. Una sola frase corta; el aviso "
+                    "para salir lo agregamos nosotros."
                 ),
             },
-            _CHOOSE_SLOT_PROMPT,
+            static_prompt,
             recent_messages,
             contact_memory,
         )
         if text_leaks_a_name(text, list(professional_names.values())):
-            text = _CHOOSE_SLOT_PROMPT
+            text = static_prompt
+        text = f"{text}\n\n{_AGGREGATED_SLOT_ESCAPE_HINT}"
+        # Aggregated screen: no professional is chosen, whatever a stale
+        # checkpoint carried (the professional comes from the picked slot).
+        collected_data = {
+            key: value
+            for key, value in collected_data.items()
+            if key not in ("chosen_professional_id", "chosen_professional_name")
+        }
         return {
             "response_text": text,
             "response_buttons": None,
-            "response_list": slots_list_message(slots, page=0, include_back=True),
+            "response_list": slots_screen(slots, 0, collected_data),
             "requires_handoff": False,
             "pending_action_id": None,
             "collected_data": {
@@ -868,7 +805,16 @@ def build_appointment_decision_graph(
             # `entry`'s own existing stale/reminder handling below,
             # unchanged.
 
-        if entry is None and stage is None:
+        if collected_data.get(SPECIALTY_SLOTS_REQUEST_KEY):
+            # The caller already resolved the specialty (and maybe the professional the
+            # patient asked for by name): straight to the slots, whatever stage a detour
+            # left behind.
+            entry = (
+                "search_availability"
+                if collected_data.get("chosen_professional_id") is not None
+                else "choose_specialty"
+            )
+        elif entry is None and stage is None:
             if collected_data.get("operation") == _CREATE_APPOINTMENT_ACTION:
                 entry = "choose_specialty"
         if entry is None:
@@ -893,6 +839,18 @@ def build_appointment_decision_graph(
 
         recent_messages = state.get("recent_messages", [])
         contact_memory = state.get("contact_memory_summary")
+
+        if collected_data.pop(SPECIALTY_SLOTS_REQUEST_KEY, None):
+            requested_specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
+            if requested_specialty_id is not None:
+                return await _offer_any_professional_slots(
+                    conversation_id,
+                    requested_specialty_id,
+                    str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                    collected_data,
+                    recent_messages,
+                    contact_memory,
+                )
 
         if not options:
             preselected = collected_data.pop(PRESELECTED_SPECIALTY_KEY, None)
@@ -1015,135 +973,35 @@ def build_appointment_decision_graph(
         )
 
     async def choose_professional(state: AppointmentDecisionState) -> dict[str, object]:
+        """Legacy stage kept only for old in-flight checkpoints that stored
+        `awaiting_professional_selection` with a professional list on screen. Professionals
+        are never shown (create and reschedule alike): whatever arrives shows the next slots
+        of the checkpoint's specialty (a "Volver atrás" still goes up to the specialty list)."""
         collected_data = dict(state.get("collected_data", {}))
         conversation_id = ConversationId(state["conversation_id"])
-        professional_options = cast(
-            list[Professional], collected_data.get("professional_options", [])
-        )
         specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
-        button_payload = state.get("button_payload")
         recent_messages = state.get("recent_messages", [])
         contact_memory = state.get("contact_memory_summary")
 
-        if specialty_id is None:
-            return await _offer_specialties(
-                conversation_id, collected_data, recent_messages, contact_memory
-            )
-        if not professional_options:
-            return await _offer_professionals(
-                conversation_id,
-                specialty_id,
-                str(collected_data.get("chosen_specialty_name", "esa especialidad")),
-                collected_data,
-                recent_messages,
-                contact_memory,
-            )
-
-        if button_payload == LIST_MORE_PAYLOAD:
-            updated_page = next_page(collected_data, "doctors_page")
-            return await _offer_professionals(
-                conversation_id,
-                specialty_id,
-                str(collected_data.get("chosen_specialty_name", "")),
-                {**collected_data, "doctors_page": updated_page},
-                recent_messages,
-                contact_memory,
-            )
-        if button_payload == LIST_BACK_PAYLOAD:
+        if specialty_id is None or state.get("button_payload") == LIST_BACK_PAYLOAD:
             return await _offer_specialties(
                 conversation_id,
                 invalidate_from(collected_data, "specialty"),
                 recent_messages,
                 contact_memory,
             )
-
-        index = resolve_list_choice(
-            button_payload=button_payload,
-            user_message=state.get("user_message", ""),
-            payload_prefix=PROFESSIONAL_PAYLOAD_PREFIX,
-            option_ids=[option.id for option in professional_options],
-            option_names=[option.full_name for option in professional_options],
+        return await _offer_any_professional_slots(
+            conversation_id,
+            specialty_id,
+            str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+            invalidate_from(collected_data, "professional"),
+            recent_messages,
+            contact_memory,
         )
-        if index is None:
-            retry_count = cast(int, collected_data.get("professional_retry_count", 0)) + 1
-            if retry_count >= _ESCALATE_AFTER_ATTEMPTS:
-                escalation_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "professional_retry_escalation",
-                    {
-                        "situacion": (
-                            "El paciente ya intentó elegir un profesional un par de veces "
-                            "sin éxito."
-                        ),
-                        "instruccion": (
-                            "Notá con calidez que no se está entendiendo y ofrecele pasarlo "
-                            "con administración, o volver al menú principal. Van a aparecer "
-                            "esos 2 botones debajo de tu mensaje — no los repitas en el texto."
-                        ),
-                    },
-                    _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE,
-                    state.get("recent_messages", []),
-                    state.get("contact_memory_summary"),
-                )
-                return {
-                    "response_text": escalation_text,
-                    "response_buttons": _ESCALATION_BUTTONS,
-                    "requires_handoff": False,
-                    "collected_data": {},
-                    "next_node": "end",
-                    "decision_node": "choose_professional",
-                    "exit_reason": "none",
-                }
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "professional_retry",
-                {
-                    "situacion": (
-                        "El paciente no eligió un profesional válido de la lista "
-                        "interactiva que le mostramos."
-                    ),
-                    "instruccion": (
-                        "Pedile que elija un profesional de la lista interactiva. "
-                        "No menciones números ni repitas la lista en el texto."
-                    ),
-                    "intentos_seguidos": retry_count,
-                },
-                _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE,
-                state.get("recent_messages", []),
-                state.get("contact_memory_summary"),
-            )
-            if text_leaks_a_name(text, [option.full_name for option in professional_options]):
-                text = _PROFESSIONAL_NOT_UNDERSTOOD_MESSAGE
-            page = current_page(collected_data, "doctors_page")
-            return {
-                "response_text": text,
-                "response_buttons": None,
-                "response_list": professionals_list_message(
-                    professional_options, page=page, include_back=True
-                ),
-                "requires_handoff": False,
-                "collected_data": {**collected_data, "professional_retry_count": retry_count},
-                "next_node": "end",
-                "decision_node": "choose_professional",
-                "exit_reason": "none",
-            }
-
-        chosen_professional = professional_options[index]
-        return {
-            "collected_data": {
-                **collected_data,
-                "chosen_professional_id": chosen_professional.id,
-                "chosen_professional_name": chosen_professional.full_name,
-            },
-            "next_node": "search_availability",
-            "decision_node": "choose_professional",
-            "exit_reason": "none",
-        }
 
     async def search_availability_node(state: AppointmentDecisionState) -> dict[str, object]:
         collected_data = dict(state.get("collected_data", {}))
+        collected_data.pop(SPECIALTY_SLOTS_REQUEST_KEY, None)
         conversation_id = ConversationId(state["conversation_id"])
         now = datetime.now(UTC)
         # `specialty_id` is deliberately never forwarded — same reason as
@@ -1156,41 +1014,17 @@ def build_appointment_decision_graph(
             limit=_MAX_SLOTS_SEARCHED,
         )
         if not slots and collected_data.get("chosen_specialty_id") is not None:
-            # A specialty is already known — offer another professional in
-            # it before falling back to "start over from scratch" (see
-            # `_NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE`'s own comment).
-            # `STAGE_AWAITING_NO_SLOTS_CHOICE`'s follow-up stays
-            # legacy-owned, same as `awaiting_no_availability_choice`
-            # below — `decision_entry_node_for_stage` never maps either
-            # back into this subgraph.
-            await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-            no_slots_other_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_slots_other_professionals",
-                {
-                    "situacion": (
-                        "No hay horarios disponibles con ese profesional en los próximos "
-                        "días; ofrecele ver otros profesionales de la misma especialidad."
-                    ),
-                },
-                _NO_SLOTS_OTHER_PROFESSIONALS_MESSAGE,
+            # The requested professional has no slots, so the next slots of
+            # the same specialty are offered instead — never a professional list.
+            return await _offer_any_professional_slots(
+                conversation_id,
+                str(collected_data["chosen_specialty_id"]),
+                str(collected_data.get("chosen_specialty_name", "esa especialidad")),
+                collected_data,
                 state.get("recent_messages", []),
                 state.get("contact_memory_summary"),
+                requested_professional_has_no_slots=True,
             )
-            return {
-                "response_text": no_slots_other_text,
-                "response_buttons": _NO_SLOTS_CHOICE_BUTTONS,
-                "requires_handoff": False,
-                "pending_action_id": None,
-                "collected_data": {
-                    **collected_data,
-                    "stage": STAGE_AWAITING_NO_SLOTS_CHOICE,
-                },
-                "next_node": "end",
-                "decision_node": "search_availability",
-                "exit_reason": "legacy_no_slots",
-            }
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
             no_slots_text = await generate_or_fallback(
@@ -1278,6 +1112,10 @@ def build_appointment_decision_graph(
 
         if button_payload == LIST_MORE_PAYLOAD and available_slots:
             updated_page = next_page(collected_data, "slots_page")
+            if is_single_page_slots(available_slots, collected_data):
+                # No next page exists on a single-page screen (a stale tap):
+                # show the same slots again.
+                updated_page = current_page(collected_data, "slots_page")
             more_text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),
@@ -1299,9 +1137,7 @@ def build_appointment_decision_graph(
             return {
                 "response_text": more_text,
                 "response_buttons": None,
-                "response_list": slots_list_message(
-                    available_slots, page=updated_page, include_back=True
-                ),
+                "response_list": slots_screen(available_slots, updated_page, collected_data),
                 "requires_handoff": False,
                 "collected_data": {**collected_data, "slots_page": updated_page},
                 "next_node": "end",
@@ -1311,25 +1147,9 @@ def build_appointment_decision_graph(
         if button_payload == LIST_BACK_PAYLOAD and available_slots:
             specialty_id = cast(str | None, collected_data.get("chosen_specialty_id"))
             if specialty_id is not None:
-                specialty_name = str(
-                    collected_data.get("chosen_specialty_name", "esa especialidad")
-                )
-                professional_id = collected_data.get("chosen_professional_id")
-                if professional_id is not None:
-                    # A specific professional was chosen (the "elegir
-                    # profesional" fallback path) — back goes to their own
-                    # professional list.
-                    return await _offer_professionals(
-                        conversation_id,
-                        specialty_id,
-                        specialty_name,
-                        invalidate_from(collected_data, "professional"),
-                        recent_messages,
-                        contact_memory,
-                    )
-                # Aggregated "ver próximos turnos" list (no professional was
-                # ever chosen for it) — back goes up to specialty selection,
-                # there is no intermediate screen to return to.
+                # Back always goes up to specialty selection (the aggregated
+                # list and a professional's own list alike): there is no
+                # professional list to return to in the create flow.
                 return await _offer_specialties(
                     conversation_id,
                     invalidate_from(collected_data, "specialty"),
@@ -1399,7 +1219,7 @@ def build_appointment_decision_graph(
             return {
                 "response_text": message,
                 "response_buttons": None,
-                "response_list": slots_list_message(available_slots, page=page, include_back=True),
+                "response_list": slots_screen(available_slots, page, collected_data),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",
@@ -1430,7 +1250,7 @@ def build_appointment_decision_graph(
             return {
                 "response_text": stale_slot_text,
                 "response_buttons": None,
-                "response_list": slots_list_message(available_slots, page=page, include_back=True),
+                "response_list": slots_screen(available_slots, page, collected_data),
                 "requires_handoff": False,
                 "next_node": "end",
                 "decision_node": "choose_slot",
@@ -1454,6 +1274,7 @@ def build_appointment_decision_graph(
             "choose_specialty",
             "choose_browse_mode",
             "choose_professional",
+            "search_availability",
             "choose_slot",
         ):
             return next_node
@@ -1482,6 +1303,7 @@ def build_appointment_decision_graph(
             "choose_specialty": "choose_specialty",
             "choose_browse_mode": "choose_browse_mode",
             "choose_professional": "choose_professional",
+            "search_availability": "search_availability",
             "choose_slot": "choose_slot",
             END: END,
         },
@@ -1489,9 +1311,9 @@ def build_appointment_decision_graph(
     # `choose_specialty`'s valid-selection branch always calls
     # `_offer_any_professional_slots` directly in the same turn (see its
     # docstring comment above) and `choose_browse_mode` only ever renders
-    # its own fallback screen or inline-delegates to `_offer_professionals`/
-    # `_offer_specialties` — neither node ever returns a `next_node` that
-    # routes elsewhere, so both are plain unconditional exits, not routing
+    # its own fallback screen or inline-delegates to
+    # `_offer_any_professional_slots`/`_offer_specialties` — neither node ever returns a
+    # `next_node` that routes elsewhere, so both are plain unconditional exits, not routing
     # decisions.
     graph.add_edge("choose_specialty", END)
     graph.add_edge("choose_browse_mode", END)

@@ -90,7 +90,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -106,10 +106,8 @@
         allowed:
           - "SELECT_SLOT:eval-free-*"
           - "SPECIALTY:eval-spec-*"
-          - "PROFESSIONAL:eval-prof-*"
           - "LIST_BACK"
           - "LIST_MORE"
-          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         La respuesta no toma la transcripción como si fuera la selección del
@@ -170,7 +168,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -259,7 +257,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -275,10 +273,8 @@
         allowed:
           - "SELECT_SLOT:eval-free-*"
           - "SPECIALTY:eval-spec-*"
-          - "PROFESSIONAL:eval-prof-*"
           - "LIST_BACK"
           - "LIST_MORE"
-          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         Ante una transcripción ambigua, la respuesta no elige un horario ni
@@ -336,7 +332,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -440,7 +436,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false

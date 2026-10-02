@@ -462,19 +462,11 @@ Identificar paciente
 Obtener motivo / especialidad
       │
       ▼
-¿Tiene profesional preferido?
+Próxima disponibilidad de la especialidad
+(todos sus profesionales, sin preguntar por profesional)
       │
-  ┌───┴────┐
-  │        │
-  Sí       No
-  │        │
-  ▼        ▼
-Agenda   Próxima disponibilidad
-dentista por especialidad
-  │        │
-  └───┬────┘
       ▼
-Mostrar horarios
+Mostrar los próximos 10 horarios
       │
       ▼
 Paciente selecciona
@@ -501,6 +493,8 @@ Dentalink responde OK
 Informar confirmación
 ```
 
+Regla: el agente nunca le pide al paciente que elija un profesional. Cuando pide un turno de una especialidad, muestra los próximos 10 horarios libres (los más cercanos primero) entre todos los profesionales de esa especialidad, en una única lista de WhatsApp (máximo 10 filas, sin filas de navegación) con solo fecha, día y hora. El profesional queda asignado por el horario elegido y se informa en la confirmación. Si ninguno sirve, el paciente puede escribir "menú" o "administración". Si el paciente nombra a un profesional ("quiero turno con la doctora X"), se muestran directamente los horarios de ese profesional, nunca una lista de profesionales. Lo mismo vale al consultar el catálogo de especialidades: al elegir una se muestran sus próximos horarios, nunca sus profesionales. Si no hay horarios, se ofrece otra especialidad, el menú principal o administración. Sin excepciones: al reagendar también se muestran directamente los próximos 10 horarios libres de la especialidad del turno (todos sus profesionales), nunca una lista de profesionales ni la opción "cambiar profesional".
+
 Nunca se informará que un turno fue reservado hasta recibir una respuesta válida de Dentalink.
 
 ---
@@ -519,17 +513,17 @@ Consultar agenda
 Obtener horarios disponibles
 ```
 
-Cuando el paciente no tiene preferencia:
+Cuando el paciente pide una especialidad (caso por defecto, sin preguntar por profesional):
 
 ```text
 Especialidad
      ↓
 Consultar próximas disponibilidades
      ↓
-Mostrar mejores opciones
+Mostrar los próximos 10 horarios libres
 ```
 
-El agente podrá presentar inicialmente entre 3 y 5 opciones.
+El agente presenta los próximos 10 horarios libres en una única lista (tope de 10 filas de WhatsApp, sin "Ver más").
 
 La disponibilidad deberá revalidarse inmediatamente antes de confirmar la operación.
 

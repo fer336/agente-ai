@@ -1,8 +1,12 @@
 from typing import cast
 
+from app.agent.appointment_decision_subgraph import (
+    SPECIALTY_SLOTS_REQUEST_KEY,
+    AppointmentDecisionState,
+    build_appointment_decision_graph,
+)
 from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
-    STAGE_AWAITING_PROFESSIONAL_SELECTION,
     match_named_professional,
     resolve_by_name,
     staffed_specialty_ids,
@@ -11,17 +15,15 @@ from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.application.specialties.list_specialties import ListSpecialtiesUseCase
+from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import AppointmentGateway, SpecialtyGateway
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
-    MENU_APPOINTMENT_PAYLOAD,
-    OPERATION_CREATE_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
-    professionals_list_message,
     specialties_list_message,
 )
 from app.domain.value_objects.welcome_menu import WELCOME_LIST
@@ -35,47 +37,11 @@ _NO_SPECIALTIES_MESSAGE = (
 )
 
 
-def _has_booking_context(button_payload: str | None, collected_data: dict[str, object]) -> bool:
-    """True when this turn already carries explicit create-booking intent
-    or context, per the browse-vs-booking separation spec requirement.
-
-    `SPECIALTIES_NODE` only ever runs on a `intent == "specialties"` turn
-    (read-only catalog browsing, `app/agent/graph.py`'s own routing) — a
-    named specialty or professional match found in that turn's free text
-    must not silently start (or continue) a booking on its own unless one
-    of these explicit signals is also present:
-
-    - `MENU_APPOINTMENT_PAYLOAD`/`OPERATION_CREATE_PAYLOAD`: the patient
-      tapped a booking row directly (defensive — resolve_interaction.py
-      already routes these to `intent="appointment"` before this node
-      would ever see them, but the check stays cheap and correct either
-      way).
-    - `collected_data["operation"] == CREATE_APPOINTMENT_ACTION`: an
-      already-resolved booking operation from a prior turn.
-    - `collected_data["operation_mention"] == "create"`: the LLM's own
-      understanding of THIS turn's free text already read it as booking
-      language (e.g. "quiero un turno con..."), carried in by
-      `resolve_interaction.py`'s `_carried_understanding(...)` even while
-      routing the turn's `intent` to "specialties" for display purposes.
-    - `collected_data["stage"] is not None`: an appointment flow is
-      already active (a temporary informational detour into this node,
-      PRD/design's "must not clear collected_data['stage']" rule) — the
-      booking cursor that's already there is real context, not a fresh
-      browse.
-    """
-    if button_payload in (MENU_APPOINTMENT_PAYLOAD, OPERATION_CREATE_PAYLOAD):
-        return True
-    if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
-        return True
-    if collected_data.get("operation_mention") == "create":
-        return True
-    return collected_data.get("stage") is not None
-
-
 def create_specialties_node(
     gateway: SpecialtyGateway,
     appointment_gateway: AppointmentGateway,
     llm_provider: LLMProvider,
+    conversation_repository: ConversationRepository,
 ) -> AgentNode:
     """Lists the clinic's dental specialties from Dentalink (PRD.md §27.1).
 
@@ -83,22 +49,58 @@ def create_specialties_node(
     (WhatsApp's 10-row cap, 9 real rows + "Ver más" per page; the page
     position lives in `collected_data["specialties_page"]`/`["doctors_page"]`):
 
-    - "¿qué especialidades tienen?" -> the catalog list, read-only, no
-      stage set. `SPECIALTY:{id}` taps and "Ver más" are handled right
-      here; "Volver atrás" returns to the main menu.
-    - "quiero un médico general" -> that specialty's professionals list,
-      plus the same `collected_data` cursor `appointment.py` uses, so the
-      very next message continues the booking flow (pick a doctor ->
-      slots -> identification). Without this, naming a specialty just
-      re-printed the catalog forever, because this node used to be a dead
-      end and the doctor flow lived only behind Turnos -> Sacar turno
-      (seen live).
+    - "¿qué especialidades tienen?" -> the catalog list, no stage set; a tapped
+      or named specialty shows its next free slots (never professionals).
+      `SPECIALTY:{id}` taps and "Ver más" are handled right here; "Volver atrás"
+      returns to the main menu.
+    - "quiero un médico general" -> that specialty's NEXT 10 FREE SLOTS
+      (the create flow never shows a professional list), plus the same
+      `collected_data` cursor `appointment.py` uses, so the very next
+      message continues the booking flow (pick a slot -> identification).
+      Without this, naming a specialty just re-printed the catalog forever,
+      because this node used to be a dead end (seen live).
 
     Never a `PendingAction` — reaching a professional list writes nothing
     (PRD.md §18's "El MVP permitirá consultar"); the first sensitive write
     is still the confirmation `appointment.py` owns.
     """
     list_specialties = ListSpecialtiesUseCase(gateway)
+    decision_graph = build_appointment_decision_graph(
+        appointment_gateway=appointment_gateway,
+        specialty_gateway=gateway,
+        conversation_repository=conversation_repository,
+        llm_provider=llm_provider,
+    )
+
+    async def _show_next_slots(
+        state: AgentState, collected_data: dict[str, object]
+    ) -> dict[str, object]:
+        """Hands a booking turn with a resolved specialty to the decision subgraph, which
+        replies with the specialty's next free slots (never a professional list)."""
+        decision_state: AppointmentDecisionState = {
+            "conversation_id": state["conversation_id"],
+            "user_message": state["user_message"],
+            "button_payload": state["button_payload"],
+            "recent_messages": state["recent_messages"],
+            "contact_memory_summary": state["contact_memory_summary"],
+            "pending_action_id": state.get("pending_action_id"),
+            "collected_data": {
+                **collected_data,
+                "operation": CREATE_APPOINTMENT_ACTION,
+                SPECIALTY_SLOTS_REQUEST_KEY: True,
+            },
+        }
+        result = await decision_graph.ainvoke(decision_state)
+        updates: dict[str, object] = {
+            "response_text": result.get("response_text"),
+            "response_buttons": result.get("response_buttons"),
+            "response_list": result.get("response_list"),
+            "requires_handoff": result.get("requires_handoff", False),
+            "collected_data": result.get("collected_data"),
+        }
+        if "pending_action_id" in result:
+            updates["pending_action_id"] = result["pending_action_id"]
+        return updates
 
     async def node(state: AgentState) -> dict[str, object]:
         button_payload = state["button_payload"]
@@ -164,40 +166,22 @@ def create_specialties_node(
                     "requires_handoff": False,
                     "collected_data": {**collected_data, "specialties_page": page},
                 }
-            if not _has_booking_context(button_payload, collected_data):
-                # Browse-only: show who matches, but never start a booking
-                # on a plain catalog turn (spec's "Browse specialty without
-                # booking context" requirement).
-                return {
-                    "response_text": None,
-                    "response_buttons": None,
-                    "response_list": professionals_list_message(
-                        [matched_professional], include_back=True
-                    ),
-                    "requires_handoff": False,
-                    "collected_data": {**collected_data, "specialties_page": page},
-                }
             specialty_name = next(
                 (s.name for s in specialties if s.id == matched_professional.specialty_id),
                 "esa especialidad",
             )
-            return {
-                "response_text": None,
-                "response_buttons": None,
-                "response_list": professionals_list_message(
-                    [matched_professional], include_back=True
-                ),
-                "requires_handoff": False,
-                "collected_data": {
-                    **state["collected_data"],
-                    "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-                    "operation": CREATE_APPOINTMENT_ACTION,
+            # Booking: straight to that professional's slots (never a professional list); with
+            # no slots the subgraph offers the specialty's next slots instead.
+            return await _show_next_slots(
+                state,
+                {
+                    **collected_data,
                     "chosen_specialty_id": matched_professional.specialty_id,
                     "chosen_specialty_name": specialty_name,
-                    "professional_options": [matched_professional],
-                    "doctors_page": 0,
+                    "chosen_professional_id": matched_professional.id,
+                    "chosen_professional_name": matched_professional.full_name,
                 },
-            }
+            )
 
         chosen_index = row_tap_index if row_tap_index is not None else index
         if chosen_index is None:
@@ -211,47 +195,16 @@ def create_specialties_node(
                 "collected_data": {**collected_data, "specialties_page": page},
             }
         chosen = specialties[int(chosen_index)]
-        professionals = await appointment_gateway.list_professionals(specialty_id=chosen.id)
-        if not professionals:
-            # Nothing to hand the booking flow — fall back to the plain
-            # catalog rather than stranding the patient mid-flow.
-            return {
-                "response_text": None,
-                "response_buttons": None,
-                "response_list": specialties_list_message(
-                    specialties, page=page, include_back=True
-                ),
-                "requires_handoff": False,
-                "collected_data": {**collected_data, "specialties_page": page},
-            }
-
-        if not _has_booking_context(button_payload, collected_data):
-            # Browse-only: a row tap or a named specialty found in plain
-            # catalog free text just shows that specialty's professionals —
-            # it never enters `awaiting_professional_selection` on its own
-            # (spec's "Browse specialty without booking context" requirement).
-            return {
-                "response_text": None,
-                "response_buttons": None,
-                "response_list": professionals_list_message(professionals, include_back=True),
-                "requires_handoff": False,
-                "collected_data": {**collected_data, "specialties_page": page},
-            }
-
-        return {
-            "response_text": None,
-            "response_buttons": None,
-            "response_list": professionals_list_message(professionals, include_back=True),
-            "requires_handoff": False,
-            "collected_data": {
-                **state["collected_data"],
-                "stage": STAGE_AWAITING_PROFESSIONAL_SELECTION,
-                "operation": CREATE_APPOINTMENT_ACTION,
+        # Never a professional list (booking or plain catalog browse alike): the specialty alone
+        # shows its next free slots across all of its professionals. Picking a slot continues
+        # to identification as in the booking flow.
+        return await _show_next_slots(
+            state,
+            {
+                **collected_data,
                 "chosen_specialty_id": chosen.id,
                 "chosen_specialty_name": chosen.name,
-                "professional_options": professionals,
-                "doctors_page": 0,
             },
-        }
+        )
 
     return node

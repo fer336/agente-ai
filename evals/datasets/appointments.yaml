@@ -69,7 +69,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -156,7 +156,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2", "LIST_BACK"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -172,10 +172,8 @@
         allowed:
           - "SELECT_SLOT:eval-free-*"
           - "SPECIALTY:eval-spec-*"
-          - "PROFESSIONAL:eval-prof-*"
           - "LIST_BACK"
           - "LIST_MORE"
-          - "VIEW_OTHER_PROFESSIONALS"
     - type: llm-rubric
       value: >
         La respuesta nunca afirma que hay un horario disponible a las 3 de la
@@ -283,8 +281,12 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["RESCHEDULE_KEEP_PROFESSIONAL", "RESCHEDULE_CHANGE_PROFESSIONAL"]
+        ids: ["SELECT_SLOT:eval-free-1", "SELECT_SLOT:eval-free-2"]
         exact: true
+    - type: javascript
+      value: file://assertions/custom.js:onlyOptionIds
+      config:
+        allowed: ["SELECT_SLOT:*"]
   metadata:
     requires_real_llm: false
 
@@ -297,11 +299,8 @@
       value: file://assertions/custom.js:onlyOptionIds
       config:
         allowed:
-          - "RESCHEDULE_KEEP_PROFESSIONAL"
-          - "RESCHEDULE_CHANGE_PROFESSIONAL"
           - "SELECT_SLOT:eval-free-*"
           - "SPECIALTY:eval-spec-*"
-          - "PROFESSIONAL:eval-prof-*"
           - "LIST_BACK"
           - "LIST_MORE"
     - type: llm-rubric
