@@ -93,6 +93,19 @@ FAQ_BOOK / preselected General paths already show aggregated slots.
   `_offer_professionals` (appointment.py and subgraph) deleted; `RESCHEDULE_*` payloads, old stage constants and
   `_VIEW_OTHER_PROFESSIONALS_PAYLOAD` kept so stale taps convert to slots.
 
+- Rebased onto origin/main (v0.50.0) after #168, #170 and #172 were released: full suite 2836
+  passed, only the 3 known redis-lock failures; ruff and mypy clean.
+- Native review split in two because the full candidate (2811 lines) exceeded the reviewer context
+  budget (`lens_context_budget_exceeded`): part 1 = T1+T2 (1805 lines), part 2 = T3+T4 (1420
+  lines). Both approved and acknowledged (lineages review-af818b8f317a6620 failed to start; the two
+  split runs are the effective reviews). Advisory findings:
+  - R3-1 (part 1): the legacy-checkpoint conversion in `choose_professional` redirects a patient
+    who taps a professional from a list shown just before the deploy to the specialty's slots
+    instead of that professional. Intended migration trade-off: the owner's rule is that
+    professionals are never shown or chosen, and the old stages must not stay stuck.
+  - R3-2 (part 1): after a no-slots fallback the stale `chosen_professional_id` may remain in
+    `collected_data` of the fallback screen; no test pins it (follow-up).
+
 ## Next step
 
-Review and PR (`fix(appointments)` per docs/pr-release-workflow.md); push and PR are the owner's decision.
+PR (`fix(appointments)` per docs/pr-release-workflow.md); push and PR are the owner's decision.
