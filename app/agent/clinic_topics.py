@@ -29,7 +29,8 @@ class ClinicTopic:
     #: Accent-folded lowercase words/phrases (see `normalize_text`) that name the topic.
     keywords: tuple[str, ...]
     text: str
-    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list.
+    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list. The
+    #: clinic books every frequent topic on "General".
     book_specialty: str | None = None
     #: File under `app/static/public/` sent with the answer (needs a configured image URL).
     image_filename: str | None = None
@@ -107,7 +108,6 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "valor de la consulta",
         ),
         text=_CONSULTA_PARTICULAR_TEXT,
-        # The clinic books every consulta particular on the "General" specialty.
         book_specialty="General",
     ),
     ClinicTopic(
@@ -115,6 +115,7 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
         title="Limpieza particular",
         keywords=("limpieza", "profilaxis"),
         text=_LIMPIEZA_PARTICULAR_TEXT,
+        book_specialty="General",
     ),
     ClinicTopic(
         id="brackets_obra_social",
@@ -127,6 +128,7 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "ortodoncia por obra social",
         ),
         text=_BRACKETS_OBRA_SOCIAL_TEXT,
+        book_specialty="General",
     ),
     ClinicTopic(
         id="alineadores",

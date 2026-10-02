@@ -5,7 +5,6 @@ from app.agent.nodes.faq_topic import create_faq_topic_node
 from app.domain.value_objects.menu_payloads import (
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
-    OPERATION_CREATE_PAYLOAD,
 )
 from tests.fixtures.agent_state import make_agent_state
 
@@ -22,10 +21,7 @@ async def test_each_topic_returns_its_exact_text_and_the_three_buttons(topic):
     assert result["response_text"] == topic.text
     buttons = result["response_buttons"]
     assert [(button.id, button.title) for button in buttons] == [
-        (
-            f"FAQ_BOOK:{topic.id}" if topic.book_specialty else OPERATION_CREATE_PAYLOAD,
-            "Agendar cita",
-        ),
+        (f"FAQ_BOOK:{topic.id}", "Agendar cita"),
         (MENU_MAIN_PAYLOAD, "Menú principal"),
         (MENU_ADMIN_PAYLOAD, "💬 Administración"),
     ]
