@@ -120,6 +120,28 @@ async def test_create_appointment_returns_confirmed_appointment_for_the_given_sl
 
 
 @pytest.mark.asyncio
+async def test_create_appointment_records_the_comment():
+    slot = make_slot()
+    gateway = make_dentalink_gateway(available_slots=[slot])
+
+    appointment = await gateway.create_appointment(
+        make_patient(), slot, idempotency_key="key-1", comment="Consulta frecuente: Alineadores"
+    )
+
+    assert gateway.get_comment(str(appointment.id)) == "Consulta frecuente: Alineadores"
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_without_a_comment_records_none():
+    slot = make_slot()
+    gateway = make_dentalink_gateway(available_slots=[slot])
+
+    appointment = await gateway.create_appointment(make_patient(), slot, idempotency_key="key-1")
+
+    assert gateway.get_comment(str(appointment.id)) is None
+
+
+@pytest.mark.asyncio
 async def test_create_appointment_is_idempotent_for_the_same_key():
     slot = make_slot()
     gateway = make_dentalink_gateway(available_slots=[slot])

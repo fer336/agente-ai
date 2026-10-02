@@ -19,6 +19,11 @@ PRESELECTED_SPECIALTY_KEY = "preselected_specialty_name"
 #: buttons. Set by the router, kept through the booking, shown in the confirmation message
 #: and dropped when the booking ends or the flow resets. Never sent to Dentalink.
 ALIGNER_OPTION_KEY = "aligner_option"
+#: `collected_data` key: the id of the frequent topic the patient chose to book from. Carried
+#: exactly like `ALIGNER_OPTION_KEY` until the booking is confirmed, where it becomes the
+#: appointment comment (see `booking_comment`). Dropped when the booking ends or the flow
+#: resets.
+BOOKING_TOPIC_KEY = "booking_topic"
 
 
 @dataclass(frozen=True)
@@ -29,13 +34,16 @@ class ClinicTopic:
     #: Accent-folded lowercase words/phrases (see `normalize_text`) that name the topic.
     keywords: tuple[str, ...]
     text: str
-    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list.
+    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list. The
+    #: clinic books every frequent topic on "General".
     book_specialty: str | None = None
     #: File under `app/static/public/` sent with the answer (needs a configured image URL).
     image_filename: str | None = None
     #: Option buttons (`Opción n`) that replace the usual Agendar / Menú / Administración
     #: trio, since WhatsApp allows 3 reply buttons. Each starts the booking.
     options: tuple[str, ...] = ()
+    #: Name administration reads in the Dentalink appointment comment.
+    comment_label: str | None = None
 
     @property
     def payload(self) -> str:
@@ -90,6 +98,8 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
         title="Blanqueamiento dental",
         keywords=("blanqueamiento", "blanquear", "blanqueo"),
         text=_BLANQUEAMIENTO_TEXT,
+        book_specialty="General",
+        comment_label="Blanqueamiento",
     ),
     ClinicTopic(
         id="consulta_particular",
@@ -106,7 +116,7 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "valor de la consulta",
         ),
         text=_CONSULTA_PARTICULAR_TEXT,
-        # The clinic books every consulta particular on the "General" specialty.
+        comment_label="Consulta Particular",
         book_specialty="General",
     ),
     ClinicTopic(
@@ -114,6 +124,8 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
         title="Limpieza particular",
         keywords=("limpieza", "profilaxis"),
         text=_LIMPIEZA_PARTICULAR_TEXT,
+        book_specialty="General",
+        comment_label="Limpieza Particular",
     ),
     ClinicTopic(
         id="brackets_obra_social",
@@ -126,6 +138,8 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "ortodoncia por obra social",
         ),
         text=_BRACKETS_OBRA_SOCIAL_TEXT,
+        book_specialty="General",
+        comment_label="Brackets por obra social",
     ),
     ClinicTopic(
         id="alineadores",
@@ -140,6 +154,7 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
         ),
         text=_ALINEADORES_TEXT,
         book_specialty="General",
+        comment_label="Alineadores",
         image_filename="alineadores-opciones.jpg",
         options=("1", "2", "3"),
     ),
@@ -148,6 +163,20 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
 
 def topic_by_id(topic_id: object) -> ClinicTopic | None:
     return next((topic for topic in CLINIC_TOPICS if topic.id == topic_id), None)
+
+
+def booking_comment(topic_id: str | None, option: str | None = None) -> str | None:
+    """The appointment comment for a booking that started from a frequent topic.
+
+    `Consulta frecuente: <label>`, plus ` - Opción <n>` for a topic with options (the
+    alineadores). None when the topic is unknown, so the booking carries no comment."""
+    topic = topic_by_id(topic_id)
+    if topic is None or topic.comment_label is None:
+        return None
+    text = f"Consulta frecuente: {topic.comment_label}"
+    if option is not None and option in topic.options:
+        text += f" - Opción {option}"
+    return text
 
 
 def _mentions(normalized_text: str, term: str) -> bool:

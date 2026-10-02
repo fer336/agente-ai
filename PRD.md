@@ -340,7 +340,23 @@ Lista de opciones (mensaje interactivo de WhatsApp, 7 filas; el límite de Meta 
 "ℹ️ Consultas frecuentes" abre una segunda lista con los temas que más consulta la clínica
 (blanqueamiento dental, consulta particular, limpieza particular, brackets por obra social y
 alineadores). Cada tema se responde con un texto fijo redactado por la clínica, sin intervención
-del LLM, y ofrece los botones Agendar cita, Menú principal y Administración.
+del LLM, y ofrece los botones Agendar cita, Menú principal y Administración. Agendar cita (o
+agendar el tema por texto libre) inicia la reserva yendo directo a la especialidad "General" de
+Dentalink, igual para los cinco temas.
+
+El turno agendado desde Consultas frecuentes lleva el tema elegido en el comentario de la cita de
+Dentalink, para que administración sepa de qué se trata: `Consulta frecuente: <tema>` con los
+nombres Blanqueamiento, Consulta Particular, Limpieza Particular, Brackets por obra social y
+Alineadores (este último con la opción: `Consulta frecuente: Alineadores - Opción 2`). El tema se
+recuerda desde que el paciente lo toca (o lo pide por texto libre) hasta la confirmación, igual que
+la opción de alineadores; se descarta al cancelar, reprogramar, ver citas o volver al menú, y una
+reserva que no nació de un tema no lleva comentario. La documentación de Dentalink es inconsistente:
+el ejemplo de `POST /v1/citas/` envía `comentario` (singular), pero la respuesta devuelve
+`comentarios` y `PUT /v1/citas/{id}` recibe `comentarios` (plural). Por eso la creación envía
+`comentario`, lee `comentarios` de la respuesta y, si no contiene el texto, lo completa con
+`PUT /v1/citas/{id}` (`{"comentarios": texto}`). Si ese paso falla se registra una advertencia y
+la cita queda creada igual: el comentario nunca hace fallar ni revierte la reserva. Reprogramar no
+toca el comentario.
 
 **Regla de alcance: pagos, anticipos y precios.** Los pagos, anticipos ("anticipo", "seña"), cuotas,
 financiación, medios de pago (tarjeta, efectivo, transferencia, Mercado Pago, etc.) y cualquier

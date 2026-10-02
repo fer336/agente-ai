@@ -27,6 +27,7 @@ class FakeDentalinkGateway:
         for appointment in appointments or []:
             self._appointments_by_id[str(appointment.id)] = appointment
             self._appointments_by_key[f"seed:{appointment.id}"] = appointment
+        self._comments_by_id: dict[str, str | None] = {}
         self._next_id = count(len(self._appointments_by_id) + 1)
         #: Defaults to UTC — fine for every existing test/dev use, which
         #: doesn't care about calendar-day alignment. A caller that DOES
@@ -83,6 +84,7 @@ class FakeDentalinkGateway:
         patient: Patient,
         slot: AppointmentSlot,
         idempotency_key: str,
+        comment: str | None = None,
     ) -> Appointment:
         if idempotency_key in self._appointments_by_key:
             return self._appointments_by_key[idempotency_key]
@@ -95,6 +97,7 @@ class FakeDentalinkGateway:
         )
         self._appointments_by_key[idempotency_key] = appointment
         self._appointments_by_id[str(appointment.id)] = appointment
+        self._comments_by_id[str(appointment.id)] = comment
         return appointment
 
     async def reschedule_appointment(
@@ -130,6 +133,10 @@ class FakeDentalinkGateway:
         )
         self._appointments_by_key[idempotency_key] = cancelled
         self._appointments_by_id[str(cancelled.id)] = cancelled
+
+    def get_comment(self, appointment_id: str) -> str | None:
+        """Test/dev introspection helper: the comment the appointment was created with."""
+        return self._comments_by_id.get(appointment_id)
 
     def get_appointment(self, appointment_id: str) -> Appointment | None:
         """Test/dev introspection helper — not part of the `AppointmentGateway` Protocol."""

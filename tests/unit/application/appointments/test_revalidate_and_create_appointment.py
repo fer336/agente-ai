@@ -34,6 +34,30 @@ async def test_execute_creates_the_appointment_when_slot_is_still_available():
 
 
 @pytest.mark.asyncio
+async def test_execute_threads_the_comment_to_the_gateway():
+    slot = _future_slot()
+    gateway = make_dentalink_gateway(available_slots=[slot])
+    use_case = RevalidateAndCreateAppointmentUseCase(gateway, InMemoryFakeRedis())
+
+    appointment = await use_case.execute(
+        make_patient(), slot, idempotency_key="key-1", comment="Consulta frecuente: Blanqueamiento"
+    )
+
+    assert gateway.get_comment(str(appointment.id)) == "Consulta frecuente: Blanqueamiento"
+
+
+@pytest.mark.asyncio
+async def test_execute_without_a_comment_records_none():
+    slot = _future_slot()
+    gateway = make_dentalink_gateway(available_slots=[slot])
+    use_case = RevalidateAndCreateAppointmentUseCase(gateway, InMemoryFakeRedis())
+
+    appointment = await use_case.execute(make_patient(), slot, idempotency_key="key-1")
+
+    assert gateway.get_comment(str(appointment.id)) is None
+
+
+@pytest.mark.asyncio
 async def test_execute_raises_when_slot_is_no_longer_in_availability():
     slot = _future_slot()
     # Gateway configured WITHOUT the slot — simulates it being taken

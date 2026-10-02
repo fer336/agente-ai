@@ -3,6 +3,7 @@ import re
 from app.agent.automatic_handoff import requires_automatic_handoff
 from app.agent.clinic_topics import (
     ALIGNER_OPTION_KEY,
+    BOOKING_TOPIC_KEY,
     PRESELECTED_SPECIALTY_KEY,
     match_clinic_topic,
     topic_by_id,
@@ -344,8 +345,12 @@ def _faq_book_result(
     (the appointment node resets the stale stage data and keeps only this one-shot key)."""
     topic = topic_by_id(payload.removeprefix(FAQ_BOOK_PAYLOAD_PREFIX))
     data = dict(collected_data)
-    if topic is not None and topic.book_specialty is not None:
-        data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    if topic is not None:
+        # A new topic replaces whatever a previous tap left behind (incl. its option).
+        data.pop(ALIGNER_OPTION_KEY, None)
+        data[BOOKING_TOPIC_KEY] = topic.id
+        if topic.book_specialty is not None:
+            data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
     return _create_flow_result(data, collected_data, has_active_stage)
 
 
@@ -362,6 +367,7 @@ def _faq_option_result(
     data = dict(collected_data)
     if topic.book_specialty is not None:
         data[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+    data[BOOKING_TOPIC_KEY] = topic.id
     data[ALIGNER_OPTION_KEY] = parsed[1]
     return _create_flow_result(data, collected_data, has_active_stage)
 
@@ -641,6 +647,7 @@ async def _resolve(
         topic = match_clinic_topic(state["user_message"])
         if topic is not None and topic.book_specialty is not None:
             carried[PRESELECTED_SPECIALTY_KEY] = topic.book_specialty
+            carried[BOOKING_TOPIC_KEY] = topic.id
 
     if post_action_context is not None and not _is_genuine_new_request(result):
         return await _thanks_reply(

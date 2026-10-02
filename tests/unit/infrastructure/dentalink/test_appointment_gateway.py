@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -565,6 +566,102 @@ async def test_create_appointment_sends_the_documented_required_fields():
         "hora_inicio": "10:00",
         "duracion": 30,
     }
+    assert str(appointment.id) == "55"
+
+
+_COMMENT = "Consulta frecuente: Blanqueamiento"
+_CREATED_CITA = {
+    "id": 55,
+    "id_paciente": "pat-1",
+    "id_dentista": "prof-1",
+    "fecha": "2026-08-01",
+    "hora_inicio": "10:00",
+    "duracion": 30,
+}
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_without_a_comment_sends_no_comment_and_never_puts():
+    client = _StubDentalinkClient()
+    client.post_response = dict(_CREATED_CITA)
+
+    await _gateway(client).create_appointment(make_patient(id_="pat-1"), make_slot(), "key-1")
+
+    assert "comentario" not in client.post_calls[0][1]
+    assert "comentarios" not in client.post_calls[0][1]
+    assert client.put_calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_sends_the_comment_as_comentario():
+    client = _StubDentalinkClient()
+    client.post_response = {**_CREATED_CITA, "comentarios": _COMMENT}
+
+    await _gateway(client).create_appointment(
+        make_patient(id_="pat-1"), make_slot(), "key-1", comment=_COMMENT
+    )
+
+    assert client.post_calls[0][1]["comentario"] == _COMMENT
+
+
+@pytest.mark.asyncio
+async def test_no_put_when_the_response_already_echoes_the_comment():
+    client = _StubDentalinkClient()
+    client.post_response = {**_CREATED_CITA, "comentarios": f"  {_COMMENT}\n"}
+
+    appointment = await _gateway(client).create_appointment(
+        make_patient(id_="pat-1"), make_slot(), "key-1", comment=_COMMENT
+    )
+
+    assert client.put_calls == []
+    assert str(appointment.id) == "55"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "echo", [{}, {"comentarios": ""}, {"comentarios": None}, {"comentarios": "otro texto"}]
+)
+async def test_the_comment_is_completed_with_a_put_when_the_response_lacks_it(echo):
+    client = _StubDentalinkClient()
+    client.post_response = {**_CREATED_CITA, **echo}
+
+    appointment = await _gateway(client).create_appointment(
+        make_patient(id_="pat-1"), make_slot(), "key-1", comment=_COMMENT
+    )
+
+    assert client.put_calls == [("/v1/citas/55", {"comentarios": _COMMENT})]
+    assert str(appointment.id) == "55"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_comment_put_never_fails_the_booking_and_is_logged(caplog):
+    client = _StubDentalinkClient(
+        raises_on={("PUT", "/v1/citas/55"): DentalinkAPIError(500, "boom")}
+    )
+    client.post_response = dict(_CREATED_CITA)
+
+    gateway_logger = "app.infrastructure.dentalink.appointment_gateway"
+    with caplog.at_level(logging.WARNING, logger=gateway_logger):
+        appointment = await _gateway(client).create_appointment(
+            make_patient(id_="pat-1"), make_slot(), "key-1", comment=_COMMENT
+        )
+
+    assert str(appointment.id) == "55"
+    assert any("comment" in record.getMessage().lower() for record in caplog.records)
+    assert _COMMENT not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_error_in_the_comment_completion_never_fails_the_booking():
+    client = _StubDentalinkClient(
+        raises_on={("PUT", "/v1/citas/55"): RuntimeError("unexpected")}  # type: ignore[dict-item]
+    )
+    client.post_response = dict(_CREATED_CITA)
+
+    appointment = await _gateway(client).create_appointment(
+        make_patient(id_="pat-1"), make_slot(), "key-1", comment=_COMMENT
+    )
+
     assert str(appointment.id) == "55"
 
 

@@ -1,5 +1,5 @@
-"""`FAQ_BOOK:<topic>`: the topic answer's "Agendar cita" button for a topic that books a
-fixed Dentalink specialty (consulta particular -> "General")."""
+"""`FAQ_BOOK:<topic>`: the topic answer's "Agendar cita" button; every frequent topic books
+the fixed Dentalink specialty "General"."""
 
 import pytest
 
@@ -9,7 +9,6 @@ from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.repositories.llm_provider import UnderstandingResult
 from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
-    OPERATION_CREATE_PAYLOAD,
     faq_book_payload,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -31,14 +30,14 @@ def test_the_payload_helper_builds_a_short_prefixed_id():
     assert all(len(faq_book_payload(topic.id)) <= 256 for topic in CLINIC_TOPICS)
 
 
-def test_only_consulta_particular_and_alineadores_book_a_fixed_specialty():
+def test_every_frequent_topic_books_the_general_specialty():
     booking = {topic.id: topic.book_specialty for topic in CLINIC_TOPICS}
 
     assert booking == {
-        "blanqueamiento": None,
+        "blanqueamiento": "General",
         "consulta_particular": "General",
-        "limpieza_particular": None,
-        "brackets_obra_social": None,
+        "limpieza_particular": "General",
+        "brackets_obra_social": "General",
         "alineadores": "General",
     }
 
@@ -47,14 +46,13 @@ def test_only_consulta_particular_and_alineadores_book_a_fixed_specialty():
 @pytest.mark.parametrize(
     "topic", [t for t in CLINIC_TOPICS if t.id != "alineadores"], ids=lambda topic: topic.id
 )
-async def test_the_topic_node_offers_the_book_button_only_for_a_topic_with_a_specialty(topic):
+async def test_the_topic_node_offers_the_topic_book_button(topic):
     result = await create_faq_topic_node()(
         make_agent_state(collected_data={"faq_topic_id": topic.id})
     )
 
     first = result["response_buttons"][0]
-    expected_id = _BOOK_CONSULTA if topic.id == "consulta_particular" else OPERATION_CREATE_PAYLOAD
-    assert (first.id, first.title) == (expected_id, "Agendar cita")
+    assert (first.id, first.title) == (f"FAQ_BOOK:{topic.id}", "Agendar cita")
 
 
 @pytest.mark.asyncio
@@ -82,13 +80,26 @@ async def test_a_mid_flow_book_tap_replaces_the_flow_and_carries_the_specialty()
 
 
 @pytest.mark.asyncio
-async def test_a_book_tap_for_a_topic_without_a_specialty_carries_no_key():
+@pytest.mark.parametrize("topic_id", ["limpieza_particular", "brackets_obra_social"])
+async def test_a_book_tap_for_limpieza_or_brackets_preselects_the_general_specialty(topic_id):
     node = create_resolve_interaction_node(FakeLLMProvider())
 
-    result = await node(make_agent_state(button_payload="FAQ_BOOK:blanqueamiento"))
+    result = await node(make_agent_state(button_payload=f"FAQ_BOOK:{topic_id}"))
 
     assert result["intent"] == "appointment"
-    assert PRESELECTED_SPECIALTY_KEY not in result.get("collected_data", {})
+    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == "General"
+
+
+@pytest.mark.asyncio
+async def test_a_book_tap_for_the_blanqueamiento_preselects_the_general_specialty():
+    node = create_resolve_interaction_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(button_payload="FAQ_BOOK:blanqueamiento", user_message="Agendar cita")
+    )
+
+    assert result["intent"] == "appointment"
+    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == "General"
 
 
 @pytest.mark.asyncio
@@ -96,6 +107,7 @@ async def test_a_book_tap_for_a_topic_without_a_specialty_carries_no_key():
     "message",
     [
         "quiero un turno para consulta particular",
+        "quiero un turno para blanqueamiento",
         "necesito una cita particular",
         "Quiero agendar una consulta particular",
     ],
@@ -110,12 +122,12 @@ async def test_a_free_text_booking_of_a_consulta_particular_carries_the_specialt
 
 
 @pytest.mark.asyncio
-async def test_a_free_text_booking_of_another_topic_carries_no_specialty():
+async def test_a_free_text_booking_of_a_limpieza_carries_the_general_specialty():
     node = create_resolve_interaction_node(_BookingLLM())
 
     result = await node(make_agent_state(user_message="quiero un turno para limpieza"))
 
-    assert PRESELECTED_SPECIALTY_KEY not in result.get("collected_data", {})
+    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == "General"
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,7 @@ class AppointmentGateway(Protocol):
         patient: Patient,
         slot: AppointmentSlot,
         idempotency_key: str,
+        comment: str | None = None,
     ) -> Appointment: ...
 
     async def reschedule_appointment(

@@ -30,3 +30,16 @@ async def test_execute_is_idempotent_for_the_same_key():
     second = await use_case.execute(patient, slot, idempotency_key="key-1")
 
     assert first.id == second.id
+
+
+@pytest.mark.asyncio
+async def test_execute_passes_the_comment_to_the_gateway():
+    slot = make_slot()
+    gateway = make_dentalink_gateway(available_slots=[slot])
+    use_case = CreateAppointmentUseCase(gateway)
+
+    appointment = await use_case.execute(
+        make_patient(), slot, idempotency_key="key-1", comment="Consulta frecuente: Alineadores"
+    )
+
+    assert gateway.get_comment(str(appointment.id)) == "Consulta frecuente: Alineadores"
