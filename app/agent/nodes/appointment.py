@@ -509,6 +509,15 @@ _CONFIRMATION_REMINDER = (
     "Por favor, confirmá o cancelá tocando uno de los botones — todavía no puedo "
     "tomar la confirmación por texto."
 )
+#: Mandatory instruction of every LLM-worded confirmation reminder (see the "instruccion"
+#: key of `generate_or_fallback` contexts). Free text never confirms nor cancels, and the
+#: reply once read as if the action was about to happen ("ahí lo cancelo entonces").
+_CONFIRMATION_REMINDER_INSTRUCTION = (
+    "Pedile en 1 o 2 oraciones cortas que toque uno de los botones ✅ Confirmar o ❌ Cancelar. "
+    "Todavía no se hizo nada: no digas ni insinúes que ya lo hiciste ni que lo vas a hacer "
+    "(nada de 'lo cancelo', 'lo agendo', 'lo reprogramo', 'ya lo hago'), solo pedile que use "
+    "los botones."
+)
 _PROPOSAL_REJECTED_MESSAGE = "Listo, descartamos esa propuesta. Necesitás algo más?"
 _SLOT_TAKEN_MESSAGE = (
     "Ese horario acaba de ocuparse mientras confirmábamos. No se realizó ningún cambio. "
@@ -2893,6 +2902,7 @@ def create_appointment_node(
                                     "El paciente escribió texto libre pero en este paso solo se "
                                     "puede confirmar o cancelar tocando uno de los 2 botones."
                                 ),
+                                "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
                             },
                             _CONFIRMATION_REMINDER,
                             state["recent_messages"],
@@ -2961,6 +2971,7 @@ def create_appointment_node(
                                 "El paciente escribió texto libre pero en este paso solo se "
                                 "puede confirmar o cancelar tocando uno de los 2 botones."
                             ),
+                            "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
                         },
                         _CONFIRMATION_REMINDER,
                         state["recent_messages"],
@@ -3361,6 +3372,7 @@ def create_appointment_node(
                             "El paciente tocó un botón que no es válido en este paso; solo se "
                             "puede confirmar o cancelar tocando uno de los 2 botones vigentes."
                         ),
+                        "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
                     },
                     _CONFIRMATION_REMINDER,
                     state["recent_messages"],
@@ -3952,6 +3964,7 @@ def create_appointment_node(
                         "El paciente tocó un botón que no es válido en este paso; solo se "
                         "puede confirmar o decir que no es así tocando uno de los 2 botones."
                     ),
+                    "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
                 },
                 _CONFIRMATION_REMINDER,
                 state["recent_messages"],
