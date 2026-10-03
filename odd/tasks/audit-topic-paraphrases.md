@@ -83,6 +83,13 @@ injection cases (the agent leaks nothing and does not obey).
   `app/domain/value_objects/faq_topics.py` (ids, descriptions, `valid_faq_topic_id`); a parity test
   in test_clinic_topics.py fails if it drifts from `CLINIC_TOPICS`. RED: failing import, then GREEN.
 
+- Native review (medium, 18 files, 593 lines, 1 consolidated lens): consent granted, approved and
+  acknowledged. Advisory R3: the reviewer could not see the unchanged part of
+  `claims_executed_action` and doubted that conditional/negated phrasings are not claims
+  ('Si tocás Cancelar, lo cancelo', 'No lo cancelo hasta que toques el botón', 'Cuando toques
+  Confirmar lo agendo'). Verified directly against the real guard: 13/13 phrasings behave as
+  expected (6 claims, 7 non-claims) and `tests/unit/agent/test_action_claims.py` passes (72).
+
 ## Next step
 
 Open the PR per docs/pr-release-workflow.md (not pushed).
