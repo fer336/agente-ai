@@ -35,6 +35,15 @@ def test_the_five_frequent_topics_are_defined_in_order():
     assert all(isinstance(topic, ClinicTopic) for topic in CLINIC_TOPICS)
 
 
+def test_the_domain_topic_ids_match_the_clinic_topics():
+    # The LLM provider (infrastructure) only knows the domain ids; this keeps the single
+    # source of truth honest.
+    from app.domain.value_objects.faq_topics import FAQ_TOPIC_DESCRIPTIONS, FAQ_TOPIC_IDS
+
+    assert FAQ_TOPIC_IDS == tuple(topic.id for topic in CLINIC_TOPICS)
+    assert tuple(FAQ_TOPIC_DESCRIPTIONS) == FAQ_TOPIC_IDS
+
+
 def test_titles_fit_a_whatsapp_list_row():
     assert [topic.title for topic in CLINIC_TOPICS] == [
         "Blanqueamiento dental",

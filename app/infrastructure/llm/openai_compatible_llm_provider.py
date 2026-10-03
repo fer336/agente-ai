@@ -1,6 +1,5 @@
 import json
 
-from app.agent.clinic_topics import CLINIC_TOPICS, topic_by_id
 from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_types import (
     INVALID_LLM_OUTPUT,
@@ -15,6 +14,10 @@ from app.domain.repositories.llm_provider import (
     IntentResult,
     ResponseContext,
     UnderstandingResult,
+)
+from app.domain.value_objects.faq_topics import (
+    FAQ_TOPIC_DESCRIPTIONS,
+    valid_faq_topic_id,
 )
 from app.infrastructure.llm.client import OpenAICompatibleLLMClient
 from app.infrastructure.llm.exceptions import (
@@ -87,16 +90,8 @@ _UNDERSTANDING_LABELS = (*_INTENT_LABELS, "question", "location", "faq_topic", "
 #: in the mentions — resolving "ortodoncia" to a Dentalink id is the
 #: graph's job (`resolve_by_name` against the real catalog), never the
 #: model's, which would otherwise invent ids.
-_FAQ_TOPIC_DESCRIPTIONS = {
-    "blanqueamiento": "blanqueamiento dental, aclarar los dientes, precio y cómo funciona",
-    "consulta_particular": "consulta particular (sin obra social), su precio y si atienden "
-    "pacientes particulares",
-    "limpieza_particular": "limpieza dental particular",
-    "brackets_obra_social": "brackets / ortodoncia por obra social",
-    "alineadores": "alineadores invisibles (Smilesecret, Invisalign)",
-}
 _FAQ_TOPIC_ID_LIST = "\n".join(
-    f'  - "{topic.id}": {_FAQ_TOPIC_DESCRIPTIONS[topic.id]}' for topic in CLINIC_TOPICS
+    f'  - "{topic_id}": {description}' for topic_id, description in FAQ_TOPIC_DESCRIPTIONS.items()
 )
 
 DEFAULT_UNDERSTAND_PROMPT = f"""Sos quien atiende el WhatsApp de una clínica dental en Argentina.
@@ -535,14 +530,6 @@ def _parse_intent_result(content: str) -> IntentResult:
     return IntentResult(intent=intent, confidence=confidence)
 
 
-def _faq_topic_id(value: object) -> str | None:
-    """The model's topic id when it is a string naming one of the known frequent topics."""
-    if not isinstance(value, str):
-        return None
-    topic = topic_by_id(value.strip())
-    return topic.id if topic is not None else None
-
-
 def _parse_understanding_result(content: str) -> UnderstandingResult:
     """Same strictness as `_parse_intent_result` for the two fields the
     graph routes on, deliberately forgiving for the rest: a smaller model
@@ -577,7 +564,7 @@ def _parse_understanding_result(content: str) -> UnderstandingResult:
         navigation_target=_optional("navigation_target"),
         # Strictly the JSON boolean: a smaller model's "true" string or null never counts.
         handoff_offer=data.get("handoff_offer") is True,
-        faq_topic_id=_faq_topic_id(data.get("faq_topic_id")),
+        faq_topic_id=valid_faq_topic_id(data.get("faq_topic_id")),
     )
 
 

@@ -573,12 +573,12 @@ async def test_understand_parses_and_validates_the_faq_topic_id(raw, expected) -
 
 
 def test_the_understand_prompt_documents_the_faq_topic_id_and_the_five_ids() -> None:
-    from app.agent.clinic_topics import CLINIC_TOPICS
+    from app.domain.value_objects.faq_topics import FAQ_TOPIC_DESCRIPTIONS, FAQ_TOPIC_IDS
     from app.infrastructure.llm.openai_compatible_llm_provider import DEFAULT_UNDERSTAND_PROMPT
 
     assert '"faq_topic_id"' in DEFAULT_UNDERSTAND_PROMPT
-    for topic in CLINIC_TOPICS:
-        assert topic.id in DEFAULT_UNDERSTAND_PROMPT
+    for topic_id in FAQ_TOPIC_IDS:
+        assert f'"{topic_id}": {FAQ_TOPIC_DESCRIPTIONS[topic_id]}' in DEFAULT_UNDERSTAND_PROMPT
     assert "null" in DEFAULT_UNDERSTAND_PROMPT.split('- "faq_topic_id":')[1].split("\n- ")[0]
 
 
