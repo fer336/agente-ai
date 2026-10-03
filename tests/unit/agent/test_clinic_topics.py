@@ -35,6 +35,15 @@ def test_the_five_frequent_topics_are_defined_in_order():
     assert all(isinstance(topic, ClinicTopic) for topic in CLINIC_TOPICS)
 
 
+def test_the_domain_topic_ids_match_the_clinic_topics():
+    # The LLM provider (infrastructure) only knows the domain ids; this keeps the single
+    # source of truth honest.
+    from app.domain.value_objects.faq_topics import FAQ_TOPIC_DESCRIPTIONS, FAQ_TOPIC_IDS
+
+    assert FAQ_TOPIC_IDS == tuple(topic.id for topic in CLINIC_TOPICS)
+    assert tuple(FAQ_TOPIC_DESCRIPTIONS) == FAQ_TOPIC_IDS
+
+
 def test_titles_fit_a_whatsapp_list_row():
     assert [topic.title for topic in CLINIC_TOPICS] == [
         "Blanqueamiento dental",
@@ -49,7 +58,10 @@ def test_titles_fit_a_whatsapp_list_row():
 def test_keywords_are_accent_folded_lowercase():
     for topic in CLINIC_TOPICS:
         assert topic.keywords
-        assert all(keyword == normalize_text(keyword) for keyword in topic.keywords)
+        assert all(
+            keyword == normalize_text(keyword)
+            for keyword in (*topic.keywords, *topic.weak_keywords)
+        )
 
 
 def test_topic_payloads_follow_the_prefix_and_the_domain_constants():
@@ -184,6 +196,59 @@ def test_common_free_text_phrasings_reach_their_topic(message, topic_id):
     ["tengo una consulta", "quiero hacer una consulta sobre un turno", "hola buen día"],
 )
 def test_a_generic_word_alone_is_not_a_topic(message):
+    assert match_clinic_topic(message) is None
+
+
+@pytest.mark.parametrize(
+    ("message", "topic_id"),
+    [
+        ("¿Cuánto me sale aclararme los dientes?", "blanqueamiento"),
+        ("cuanto sale aclarar los dientes", "blanqueamiento"),
+        ("me quiero aclarar los dientes, cuánto cuesta?", "blanqueamiento"),
+        ("aclarame los dientes, cuanto sale", "blanqueamiento"),
+        ("quiero tener dientes blancos", "blanqueamiento"),
+        ("quiero los dientes más blancos", "blanqueamiento"),
+        ("me quiero blanquearme los dientes", "blanqueamiento"),
+        ("¿Atienden pacientes particulares?", "consulta_particular"),
+        ("atienden particulares?", "consulta_particular"),
+        ("atienden pacientes particulares", "consulta_particular"),
+        ("¿atienden particular?", "consulta_particular"),
+        ("atienden sin obra social?", "consulta_particular"),
+        ("me atienden sin obra social", "consulta_particular"),
+        ("pacientes particulares tienen turnos?", "consulta_particular"),
+        # An explicit topic keeps priority over the broader consulta particular phrasings.
+        ("limpieza particular", "limpieza_particular"),
+        ("limpieza sin obra social", "limpieza_particular"),
+        ("brackets sin obra social", "brackets_obra_social"),
+        ("ortodoncia con obra social", "brackets_obra_social"),
+        ("alineadores para pacientes particulares", "alineadores"),
+        ("blanqueamiento sin obra social", "blanqueamiento"),
+    ],
+)
+def test_audit_phrasings_reach_their_topic(message, topic_id):
+    topic = match_clinic_topic(message)
+
+    assert topic is not None
+    assert topic.id == topic_id
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "tengo osde",
+        "atienden osde?",
+        "atienden medife?",
+        "tengo obra social",
+        "consulta",
+        "quiero hacer una consulta",
+        "podés aclararme una duda?",
+        "aclarame el horario por favor",
+        "necesito aclarar un tema del turno",
+        "tengo dientes chuecos",
+        "atienden los sábados?",
+    ],
+)
+def test_the_new_phrasings_do_not_steal_other_messages(message):
     assert match_clinic_topic(message) is None
 
 

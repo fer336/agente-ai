@@ -424,6 +424,50 @@
   metadata:
     requires_real_llm: true
 
+# Audit 2026-10-03: both messages got the 5-topic list; the keyword matcher now recognizes them
+# (and the LLM can name the topic for phrasings the matcher does not know).
+- description: "Paráfrasis de precio: aclarar los dientes es blanqueamiento"
+  vars:
+    conversation_id: "eval-topics-audit-01"
+    message: "¿Cuánto me sale aclararme los dientes?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["450.000"]
+  metadata:
+    requires_real_llm: false
+
+- description: "Pacientes particulares: responde la consulta particular"
+  vars:
+    conversation_id: "eval-topics-audit-02"
+    message: "¿Atienden pacientes particulares?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
+    - type: javascript
+      value: file://assertions/custom.js:hasButtons
+      config:
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["60.000"]
+  metadata:
+    requires_real_llm: false
+
 - description: "Paráfrasis de precio: blanqueamiento (LLM real)"
   vars:
     conversation_id: "eval-topics-llm-01"

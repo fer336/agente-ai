@@ -546,6 +546,42 @@ async def test_understand_accepts_the_faq_topic_label() -> None:
     assert result.intent == "faq_topic"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('"faq_topic_id": "blanqueamiento"', "blanqueamiento"),
+        ('"faq_topic_id": "consulta_particular"', "consulta_particular"),
+        ('"faq_topic_id": " alineadores "', "alineadores"),
+        ('"faq_topic_id": "ortodoncia"', None),
+        ('"faq_topic_id": ""', None),
+        ('"faq_topic_id": null', None),
+        ('"faq_topic_id": 3', None),
+        ('"faq_topic_id": ["blanqueamiento"]', None),
+        ('"faq_topic_id": true', None),
+        ('"other": 1', None),
+    ],
+)
+async def test_understand_parses_and_validates_the_faq_topic_id(raw, expected) -> None:
+    client = _StubClient('{"intent": "faq_topic", "confidence": 0.9, "answer": null, ' + raw + "}")
+    provider = _make_provider(client)
+
+    result = await provider.understand("cuánto me sale aclararme los dientes", context={})
+
+    assert result.intent == "faq_topic"
+    assert result.faq_topic_id == expected
+
+
+def test_the_understand_prompt_documents_the_faq_topic_id_and_the_five_ids() -> None:
+    from app.domain.value_objects.faq_topics import FAQ_TOPIC_DESCRIPTIONS, FAQ_TOPIC_IDS
+    from app.infrastructure.llm.openai_compatible_llm_provider import DEFAULT_UNDERSTAND_PROMPT
+
+    assert '"faq_topic_id"' in DEFAULT_UNDERSTAND_PROMPT
+    for topic_id in FAQ_TOPIC_IDS:
+        assert f'"{topic_id}": {FAQ_TOPIC_DESCRIPTIONS[topic_id]}' in DEFAULT_UNDERSTAND_PROMPT
+    assert "null" in DEFAULT_UNDERSTAND_PROMPT.split('- "faq_topic_id":')[1].split("\n- ")[0]
+
+
 def test_the_understand_prompt_routes_priced_topics_to_faq_topic_not_question() -> None:
     from app.infrastructure.llm.openai_compatible_llm_provider import DEFAULT_UNDERSTAND_PROMPT
 

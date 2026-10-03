@@ -861,6 +861,114 @@ async def test_the_llm_faq_topic_label_routes_like_the_other_information_intents
     assert mid_booking["resume_node"] == "awaiting_slot_selection"
 
 
+class _TopicNamingLLM(FakeLLMProvider):
+    """Real-LLM stand-in: labels the message `faq_topic` and optionally names the topic."""
+
+    def __init__(self, faq_topic_id: str | None) -> None:
+        super().__init__()
+        self._faq_topic_id = faq_topic_id
+
+    async def understand(self, message, context):
+        return UnderstandingResult(
+            intent="faq_topic", confidence=0.9, faq_topic_id=self._faq_topic_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_llm_named_topic_is_used_when_no_keyword_matched():
+    node = create_resolve_interaction_node(_TopicNamingLLM("blanqueamiento"))
+
+    result = await node(make_agent_state(user_message="cuánto me sale lo de ponerme más lindos"))
+
+    assert result["intent"] == "faq_topic"
+    assert result["collected_data"]["faq_topic_id"] == "blanqueamiento"
+
+
+@pytest.mark.asyncio
+async def test_an_llm_faq_topic_without_an_id_keeps_the_topic_list_fallback():
+    node = create_resolve_interaction_node(_TopicNamingLLM(None))
+
+    result = await node(make_agent_state(user_message="info de tratamientos estéticos"))
+
+    assert result["intent"] == "faq_topic"
+    assert "faq_topic_id" not in result.get("collected_data", {})
+
+
+@pytest.mark.asyncio
+async def test_the_keyword_match_wins_over_the_llm_named_topic():
+    node = create_resolve_interaction_node(_TopicNamingLLM("alineadores"))
+
+    result = await node(make_agent_state(user_message="cuánto sale el blanqueamiento?"))
+
+    assert result["collected_data"]["faq_topic_id"] == "blanqueamiento"
+
+
+@pytest.mark.asyncio
+async def test_an_llm_named_topic_mid_booking_is_a_temporary_interruption():
+    node = create_resolve_interaction_node(_TopicNamingLLM("consulta_particular"))
+    state = make_agent_state(
+        user_message="y a quienes no tienen cobertura los reciben?",
+        collected_data={"stage": "awaiting_slot_selection", "chosen_professional_id": "p1"},
+    )
+
+    result = await node(state)
+
+    assert result["intent"] == "faq_topic"
+    assert result["interruption"] == "temporary"
+    assert result["resume_node"] == "awaiting_slot_selection"
+    assert result["collected_data"]["stage"] == "awaiting_slot_selection"
+    assert result["collected_data"]["chosen_professional_id"] == "p1"
+    assert result["collected_data"]["faq_topic_id"] == "consulta_particular"
+
+
+@pytest.mark.asyncio
+async def test_an_llm_named_topic_only_applies_to_the_faq_topic_intent():
+    class _OtherIntentLLM(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(
+                intent="question",
+                confidence=0.9,
+                answer="Atendemos de 9 a 18.",
+                faq_topic_id="blanqueamiento",
+            )
+
+    node = create_resolve_interaction_node(_OtherIntentLLM())
+
+    result = await node(make_agent_state(user_message="¿hasta qué hora atienden?"))
+
+    assert result["intent"] == "question"
+    assert "faq_topic_id" not in result.get("collected_data", {})
+
+
+@pytest.mark.asyncio
+async def test_an_llm_named_topic_reaches_the_node_answer():
+    from app.agent.clinic_topics import topic_by_id
+    from app.agent.nodes.faq_topic import create_faq_topic_node
+
+    state = make_agent_state(user_message="cuánto me sale lo de ponerme más lindos")
+    routed = await create_resolve_interaction_node(_TopicNamingLLM("blanqueamiento"))(state)
+
+    result = await create_faq_topic_node()({**state, **routed})  # type: ignore[typeddict-item]
+
+    assert result["response_text"] == topic_by_id("blanqueamiento").text  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_an_llm_named_topic_for_a_question_in_a_data_stage_interrupts_temporarily():
+    node = create_resolve_interaction_node(_TopicNamingLLM("consulta_particular"))
+    state = make_agent_state(
+        user_message="¿Atienden pacientes sin cobertura?",
+        collected_data={"stage": "awaiting_first_visit_intake"},
+    )
+
+    result = await node(state)
+
+    assert result["intent"] == "faq_topic"
+    assert result["interruption"] == "temporary"
+    assert result["resume_node"] == "awaiting_first_visit_intake"
+    assert result["collected_data"]["faq_topic_id"] == "consulta_particular"
+
+
 class _ExplodingLLMProvider(FakeLLMProvider):
     async def understand(self, message, context):
         raise AssertionError("the deterministic payment check must answer first")

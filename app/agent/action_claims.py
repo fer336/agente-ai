@@ -48,6 +48,19 @@ _CLAIM_PATTERNS = tuple(
         # "nos vemos el lunes", "te esperamos mañana"
         r"\bnos\s+vemos\s+(?:el|este|esta|la|ma[ñn]ana|hoy|pasado)\b",
         r"\bte\s+esperamos\s+(?:el|este|esta|ma[ñn]ana|hoy|pasado)\b",
+        # Present/future promises to act right away: "ahí lo cancelo", "lo agendo", "te lo
+        # reprogramo". Only the indicative counts ("querés que lo cancele?" is a question).
+        r"\b(?:te\s+)?(?:lo|la)\s+(?:cancelo|reprogramo|reagendo|agendo|reservo|anoto|confirmo)\b",
+        # "cancelo el turno", "agendo tu cita"
+        r"\b(?:cancelo|reprogramo|reagendo|agendo|reservo|anoto|confirmo)\s+"
+        r"(?:tu|el|ese|su|la)\s+(?:turno|cita|consulta|reserva)\b",
+        # "procedo a cancelar", "procedemos a agendar"
+        r"\bproced(?:o|emos)\s+a\s+(?:cancelar|reagendar|agendar|reprogramar|confirmar|reservar"
+        r"|anotar)(?:l[oa]s?)?\b",
+        # "ya lo hago", "lo hago ahora", "listo, lo hago"
+        r"\bya\s+lo\s+hago\b",
+        r"\blo\s+hago\s+(?:ya|ahora|enseguida)\b",
+        r"\blist[oa][,!]?\s+lo\s+hago\b",
     )
 )
 

@@ -89,6 +89,8 @@ async def test_the_provider_is_told_whether_the_conversation_already_started():
     [
         "Buenísimo, ahí te lo confirmo entonces. Nos vemos el lunes! 👍",
         "Dale, ahí te lo cancelo entonces.",
+        "ahí lo cancelo entonces",
+        "Procedo a cancelar el turno.",
     ],
 )
 async def test_a_reply_claiming_an_executed_action_is_replaced_by_the_static_text(claim):
@@ -176,3 +178,23 @@ async def test_a_provider_error_still_falls_back_when_a_validator_is_given():
     )
 
     assert text == "STATIC"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Listo, ya lo cancelo.",
+        "Perfecto, lo agendo ahora.",
+        "Dale, lo reprogramo.",
+        "Ya lo hago.",
+    ],
+)
+async def test_a_genuine_post_execution_message_skips_the_action_claim_guard(message):
+    llm = _ScriptedLLM(message)
+
+    text = await generate_or_fallback(
+        llm, "conv-1", "cancel_success", {}, "STATIC", _STARTED, None, action_executed=True
+    )
+
+    assert text == message

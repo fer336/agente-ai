@@ -163,12 +163,22 @@
     conversation_id: "flows-handoff-offer"
     message: "¿Atienden pacientes particulares?"
   assert:
+    # Audit 2026-10-03: this is the consulta particular topic (fixed text, no handoff offer).
+    # Typed inside the first-visit data stage, so only the real LLM (which names the topic)
+    # can route it; the keyword path is covered by the clinic_topics deterministic case.
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "faq_topic"
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["💬 Administración", "Menú principal"]
+        titles: ["Agendar cita", "Menú principal", "💬 Administración"]
+        exact: true
     - type: javascript
-      value: file://assertions/custom.js:noLeadingGreeting
+      value: file://assertions/custom.js:mentionsAll
+      config:
+        terms: ["60.000"]
   metadata:
     requires_real_llm: true
 
