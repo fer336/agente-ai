@@ -34,6 +34,9 @@ class ClinicTopic:
     #: Accent-folded lowercase words/phrases (see `normalize_text`) that name the topic.
     keywords: tuple[str, ...]
     text: str
+    #: Broader phrases that only name the topic when no topic matched a regular keyword, so
+    #: "brackets sin obra social" stays brackets and "limpieza sin obra social" stays limpieza.
+    weak_keywords: tuple[str, ...] = ()
     #: Dentalink specialty a booking of this topic goes to, skipping the specialty list. The
     #: clinic books every frequent topic on "General".
     book_specialty: str | None = None
@@ -96,7 +99,21 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
     ClinicTopic(
         id="blanqueamiento",
         title="Blanqueamiento dental",
-        keywords=("blanqueamiento", "blanquear", "blanqueo"),
+        keywords=(
+            "blanqueamiento",
+            "blanquear",
+            "blanqueo",
+            "blanquearme",
+            # "aclarar"/"aclarame" alone are everyday verbs ("aclarame una duda"): only the
+            # teeth-lightening phrasings name the topic.
+            "aclarar los dientes",
+            "aclararme los dientes",
+            "aclarame los dientes",
+            "aclarar dientes",
+            "aclararme dientes",
+            "dientes blancos",
+            "dientes mas blancos",
+        ),
         text=_BLANQUEAMIENTO_TEXT,
         book_specialty="General",
         comment_label="Blanqueamiento",
@@ -114,6 +131,13 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "cuanto sale la consulta",
             "precio de la consulta",
             "valor de la consulta",
+        ),
+        weak_keywords=(
+            "pacientes particulares",
+            "atienden particulares",
+            "atienden pacientes particulares",
+            "atienden particular",
+            "sin obra social",
         ),
         text=_CONSULTA_PARTICULAR_TEXT,
         comment_label="Consulta Particular",
@@ -184,16 +208,17 @@ def _mentions(normalized_text: str, term: str) -> bool:
 
 
 def match_clinic_topic(text: str) -> ClinicTopic | None:
-    """The first topic whose keyword the text names (accent- and case-insensitive)."""
+    """The first topic whose keyword the text names (accent- and case-insensitive).
+
+    Weak keywords are only consulted when no topic matched a regular one."""
     normalized = normalize_text(text)
-    return next(
-        (
-            topic
-            for topic in CLINIC_TOPICS
-            if any(_mentions(normalized, keyword) for keyword in topic.keywords)
-        ),
-        None,
-    )
+    for topic in CLINIC_TOPICS:
+        if any(_mentions(normalized, keyword) for keyword in topic.keywords):
+            return topic
+    for topic in CLINIC_TOPICS:
+        if any(_mentions(normalized, keyword) for keyword in topic.weak_keywords):
+            return topic
+    return None
 
 
 #: Insurances the clinic treats alike: a first visit with an integral diagnosis.

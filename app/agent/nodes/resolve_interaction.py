@@ -260,6 +260,12 @@ def _carried_understanding(result: UnderstandingResult) -> dict[str, object]:
     }
     if result.answer is not None and result.handoff_offer:
         carried[HANDOFF_OFFER_FLAG_KEY] = True
+    if result.intent == "faq_topic" and result.confidence >= _MIN_INTENT_CONFIDENCE:
+        # The model named the topic the keyword matcher missed ("aclararme los dientes"): the
+        # faq_topic node answers it like a keyword match. No valid id keeps the topic list.
+        topic = topic_by_id(result.faq_topic_id)
+        if topic is not None:
+            carried[FAQ_TOPIC_ID_KEY] = topic.id
     return carried
 
 

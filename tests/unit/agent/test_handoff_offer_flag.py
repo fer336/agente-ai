@@ -131,7 +131,7 @@ async def test_an_ordinary_answer_shows_no_offer_buttons(node_factory):
 async def test_audit_replay_through_the_router_and_the_question_node():
     resolve = create_resolve_interaction_node(_AnsweringLLM(_AUDIT_ANSWER, handoff_offer=False))
     question = create_question_node(FakeLLMProvider())
-    state = make_agent_state(user_message="¿atienden particulares o solo obras sociales?")
+    state = make_agent_state(user_message="¿aceptan particulares o solo obras sociales?")
 
     routed = await resolve(state)
     result = await question({**state, **routed})  # type: ignore[typeddict-item]

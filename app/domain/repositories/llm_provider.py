@@ -46,6 +46,10 @@ class UnderstandingResult:
     #: advisor. Lets the question and fallback nodes show the handoff buttons without
     #: guessing from the prose (the text detector stays as a fallback).
     handoff_offer: bool = False
+    #: For intent "faq_topic" only: the id of the frequent clinic topic the patient means, when
+    #: the model could tell (validated against the known ids by the provider). The router uses
+    #: it when no keyword matched; `None` leaves the topic list as the fallback.
+    faq_topic_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

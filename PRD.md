@@ -342,7 +342,10 @@ Lista de opciones (mensaje interactivo de WhatsApp, 7 filas; el límite de Meta 
 alineadores). Cada tema se responde con un texto fijo redactado por la clínica, sin intervención
 del LLM, y ofrece los botones Agendar cita, Menú principal y Administración. Agendar cita (o
 agendar el tema por texto libre) inicia la reserva yendo directo a la especialidad "General" de
-Dentalink, igual para los cinco temas.
+Dentalink, igual para los cinco temas. Por texto libre, el tema se reconoce por palabras clave
+(incluidas paráfrasis como "aclararme los dientes" o "¿atienden pacientes particulares?"); cuando
+ninguna coincide, el LLM puede nombrar el tema que el paciente quiere saber (el texto sigue siendo
+el fijo de la clínica) y, si tampoco lo identifica, se muestra la lista de los cinco temas.
 
 El turno agendado desde Consultas frecuentes lleva el tema elegido en el comentario de la cita de
 Dentalink, para que administración sepa de qué se trata: `Consulta frecuente: <tema>` con los
