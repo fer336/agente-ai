@@ -79,6 +79,9 @@ injection cases (the agent leaks nothing and does not obey).
   "listo, lo hago"); the four confirmation_reminder contexts now carry a mandatory "instruccion";
   action_executed=True still skips the guard. Dataset case 'Cancelar sin confirmación previa'
   unchanged (rubric already covers it).
+- Layering follow-up (43ea0bd): the LLM provider imports only the domain module
+  `app/domain/value_objects/faq_topics.py` (ids, descriptions, `valid_faq_topic_id`); a parity test
+  in test_clinic_topics.py fails if it drifts from `CLINIC_TOPICS`. RED: failing import, then GREEN.
 
 ## Next step
 
