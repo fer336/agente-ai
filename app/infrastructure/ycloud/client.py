@@ -1,5 +1,6 @@
 import httpx
 
+from app.domain.repositories.gateways import TemplateMessage
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListRow
 from app.infrastructure.ycloud.exceptions import YCloudAPIError
@@ -24,6 +25,45 @@ class YCloudClient:
         self._api_key = api_key
         self._whatsapp_number = whatsapp_number
         self._waba_id = waba_id
+
+    async def send_template(self, to: str, template: TemplateMessage) -> str:
+        """Sends a pre-approved WhatsApp template through YCloud.
+
+        `TemplateMessage` keeps body substitutions and quick-reply callback
+        payloads distinct from their display text, matching YCloud's template
+        component shape and preserving deterministic inbound routing.
+        """
+        components: list[dict[str, object]] = []
+        if template.body_parameters:
+            components.append(
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": value} for value in template.body_parameters
+                    ],
+                }
+            )
+        components.extend(
+            {
+                "type": "button",
+                "sub_type": "quick_reply",
+                "index": str(button.index),
+                "parameters": [{"type": "payload", "payload": button.payload}],
+            }
+            for button in template.quick_reply_buttons
+        )
+        return await self._post_message(
+            {
+                "from": self._whatsapp_number,
+                "to": to,
+                "type": "template",
+                "template": {
+                    "name": template.name,
+                    "language": {"code": template.language},
+                    "components": components,
+                },
+            }
+        )
 
     async def send_text(self, to: str, text: str) -> str:
         return await self._post_message(

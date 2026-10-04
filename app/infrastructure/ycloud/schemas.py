@@ -57,6 +57,17 @@ class YCloudInteractive(BaseModel):
     list_reply: YCloudListReply | None = None
 
 
+class YCloudTemplateButton(BaseModel):
+    """A quick-reply callback from a sent WhatsApp template.
+
+    Unlike interactive replies, YCloud delivers these directly as
+    ``message.type == "button"`` with ``button.payload`` and ``button.text``.
+    """
+
+    payload: str = ""
+    text: str = ""
+
+
 class YCloudAudioMessage(BaseModel):
     """`type="audio"` payload shape (PRD.md §24.1), following the same Meta
     WhatsApp Cloud API convention every media message type uses: only an
@@ -78,6 +89,7 @@ class YCloudInboundMessage(BaseModel):
     type: str = ""
     text: YCloudText | None = None
     interactive: YCloudInteractive | None = None
+    button: YCloudTemplateButton | None = None
     audio: YCloudAudioMessage | None = None
 
     model_config = ConfigDict(populate_by_name=True)

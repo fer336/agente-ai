@@ -1,4 +1,5 @@
 from app.application.errors.error_types import YCLOUD_AUTH_ERROR, YCLOUD_SEND_FAILURE
+from app.domain.repositories.gateways import TemplateMessage
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage
@@ -38,6 +39,22 @@ class YCloudMessagingGateway:
 
     def __init__(self, client: YCloudClient) -> None:
         self._client = client
+
+    async def send_template(self, to: PhoneNumber, template: TemplateMessage) -> str:
+        return await traced_call(
+            tool_name="SendTemplateTool",
+            provider=_PROVIDER,
+            operation="send_template",
+            request_summary=(
+                f"template_name={template.name} language={template.language} "
+                f"body_parameters={len(template.body_parameters)} "
+                f"quick_reply_buttons={len(template.quick_reply_buttons)}"
+            ),
+            call=lambda: self._client.send_template(str(to), template),
+            response_summary=lambda external_id: f"external_message_id={external_id}",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
 
     async def send_text_message(self, to: PhoneNumber, text: str) -> str:
         return await traced_call(

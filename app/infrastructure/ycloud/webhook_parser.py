@@ -15,6 +15,7 @@ _INTERACTIVE_MESSAGE_TYPE = "interactive"
 _BUTTON_REPLY_TYPE = "button_reply"
 _LIST_REPLY_TYPE = "list_reply"
 _NFM_REPLY_TYPE = "nfm_reply"
+_BUTTON_MESSAGE_TYPE = "button"
 _AUDIO_MESSAGE_TYPE = "audio"
 
 #: Human-readable stand-in for a Flow submission's `text` — the actual
@@ -79,6 +80,8 @@ def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: 
         if message.interactive.type == _NFM_REPLY_TYPE:
             return message.interactive.nfm_reply is not None
         return False
+    if message.type == _BUTTON_MESSAGE_TYPE:
+        return message.button is not None and bool(message.button.payload.strip())
     if message.type == _AUDIO_MESSAGE_TYPE:
         return message.audio is not None and bool(message.audio.id.strip())
     return False
@@ -139,6 +142,14 @@ def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessage
                 text=_FLOW_SUBMITTED_TEXT,
                 button_payload=f"{FLOW_RESPONSE_PAYLOAD_PREFIX}{nfm_reply.response_json}",
             )
+
+    if message.type == _BUTTON_MESSAGE_TYPE and message.button is not None:
+        return InboundMessageDTO(
+            external_message_id=message.id,
+            from_phone=PhoneNumber(phone_value),
+            text=message.button.text,
+            button_payload=message.button.payload,
+        )
 
     if message.type == _AUDIO_MESSAGE_TYPE and message.audio is not None:
         # No `text` yet (PRD.md §24.1: "No se transcribirá dentro del

@@ -1,7 +1,11 @@
 import pytest
 
 from app.domain.entities.tool_execution import COMPLETED, FAILED
-from app.domain.repositories.gateways import MessagingGateway
+from app.domain.repositories.gateways import (
+    MessagingGateway,
+    TemplateMessage,
+    TemplateQuickReplyButton,
+)
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage, ListRow
@@ -24,7 +28,12 @@ class _StubYCloudClient:
         self.flow_calls: list[tuple[str, str, str, str, str, str]] = []
         self.location_calls: list[tuple[str, float, float, str, str | None]] = []
         self.list_calls: list[tuple[str, str, str, list[ListRow], str | None]] = []
+        self.template_calls: list[tuple[str, TemplateMessage]] = []
         self.contacts: dict[str, dict[str, object]] = {}
+
+    async def send_template(self, to: str, template: TemplateMessage) -> str:
+        self.template_calls.append((to, template))
+        return "wamid.stub-template"
 
     async def send_text(self, to: str, text: str) -> str:
         self.text_calls.append((to, text))
@@ -76,6 +85,23 @@ class _StubYCloudClient:
 
     async def get_contact(self, contact_id: str) -> dict[str, object]:
         return self.contacts.get(contact_id, {})
+
+
+@pytest.mark.asyncio
+async def test_send_template_delegates_to_client_with_stringified_phone():
+    client = _StubYCloudClient()
+    gateway = YCloudMessagingGateway(client)
+    template = TemplateMessage(
+        name="recordatorio_turno_confirmar",
+        language="es_AR",
+        body_parameters=("Ana",),
+        quick_reply_buttons=(TemplateQuickReplyButton(index=0, payload="CONFIRM"),),
+    )
+
+    external_id = await gateway.send_template(PhoneNumber("+5491122334455"), template)
+
+    assert client.template_calls == [("+5491122334455", template)]
+    assert external_id == "wamid.stub-template"
 
 
 @pytest.mark.asyncio
