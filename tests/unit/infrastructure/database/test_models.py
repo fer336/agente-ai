@@ -9,6 +9,7 @@ _EXPECTED_TABLES = {
     "messages",
     "appointments",
     "appointment_actions",
+    "appointment_reminders",
     "pending_actions",
     "tool_executions",
     "human_handoffs",
