@@ -106,7 +106,9 @@ Use a safe staged rollout in an isolated worktree:
 - Isolated worktree created from `origin/main`.
 - T1 complete: template transport, actual template-button callback parsing, safe
   settings, and fake compatibility. Verification: 131 focused tests passed; ruff,
-  mypy, and `git diff --check` passed. Live YCloud send intentionally deferred.
+  mypy, and `git diff --check` passed. Work-unit commit: `7fd0765`. Native review
+  was unavailable (`package-local-binary-missing`). Live YCloud send intentionally
+  deferred.
 
 ## Next step
 

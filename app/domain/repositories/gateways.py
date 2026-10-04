@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from datetime import tzinfo
-from typing import Protocol, runtime_checkable
+from datetime import date, datetime, tzinfo
+from typing import Literal, Protocol, runtime_checkable
 
 from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
@@ -124,6 +124,47 @@ class AppointmentGateway(Protocol):
         appointment_id: str,
         idempotency_key: str,
     ) -> None: ...
+
+
+ReminderAppointmentState = Literal[
+    "active", "confirmed", "attended", "cancelled", "no_show", "unknown"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderAppointment:
+    """Read model used only to decide whether and when to send a reminder."""
+
+    id: str
+    patient_id: str
+    starts_at: datetime
+    raw_status_id: str
+    raw_status_name: str
+    state: ReminderAppointmentState
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderPatient:
+    """Minimum patient data required for reminder delivery."""
+
+    patient_id: str
+    mobile: PhoneNumber
+
+
+@runtime_checkable
+class ReminderAppointmentGateway(Protocol):
+    """Read-only appointment port for reminder scheduling."""
+
+    async def list_reminder_appointments_for_date_window(
+        self, start_date: date, end_date: date
+    ) -> list[ReminderAppointment]: ...
+
+
+@runtime_checkable
+class ReminderPatientGateway(Protocol):
+    """Read-only patient contact port for reminder delivery."""
+
+    async def get_reminder_patient(self, patient_id: str) -> ReminderPatient | None: ...
 
 
 @runtime_checkable

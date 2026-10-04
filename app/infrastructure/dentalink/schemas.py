@@ -20,6 +20,7 @@ production use.
 
 from collections.abc import Collection
 from datetime import datetime, timedelta, tzinfo
+from unicodedata import combining, normalize
 
 from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
@@ -28,6 +29,11 @@ from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.entities.specialty import Specialty
 from app.domain.entities.treatment import Treatment
+from app.domain.repositories.gateways import (
+    ReminderAppointment,
+    ReminderAppointmentState,
+    ReminderPatient,
+)
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -133,6 +139,93 @@ def appointment_from_cita(
         slot=slot,
         status=status,
     )
+
+
+def reminder_statuses_from_estados(
+    estados: list[dict[str, object]],
+) -> dict[str, tuple[str, ReminderAppointmentState]]:
+    """Builds strict, clinic-owned status semantics for reminder scheduling.
+
+    Cancellation is authoritative only when Dentalink's explicit `anulacion`
+    flag is set. Other states are recognized by exact normalized names. An
+    unrecognized state is `active` only when the explicit `reservado` flag
+    marks it active; otherwise it remains `unknown` for the scheduler to
+    skip safely.
+    """
+    named_states: dict[str, ReminderAppointmentState] = {
+        "confirmada": "confirmed",
+        "confirmado": "confirmed",
+        "atendida": "attended",
+        "atendido": "attended",
+        "no asistio": "no_show",
+        "no show": "no_show",
+    }
+    statuses: dict[str, tuple[str, ReminderAppointmentState]] = {}
+    for estado in estados:
+        state_id = estado.get("id")
+        name = estado.get("nombre")
+        anulacion = estado.get("anulacion")
+        if state_id is None or not isinstance(name, str) or not name.strip():
+            raise DentalinkInvalidResponseError("cita estado is missing id/nombre")
+        if not isinstance(anulacion, bool | int) or anulacion not in (0, 1, False, True):
+            raise DentalinkInvalidResponseError("cita estado is missing a valid anulacion flag")
+        reservado = estado.get("reservado")
+        if reservado is not None and (
+            not isinstance(reservado, bool | int) or reservado not in (0, 1, False, True)
+        ):
+            raise DentalinkInvalidResponseError("cita estado has an invalid reservado flag")
+        normalized_id = str(state_id)
+        if normalized_id in statuses:
+            raise DentalinkInvalidResponseError("cita estados contains a duplicate id")
+        if anulacion == 1:
+            state: ReminderAppointmentState = "cancelled"
+        else:
+            named_state = named_states.get(_normalized_status_name(name))
+            if named_state is not None:
+                state = named_state
+            else:
+                state = "active" if reservado == 1 else "unknown"
+        statuses[normalized_id] = (name, state)
+    return statuses
+
+
+def reminder_appointment_from_cita(
+    raw: dict[str, object],
+    *,
+    statuses: dict[str, tuple[str, ReminderAppointmentState]],
+    timezone: tzinfo,
+) -> ReminderAppointment:
+    """Maps a cita into the reminder read model without widening `Appointment`."""
+    required = ("id", "id_paciente", "fecha", "hora_inicio", "id_estado")
+    if any(raw.get(field) is None for field in required):
+        raise DentalinkInvalidResponseError("cita record is missing reminder-required fields")
+    status_id = str(raw["id_estado"])
+    try:
+        status_name, state = statuses[status_id]
+    except KeyError as exc:
+        raise DentalinkInvalidResponseError("cita record references an unknown estado") from exc
+    return ReminderAppointment(
+        id=str(raw["id"]),
+        patient_id=str(raw["id_paciente"]),
+        starts_at=_parse_datetime(str(raw["fecha"]), str(raw["hora_inicio"]), timezone),
+        raw_status_id=status_id,
+        raw_status_name=status_name,
+        state=state,
+    )
+
+
+def _normalized_status_name(name: str) -> str:
+    decomposed = normalize("NFKD", name.casefold())
+    return " ".join("".join(char for char in decomposed if not combining(char)).split())
+
+
+def reminder_patient_from_paciente(raw: dict[str, object]) -> ReminderPatient:
+    """Maps only the identifier and normalized mobile needed for a reminder."""
+    patient_id = raw.get("id")
+    raw_phone = raw.get("celular") or raw.get("telefono")
+    if patient_id is None or not raw_phone:
+        raise DentalinkInvalidResponseError("paciente record is missing id/celular/telefono")
+    return ReminderPatient(patient_id=str(patient_id), mobile=_phone_from_dentalink(str(raw_phone)))
 
 
 def patient_from_paciente(raw: dict[str, object]) -> Patient:
