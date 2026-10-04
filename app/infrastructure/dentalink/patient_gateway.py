@@ -32,6 +32,7 @@ from app.application.errors.error_types import (
 )
 from app.domain.entities.patient import Patient
 from app.domain.exceptions.errors import PatientAlreadyExistsError
+from app.domain.repositories.gateways import ReminderPatient
 from app.domain.value_objects.dni import Dni
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.dentalink.client import DentalinkClient
@@ -46,6 +47,7 @@ from app.infrastructure.dentalink.schemas import (
     as_list,
     full_names_match,
     patient_from_paciente,
+    reminder_patient_from_paciente,
 )
 from app.infrastructure.observability.tool_tracing import traced_call
 
@@ -152,6 +154,31 @@ class DentalinkPatientGateway:
             call=_call,
             response_summary=lambda patient: (
                 f"patient_id={patient.id}" if patient else "not_found"
+            ),
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def get_reminder_patient(self, patient_id: str) -> ReminderPatient | None:
+        """Returns only the normalized mobile contact for an already-selected patient."""
+
+        async def _call() -> ReminderPatient | None:
+            try:
+                raw = await self._client.get(f"/v1/pacientes/{patient_id}")
+            except DentalinkAPIError as exc:
+                if exc.status_code == 404:
+                    return None
+                raise
+            return reminder_patient_from_paciente(as_dict(raw))
+
+        return await traced_call(
+            tool_name="GetReminderPatientTool",
+            provider=_PROVIDER,
+            operation="get_reminder_patient",
+            request_summary=f"patient_id={patient_id}",
+            call=_call,
+            response_summary=lambda patient: (
+                f"patient_id={patient.patient_id}" if patient else "not_found"
             ),
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
