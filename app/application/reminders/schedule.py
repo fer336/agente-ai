@@ -12,9 +12,11 @@ from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.repositories.appointment_reminder_repository import AppointmentReminderRepository
+from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.gateways import ReminderAppointmentGateway, ReminderPatientGateway
 from app.domain.value_objects.appointment_id import AppointmentId
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.phone_number import PhoneNumber
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ async def schedule_reminders(
     repository: AppointmentReminderRepository,
     now: datetime,
     settings: ReminderSchedulingSettings,
+    contact_preferences: ContactRepository | None = None,
 ) -> int:
     """Plan yesterday through tomorrow, with no external call unless enabled."""
     if not settings.enabled or not settings.phone_allowlist:
@@ -86,9 +89,14 @@ async def schedule_reminders(
             logger.warning("appointment_reminder.schedule_invalid appointment_id=%s", source.id)
             continue
         for candidate in candidates:
-            if (
-                candidate.kind == "review_request"
-                and await repository.has_sent_review_request_since(
+            if candidate.kind == "review_request" and (
+                (
+                    contact_preferences is not None
+                    and await contact_preferences.is_review_opted_out(
+                        PhoneNumber(candidate.recipient_phone)
+                    )
+                )
+                or await repository.has_sent_review_request_since(
                     candidate.patient_id, now - timedelta(days=settings.review_cooldown_days)
                 )
             ):
