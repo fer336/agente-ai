@@ -48,9 +48,7 @@ async def test_send_buttons_records_recipient_text_and_buttons():
 
     await gateway.send_buttons(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons)
 
-    assert gateway.sent_buttons == [
-        (PhoneNumber("+5491122334455"), "¿Confirmás?", buttons, None)
-    ]
+    assert gateway.sent_buttons == [(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons, None)]
 
 
 @pytest.mark.asyncio

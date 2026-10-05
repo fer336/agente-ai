@@ -21,9 +21,7 @@ class Settings(BaseSettings):
     #: env-var injection isn't how Swarm secrets work. Whichever path exists
     #: on disk is used; a missing one is silently skipped by pydantic-settings,
     #: so this is safe in both environments without an if/else.
-    model_config = SettingsConfigDict(
-        env_file=(".env", "/run/secrets/backend.env"), extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=(".env", "/run/secrets/backend.env"), extra="ignore")
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
@@ -138,6 +136,21 @@ class Settings(BaseSettings):
     appointment_reminders_send_window_end: time = time(20, 0)
     appointment_reminders_review_time: time = time(10, 0)
     appointment_reminders_review_cooldown_days: int = 90
+    #: Worker defaults are conservative; T5 owns process-lifetime wiring.
+    appointment_reminders_poll_interval_seconds: int = 60
+    appointment_reminders_batch_size: int = 50
+    appointment_reminders_max_attempts: int = 3
+    #: Must comfortably outlast YCloud's bounded outbound HTTP request (15s)
+    #: plus DB scheduling jitter; smaller leases risk concurrent reclamation.
+    appointment_reminders_claim_timeout_seconds: int = 300
+    appointment_reminders_retry_backoff_seconds: int = 60
+
+    @field_validator("appointment_reminders_claim_timeout_seconds")
+    @classmethod
+    def _validate_appointment_reminder_claim_timeout(cls, value: int) -> int:
+        if value < 60:
+            raise ValueError("appointment reminder claim timeout must be at least 60 seconds")
+        return value
 
     @field_validator("appointment_reminders_phone_allowlist")
     @classmethod
