@@ -18,6 +18,7 @@ from app.agent.clinic_topics import (
     PRESELECTED_SPECIALTY_KEY,
     booking_comment,
 )
+from app.agent.example_identity import pick_example_identity
 from app.agent.first_visit_intake_extraction import (
     extract_intake_reply,
     extract_question_reply,
@@ -383,24 +384,46 @@ _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón
 #: Sampling temperature for the intake ask/re-ask intro: high on purpose, so consecutive
 #: asks are not worded the same.
 _INTAKE_ASK_TEMPERATURE = 0.9
-_ASK_IDENTIFICATION_MESSAGE = (
-    "Para coordinar un turno necesito identificarte primero.\n\n"
-    "Escribime tu *nombre completo* y tu *DNI* (por ejemplo: Rosa Gómez, 30123456)."
-)
-_IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE = (
-    "No pude leer bien tus datos. Escribime tu nombre completo y tu DNI juntos, "
-    "por ejemplo: Rosa Gómez, 30123456."
-)
-_DNI_FORMAT_INVALID_MESSAGE = (
-    "Ese DNI no parece válido. Escribime tu DNI solo con números "
-    "(7 u 8 dígitos), por ejemplo: 30123456."
-)
-_NAME_INCOMPLETE_MESSAGE = (
-    "Necesito tu nombre Y apellido completos, no solo uno. Escribimelos junto "
-    "con tu DNI, por ejemplo: Rosa Gómez, 30123456."
-)
-_ASK_DNI_ONLY_MESSAGE = "Gracias! Ahora decime tu *DNI* (7 u 8 dígitos), por ejemplo: 30123456."
-_ASK_NAME_ONLY_MESSAGE = "Gracias! Ahora decime tu *nombre completo*, por ejemplo: Rosa Gómez."
+
+
+#: The messages below show a fictional example; each takes it as an argument so every
+#: send picks a fresh one (`pick_example_identity`) instead of a hard-coded name.
+def _identification_prompt_text(example_name: str, example_dni: str) -> str:
+    return (
+        "Para coordinar un turno necesito identificarte primero.\n\n"
+        f"Escribime tu *nombre completo* y tu *DNI* (por ejemplo: {example_name}, {example_dni})."
+    )
+
+
+def _identification_not_understood_message(example_name: str, example_dni: str) -> str:
+    return (
+        "No pude leer bien tus datos. Escribime tu nombre completo y tu DNI juntos, "
+        f"por ejemplo: {example_name}, {example_dni}."
+    )
+
+
+def _dni_format_invalid_message(example_dni: str) -> str:
+    return (
+        "Ese DNI no parece válido. Escribime tu DNI solo con números "
+        f"(7 u 8 dígitos), por ejemplo: {example_dni}."
+    )
+
+
+def _name_incomplete_message(example_name: str, example_dni: str) -> str:
+    return (
+        "Necesito tu nombre Y apellido completos, no solo uno. Escribimelos junto "
+        f"con tu DNI, por ejemplo: {example_name}, {example_dni}."
+    )
+
+
+def _ask_dni_only_message(example_dni: str) -> str:
+    return f"Gracias! Ahora decime tu *DNI* (7 u 8 dígitos), por ejemplo: {example_dni}."
+
+
+def _ask_name_only_message(example_name: str) -> str:
+    return f"Gracias! Ahora decime tu *nombre completo*, por ejemplo: {example_name}."
+
+
 #: Shown at the start of the next step when Dentalink says the patient already has the
 #: agreement we tried to link: not an error, they just carry on with their booking.
 _AGREEMENT_ALREADY_LINKED_NOTICE = (
@@ -554,10 +577,15 @@ _NEW_PATIENT_BUTTONS = [
 _NEW_PATIENT_CONFIRMATION_QUESTION = (
     "No encontramos ningún registro con tu DNI. ¿Es tu primera vez en Smiling Pilar?"
 )
-_NEW_PATIENT_REJECTED_MESSAGE = (
-    "Entendido, entonces ya sos paciente. Escribime de nuevo tu *nombre completo* y tu *DNI* "
-    "(7 u 8 dígitos) para buscar tu ficha, por ejemplo: Rosa Gómez, 30123456."
-)
+
+
+def _new_patient_rejected_message(example_name: str, example_dni: str) -> str:
+    return (
+        "Entendido, entonces ya sos paciente. Escribime de nuevo tu *nombre completo* y tu "
+        f"*DNI* (7 u 8 dígitos) para buscar tu ficha, por ejemplo: {example_name}, {example_dni}."
+    )
+
+
 _CONFIRM_BUTTONS = [
     InteractiveButton(id=CONFIRM_APPOINTMENT_PAYLOAD, title="✅ Confirmar"),
     InteractiveButton(id=REJECT_APPOINTMENT_PAYLOAD, title="❌ Cancelar"),
@@ -1419,6 +1447,7 @@ def create_appointment_node(
         different entry points (post-slot, reschedule, cancel) all reach
         this same ask, and a patient bouncing between them shouldn't see
         the identical canned sentence every time."""
+        example_name, example_dni = pick_example_identity()
         return await generate_or_fallback(
             llm_provider,
             str(conversation_id),
@@ -1430,11 +1459,11 @@ def create_appointment_node(
                 ),
                 "formato_requerido": (
                     "Nombre y apellido completos, y DNI (7 u 8 dígitos), en uno o dos "
-                    "mensajes, ejemplo: Rosa Gómez, 30123456. Incluí ese ejemplo en tu "
-                    "respuesta."
+                    f"mensajes, ejemplo: {example_name}, {example_dni}. Incluí ese ejemplo "
+                    "en tu respuesta."
                 ),
             },
-            _ASK_IDENTIFICATION_MESSAGE,
+            _identification_prompt_text(example_name, example_dni),
             recent_messages,
             contact_memory,
         )
@@ -3054,7 +3083,7 @@ def create_appointment_node(
                     # remembered pieces are cleared so the same pair that
                     # just failed to match is not resurrected.
                     return {
-                        "response_text": _NEW_PATIENT_REJECTED_MESSAGE,
+                        "response_text": _new_patient_rejected_message(*pick_example_identity()),
                         "response_buttons": None,
                         "requires_handoff": False,
                         "pending_action_id": None,
@@ -4163,6 +4192,7 @@ def create_appointment_node(
             if merged_full_name is None and merged_dni is None:
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
                 escalating = retry_count > _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS
+                example_name, example_dni = pick_example_identity()
                 context: dict[str, object] = {
                     "situacion": (
                         "Todavía falta el nombre completo o el DNI para poder buscar al "
@@ -4170,7 +4200,7 @@ def create_appointment_node(
                     ),
                     "formato_requerido": (
                         "Nombre completo y DNI, en un mismo mensaje o en dos, ejemplo: "
-                        "Rosa Gómez, 30123456. Incluí ese ejemplo en tu respuesta."
+                        f"{example_name}, {example_dni}. Incluí ese ejemplo en tu respuesta."
                     ),
                     # The model used to be told WE had failed ("no pudimos
                     # identificar", "no llegué a registrar bien tus datos"),
@@ -4191,7 +4221,7 @@ def create_appointment_node(
                     str(conversation_id),
                     "identification_retry",
                     context,
-                    _IDENTIFICATION_NOT_UNDERSTOOD_MESSAGE,
+                    _identification_not_understood_message(example_name, example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
@@ -4217,6 +4247,7 @@ def create_appointment_node(
                 # DNI came with it (or was already remembered) is kept —
                 # only the name needs fixing.
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
+                example_name, example_dni = pick_example_identity()
                 text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
@@ -4228,12 +4259,12 @@ def create_appointment_node(
                         ),
                         "nombre_recibido": merged_full_name.strip(),
                         "formato_requerido": (
-                            "Nombre Y apellido completos, ejemplo: Rosa Gómez. "
+                            f"Nombre Y apellido completos, ejemplo: {example_name}. "
                             "Incluí ese ejemplo en tu respuesta."
                         ),
                         "intentos_seguidos": retry_count,
                     },
-                    _NAME_INCOMPLETE_MESSAGE,
+                    _name_incomplete_message(example_name, example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
@@ -4252,15 +4283,18 @@ def create_appointment_node(
                 # instead of repeating the whole "nombre y DNI" prompt
                 # (PRD.md never demanded a single message, and the patient
                 # already got half of this right).
+                example_name = pick_example_identity()[0]
                 text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
                     "identification_missing_name",
                     {
                         "situacion": "El paciente ya dio su DNI, todavía falta el nombre completo.",
-                        "formato_requerido": "Nombre y apellido completos, ejemplo: Rosa Gómez.",
+                        "formato_requerido": (
+                            f"Nombre y apellido completos, ejemplo: {example_name}."
+                        ),
                     },
-                    _ASK_NAME_ONLY_MESSAGE,
+                    _ask_name_only_message(example_name),
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
@@ -4273,15 +4307,18 @@ def create_appointment_node(
             if merged_dni is None:
                 # Full name in hand, still no DNI — same idea, ask for just
                 # what's missing.
+                example_dni = pick_example_identity()[1]
                 text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
                     "identification_missing_dni",
                     {
                         "situacion": "El paciente ya dio su nombre completo, todavía falta el DNI.",
-                        "formato_requerido": "Solo números, 7 u 8 dígitos, ejemplo: 30123456.",
+                        "formato_requerido": (
+                            f"Solo números, 7 u 8 dígitos, ejemplo: {example_dni}."
+                        ),
                     },
-                    _ASK_DNI_ONLY_MESSAGE,
+                    _ask_dni_only_message(example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
@@ -4305,6 +4342,7 @@ def create_appointment_node(
                 # and stay in this same stage (no PendingAction needed for
                 # a plain format retry).
                 retry_count = cast(int, collected_data.get("identification_retry_count", 0)) + 1
+                example_dni = pick_example_identity()[1]
                 text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
@@ -4316,12 +4354,12 @@ def create_appointment_node(
                         ),
                         "dni_recibido": dni,
                         "formato_requerido": (
-                            "Solo números, 7 u 8 dígitos, ejemplo: 30123456. Incluí ese "
+                            f"Solo números, 7 u 8 dígitos, ejemplo: {example_dni}. Incluí ese "
                             "ejemplo en tu respuesta."
                         ),
                         "intentos_seguidos": retry_count,
                     },
-                    _DNI_FORMAT_INVALID_MESSAGE,
+                    _dni_format_invalid_message(example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
