@@ -1,7 +1,9 @@
+from collections.abc import Collection
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from app.domain.entities.appointment_reminder import AppointmentReminder
+from app.domain.entities.appointment_reminder import AppointmentReminder, ReminderKind
+from app.domain.value_objects.phone_number import PhoneNumber
 
 
 @runtime_checkable
@@ -55,3 +57,16 @@ class AppointmentReminderRepository(Protocol):
     ) -> bool: ...
 
     async def has_sent_review_request_since(self, patient_id: str, cutoff: datetime) -> bool: ...
+
+    async def find_sent_for_inbound_action(
+        self,
+        appointment_id: str,
+        recipient_phone: PhoneNumber,
+        allowed_kinds: Collection[ReminderKind],
+    ) -> AppointmentReminder | None:
+        """Returns only a terminal sent reminder eligible for an inbound action."""
+        ...
+
+    async def has_sent_review_request_for_recipient(self, recipient_phone: PhoneNumber) -> bool:
+        """Whether this normalized recipient was sent a terminal review request."""
+        ...
