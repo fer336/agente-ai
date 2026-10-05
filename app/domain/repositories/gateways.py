@@ -87,6 +87,15 @@ class PatientGateway(Protocol):
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None: ...
 
+    async def find_patient_by_dni(self, dni: str) -> Patient | None:
+        """Looks a patient up by DNI alone, with no name check.
+
+        Used to detect an already-registered patient whose typed name does
+        not match the record on file, so they are never asked to register
+        again (nor to re-enter their data in a loop).
+        """
+        ...
+
     async def create_patient(
         self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
     ) -> Patient:

@@ -136,6 +136,27 @@ class DentalinkPatientGateway:
             error_type_of=_error_type_of,
         )
 
+    async def find_patient_by_dni(self, dni: str) -> Patient | None:
+        async def _call() -> Patient | None:
+            try:
+                validated_dni = Dni(dni)
+            except ValueError:
+                return None
+            return await self._find_by_rut(validated_dni)
+
+        return await traced_call(
+            tool_name="FindPatientByDniTool",
+            provider=_PROVIDER,
+            operation="find_patient_by_dni",
+            request_summary=f"dni_len={len(dni)}",
+            call=_call,
+            response_summary=lambda patient: (
+                f"patient_id={patient.id}" if patient else "not_found"
+            ),
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
     async def create_patient(
         self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
     ) -> Patient:
