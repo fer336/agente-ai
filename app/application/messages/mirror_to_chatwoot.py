@@ -94,6 +94,24 @@ class MirrorMessageToChatwootUseCase:
                 exc_info=True,
             )
 
+    async def activate_agente(
+        self, conversation_id: ConversationId, phone: PhoneNumber, name: str
+    ) -> None:
+        """Swaps the Chatwoot control label back to "agente" when the bot is
+        reactivated outside Chatwoot (e.g. the human-mode lazy timeout), so
+        the label always matches `conversation.mode`."""
+        try:
+            chatwoot_conversation_id = await self._resolve_conversation(
+                conversation_id, phone, name
+            )
+            await self._chatwoot_gateway.assign_bot(chatwoot_conversation_id)
+        except Exception:  # noqa: BLE001 - mirror is best-effort, must never raise
+            logger.warning(
+                "mirror_to_chatwoot.activate_agente_failed conversation_id=%s",
+                conversation_id,
+                exc_info=True,
+            )
+
     async def _resolve_conversation(
         self, conversation_id: ConversationId, phone: PhoneNumber, name: str
     ) -> str:
@@ -115,4 +133,16 @@ class MirrorMessageToChatwootUseCase:
                     chatwoot_conversation_id=chatwoot_conversation_id,
                 )
             )
+            # Agent is the default control mode: label the brand-new Chatwoot
+            # conversation "agente" right away (after the mapping is saved, so
+            # a label failure can neither lose the mapping nor block the
+            # message being mirrored).
+            try:
+                await self._chatwoot_gateway.assign_bot(chatwoot_conversation_id)
+            except Exception:  # noqa: BLE001 - cosmetic label, best-effort
+                logger.warning(
+                    "mirror_to_chatwoot.initial_label_failed conversation_id=%s",
+                    conversation_id,
+                    exc_info=True,
+                )
             return chatwoot_conversation_id

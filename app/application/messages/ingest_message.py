@@ -374,6 +374,13 @@ class IngestMessageUseCase:
                     conversation.id, "agent"
                 )
                 conversation_mode = "agent"
+                if self._mirror_to_chatwoot is not None:
+                    # Keep the Chatwoot control label in sync with the mode.
+                    asyncio.create_task(
+                        self._mirror_to_chatwoot.activate_agente(
+                            conversation.id, dto.from_phone, str(dto.from_phone)
+                        )
+                    )
                 # Same fresh-start contract as the `/bot` command: the old
                 # workflow generation dies (stage/collected_data reset) and
                 # the next graph turn renders the canonical welcome menu

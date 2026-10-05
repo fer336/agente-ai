@@ -172,3 +172,75 @@ async def test_a_failed_first_attempt_does_not_persist_a_partial_mapping():
     await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
 
     assert await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_newly_created_chatwoot_conversation_is_labeled_agente_from_the_start():
+    use_case, gateway, mapping_repository = _make_use_case()
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    assert gateway.labels_by_conversation == {mapping.chatwoot_conversation_id: "agente"}
+
+
+@pytest.mark.asyncio
+async def test_an_existing_mapping_is_not_relabeled_agente_on_later_messages():
+    # A staff-applied "administracion" label must survive later mirror calls.
+    use_case, gateway, mapping_repository = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    await gateway.assign_administracion(mapping.chatwoot_conversation_id)
+
+    await use_case.mirror_outgoing(_CONVERSATION_ID, _PHONE, str(_PHONE), "Un asesor te escribe")
+
+    assert gateway.labels_by_conversation == {mapping.chatwoot_conversation_id: "administracion"}
+
+
+@pytest.mark.asyncio
+async def test_a_failing_initial_label_does_not_block_the_mirrored_message():
+    class _LabelFailingGateway(FakeChatwootGateway):
+        async def assign_bot(self, chatwoot_conversation_id: str) -> None:
+            raise RuntimeError("label endpoint down")
+
+    use_case, gateway, mapping_repository = _make_use_case(
+        chatwoot_gateway=_LabelFailingGateway()
+    )
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    assert gateway.sent_incoming == [(mapping.chatwoot_conversation_id, "Hola")]
+
+
+@pytest.mark.asyncio
+async def test_escalating_a_new_conversation_ends_with_only_administracion():
+    use_case, gateway, mapping_repository = _make_use_case()
+
+    await use_case.escalate_to_administracion(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    assert gateway.labels_by_conversation == {mapping.chatwoot_conversation_id: "administracion"}
+
+
+@pytest.mark.asyncio
+async def test_activate_agente_swaps_administracion_back_to_agente():
+    use_case, gateway, mapping_repository = _make_use_case()
+    await use_case.escalate_to_administracion(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+    await use_case.activate_agente(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    assert gateway.labels_by_conversation == {mapping.chatwoot_conversation_id: "agente"}
+
+
+@pytest.mark.asyncio
+async def test_activate_agente_never_raises_when_the_gateway_fails():
+    use_case, _, _ = _make_use_case(chatwoot_gateway=FakeChatwootGateway(fail=True))
+
+    await use_case.activate_agente(_CONVERSATION_ID, _PHONE, str(_PHONE))
