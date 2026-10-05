@@ -2,8 +2,8 @@
 
 import pytest
 
+from app.agent.example_identity import EXAMPLE_FULL_NAMES
 from app.agent.nodes.appointment import (
-    _ASK_IDENTIFICATION_MESSAGE,
     _CONFIRM_BUTTONS,
     _CONFIRMATION_REMINDER,
     STAGE_AWAITING_CONFIRMATION,
@@ -85,7 +85,8 @@ async def test_a_collection_prompt_never_claims_a_cancellation_that_did_not_run(
     result = await node(state)
 
     assert llm.calls, "the scripted LLM was never consulted"
-    assert result["response_text"] == _ASK_IDENTIFICATION_MESSAGE
+    assert result["response_text"].startswith("Para coordinar un turno necesito identificarte")
+    assert any(name in result["response_text"] for name in EXAMPLE_FULL_NAMES)
 
 
 @pytest.mark.asyncio
