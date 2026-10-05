@@ -56,8 +56,11 @@ ALIGNERS_IMAGE_URL=
 MESSAGE_DEBOUNCE_SECONDS=6
 
 # Appointment reminders — disabled until an operator explicitly enables the
-# feature AND lists E.164 recipient numbers. An empty allowlist blocks everyone.
+# feature. `allowlist` is the safe default: only listed E.164 recipients may
+# receive reminders, and an empty allowlist blocks all sends. `all` is an
+# explicit production mode; it still requires enabled=true.
 APPOINTMENT_REMINDERS_ENABLED=false
+APPOINTMENT_REMINDERS_ROLLOUT_MODE=allowlist
 APPOINTMENT_REMINDERS_PHONE_ALLOWLIST=
 APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME=recordatorio_turno_confirmar
 APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME=recordatorio_turno_ubicacion

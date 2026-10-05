@@ -17,8 +17,9 @@ Use a safe staged rollout in an isolated worktree:
 - A `Confirmar` tap writes Dentalink status `Confirmado por pcte. vía WhatsApp`
   (clinic status ID `22`, confirmed by the user after a live metadata-only check).
 - A `Cancelar` tap still requires a second explicit confirmation before cancellation.
-- Keep production recipients blocked behind an off-by-default feature flag and explicit
-  phone allowlist.
+- Keep the feature off by default.
+- Use rollout mode `allowlist` for staged tests and explicit mode `all` for production;
+  an empty allowlist never implicitly means all recipients.
 
 ## Approved templates
 
@@ -48,7 +49,9 @@ Use a safe staged rollout in an isolated worktree:
 - Test-first for deterministic behavior: observed RED, GREEN, then refactor.
 - Preserve unrelated work in `/home/lucy/work/agente-ai`; all writes occur in this
   isolated worktree.
-- No reminder sends unless both the feature flag and recipient allowlist permit them.
+- No reminder sends unless the feature flag and explicit rollout mode permit them.
+- `allowlist` mode requires a matching normalized number; only explicit `all` mode may
+  target every otherwise eligible Dentalink patient.
 - Idempotency is appointment + reminder kind; retries must not duplicate completed
   sends.
 - Appointment state is revalidated immediately before every send or state mutation.
@@ -65,12 +68,17 @@ Use a safe staged rollout in an isolated worktree:
   stale/duplicate safeguards and durable opt-out.
 - [x] T5 — Wire the disabled-by-default worker, add operational observability/docs,
   and run focused plus full verification without a live patient send.
+- [x] T6 — Add explicit `allowlist`/`all` rollout modes so production can process all
+  eligible Dentalink patients without weakening staged-test safety.
 
 ## Acceptance criteria
 
 - With defaults, no reminder is sent.
-- With reminders enabled but an empty allowlist, no reminder is sent.
+- With reminders enabled in `allowlist` mode but an empty allowlist, no reminder is
+  sent.
 - Only allowlisted numbers can receive staged reminders.
+- Production mode `all` may send to every otherwise eligible Dentalink patient, while
+  still enforcing appointment state, timing, cooldown, opt-out, and phone validation.
 - Confirmation reminders are sent at most once per appointment/kind and use the
   approved `es_AR` templates with correct parameters.
 - Same-day reminders are skipped when their due time is outside 09:00–20:00.
@@ -140,8 +148,18 @@ Use a safe staged rollout in an isolated worktree:
   every reminder acceptance criterion passed. Native review remained unavailable
   (`package-local-binary-missing`). No live message was sent.
 
+- T6 complete: centralized immutable recipient policy, safe default `allowlist` mode,
+  and explicit production `all` mode wired through startup, scheduling, delivery, and
+  worker execution. Work-unit commit: `605fc71`, plus the documentation/progress
+  commit containing this update. Verification: 130 focused tests passed; the full
+  suite reached 2,964 passed and 84 skipped, with only the same 3 Redis integration
+  failures plus 3 teardown errors caused by the environment authentication mismatch.
+  Ruff, mypy, Alembic head, and diff checks passed. No live message was sent.
+
 ## Next step
 
-Obtain and explicitly approve one E.164 test recipient, apply migrations, and follow
-`docs/appointment-reminders-runbook.md` for the manual one-number staged trial. Push,
-PR, deployment, enablement, and allowlist expansion remain user decisions.
+Integrate the branch with current `origin/main`, prepare review-sized PR slices, apply
+migrations, then run the one-number `allowlist` trial. Production expansion requires a
+separate manual configuration change to `APPOINTMENT_REMINDERS_ROLLOUT_MODE=all` and
+`APPOINTMENT_REMINDERS_ENABLED=true`; push, PR, deployment, and enablement remain user
+decisions.

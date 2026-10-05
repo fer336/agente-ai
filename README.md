@@ -146,7 +146,7 @@ alembic upgrade head
 
 ## Appointment-reminder rollout
 
-Appointment reminders are fail-closed: they are disabled by default, and an empty E.164 allowlist blocks all sends. Follow the [staged appointment-reminder rollout runbook](docs/appointment-reminders-runbook.md) before any manual production enablement. Its automated verification commands do not send messages; the staged trial sends only to the explicitly authorized allowlisted number.
+Appointment reminders are fail-closed: they are disabled by default, and the safe default `APPOINTMENT_REMINDERS_ROLLOUT_MODE=allowlist` requires an E.164 allowlist. An empty allowlist blocks sends **only in `allowlist` mode**; it never implies `all`. `all` is the explicit production mode and still requires `APPOINTMENT_REMINDERS_ENABLED=true`. Follow the [staged appointment-reminder rollout runbook](docs/appointment-reminders-runbook.md) before any manual production enablement. Changing rollout mode requires the normal application restart/reload; deployment and enablement remain manual operator actions. Its automated verification commands do not send messages; the staged trial sends only to the explicitly authorized allowlisted number.
 
 ## Run the app
 

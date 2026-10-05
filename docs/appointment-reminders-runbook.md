@@ -2,9 +2,9 @@
 
 ## Safe state first
 
-**Reminders are off by default.** `APPOINTMENT_REMINDERS_ENABLED=false` and an empty `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` blocks every send. Both controls must be changed deliberately before the worker schedules or delivers anything.
+**Reminders are off by default.** `APPOINTMENT_REMINDERS_ENABLED=false` and the safe default `APPOINTMENT_REMINDERS_ROLLOUT_MODE=allowlist` fail closed. In `allowlist` mode, an empty `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` blocks every send; an empty allowlist never implies `all`. Both controls must be changed deliberately before the worker schedules or delivers anything.
 
-This runbook is for an operator conducting a deliberately narrow rollout. **No live send was performed while creating this documentation.** Production deployment and production enablement remain manual operator actions.
+This runbook is for an operator conducting a deliberately narrow rollout. **No live send was performed while creating this documentation.** Production deployment and production enablement remain manual operator actions. Mode changes require the normal application restart/reload.
 
 ## Preflight
 
@@ -29,8 +29,8 @@ This runbook is for an operator conducting a deliberately narrow rollout. **No l
 
 Do not invent or substitute a recipient. Obtain explicit authorization for **one** E.164 test number, then make that one number the complete allowlist.
 
-1. Keep `APPOINTMENT_REMINDERS_ENABLED=false` while adding only the authorized number to `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST`; use E.164 format (for example, the authorized number itself, not a placeholder or a patient number copied into a ticket).
-2. Restart/reload the application using the normal environment-management procedure and confirm the loaded allowlist contains only that number. Do not enable a broader list.
+1. Keep `APPOINTMENT_REMINDERS_ENABLED=false`, explicitly set `APPOINTMENT_REMINDERS_ROLLOUT_MODE=allowlist`, and add only the authorized number to `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST`; use E.164 format (the authorized number itself, not a placeholder or a patient number copied into a ticket).
+2. Restart/reload the application using the normal environment-management procedure and confirm the loaded mode is `allowlist` and the loaded allowlist contains only that number. Do not enable a broader list.
 3. Set `APPOINTMENT_REMINDERS_ENABLED=true`, restart/reload through the normal procedure, and watch logs and aggregate database state. The worker must schedule/deliver only for the authorized number; do not print phone numbers, names, message text, or other patient data in shared evidence.
 4. Exercise and record each path below against planned test appointments whose clinic-local time makes the path due. Check the actual template and timing, not only that a row exists:
 
@@ -49,8 +49,9 @@ These settings and defaults are already documented in [`dotenv_example_template.
 
 | Variable | Default | Operator meaning |
 | --- | --- | --- |
-| `APPOINTMENT_REMINDERS_ENABLED` | `false` | Master opt-in; it does not bypass the allowlist. |
-| `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` | empty | Comma-separated E.164 recipients; empty blocks all sends. |
+| `APPOINTMENT_REMINDERS_ENABLED` | `false` | Master opt-in; it must be `true` in every sending mode. |
+| `APPOINTMENT_REMINDERS_ROLLOUT_MODE` | `allowlist` | Safe staged mode. `all` is an explicit production mode; changing modes requires restart/reload. |
+| `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` | empty | Comma-separated E.164 recipients used only in `allowlist` mode; empty blocks all sends in that mode and never implies `all`. |
 | `APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME` | `recordatorio_turno_confirmar` | Day-before and active same-day template. |
 | `APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME` | `recordatorio_turno_ubicacion` | Confirmed same-day location template. |
 | `APPOINTMENT_REMINDERS_REVIEW_TEMPLATE_NAME` | `solicitud_resena_google` | Attended-appointment review template. |
@@ -65,6 +66,22 @@ These settings and defaults are already documented in [`dotenv_example_template.
 | `APPOINTMENT_REMINDERS_MAX_ATTEMPTS` | `3` | Retry limit for delivery failures. |
 | `APPOINTMENT_REMINDERS_CLAIM_TIMEOUT_SECONDS` | `300` | Delivery-claim lease; keep above the provider request bound. |
 | `APPOINTMENT_REMINDERS_RETRY_BACKOFF_SECONDS` | `60` | Initial retry backoff; retries increase exponentially. |
+
+## Production expansion: explicit `all` mode
+
+Only after the staged trial has a separate recorded approval, set `APPOINTMENT_REMINDERS_ROLLOUT_MODE=all` and restart/reload through the normal environment-management procedure. Do **not** add every production number to the allowlist. In `all` mode, every otherwise eligible normalized Dentalink patient may receive reminders, but sends still require `APPOINTMENT_REMINDERS_ENABLED=true`.
+
+The following safeguards remain in force in `all` mode:
+
+- appointment state eligibility;
+- configured timing and send-window checks;
+- review-request cooldown;
+- recorded review opt-out;
+- phone normalization and validation;
+- durable idempotency/claim handling; and
+- delivery-time revalidation for stale or mismatched appointments.
+
+An empty allowlist never switches the system to `all`; only the explicit mode setting does. Deployment and enablement remain manual operator actions.
 
 ## Observe and verify
 
@@ -97,8 +114,8 @@ The database claim and terminal `sent` state prevent normal concurrent re-sends,
 
 For any unexpected recipient, template, timing, callback, or delivery failure:
 
-1. Set `APPOINTMENT_REMINDERS_ENABLED=false`.
-2. Remove the number(s) from `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` (leave it empty to block all sends).
+1. First set `APPOINTMENT_REMINDERS_ENABLED=false`.
+2. Set `APPOINTMENT_REMINDERS_ROLLOUT_MODE=allowlist` and leave `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` empty to block all sends.
 3. Restart/reload the application via the normal operational procedure.
 4. Preserve reminder and opt-out rows, collect only privacy-safe aggregate/log evidence, and investigate before any re-enable. Operational rollback does not downgrade the database migrations; the additive tables/column remain in place while sends are disabled.
 
