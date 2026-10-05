@@ -275,3 +275,53 @@ async def test_dentalink_api_error_never_includes_the_access_token(
     assert "secret-token" not in str(exc_info.value)
     assert "secret-token" not in repr(exc_info.value)
     assert len(captured) == 1  # a non-timeout error is never retried
+
+
+@pytest.mark.asyncio
+async def test_find_patient_by_dni_returns_patient_even_when_no_name_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "data": [
+                {
+                    "id": 28,
+                    "rut": "30111222",
+                    "nombre": "Maria",
+                    "apellidos": "Soto",
+                    "celular": "1122334455",
+                }
+            ]
+        },
+    )
+    client, captured = _client_with_responses(monkeypatch, [response])
+    gateway = DentalinkPatientGateway(client)
+
+    found = await gateway.find_patient_by_dni(_VALID_DNI)
+
+    assert found is not None
+    assert found.id == "28"
+    assert found.full_name == "Maria Soto"
+    assert json.loads(captured[0].url.params["q"]) == {"rut": {"eq": "30111222"}}
+
+
+@pytest.mark.asyncio
+async def test_find_patient_by_dni_returns_none_when_dni_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client_with_responses(monkeypatch, [httpx.Response(200, json={"data": []})])
+    gateway = DentalinkPatientGateway(client)
+
+    assert await gateway.find_patient_by_dni(_VALID_DNI) is None
+
+
+@pytest.mark.asyncio
+async def test_find_patient_by_dni_returns_none_without_calling_for_malformed_dni(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, captured = _client_with_responses(monkeypatch, [])
+    gateway = DentalinkPatientGateway(client)
+
+    assert await gateway.find_patient_by_dni("not-a-dni") is None
+    assert captured == []

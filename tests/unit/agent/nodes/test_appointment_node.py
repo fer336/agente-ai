@@ -70,6 +70,7 @@ from app.infrastructure.database.fake_pending_action_repository import (
     FakePendingActionRepository,
 )
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
+from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.appointment_node import (
@@ -1989,6 +1990,107 @@ async def test_an_unknown_patient_is_offered_registration_whatever_they_came_to_
     assert len(result["response_buttons"]) == 3
 
 
+class _CreateForbiddenPatientGateway(FakePatientGateway):
+    """Fake that fails the test if the node ever tries to create a patient."""
+
+    async def create_patient(self, *args, **kwargs):
+        raise AssertionError("create_patient must not be called for a registered DNI")
+
+
+async def _make_node_with_registered_patient(
+    *, slot=None, conversation_id="ycloud-+5491122334455", **kwargs
+):
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
+    registered = make_patient(id_="pat-existing", full_name="Maria Soto Gomez", dni="30111222")
+    node = create_appointment_node(
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot or _future_slot()],
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        ),
+        patient_gateway=_CreateForbiddenPatientGateway(patients=[registered]),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        agreement_gateway=make_agreement_gateway(),
+        **kwargs,
+    )
+    return node
+
+
+@pytest.mark.asyncio
+async def test_a_registered_dni_with_a_different_name_is_told_they_already_figure_and_continues():
+    node = await _make_node_with_registered_patient()
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="Maria Soto, 30111222",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    # Continues to specialties (no slot picked yet) instead of proposing
+    # a new registration; `create_patient` is forbidden by the gateway.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert "Ya figur" in result["response_text"]
+    # Only the name on file is shown — never the DNI or other personal data.
+    assert "Maria Soto Gomez" in result["response_text"]
+    assert "5491122334455" not in result["response_text"]
+    assert "30111222" not in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_registered_dni_with_a_picked_slot_continues_to_confirm_that_slot():
+    slot = _future_slot()
+    node = await _make_node_with_registered_patient(slot=slot)
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="Maria Soto, 30111222",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
+    assert result["pending_action_id"] is not None
+    assert "Ya figur" in result["response_text"]
+    assert "Maria Soto Gomez" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_registered_dni_in_a_non_create_operation_lists_their_appointments():
+    node = await _make_node_with_registered_patient()
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="Maria Soto, 30111222",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    # Registered, so no registration questions: the existing patient goes
+    # straight to the appointments lookup (none seeded here).
+    assert result["collected_data"].get("stage") != STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert "Ya figur" in result["response_text"]
+    assert "intent=no_appointments" in result["response_text"]
+
+
 @pytest.mark.asyncio
 async def test_new_patient_details_stage_asks_for_whichever_piece_is_missing():
     node, _, _ = await _make_node_and_conversation(
@@ -2037,6 +2139,13 @@ async def test_new_patient_details_stage_proposes_creation_once_both_fields_arri
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     ]
+    assert [b.title for b in result["response_buttons"]] == [
+        "Soy paciente nuevo",
+        "Ya soy paciente",
+    ]
+    assert all(len(b.title) <= 20 for b in result["response_buttons"])
+    assert "No encontramos ningún registro con tu DNI" in result["response_text"]
+    assert "¿Es tu primera vez en Smiling Pilar?" in result["response_text"]
     # The data they gave (across both stages) is echoed back, so they can
     # spot their own typo before it's created.
     assert "Fernando Ariel" in result["response_text"]
@@ -2804,12 +2913,50 @@ async def test_confirmation_stage_rejects_new_patient_creation_proposal():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] is None
+    # "Ya soy paciente": nothing is created and they are asked for their
+    # name and DNI again, so the stage goes back to identification.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["identification_full_name"] is None
+    assert result["collected_data"]["identification_dni"] is None
     assert result["pending_action_id"] is None
+    assert result["response_buttons"] is None
+    assert "nombre completo" in result["response_text"]
+    assert "DNI" in result["response_text"]
     async with repositories_provider() as repositories:
         rejected = await repositories.pending_actions.get_by_id("pa-1")
         assert rejected is not None
         assert rejected.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_new_patient_confirmation_reminder_keeps_the_new_patient_buttons():
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1",
+                action_type=CREATE_PATIENT_ACTION,
+                status="pending",
+                payload={"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"},
+            )
+        )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="hola?",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert [b.title for b in result["response_buttons"]] == [
+        "Soy paciente nuevo",
+        "Ya soy paciente",
+    ]
 
 
 @pytest.mark.asyncio
@@ -2843,7 +2990,7 @@ async def test_confirmation_stage_treats_a_free_text_decline_like_the_cancel_but
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] is None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["pending_action_id"] is None
     assert result["response_buttons"] is None
     async with repositories_provider() as repositories:
@@ -2908,14 +3055,11 @@ async def test_confirmation_stage_recovers_from_a_create_patient_race_and_never_
 
 
 @pytest.mark.asyncio
-async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retry():
-    # `create_patient` raised `PatientAlreadyExistsError` (the DNI is
-    # already registered) but the recovery lookup by name+DNI found no
-    # match (the patient typed an incomplete/mismatched name) — the
-    # response text asks the patient to retype name+DNI, so the stage must
-    # stay on identification for that reply to actually be parsed as the
-    # retry it was asked for, instead of falling out of the flow (and
-    # losing the slot already picked) into generic intent classification.
+async def test_create_patient_race_with_a_different_name_continues_with_the_existing_patient():
+    # `create_patient` raised `PatientAlreadyExistsError` and the typed name
+    # does not match the record on file. The DNI is what identifies the
+    # patient, so recovery must continue with that record — never reset
+    # identification (which looped the patient asking for name+DNI again).
     slot = _future_slot()
     repositories_provider = make_proposal_repositories_provider()
     conversation_repository = make_conversation_repository()
@@ -2959,12 +3103,11 @@ async def test_create_patient_race_lost_stays_in_identification_stage_for_a_retr
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
     assert result["collected_data"]["pending_selected_slot"] == slot
-    # Neither the mismatched name nor the DNI it was matched against
-    # should survive — the patient was asked to write both again, fresh.
-    assert result["collected_data"]["identification_full_name"] is None
-    assert result["collected_data"]["identification_dni"] is None
+    assert "Ya figur" in result["response_text"]
+    assert "Pedro Cassera" in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -4434,6 +4577,104 @@ async def test_registration_flow_recovers_from_a_create_patient_race():
     result = await node(state)
 
     assert result["collected_data"]["patient"]["id"] == "pat-existing"
+
+
+@pytest.mark.asyncio
+async def test_verification_flow_with_a_registered_dni_and_other_name_continues_without_creating():
+    slot = _future_slot()
+    node = await _make_node_with_registered_patient(
+        slot=slot, verification_flow_id="flow-verify", registration_flow_id="flow-register"
+    )
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Maria Soto", "dni": "30111222"}}'
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_VERIFICATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
+    assert "Ya figur" in result["response_text"]
+    assert "Maria Soto Gomez" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_with_a_registered_dni_continues_without_creating():
+    slot = _future_slot()
+    node = await _make_node_with_registered_patient(slot=slot)
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Maria Soto", "dni": "30111222"}}'
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_REGISTRATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
+    assert "Ya figur" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_registration_flow_race_with_a_different_name_recovers_by_dni():
+    # The pre-check saw nobody, but the DNI was registered before
+    # `create_patient` ran: recovery must find it by DNI alone.
+    slot = _future_slot()
+
+    class _RacyPatientGateway(FakePatientGateway):
+        def __init__(self, patients):
+            super().__init__(patients=patients)
+            self._lookups = 0
+
+        async def find_patient_by_dni(self, dni):
+            self._lookups += 1
+            if self._lookups == 1:
+                return None
+            return await super().find_patient_by_dni(dni)
+
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    node = create_appointment_node(
+        appointment_gateway=make_dentalink_gateway(available_slots=[slot]),
+        patient_gateway=_RacyPatientGateway(
+            [make_patient(id_="pat-existing", full_name="Maria Soto Gomez", dni="30111222")]
+        ),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        agreement_gateway=make_agreement_gateway(),
+    )
+    payload = f'{FLOW_RESPONSE_PAYLOAD_PREFIX}{{"full_name": "Maria Soto", "dni": "30111222"}}'
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=payload,
+        collected_data={
+            "stage": STAGE_AWAITING_REGISTRATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,13 @@ class FakePatientGateway:
                 return patient
         return None
 
+    async def find_patient_by_dni(self, dni: str) -> Patient | None:
+        try:
+            validated_dni = Dni(dni)
+        except ValueError:
+            return None
+        return self._find_by_rut(validated_dni)
+
     async def create_patient(
         self, full_name: str, dni: str, phone: PhoneNumber, email: str | None = None
     ) -> Patient:
