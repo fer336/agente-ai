@@ -418,6 +418,12 @@ _NEW_PATIENT_RACE_LOST_MESSAGE = (
     "Encontramos un registro para ese DNI, pero con otro nombre. Por seguridad, "
     "escribime de nuevo tu nombre completo y tu DNI para verificarlo."
 )
+#: Shown when the DNI is already on file (even if the typed name differs).
+#: Deliberately static: it echoes ONLY the name on file, never any other
+#: personal data, so the wording must not be left to the LLM.
+_ALREADY_REGISTERED_MESSAGE = (
+    "Ya figurás en nuestro sistema como *{full_name}*, así que no hace falta registrarte de nuevo."
+)
 _PATIENT_NOT_FOUND_MESSAGE = (
     "No encontré ningún paciente con esos datos. Podés registrarte, probar con otro nombre "
     "o DNI, o hablar con administración."
@@ -2320,6 +2326,53 @@ def create_appointment_node(
                 "slots_page": page,
             },
         }
+
+    def _already_registered_notice(patient: Patient) -> str:
+        return _ALREADY_REGISTERED_MESSAGE.format(full_name=patient.full_name)
+
+    async def _continue_as_registered_patient(
+        conversation_id: ConversationId,
+        patient: Patient,
+        collected_data: dict[str, object],
+        recent_messages: list[dict[str, str]],
+        contact_memory: str | None,
+    ) -> dict[str, object]:
+        """Treats a DNI already on file as a registered patient and carries on.
+
+        Used when the DNI exists but the typed name did not match: the patient
+        is told they already figure in the system (name on file only) and the
+        flow continues instead of offering a duplicate registration.
+        """
+        patient_primitives = _patient_to_primitives(patient)
+        if collected_data.get("operation") == CREATE_APPOINTMENT_ACTION:
+            if collected_data.get("pending_selected_slot") is None:
+                result = await _offer_specialties(
+                    conversation_id,
+                    {**collected_data, "patient": patient_primitives},
+                    recent_messages,
+                    contact_memory,
+                )
+            else:
+                result = await _propose_selected_slot(
+                    conversation_id,
+                    patient_primitives,
+                    collected_data,
+                    recent_messages,
+                    contact_memory,
+                )
+        else:
+            result = await _offer_appointments(
+                conversation_id,
+                patient_primitives,
+                patient.id,
+                collected_data,
+                recent_messages,
+                contact_memory,
+            )
+        result["response_text"] = (
+            f"{_already_registered_notice(patient)}\n\n{result['response_text']}"
+        )
+        return result
 
     async def _propose_selected_slot(
         conversation_id: ConversationId,
@@ -4278,6 +4331,18 @@ def create_appointment_node(
                 }
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
             if identified_patient is None:
+                # The DNI may still be on file under a different name
+                # spelling: that is a registered patient, not a new one.
+                # Never offer to register a duplicate.
+                registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
+                if registered_by_dni is not None:
+                    return await _continue_as_registered_patient(
+                        conversation_id,
+                        registered_by_dni,
+                        collected_data,
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
                 # Dentalink has no record for this name + DNI. Say so plainly and let the
                 # patient choose (register, retry, advisor) — whatever they came to do,
                 # since someone Dentalink has never seen has nothing to reschedule or

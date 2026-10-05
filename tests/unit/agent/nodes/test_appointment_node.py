@@ -70,6 +70,7 @@ from app.infrastructure.database.fake_pending_action_repository import (
     FakePendingActionRepository,
 )
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
+from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.appointment_node import (
@@ -1987,6 +1988,107 @@ async def test_an_unknown_patient_is_offered_registration_whatever_they_came_to_
     assert result["collected_data"]["identification_full_name"] == "Fernando Ariel"
     assert result["collected_data"]["identification_dni"] == "35946257"
     assert len(result["response_buttons"]) == 3
+
+
+class _CreateForbiddenPatientGateway(FakePatientGateway):
+    """Fake that fails the test if the node ever tries to create a patient."""
+
+    async def create_patient(self, *args, **kwargs):
+        raise AssertionError("create_patient must not be called for a registered DNI")
+
+
+async def _make_node_with_registered_patient(
+    *, slot=None, conversation_id="ycloud-+5491122334455", **kwargs
+):
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
+    registered = make_patient(id_="pat-existing", full_name="Maria Soto Gomez", dni="30111222")
+    node = create_appointment_node(
+        appointment_gateway=make_dentalink_gateway(
+            available_slots=[slot or _future_slot()],
+            professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        ),
+        patient_gateway=_CreateForbiddenPatientGateway(patients=[registered]),
+        proposal_repositories_provider=make_proposal_repositories_provider(),
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        confirmation_timeout_seconds=120,
+        llm_provider=FakeLLMProvider(),
+        specialty_gateway=make_specialty_gateway(
+            specialties=[make_specialty(id_="cleaning", name="Ortodoncia")]
+        ),
+        agreement_gateway=make_agreement_gateway(),
+        **kwargs,
+    )
+    return node
+
+
+@pytest.mark.asyncio
+async def test_a_registered_dni_with_a_different_name_is_told_they_already_figure_and_continues():
+    node = await _make_node_with_registered_patient()
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="Maria Soto, 30111222",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    # Continues to specialties (no slot picked yet) instead of proposing
+    # a new registration; `create_patient` is forbidden by the gateway.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert "Ya figur" in result["response_text"]
+    # Only the name on file is shown — never the DNI or other personal data.
+    assert "Maria Soto Gomez" in result["response_text"]
+    assert "5491122334455" not in result["response_text"]
+    assert "30111222" not in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_registered_dni_with_a_picked_slot_continues_to_confirm_that_slot():
+    slot = _future_slot()
+    node = await _make_node_with_registered_patient(slot=slot)
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="Maria Soto, 30111222",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+
+    result = await node(state)
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
+    assert result["collected_data"]["patient"]["id"] == "pat-existing"
+    assert result["pending_action_id"] is not None
+    assert "Ya figur" in result["response_text"]
+    assert "Maria Soto Gomez" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_registered_dni_in_a_non_create_operation_lists_their_appointments():
+    node = await _make_node_with_registered_patient()
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        user_message="Maria Soto, 30111222",
+        collected_data={
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "operation": RESCHEDULE_APPOINTMENT_ACTION,
+        },
+    )
+
+    result = await node(state)
+
+    # Registered, so no registration questions: the existing patient goes
+    # straight to the appointments lookup (none seeded here).
+    assert result["collected_data"].get("stage") != STAGE_AWAITING_NEW_PATIENT_DETAILS
+    assert "Ya figur" in result["response_text"]
+    assert "intent=no_appointments" in result["response_text"]
 
 
 @pytest.mark.asyncio
