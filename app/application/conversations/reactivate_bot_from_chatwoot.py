@@ -25,7 +25,8 @@ class ReactivateBotFromChatwootUseCase:
 
     No-ops (does not raise) when no mapping exists for this Chatwoot
     conversation — a `resolved` event for a conversation we never mirrored
-    (e.g. created directly in Chatwoot) has nothing to reactivate.
+    (e.g. created directly in Chatwoot) has nothing to reactivate — or when
+    the mapped local conversation no longer exists (logged as a warning).
     """
 
     def __init__(
@@ -49,7 +50,18 @@ class ReactivateBotFromChatwootUseCase:
             return
 
         conversation_id = ConversationId(mapping.conversation_id)
-        await self._set_conversation_mode.execute(conversation_id, mode="agent")
+        try:
+            await self._set_conversation_mode.execute(conversation_id, mode="agent")
+        except ValueError:
+            # The mapping outlived its local conversation (e.g. an admin
+            # reset deleted the row): nothing to reactivate.
+            logger.warning(
+                "reactivate_bot_from_chatwoot.conversation_missing "
+                "chatwoot_conversation_id=%s conversation_id=%s",
+                chatwoot_conversation_id,
+                conversation_id,
+            )
+            return
         await self._set_conversation_input_state.execute(conversation_id, FREE_INPUT)
         # Reflects the flip back in Chatwoot's own label too, so the
         # dashboard never disagrees with what conversation.mode says —

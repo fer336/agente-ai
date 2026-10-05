@@ -100,3 +100,36 @@ async def test_mode_flip_still_persists_even_when_the_label_sync_fails():
     )
     assert conversation is not None
     assert conversation.mode == "agent"
+
+
+@pytest.mark.asyncio
+async def test_resolving_replaces_administracion_with_agente():
+    use_case, _, chatwoot_gateway = await _seeded()
+    chatwoot_gateway.labels_by_conversation["99"] = "administracion"
+
+    await use_case.execute("99")
+
+    assert chatwoot_gateway.labels_by_conversation == {"99": "agente"}
+
+
+@pytest.mark.asyncio
+async def test_no_ops_when_the_mapped_local_conversation_no_longer_exists():
+    # Seen in production logs: `resolved` fires for a Chatwoot conversation
+    # whose mapping survives but whose local row was deleted (e.g. admin reset).
+    conversation_repository = FakeConversationRepository()
+    mapping_repository = FakeChatwootMappingRepository()
+    await mapping_repository.save(
+        ChatwootConversationMapping(
+            conversation_id="ycloud-+5491122334455",
+            chatwoot_contact_id="1",
+            chatwoot_conversation_id="99",
+        )
+    )
+    chatwoot_gateway = FakeChatwootGateway()
+    use_case = ReactivateBotFromChatwootUseCase(
+        chatwoot_gateway, conversation_repository, mapping_repository
+    )
+
+    await use_case.execute("99")
+
+    assert chatwoot_gateway.labels_by_conversation == {}

@@ -664,6 +664,34 @@ async def test_human_mode_past_timeout_reactivates_and_falls_through_to_debounce
 
 
 @pytest.mark.asyncio
+async def test_lazy_timeout_reactivation_swaps_the_chatwoot_label_back_to_agente():
+    conversation_repository = make_conversation_repository()
+    stale_reply = datetime.now(UTC) - timedelta(hours=2)
+    await conversation_repository.save(
+        make_conversation(
+            id_="ycloud-+5491122334455", mode="human", last_human_reply_at=stale_reply
+        )
+    )
+    chatwoot_gateway = FakeChatwootGateway()
+    mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
+    await mirror_to_chatwoot.escalate_to_administracion(
+        ConversationId("ycloud-+5491122334455"),
+        PhoneNumber("+5491122334455"),
+        "+5491122334455",
+    )
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        redis_client=InMemoryFakeRedis(),
+        mirror_to_chatwoot=mirror_to_chatwoot,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455"))
+    await asyncio.sleep(0.05)  # let the fire-and-forget mirror tasks run
+
+    assert set(chatwoot_gateway.labels_by_conversation.values()) == {"agente"}
+
+
+@pytest.mark.asyncio
 async def test_lazy_timeout_reactivation_rotates_workflow_session_and_marks_fresh_restart():
     conversation_repository = make_conversation_repository()
     stale_reply = datetime.now(UTC) - timedelta(hours=2)
