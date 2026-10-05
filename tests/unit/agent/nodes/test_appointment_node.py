@@ -10,6 +10,8 @@ import app.agent.nodes.appointment as appointment
 from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CANCEL_PAYLOAD,
     FIRST_VISIT_CONFIRM_PAYLOAD,
+    FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD,
+    FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -5437,3 +5439,78 @@ async def test_first_visit_failing_agreement_lookup_for_an_existing_patient_does
         "✏️ Modificar",
         "❌ Cancelar",
     }
+
+
+async def _intake_hitting_a_dni_on_file_under_another_name(agreement_gateway=None):
+    """Finish the intake as "Ana Pérez" while her DNI is on file under another name."""
+    patients = [_EXISTING_PATIENT_FACTORY("María González", "30123457")]
+    patient_gateway = make_patient_gateway(patients=patients)
+    node, _, _ = await _make_node_and_conversation(
+        patients=patients,
+        patient_gateway=patient_gateway,
+        agreement_gateway=agreement_gateway or _recording_gateway(),
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+    return node, patient_gateway, await _complete_new_patient_intake(node)
+
+
+@pytest.mark.asyncio
+async def test_a_dni_on_file_under_another_name_asks_the_patient_to_confirm_it_is_them():
+    _, patient_gateway, result = await _intake_hitting_a_dni_on_file_under_another_name()
+
+    assert "ya está registrado con otros datos" not in result["response_text"]
+    assert "María González" in result["response_text"]
+    assert "30123457" in result["response_text"]
+    assert "ana@example.com" not in result["response_text"]
+    assert [(b.id, b.title) for b in result["response_buttons"]] == [
+        (FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD, "Sí, soy yo"),
+        (FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD, "No soy yo"),
+    ]
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
+    assert result["collected_data"]["first_visit_intake"]["stage"] == "confirm_existing"
+    assert len(patient_gateway._patients) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirming_the_dni_on_file_continues_the_booking_without_a_duplicate():
+    agreements = _recording_gateway()
+    node, patient_gateway, shown = await _intake_hitting_a_dni_on_file_under_another_name(
+        agreements
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            button_payload=FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD,
+            collected_data=shown["collected_data"],
+        )
+    )
+
+    assert len(patient_gateway._patients) == 1
+    assert agreements.link_calls == [(_EXISTING_ID, "osde")]
+    assert result["response_text"].startswith(_NOTICE_LINKED_NOW)
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
+    assert result["collected_data"]["patient"]["id"] == _EXISTING_ID
+    assert "first_visit_intake" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_rejecting_the_dni_on_file_asks_for_the_dni_again_and_creates_nobody():
+    node, patient_gateway, shown = await _intake_hitting_a_dni_on_file_under_another_name()
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            button_payload=FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD,
+            collected_data=shown["collected_data"],
+        )
+    )
+
+    assert "ya está registrado con otros datos" not in result["response_text"]
+    assert "DNI" in result["response_text"]
+    assert result["response_buttons"] is None
+    intake = result["collected_data"]["first_visit_intake"]
+    assert intake["stage"] == "collect"
+    assert intake["editing_field"] == "dni"
+    assert len(patient_gateway._patients) == 1

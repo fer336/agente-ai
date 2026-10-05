@@ -31,6 +31,7 @@ from app.agent.first_visit_intake_subgraph import (
     INTAKE_FIELDS,
     FirstVisitIntakeState,
     build_first_visit_intake_graph,
+    existing_dni_confirmation_turn,
     format_field_bullets,
     missing_intake_fields,
 )
@@ -2034,7 +2035,7 @@ def create_appointment_node(
                 "response_buttons": None,
             }
 
-        if result.get("next_action") == "persist":
+        if result.get("next_action") in ("persist", "use_existing"):
             details = cast(dict[str, str], result.get("details", {}))
             try:
                 agreements = await agreement_gateway.list_agreements()
@@ -2078,30 +2079,55 @@ def create_appointment_node(
                     }
                 else:
                     patient_recovered = False
+                    new_patient: Patient | None = None
                     try:
-                        new_patient = await patient_gateway.create_patient(
-                            details["full_name"],
-                            details["dni"],
-                            PhoneNumber(str(conversation_id).removeprefix("ycloud-")),
-                            email=details["email"],
-                        )
+                        if result.get("next_action") == "use_existing":
+                            # The patient confirmed the record on file for their DNI.
+                            new_patient = await patient_gateway.find_patient_by_dni(
+                                details["dni"]
+                            )
+                            patient_recovered = new_patient is not None
+                        if new_patient is None:
+                            new_patient = await patient_gateway.create_patient(
+                                details["full_name"],
+                                details["dni"],
+                                PhoneNumber(str(conversation_id).removeprefix("ycloud-")),
+                                email=details["email"],
+                            )
                     except PatientAlreadyExistsError:
                         recovered = await identify_patient.execute(
                             details["full_name"], details["dni"]
                         )
                         if recovered is None:
-                            result = {
-                                **result,
-                                "stage": "collect",
-                                "editing_field": "dni",
-                                "next_action": "none",
-                                "ready_to_persist": False,
-                                "response_text": (
-                                    "Ese DNI ya está registrado con otros datos. "
-                                    "Por favor, ingresalo nuevamente."
-                                ),
-                                "response_buttons": None,
-                            }
+                            try:
+                                on_file = await patient_gateway.find_patient_by_dni(
+                                    details["dni"]
+                                )
+                            except Exception as exc:  # noqa: BLE001 -- external gateway boundary
+                                logger.warning("first-visit DNI lookup failed", exc_info=exc)
+                                on_file = None
+                            if on_file is not None:
+                                # Never a duplicate and never a dead end: show what is on
+                                # file (name + DNI only) and let the patient confirm it.
+                                result = {
+                                    **result,
+                                    **existing_dni_confirmation_turn(
+                                        details, on_file.full_name, on_file.dni or details["dni"]
+                                    ),
+                                }
+                            else:
+                                result = {
+                                    **result,
+                                    "stage": "collect",
+                                    "editing_field": "dni",
+                                    "next_action": "none",
+                                    "ready_to_persist": False,
+                                    "response_text": (
+                                        "No pudimos verificar ese DNI. Indicame nuevamente "
+                                        "tu DNI, solo números."
+                                    ),
+                                    "response_buttons": None,
+                                }
                             new_patient = None
                         else:
                             new_patient = recovered
