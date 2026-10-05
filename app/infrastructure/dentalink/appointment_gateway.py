@@ -32,6 +32,7 @@ from app.infrastructure.dentalink.schemas import (
     reminder_statuses_from_estados,
     resolve_cancellation_state_id,
     resolve_cancellation_state_ids,
+    resolve_patient_whatsapp_confirmation_state_id,
     slot_from_agenda,
 )
 from app.infrastructure.observability.tool_tracing import traced_call
@@ -490,6 +491,39 @@ class DentalinkAppointmentGateway:
             operation="get_reminder_appointment",
             request_summary=f"appointment_id={appointment_id}",
             response_summary=lambda appointment: "found" if appointment else "not_found",
+            call=_call,
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def mark_appointment_confirmed_via_patient_whatsapp(self, appointment_id: str) -> None:
+        """Writes only the clinic's validated patient-WhatsApp confirmation state.
+
+        Ownership and current-state checks intentionally belong to the T4
+        action use case. This adapter validates that the configured live
+        state remains exactly the safe clinic-owned state before every write.
+        """
+
+        async def _call() -> None:
+            estados = as_list(await self._client.get("/v1/citas/estados"))
+            state_id = resolve_patient_whatsapp_confirmation_state_id(estados)
+            if state_id is None:
+                raise DentalinkInvalidResponseError(
+                    "could not resolve the patient WhatsApp confirmation id_estado from "
+                    "GET /v1/citas/estados"
+                )
+            try:
+                await self._client.put(f"/v1/citas/{appointment_id}", json={"id_estado": state_id})
+            except DentalinkAPIError as exc:
+                if exc.status_code == 404:
+                    raise AppointmentNotFoundError(appointment_id) from exc
+                raise
+
+        await traced_call(
+            tool_name="ConfirmAppointmentViaPatientWhatsAppTool",
+            provider=_PROVIDER,
+            operation="mark_appointment_confirmed_via_patient_whatsapp",
+            request_summary=f"appointment_id={appointment_id}",
             call=_call,
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
