@@ -467,6 +467,34 @@ class DentalinkAppointmentGateway:
             error_type_of=_error_type_of,
         )
 
+    async def get_reminder_appointment(self, appointment_id: str) -> ReminderAppointment | None:
+        """Reads current reminder state for one appointment just before send."""
+
+        async def _call() -> ReminderAppointment | None:
+            try:
+                raw = await self._client.get(f"/v1/citas/{appointment_id}")
+            except DentalinkAPIError as exc:
+                if exc.status_code == 404:
+                    return None
+                raise
+            statuses = reminder_statuses_from_estados(
+                as_list(await self._client.get("/v1/citas/estados"))
+            )
+            return reminder_appointment_from_cita(
+                as_dict(raw), statuses=statuses, timezone=self._clinic_timezone
+            )
+
+        return await traced_call(
+            tool_name="GetReminderAppointmentTool",
+            provider=_PROVIDER,
+            operation="get_reminder_appointment",
+            request_summary=f"appointment_id={appointment_id}",
+            response_summary=lambda appointment: "found" if appointment else "not_found",
+            call=_call,
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
     async def get_patient_appointments(self, patient_id: str) -> list[Appointment]:
         async def _call() -> list[Appointment]:
             cancelled_state_ids = await self._resolve_cancellation_state_ids()
