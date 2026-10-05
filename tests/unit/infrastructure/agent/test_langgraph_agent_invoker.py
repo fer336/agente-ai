@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
@@ -99,6 +100,7 @@ def _make_invoker(
     message_repository=None,
     contact_memory_repository=None,
     scheduled_action_repository=None,
+    appointment_reminder_repository=None,
     messaging_gateway=None,
     handoff_gateway=None,
     agreement_gateway=None,
@@ -129,6 +131,7 @@ def _make_invoker(
             messages=message_repository,
             contact_memories=contact_memory_repository,
             scheduled_actions=scheduled_action_repository,
+            appointment_reminders=appointment_reminder_repository,
         )
 
     invoker = LangGraphAgentInvoker(
@@ -170,6 +173,75 @@ def _make_invoker(
         messaging_gateway,
         appointment_gateway,
     )
+
+
+@pytest.mark.asyncio
+async def test_handle_wires_reminder_actions_only_for_capable_gateways(monkeypatch):
+    import app.infrastructure.agent.langgraph_agent_invoker as invoker_module
+
+    captured = []
+    original_compile_graph = invoker_module.compile_graph
+
+    def capture_compile_graph(*args, **kwargs):
+        captured.append(kwargs)
+        return original_compile_graph(*args, **kwargs)
+
+    monkeypatch.setattr(invoker_module, "compile_graph", capture_compile_graph)
+    class ReminderAppointments:
+        async def list_reminder_appointments_for_date_window(self, start_date, end_date):
+            return []
+
+        async def get_reminder_appointment(self, appointment_id):
+            return None
+
+        async def mark_appointment_confirmed_via_patient_whatsapp(self, appointment_id):
+            return None
+
+        async def cancel_appointment(self, appointment_id, idempotency_key):
+            return None
+
+    class ReminderPatients:
+        async def get_reminder_patient(self, patient_id):
+            return None
+
+    invoker, conversations, contacts, _, _ = _make_invoker(
+        appointment_gateway=ReminderAppointments(),
+        patient_gateway=ReminderPatients(),
+        appointment_reminder_repository=AsyncMock(),
+    )
+    await contacts.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversations.save(make_conversation(id_="conv-1", contact_id="contact-1", mode="agent"))
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+
+    assert captured[0]["reminder_action_use_case"] is not None
+    assert captured[0]["contact_repository"] is contacts
+
+
+@pytest.mark.asyncio
+async def test_handle_fails_closed_when_reminder_dependencies_are_incompatible(monkeypatch):
+    import app.infrastructure.agent.langgraph_agent_invoker as invoker_module
+
+    captured = []
+    original_compile_graph = invoker_module.compile_graph
+
+    def capture_compile_graph(*args, **kwargs):
+        captured.append(kwargs)
+        return original_compile_graph(*args, **kwargs)
+
+    monkeypatch.setattr(invoker_module, "compile_graph", capture_compile_graph)
+    invoker, conversations, contacts, _, _ = _make_invoker(
+        appointment_gateway=object(),
+        patient_gateway=object(),
+        appointment_reminder_repository=AsyncMock(),
+    )
+    await contacts.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversations.save(make_conversation(id_="conv-1", contact_id="contact-1", mode="agent"))
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+
+    assert captured[0]["reminder_action_use_case"] is None
+    assert captured[0]["contact_repository"] is None
 
 
 @pytest.mark.asyncio

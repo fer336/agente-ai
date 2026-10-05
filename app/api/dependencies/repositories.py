@@ -25,6 +25,9 @@ from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
 )
+from app.infrastructure.database.repositories.appointment_reminder_repository import (
+    SqlAlchemyAppointmentReminderRepository,
+)
 from app.infrastructure.database.repositories.chatwoot_mapping_repository import (
     SqlAlchemyChatwootMappingRepository,
 )
@@ -62,6 +65,7 @@ from app.infrastructure.database.repositories.sent_message_repository import (
 from app.infrastructure.database.repositories.tool_execution_repository import (
     SqlAlchemyToolExecutionRepository,
 )
+from app.workers.appointment_reminder_worker import AppointmentReminderWorkerRepositories
 from app.workers.follow_up_worker import FollowUpWorkerRepositories
 
 
@@ -209,6 +213,21 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
             messages=SqlAlchemyMessageRepository(session),
             contact_memories=SqlAlchemyContactMemoryRepository(session),
             scheduled_actions=SqlAlchemyScheduledActionRepository(session),
+            appointment_reminders=SqlAlchemyAppointmentReminderRepository(session),
+        )
+        await session.commit()
+
+
+@asynccontextmanager
+async def open_sqlalchemy_appointment_reminder_worker_repositories() -> AsyncIterator[
+    AppointmentReminderWorkerRepositories
+]:
+    """Provide one fresh, committing transaction for each reminder poll tick."""
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        yield AppointmentReminderWorkerRepositories(
+            reminders=SqlAlchemyAppointmentReminderRepository(session),
+            contacts=SqlAlchemyContactRepository(session),
         )
         await session.commit()
 

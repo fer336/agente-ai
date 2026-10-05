@@ -20,10 +20,12 @@ from app.application.memory.memory_service import MemoryService
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositoriesProvider
+from app.application.reminders.actions import HandleReminderActionUseCase
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF, RUNNING, AgentRun
 from app.domain.entities.node_execution import FAILED as NODE_EXECUTION_FAILED
 from app.domain.entities.node_execution import NodeExecution
 from app.domain.repositories.alert_notifier import AlertNotifier
+from app.domain.repositories.appointment_reminder_repository import AppointmentReminderRepository
 from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -32,6 +34,8 @@ from app.domain.repositories.gateways import (
     AppointmentGateway,
     HumanHandoffGateway,
     PatientGateway,
+    ReminderAppointmentGateway,
+    ReminderPatientGateway,
     SpecialtyGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
@@ -66,6 +70,8 @@ class AgentRepositories:
     #: message more than an hour later (the unrelated, coarser lazy
     #: rotation in `RotateWorkflowSessionUseCase`).
     scheduled_actions: ScheduledActionRepository
+    #: Optional while test and non-reminder callers transition to this session bundle.
+    appointment_reminders: AppointmentReminderRepository | None = None
 
 
 RepositoriesProvider = Callable[[], AbstractAsyncContextManager[AgentRepositories]]
@@ -248,6 +254,22 @@ class LangGraphAgentInvoker:
                 config: RunnableConfig = {
                     "configurable": {"thread_id": f"{conversation_id}:session:{generation}"}
                 }
+                reminder_action_use_case = None
+                contact_repository = None
+                if (
+                    repositories.appointment_reminders is not None
+                    and isinstance(self._appointment_gateway, ReminderAppointmentGateway)
+                    and isinstance(self._patient_gateway, ReminderPatientGateway)
+                ):
+                    reminder_action_use_case = HandleReminderActionUseCase(
+                        repositories.appointment_reminders,
+                        self._appointment_gateway,
+                        self._patient_gateway,
+                        repositories.contacts,
+                        now=lambda: datetime.now(UTC),
+                    )
+                    contact_repository = repositories.contacts
+
                 compiled_graph = compile_graph(
                     self._appointment_gateway,
                     self._agreement_gateway,
@@ -269,6 +291,8 @@ class LangGraphAgentInvoker:
                     mirror_to_chatwoot=self._mirror_to_chatwoot,
                     location_image_url=self._location_image_url,
                     aligners_image_url=self._aligners_image_url,
+                    reminder_action_use_case=reminder_action_use_case,
+                    contact_repository=contact_repository,
                 )
 
                 previous_values: dict[str, Any] = {}
