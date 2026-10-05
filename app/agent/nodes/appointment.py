@@ -3314,14 +3314,12 @@ def create_appointment_node(
                             state["contact_memory_summary"],
                         )
                     # A recovered patient is told they already figure (name on file
-                    # only), followed by the agreement outcome when there is one.
-                    notices = [
-                        notice
-                        for notice in (already_registered_notice, already_linked_notice)
-                        if notice is not None
-                    ]
-                    if notices:
-                        return _with_notice(next_step, "\n\n".join(notices))
+                    # only). The agreement notices already open with "Ya figurás en
+                    # nuestro sistema", so when there is one it replaces the static
+                    # notice instead of repeating it.
+                    notice = already_linked_notice or already_registered_notice
+                    if notice is not None:
+                        return _with_notice(next_step, notice)
                     return next_step
 
                 if confirmed_action_type == RESCHEDULE_APPOINTMENT_ACTION:
@@ -4064,37 +4062,37 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
-            registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
-            if registered_by_dni is not None:
-                return await _continue_as_registered_patient(
-                    conversation_id,
-                    registered_by_dni,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
             contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
             registration_notice: str | None = None
             registration_recovered = False
-            try:
-                new_patient = await patient_gateway.create_patient(
-                    full_name, validated_dni.value, contact_phone, email=email
-                )
-            except PatientAlreadyExistsError:
-                # Race: someone registered this exact DNI between the
-                # pre-check above and this submission — recover the record
-                # by DNI instead of failing or restarting registration.
-                recovered = await patient_gateway.find_patient_by_dni(validated_dni.value)
-                if recovered is None:
-                    return await _begin_registration(
-                        conversation_id,
-                        collected_data,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
+            # A DNI already on file is a registered patient: never create a
+            # duplicate, keep the record and carry on (its agreement is handled
+            # below without ever overwriting an existing one).
+            on_file = await patient_gateway.find_patient_by_dni(validated_dni.value)
+            if on_file is None:
+                try:
+                    new_patient = await patient_gateway.create_patient(
+                        full_name, validated_dni.value, contact_phone, email=email
                     )
-                new_patient = recovered
+                except PatientAlreadyExistsError:
+                    # Race: someone registered this exact DNI between the
+                    # pre-check above and this submission — recover the record
+                    # by DNI instead of failing or restarting registration.
+                    raced = await patient_gateway.find_patient_by_dni(validated_dni.value)
+                    if raced is None:
+                        return await _begin_registration(
+                            conversation_id,
+                            collected_data,
+                            state["recent_messages"],
+                            state["contact_memory_summary"],
+                        )
+                    new_patient = raced
+                    registration_recovered = True
+            else:
+                new_patient = on_file
                 registration_recovered = True
-                registration_notice = _already_registered_notice(recovered)
+            if registration_recovered:
+                registration_notice = _already_registered_notice(new_patient)
             if obra_social_name:
                 agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                 if agreement is not None:
@@ -4104,12 +4102,9 @@ def create_appointment_node(
                         agreement,
                         recovered=registration_recovered,
                     )
-                    if agreement_notice is not None:
-                        registration_notice = (
-                            agreement_notice
-                            if registration_notice is None
-                            else f"{registration_notice}\n\n{agreement_notice}"
-                        )
+                    # Agreement notices already say "Ya figurás en nuestro sistema",
+                    # so they replace the static notice instead of repeating it.
+                    registration_notice = agreement_notice or registration_notice
             patient_primitives = _patient_to_primitives(new_patient)
             if _is_create_flow(collected_data):
                 registration_next = await _continue_booking_with_patient(
