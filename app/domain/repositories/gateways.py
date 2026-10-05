@@ -173,6 +173,10 @@ class ReminderAppointmentGateway(Protocol):
         """
         ...
 
+    async def cancel_appointment(self, appointment_id: str, idempotency_key: str) -> None:
+        """Cancel a revalidated reminder appointment using the shared operation."""
+        ...
+
 
 @runtime_checkable
 class ReminderPatientGateway(Protocol):
