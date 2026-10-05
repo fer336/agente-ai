@@ -2139,6 +2139,13 @@ async def test_new_patient_details_stage_proposes_creation_once_both_fields_arri
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     ]
+    assert [b.title for b in result["response_buttons"]] == [
+        "Soy paciente nuevo",
+        "Ya soy paciente",
+    ]
+    assert all(len(b.title) <= 20 for b in result["response_buttons"])
+    assert "No encontramos ningún registro con tu DNI" in result["response_text"]
+    assert "¿Es tu primera vez en Smiling Pilar?" in result["response_text"]
     # The data they gave (across both stages) is echoed back, so they can
     # spot their own typo before it's created.
     assert "Fernando Ariel" in result["response_text"]
@@ -2906,12 +2913,50 @@ async def test_confirmation_stage_rejects_new_patient_creation_proposal():
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] is None
+    # "Ya soy paciente": nothing is created and they are asked for their
+    # name and DNI again, so the stage goes back to identification.
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
+    assert result["collected_data"]["identification_full_name"] is None
+    assert result["collected_data"]["identification_dni"] is None
     assert result["pending_action_id"] is None
+    assert result["response_buttons"] is None
+    assert "nombre completo" in result["response_text"]
+    assert "DNI" in result["response_text"]
     async with repositories_provider() as repositories:
         rejected = await repositories.pending_actions.get_by_id("pa-1")
         assert rejected is not None
         assert rejected.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_new_patient_confirmation_reminder_keeps_the_new_patient_buttons():
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], proposal_repositories_provider=repositories_provider
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(
+            make_pending_action(
+                id_="pa-1",
+                action_type=CREATE_PATIENT_ACTION,
+                status="pending",
+                payload={"full_name": "Maria Soto", "dni": "30111222", "phone": "+5491122334455"},
+            )
+        )
+    state = make_agent_state(
+        conversation_id="conv-1",
+        user_message="hola?",
+        button_payload=None,
+        pending_action_id="pa-1",
+        collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+    )
+
+    result = await node(state)
+
+    assert [b.title for b in result["response_buttons"]] == [
+        "Soy paciente nuevo",
+        "Ya soy paciente",
+    ]
 
 
 @pytest.mark.asyncio
@@ -2945,7 +2990,7 @@ async def test_confirmation_stage_treats_a_free_text_decline_like_the_cancel_but
 
     result = await node(state)
 
-    assert result["collected_data"]["stage"] is None
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert result["pending_action_id"] is None
     assert result["response_buttons"] is None
     async with repositories_provider() as repositories:

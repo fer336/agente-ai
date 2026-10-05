@@ -111,6 +111,7 @@ from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
+from app.domain.entities.pending_action import PendingAction
 from app.domain.entities.professional import Professional
 from app.domain.exceptions.errors import (
     AgreementAlreadyLinkedError,
@@ -542,6 +543,21 @@ _OPERATION_BUTTONS = [
     InteractiveButton(id=OPERATION_RESCHEDULE_PAYLOAD, title="🔄 Reagendar"),
     InteractiveButton(id=OPERATION_CANCEL_PAYLOAD, title="❌ Cancelar"),
 ]
+#: Dedicated buttons for the "first time at the clinic?" question — the shared
+#: Confirmar/Cancelar pair read as "confirm my data", so already-registered
+#: patients kept pressing Confirmar. Same payload ids, so the confirm/reject
+#: handling stays shared.
+_NEW_PATIENT_BUTTONS = [
+    InteractiveButton(id=CONFIRM_APPOINTMENT_PAYLOAD, title="Soy paciente nuevo"),
+    InteractiveButton(id=REJECT_APPOINTMENT_PAYLOAD, title="Ya soy paciente"),
+]
+_NEW_PATIENT_CONFIRMATION_QUESTION = (
+    "No encontramos ningún registro con tu DNI. ¿Es tu primera vez en Smiling Pilar?"
+)
+_NEW_PATIENT_REJECTED_MESSAGE = (
+    "Entendido, entonces ya sos paciente. Escribime de nuevo tu *nombre completo* y tu *DNI* "
+    "(7 u 8 dígitos) para buscar tu ficha, por ejemplo: Rosa Gómez, 30123456."
+)
 _CONFIRM_BUTTONS = [
     InteractiveButton(id=CONFIRM_APPOINTMENT_PAYLOAD, title="✅ Confirmar"),
     InteractiveButton(id=REJECT_APPOINTMENT_PAYLOAD, title="❌ Cancelar"),
@@ -947,38 +963,14 @@ async def _reschedule_confirmation_message(
     return f"{text}\n\n{datetime_block}"
 
 
-async def _new_patient_confirmation_message(
-    llm_provider: LLMProvider,
-    conversation_id: ConversationId,
-    full_name: str,
-    dni: str,
-    obra_social: str,
-    email: str,
-    recent_messages: list[dict[str, str]],
-    contact_memory: str | None,
+def _new_patient_confirmation_message(
+    full_name: str, dni: str, obra_social: str, email: str
 ) -> str:
+    # Static on purpose: the question must stay unambiguous (the LLM used to
+    # reword it into a generic "confirm your data" prompt), and the data is
+    # echoed back verbatim so the patient can spot a typo.
     data_block = f"Nombre: {full_name}\nDNI: {dni}\nObra social: {obra_social}\nMail: {email}"
-    text = await generate_or_fallback(
-        llm_provider,
-        str(conversation_id),
-        "propose_new_patient_confirmation",
-        {
-            "situacion": (
-                "No encontramos al paciente registrado con esos datos — hay que "
-                "confirmarle que quiere crear su ficha antes de hacerlo."
-            ),
-            "instruccion": (
-                "Decí que no encontramos a nadie registrado con esos datos y preguntá si "
-                "confirma crear su ficha. NO reescribas ninguno de sus datos — se agregan "
-                "aparte, después de tu mensaje, tal cual vienen."
-            ),
-        },
-        "No encontramos ningún paciente registrado con esos datos. "
-        "Confirmás que querés crear tu ficha con estos datos?",
-        recent_messages,
-        contact_memory,
-    )
-    return f"{text}\n\n{data_block}"
+    return f"{_NEW_PATIENT_CONFIRMATION_QUESTION}\n\n{data_block}"
 
 
 def _new_patient_proposal_payload(
@@ -3032,21 +3024,47 @@ def create_appointment_node(
                     )
                     return {
                         "response_text": confirmation_reminder_text,
-                        "response_buttons": _CONFIRM_BUTTONS,
+                        "response_buttons": (
+                            _NEW_PATIENT_BUTTONS
+                            if existing_pending_action is not None
+                            and existing_pending_action.action_type == CREATE_PATIENT_ACTION
+                            else _CONFIRM_BUTTONS
+                        ),
                         "requires_handoff": False,
                     }
 
             elif button_payload == REJECT_APPOINTMENT_PAYLOAD and pending_action_id is not None:
+                rejected_action: PendingAction | None = None
                 async with proposal_repositories_provider() as repositories:
                     try:
-                        await RejectPendingActionUseCase(repositories.pending_actions).execute(
-                            pending_action_id
-                        )
+                        rejected_action = await RejectPendingActionUseCase(
+                            repositories.pending_actions
+                        ).execute(pending_action_id)
                     except (InvalidConfirmationError, PendingActionExpiredError):
                         pass
                     else:
                         await _cancel_follow_up(repositories, pending_action_id)
                 await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                if (
+                    rejected_action is not None
+                    and rejected_action.action_type == CREATE_PATIENT_ACTION
+                ):
+                    # "Ya soy paciente": they are already registered, so ask
+                    # for name and DNI again to find their record. Both
+                    # remembered pieces are cleared so the same pair that
+                    # just failed to match is not resurrected.
+                    return {
+                        "response_text": _NEW_PATIENT_REJECTED_MESSAGE,
+                        "response_buttons": None,
+                        "requires_handoff": False,
+                        "pending_action_id": None,
+                        "collected_data": {
+                            **collected_data,
+                            "stage": STAGE_AWAITING_IDENTIFICATION,
+                            "identification_full_name": None,
+                            "identification_dni": None,
+                        },
+                    }
                 proposal_rejected_text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),
@@ -4442,19 +4460,12 @@ def create_appointment_node(
                 conversation_id, CREATE_PATIENT_ACTION, new_patient_payload
             )
             await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-            new_patient_text = await _new_patient_confirmation_message(
-                llm_provider,
-                conversation_id,
-                new_patient_full_name,
-                new_patient_dni,
-                obra_social,
-                email,
-                state["recent_messages"],
-                state["contact_memory_summary"],
+            new_patient_text = _new_patient_confirmation_message(
+                new_patient_full_name, new_patient_dni, obra_social, email
             )
             return {
                 "response_text": new_patient_text,
-                "response_buttons": _CONFIRM_BUTTONS,
+                "response_buttons": _NEW_PATIENT_BUTTONS,
                 "requires_handoff": False,
                 "pending_action_id": pending_action.id,
                 "collected_data": {**collected_data, "stage": STAGE_AWAITING_CONFIRMATION},
