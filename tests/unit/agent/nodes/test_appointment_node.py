@@ -132,10 +132,12 @@ class _IntakeLLM(FakeLLMProvider):
     def __init__(self) -> None:
         super().__init__()
         self.intents: list[str] = []
+        self.question_instructions: list[str] = []
 
     async def generate_response(self, context):
         self.intents.append(context.intent)
         if context.intent == "first_visit_question":
+            self.question_instructions.append(str(context.collected_data["instruccion"]))
             return "Dale, es tu primera cita en Smiling Pilar? Confirmame así te registro."
         if context.intent == "first_visit_intake_ask":
             return "Necesito que me pases estos datos para registrarte."
@@ -215,12 +217,26 @@ async def test_create_operation_asks_the_first_visit_question_with_confirm_and_c
         "Dale, es tu primera cita en Smiling Pilar? Confirmame así te registro."
     )
     assert [(b.id, b.title) for b in question["response_buttons"]] == [
-        (FIRST_VISIT_CONFIRM_PAYLOAD, "✅ Confirmar"),
-        (FIRST_VISIT_CANCEL_PAYLOAD, "❌ Cancelar"),
+        (FIRST_VISIT_CONFIRM_PAYLOAD, "Soy paciente nuevo"),
+        (FIRST_VISIT_CANCEL_PAYLOAD, "Ya soy paciente"),
     ]
     assert "- " not in question["response_text"]
     assert question.get("response_list") is None
     assert llm.intents == ["first_visit_question"]
+
+
+@pytest.mark.asyncio
+async def test_first_visit_question_instruction_refers_to_the_two_new_buttons():
+    llm = _IntakeLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+
+    await _start_create(node)
+
+    instruction = llm.question_instructions[0]
+    assert "Soy paciente nuevo" in instruction
+    assert "Ya soy paciente" in instruction
+    assert "Confirmar" not in instruction
+    assert "Cancelar" not in instruction
 
 
 @pytest.mark.asyncio

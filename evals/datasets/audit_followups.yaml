@@ -106,7 +106,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["✅ Confirmar", "❌ Cancelar"]
+        titles: ["Soy paciente nuevo", "Ya soy paciente"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -237,7 +237,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["✅ Confirmar", "❌ Cancelar"]
+        titles: ["Soy paciente nuevo", "Ya soy paciente"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -314,7 +314,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["✅ Confirmar", "❌ Cancelar"]
+        titles: ["Soy paciente nuevo", "Ya soy paciente"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -371,7 +371,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["✅ Confirmar", "❌ Cancelar"]
+        titles: ["Soy paciente nuevo", "Ya soy paciente"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -424,7 +424,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasButtons
       config:
-        titles: ["✅ Confirmar", "❌ Cancelar"]
+        titles: ["Soy paciente nuevo", "Ya soy paciente"]
         exact: true
   metadata:
     requires_real_llm: false

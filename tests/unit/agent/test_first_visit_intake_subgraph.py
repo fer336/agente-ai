@@ -4,6 +4,7 @@ from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CANCEL_PAYLOAD,
     FIRST_VISIT_CONFIRM_PAYLOAD,
     FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
+    FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -19,6 +20,22 @@ _ALL_FIELDS = {
 }
 
 
+def test_static_question_names_both_buttons_and_never_mentions_confirm_or_cancel():
+    text = FIRST_VISIT_QUESTION.casefold()
+
+    assert "soy paciente nuevo" in text
+    assert "ya soy paciente" in text
+    assert "confirm" not in text
+    assert "cancel" not in text
+
+
+@pytest.mark.asyncio
+async def test_question_button_titles_fit_the_whatsapp_limit():
+    state = await build_first_visit_intake_graph().ainvoke({"stage": "offer", "details": {}})
+
+    assert all(len(b.title) <= 20 for b in state["response_buttons"])
+
+
 @pytest.mark.asyncio
 async def test_offer_asks_the_first_visit_question_with_confirm_and_cancel_buttons():
     state = await build_first_visit_intake_graph().ainvoke({"stage": "offer", "details": {}})
@@ -27,8 +44,8 @@ async def test_offer_asks_the_first_visit_question_with_confirm_and_cancel_butto
     assert state["ask_kind"] == "question"
     assert state.get("ask_fields") is None
     assert [(b.id, b.title) for b in state["response_buttons"]] == [
-        (FIRST_VISIT_CONFIRM_PAYLOAD, "✅ Confirmar"),
-        (FIRST_VISIT_CANCEL_PAYLOAD, "❌ Cancelar"),
+        (FIRST_VISIT_CONFIRM_PAYLOAD, "Soy paciente nuevo"),
+        (FIRST_VISIT_CANCEL_PAYLOAD, "Ya soy paciente"),
     ]
     text = state["response_text"]
     assert "primera" in text.casefold()
