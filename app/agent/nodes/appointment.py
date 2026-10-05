@@ -3239,59 +3239,24 @@ def create_appointment_node(
                     email = str(confirmed_payload.get("email") or "") or None
                     obra_social_name = str(confirmed_payload.get("obra_social") or "")
                     already_linked_notice: str | None = None
+                    already_registered_notice: str | None = None
                     patient_recovered = False
                     try:
                         new_patient = await patient_gateway.create_patient(
                             full_name, dni, phone, email=email
                         )
                     except PatientAlreadyExistsError:
-                        # Race: someone else created a matching-DNI record
-                        # between propose and confirm. Re-look-up by the
-                        # same name+DNI the patient just confirmed rather
-                        # than failing the turn.
-                        recovered = await identify_patient.execute(full_name, dni)
+                        # Race: the DNI was registered between propose and
+                        # confirm. The DNI alone identifies the patient, so
+                        # recover the record by it (never by name too) and
+                        # carry on — resetting identification here is what
+                        # used to loop the patient on name+DNI.
+                        recovered = await patient_gateway.find_patient_by_dni(dni)
                         if recovered is None:
-                            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                            # The message asks the patient to retype their
-                            # name+DNI — stay in STAGE_AWAITING_IDENTIFICATION
-                            # so that reply is actually parsed as the retry
-                            # it was asked for, instead of falling out of
-                            # the flow entirely (losing the slot they'd
-                            # already picked) and landing in generic intent
-                            # classification. Both remembered pieces are
-                            # cleared: the name+DNI just confirmed are the
-                            # ones that turned out not to match, so keeping
-                            # either around could resurrect the same bad
-                            # pair instead of forcing a genuinely fresh one.
-                            text = await generate_or_fallback(
-                                llm_provider,
-                                str(conversation_id),
-                                "identification_name_mismatch",
-                                {
-                                    "situacion": (
-                                        "Encontramos un paciente con ese DNI, pero registrado "
-                                        "con otro nombre. Por seguridad hay que pedirle que "
-                                        "vuelva a escribir nombre y DNI completos."
-                                    ),
-                                },
-                                _NEW_PATIENT_RACE_LOST_MESSAGE,
-                                state["recent_messages"],
-                                state["contact_memory_summary"],
-                            )
-                            return {
-                                "response_text": text,
-                                "response_buttons": None,
-                                "requires_handoff": False,
-                                "pending_action_id": None,
-                                "collected_data": {
-                                    **collected_data,
-                                    "stage": STAGE_AWAITING_IDENTIFICATION,
-                                    "identification_full_name": None,
-                                    "identification_dni": None,
-                                },
-                            }
+                            raise
                         new_patient = recovered
                         patient_recovered = True
+                        already_registered_notice = _already_registered_notice(recovered)
 
                     if obra_social_name:
                         agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
@@ -3330,8 +3295,15 @@ def create_appointment_node(
                             state["recent_messages"],
                             state["contact_memory_summary"],
                         )
-                    if already_linked_notice is not None:
-                        return _with_notice(next_step, already_linked_notice)
+                    # A recovered patient is told they already figure (name on file
+                    # only), followed by the agreement outcome when there is one.
+                    notices = [
+                        notice
+                        for notice in (already_registered_notice, already_linked_notice)
+                        if notice is not None
+                    ]
+                    if notices:
+                        return _with_notice(next_step, "\n\n".join(notices))
                     return next_step
 
                 if confirmed_action_type == RESCHEDULE_APPOINTMENT_ACTION:
@@ -3950,6 +3922,15 @@ def create_appointment_node(
                 )
             identified_patient = await identify_patient.execute(full_name, validated_dni.value)
             if identified_patient is None:
+                registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
+                if registered_by_dni is not None:
+                    return await _continue_as_registered_patient(
+                        conversation_id,
+                        registered_by_dni,
+                        collected_data,
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
                 return await _begin_registration(
                     conversation_id,
                     collected_data,
@@ -4065,6 +4046,15 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
+            registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
+            if registered_by_dni is not None:
+                return await _continue_as_registered_patient(
+                    conversation_id,
+                    registered_by_dni,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
             contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
             registration_notice: str | None = None
             registration_recovered = False
@@ -4073,10 +4063,10 @@ def create_appointment_node(
                     full_name, validated_dni.value, contact_phone, email=email
                 )
             except PatientAlreadyExistsError:
-                # Race: someone else registered this exact DNI between the
-                # verification check and this submission — look them up
-                # instead of failing the turn.
-                recovered = await identify_patient.execute(full_name, validated_dni.value)
+                # Race: someone registered this exact DNI between the
+                # pre-check above and this submission — recover the record
+                # by DNI instead of failing or restarting registration.
+                recovered = await patient_gateway.find_patient_by_dni(validated_dni.value)
                 if recovered is None:
                     return await _begin_registration(
                         conversation_id,
@@ -4086,15 +4076,22 @@ def create_appointment_node(
                     )
                 new_patient = recovered
                 registration_recovered = True
+                registration_notice = _already_registered_notice(recovered)
             if obra_social_name:
                 agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
                 if agreement is not None:
-                    registration_notice = await _attach_agreement(
+                    agreement_notice = await _attach_agreement(
                         agreement_gateway,
                         new_patient,
                         agreement,
                         recovered=registration_recovered,
                     )
+                    if agreement_notice is not None:
+                        registration_notice = (
+                            agreement_notice
+                            if registration_notice is None
+                            else f"{registration_notice}\n\n{agreement_notice}"
+                        )
             patient_primitives = _patient_to_primitives(new_patient)
             if _is_create_flow(collected_data):
                 registration_next = await _continue_booking_with_patient(
