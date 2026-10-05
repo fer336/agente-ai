@@ -1835,11 +1835,11 @@ def create_appointment_node(
                     "cita en Smiling Pilar."
                 ),
                 "instruccion": (
-                    "Preguntá si es su primera cita en Smiling Pilar. Van a aparecer 2 botones "
-                    "debajo de tu mensaje (Confirmar, Cancelar): pedile que toque Confirmar si "
-                    "es su primera vez, así lo registrás, o Cancelar si ya es paciente. NO "
-                    "listes datos ni nombres de campos. Sin saludo, en una o dos oraciones "
-                    "cortas."
+                    "Preguntá si es su primera vez en Smiling Pilar. Van a aparecer 2 botones "
+                    "debajo de tu mensaje (Soy paciente nuevo, Ya soy paciente): pedile que "
+                    "elija Soy paciente nuevo si es su primera vez, así lo registrás, o Ya soy "
+                    "paciente si ya se atendió en la clínica. NO listes datos ni nombres de "
+                    "campos. Sin saludo, en una o dos oraciones cortas."
                 ),
             },
             FIRST_VISIT_QUESTION,

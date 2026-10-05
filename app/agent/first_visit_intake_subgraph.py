@@ -57,8 +57,8 @@ _EMAIL_PATTERN = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 
 #: Static wordings, also the fallback when the LLM-built ones fail.
 FIRST_VISIT_QUESTION = (
-    "¿Es tu primera cita en Smiling Pilar? Confirmame así te registro, "
-    "o cancelá si ya sos paciente."
+    "¿Es tu primera vez en Smiling Pilar? Elegí *Soy paciente nuevo* para "
+    "registrarte o *Ya soy paciente* si ya te atendiste con nosotros."
 )
 FIRST_ASK_INTRO = FIRST_ASK_INTROS[0]
 RETRY_ASK_INTRO = RETRY_ASK_INTROS[0]
@@ -165,8 +165,8 @@ def _question_turn(details: dict[str, str]) -> dict[str, object]:
         "ask_kind": "question",
         "response_text": FIRST_VISIT_QUESTION,
         "response_buttons": _buttons(
-            (FIRST_VISIT_CONFIRM_PAYLOAD, "✅ Confirmar"),
-            (FIRST_VISIT_CANCEL_PAYLOAD, "❌ Cancelar"),
+            (FIRST_VISIT_CONFIRM_PAYLOAD, "Soy paciente nuevo"),
+            (FIRST_VISIT_CANCEL_PAYLOAD, "Ya soy paciente"),
         ),
         "next_action": "none",
         "ready_to_persist": False,
