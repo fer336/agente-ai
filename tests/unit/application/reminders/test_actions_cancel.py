@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD, OPERATION_RESCHEDULE_PAYLOAD
+from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
 from tests.unit.application.reminders.test_actions import (
     PHONE,
     current,
@@ -33,7 +33,7 @@ async def test_cancel_confirmation_cancels_with_a_deterministic_key_and_offers_n
     assert result.outcome == "cancelled"
     assert appointments.cancellation_calls == [("appointment-1", "reminder-cancel:appointment-1")]
     assert [(button.id, button.title) for button in result.buttons] == [
-        (OPERATION_RESCHEDULE_PAYLOAD, "Agendar nuevo turno"),
+        (OPERATION_CREATE_PAYLOAD, "Agendar nuevo turno"),
         (MENU_MAIN_PAYLOAD, "Menú principal"),
     ]
 

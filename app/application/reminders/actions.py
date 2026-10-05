@@ -19,7 +19,7 @@ from app.domain.repositories.gateways import (
     ReminderPatientGateway,
 )
 from app.domain.value_objects.interactive_button import InteractiveButton
-from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD, OPERATION_RESCHEDULE_PAYLOAD
+from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
 from app.domain.value_objects.phone_number import PhoneNumber
 
 _SAFE_STALE_TEXT = "Este recordatorio ya no está disponible."
@@ -111,7 +111,7 @@ class HandleReminderActionUseCase:
                 "cancelled",
                 "Tu turno fue cancelado.",
                 (
-                    InteractiveButton(OPERATION_RESCHEDULE_PAYLOAD, "Agendar nuevo turno"),
+                    InteractiveButton(OPERATION_CREATE_PAYLOAD, "Agendar nuevo turno"),
                     InteractiveButton(MENU_MAIN_PAYLOAD, "Menú principal"),
                 ),
             )
