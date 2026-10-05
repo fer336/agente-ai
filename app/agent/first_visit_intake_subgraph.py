@@ -31,6 +31,8 @@ FIRST_VISIT_CANCEL_PAYLOAD = "FIRST_VISIT_CANCEL"
 #: Legacy "No, ya soy paciente" tap: a stale button from an older message
 #: still resolves to the existing-patient path, like cancel.
 FIRST_VISIT_EXISTING_PATIENT_PAYLOAD = "FIRST_VISIT_EXISTING_PATIENT"
+FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD = "FIRST_VISIT_EXISTING_DNI_YES"
+FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD = "FIRST_VISIT_EXISTING_DNI_NO"
 FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD = "FIRST_VISIT_REVIEW_CONFIRM"
 FIRST_VISIT_REVIEW_MODIFY_PAYLOAD = "FIRST_VISIT_REVIEW_MODIFY"
 FIRST_VISIT_REVIEW_CANCEL_PAYLOAD = "FIRST_VISIT_REVIEW_CANCEL"
@@ -69,7 +71,9 @@ class FirstVisitIntakeState(TypedDict, total=False):
 
     user_message: str
     button_payload: str | None
-    stage: Literal["offer", "question", "collect", "review", "choose_field", "cancelled"]
+    stage: Literal[
+        "offer", "question", "collect", "review", "choose_field", "confirm_existing", "cancelled"
+    ]
     details: dict[str, str]
     #: Fields the adapter extracted from this turn's free-text reply.
     extracted_details: dict[str, str]
@@ -82,8 +86,11 @@ class FirstVisitIntakeState(TypedDict, total=False):
     ask_fields: list[str] | None
     ask_kind: Literal["question", "first", "retry"] | None
     #: ``identify`` = the patient is not a first visit: verify them instead.
-    next_action: Literal["none", "identify", "persist", "main_menu", "handoff"]
+    #: ``use_existing`` = the patient confirmed the record already on file for the DNI.
+    next_action: Literal["none", "identify", "persist", "use_existing", "main_menu", "handoff"]
     ready_to_persist: bool
+    #: Full name and DNI on file for the typed DNI (shown to the patient, nothing else).
+    existing_patient: dict[str, str] | None
 
 
 def format_field_bullets(fields: list[str]) -> str:
@@ -217,6 +224,34 @@ def _review(details: dict[str, str]) -> str:
     )
 
 
+def existing_dni_confirmation_turn(
+    details: dict[str, str], full_name: str, dni: str
+) -> dict[str, object]:
+    """Ask the patient to confirm that the record on file for their DNI is theirs.
+
+    Only the full name and DNI are shown: nothing else on file is disclosed.
+    """
+    return {
+        "stage": "confirm_existing",
+        "editing_field": None,
+        "details": details,
+        "existing_patient": {"full_name": full_name, "dni": dni},
+        "ask_fields": None,
+        "response_text": (
+            "Ese DNI ya figura en nuestro sistema con estos datos:\n\n"
+            f"Nombre y apellido: {full_name}\n"
+            f"DNI: {dni}\n\n"
+            "¿Sos vos?"
+        ),
+        "response_buttons": _buttons(
+            (FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD, "Sí, soy yo"),
+            (FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD, "No soy yo"),
+        ),
+        "next_action": "none",
+        "ready_to_persist": False,
+    }
+
+
 def _normalise_field_choice(text: str) -> str | None:
     normalized = text.strip().casefold()
     choices = {
@@ -263,6 +298,34 @@ def build_first_visit_intake_graph() -> Any:
             missing = missing_intake_fields(details)
             if missing:
                 return _ask(details, missing, "retry")
+
+        if stage == "confirm_existing":
+            on_file = state.get("existing_patient") or {}
+            if payload == FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD:
+                return {
+                    "next_action": "use_existing",
+                    "ready_to_persist": False,
+                    "details": details,
+                }
+            if payload == FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD:
+                return {
+                    "stage": "collect",
+                    "editing_field": "dni",
+                    "details": details,
+                    "existing_patient": None,
+                    "response_text": (
+                        "Entendido, esos datos no son tuyos. Indicame nuevamente tu DNI, "
+                        "solo números."
+                    ),
+                    "response_buttons": None,
+                    "next_action": "none",
+                    "ready_to_persist": False,
+                }
+            if on_file.get("full_name") and on_file.get("dni"):
+                return existing_dni_confirmation_turn(
+                    details, on_file["full_name"], on_file["dni"]
+                )
+            return _review_turn(details)
 
         if stage == "choose_field":
             field = _normalise_field_choice(state.get("user_message", ""))

@@ -3,12 +3,15 @@ import pytest
 from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CANCEL_PAYLOAD,
     FIRST_VISIT_CONFIRM_PAYLOAD,
+    FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD,
+    FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD,
     FIRST_VISIT_EXISTING_PATIENT_PAYLOAD,
     FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
     build_first_visit_intake_graph,
+    existing_dni_confirmation_turn,
 )
 
 _ALL_FIELDS = {
@@ -348,3 +351,76 @@ async def test_review_state_with_missing_fields_never_reviews_or_persists_on_mod
 
     assert state["stage"] == "collect"
     assert state["ask_fields"] == ["email", "obra_social", "plan"]
+
+
+_ON_FILE = {"full_name": "María González", "dni": "30123456"}
+
+
+def test_existing_dni_confirmation_turn_shows_only_name_and_dni_with_short_buttons():
+    turn = existing_dni_confirmation_turn(_ALL_FIELDS, "María González", "30123456")
+
+    assert turn["stage"] == "confirm_existing"
+    assert turn["existing_patient"] == _ON_FILE
+    text = str(turn["response_text"])
+    assert "María González" in text
+    assert "30123456" in text
+    assert "ana@example.com" not in text
+    assert "OSDE" not in text
+    buttons = turn["response_buttons"]
+    assert [(b.id, b.title) for b in buttons] == [
+        (FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD, "Sí, soy yo"),
+        (FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD, "No soy yo"),
+    ]
+    assert all(len(b.title) <= 20 for b in buttons)
+
+
+@pytest.mark.asyncio
+async def test_confirming_the_dni_on_file_asks_to_continue_with_that_patient():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "confirm_existing",
+            "details": _ALL_FIELDS,
+            "existing_patient": _ON_FILE,
+            "button_payload": FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD,
+        }
+    )
+
+    assert state["next_action"] == "use_existing"
+    assert state["ready_to_persist"] is False
+
+
+@pytest.mark.asyncio
+async def test_rejecting_the_dni_on_file_asks_for_the_dni_again():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "confirm_existing",
+            "details": _ALL_FIELDS,
+            "existing_patient": _ON_FILE,
+            "button_payload": FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD,
+        }
+    )
+
+    assert state["stage"] == "collect"
+    assert state["editing_field"] == "dni"
+    assert state["next_action"] == "none"
+    assert state["response_buttons"] is None
+    assert "DNI" in state["response_text"]
+    assert "ya está registrado con otros datos" not in state["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_typed_text_during_the_dni_confirmation_shows_it_again():
+    state = await build_first_visit_intake_graph().ainvoke(
+        {
+            "stage": "confirm_existing",
+            "details": _ALL_FIELDS,
+            "existing_patient": _ON_FILE,
+            "user_message": "hola",
+            "button_payload": None,
+        }
+    )
+
+    assert state["stage"] == "confirm_existing"
+    assert state["next_action"] == "none"
+    assert "María González" in state["response_text"]
+    assert len(state["response_buttons"]) == 2
