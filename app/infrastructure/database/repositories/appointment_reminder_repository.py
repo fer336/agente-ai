@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, exists, select, update
+from sqlalchemy import CursorResult, and_, case, exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +39,18 @@ class SqlAlchemyAppointmentReminderRepository:
             set_={
                 "patient_id": statement.excluded.patient_id,
                 "status": "pending",
-                "due_at": statement.excluded.due_at,
+                # A scheduled retry carries a backoff due_at. A scan must
+                # not pull it forward while attempts remain outstanding.
+                "due_at": case(
+                    (
+                        and_(
+                            AppointmentReminderModel.status == "pending",
+                            AppointmentReminderModel.attempts > 0,
+                        ),
+                        AppointmentReminderModel.due_at,
+                    ),
+                    else_=statement.excluded.due_at,
+                ),
                 "claimed_at": None,
                 "recipient_phone": statement.excluded.recipient_phone,
                 "external_message_id": None,
@@ -64,6 +75,18 @@ class SqlAlchemyAppointmentReminderRepository:
         )
         return [_to_entity(model) for model in result.scalars()]
 
+    async def skip_pending(self, reminder_id: str, *, reason: str, skipped_at: datetime) -> bool:
+        result = await self._session.execute(
+            update(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.id == reminder_id,
+                AppointmentReminderModel.status == "pending",
+            )
+            .values(status="skipped", last_error=reason)
+        )
+        await self._session.flush()
+        return cast("CursorResult[Any]", result).rowcount == 1
+
     async def claim(self, reminder_id: str, claimed_at: datetime) -> bool:
         result = await self._session.execute(
             update(AppointmentReminderModel)
@@ -76,6 +99,53 @@ class SqlAlchemyAppointmentReminderRepository:
                 claimed_at=claimed_at,
                 attempts=AppointmentReminderModel.attempts + 1,
             )
+        )
+        await self._session.flush()
+        return cast("CursorResult[Any]", result).rowcount == 1
+
+    async def renew_claim(
+        self, reminder_id: str, *, claimed_at: datetime, renewed_at: datetime
+    ) -> bool:
+        result = await self._session.execute(
+            update(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.id == reminder_id,
+                AppointmentReminderModel.status == "processing",
+                AppointmentReminderModel.claimed_at == claimed_at,
+            )
+            .values(claimed_at=renewed_at)
+        )
+        await self._session.flush()
+        return cast("CursorResult[Any]", result).rowcount == 1
+
+    async def reclaim_stale_claims(self, stale_before: datetime) -> int:
+        result = await self._session.execute(
+            update(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.status == "processing",
+                AppointmentReminderModel.claimed_at < stale_before,
+            )
+            .values(status="pending", claimed_at=None)
+        )
+        await self._session.flush()
+        return cast("CursorResult[Any]", result).rowcount
+
+    async def mark_skipped(
+        self,
+        reminder_id: str,
+        *,
+        claimed_at: datetime,
+        reason: str,
+        skipped_at: datetime,
+    ) -> bool:
+        result = await self._session.execute(
+            update(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.id == reminder_id,
+                AppointmentReminderModel.status == "processing",
+                AppointmentReminderModel.claimed_at == claimed_at,
+            )
+            .values(status="skipped", claimed_at=None, last_error=reason)
         )
         await self._session.flush()
         return cast("CursorResult[Any]", result).rowcount == 1

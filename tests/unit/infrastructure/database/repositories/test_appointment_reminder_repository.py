@@ -48,9 +48,11 @@ async def test_upsert_only_refreshes_pending_or_failed_rows(reminder: Appointmen
     sql = str(compiled)
     assert inserted is False
     assert "ON CONFLICT (appointment_id, kind) DO UPDATE" in sql
-    assert "appointment_reminders.status IN (__[POSTCOMPILE_status_1])" in sql
-    assert compiled.params["status_1"] == ["pending", "failed"]
-    assert "due_at = excluded.due_at" in sql
+    assert "appointment_reminders.status IN" in sql
+    assert ["pending", "failed"] in compiled.params.values()
+    assert "CASE WHEN (appointment_reminders.status = %(status_1)s AND " in sql
+    assert "appointment_reminders.attempts > %(attempts_1)s) " in sql
+    assert "THEN appointment_reminders.due_at ELSE excluded.due_at END" in sql
 
 
 @pytest.mark.asyncio
@@ -67,8 +69,8 @@ async def test_upsert_never_resets_a_processing_row_during_delivery(
     compiled = statement.compile(dialect=postgresql.dialect())
     sql = str(compiled)
     assert updated is False
-    assert "appointment_reminders.status IN (__[POSTCOMPILE_status_1])" in sql
-    assert compiled.params["status_1"] == ["pending", "failed"]
+    assert "appointment_reminders.status IN" in sql
+    assert ["pending", "failed"] in compiled.params.values()
 
 
 @pytest.mark.asyncio
@@ -98,10 +100,54 @@ async def test_claim_uses_pending_status_and_claim_timestamp_as_its_cas_guard():
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert won is True
     assert (
-        "WHERE appointment_reminders.id = %(id_1)s "
-        "AND appointment_reminders.status = %(status_1)s"
+        "WHERE appointment_reminders.id = %(id_1)s AND appointment_reminders.status = %(status_1)s"
     ) in sql
     assert "attempts=(appointment_reminders.attempts + %(attempts_1)s)" in sql
+
+
+@pytest.mark.asyncio
+async def test_reclaim_and_skip_are_bounded_by_processing_claim_state():
+    session = AsyncMock()
+    session.execute.side_effect = [_Result(rowcount=1), _Result(rowcount=1)]
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+    claimed_at = datetime(2026, 10, 2, 13, tzinfo=UTC)
+
+    assert await repository.reclaim_stale_claims(claimed_at) == 1
+    assert (
+        await repository.mark_skipped(
+            "reminder-1", claimed_at=claimed_at, reason="stale", skipped_at=claimed_at
+        )
+        is True
+    )
+
+    reclaim_sql = str(
+        session.execute.await_args_list[0].args[0].compile(dialect=postgresql.dialect())
+    )
+    skip_sql = str(session.execute.await_args_list[1].args[0].compile(dialect=postgresql.dialect()))
+    assert "appointment_reminders.status = %(status_1)s" in reclaim_sql
+    assert "appointment_reminders.claimed_at < %(claimed_at_1)s" in reclaim_sql
+    assert "appointment_reminders.claimed_at = %(claimed_at_1)s" in skip_sql
+    assert "status=%(status)s" in skip_sql
+
+
+@pytest.mark.asyncio
+async def test_skip_pending_and_renew_claim_use_compare_and_swap_guards():
+    session = AsyncMock()
+    session.execute.side_effect = [_Result(rowcount=1), _Result(rowcount=1)]
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+    claimed_at = datetime(2026, 10, 2, 13, tzinfo=UTC)
+    renewed_at = claimed_at + timedelta(seconds=1)
+
+    assert await repository.skip_pending("reminder-1", reason="allowlist", skipped_at=claimed_at)
+    assert await repository.renew_claim("reminder-1", claimed_at=claimed_at, renewed_at=renewed_at)
+
+    skip_sql = str(session.execute.await_args_list[0].args[0].compile(dialect=postgresql.dialect()))
+    renew_sql = str(
+        session.execute.await_args_list[1].args[0].compile(dialect=postgresql.dialect())
+    )
+    assert "appointment_reminders.status = %(status_1)s" in skip_sql
+    assert "appointment_reminders.claimed_at = %(claimed_at_1)s" in renew_sql
+    assert "claimed_at=%(claimed_at)s" in renew_sql
 
 
 @pytest.mark.asyncio
