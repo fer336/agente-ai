@@ -144,6 +144,10 @@ docker compose up -d postgres redis
 alembic upgrade head
 ```
 
+## Appointment-reminder rollout
+
+Appointment reminders are fail-closed: they are disabled by default, and an empty E.164 allowlist blocks all sends. Follow the [staged appointment-reminder rollout runbook](docs/appointment-reminders-runbook.md) before any manual production enablement. Its automated verification commands do not send messages; the staged trial sends only to the explicitly authorized allowlisted number.
+
 ## Run the app
 
 ```bash

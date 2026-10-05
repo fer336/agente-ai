@@ -61,9 +61,9 @@ Use a safe staged rollout in an isolated worktree:
   confirmed/attended/cancelled status resolution from clinic metadata.
 - [x] T3 — Add durable reminder persistence, scheduler, claim/retry behavior, and
   allowlisted template delivery for the three timing rules.
-- [ ] T4 — Handle Confirmar, Cancelar, Cómo llegar, and No recibir más payloads with
+- [x] T4 — Handle Confirmar, Cancelar, Cómo llegar, and No recibir más payloads with
   stale/duplicate safeguards and durable opt-out.
-- [ ] T5 — Wire the disabled-by-default worker, add operational observability/docs,
+- [x] T5 — Wire the disabled-by-default worker, add operational observability/docs,
   and run focused plus full verification without a live patient send.
 
 ## Acceptance criteria
@@ -119,11 +119,29 @@ Use a safe staged rollout in an isolated worktree:
 - T3 complete: timing planner, migration/model, atomic repository, allowlisted
   scheduling, configured template construction, state-revalidated delivery, lease
   renewal, and bounded retries. Work-unit commits: `97f688d`, `6e01837`, `e491abe`,
-  `eb029fa`, `caa42b9`, `c8abc25`, `e0b7ec8`, plus the worker/config commit recorded
-  with this progress update. Verification: 243 focused tests passed; ruff, mypy,
-  Alembic single-head, and diff checks passed. Provider exactly-once remains impossible
-  only for a crash after YCloud accepts a send and before the DB terminal write.
+  `eb029fa`, `caa42b9`, `c8abc25`, `e0b7ec8`, `5b182b6`. Verification: 243
+  focused tests passed; ruff, mypy, Alembic single-head, and diff checks passed.
+  Provider exactly-once remains impossible only for a crash after YCloud accepts a
+  send and before the DB terminal write.
+- T4 complete at the application/graph boundary: durable review opt-out, exact
+  Dentalink state-22 confirmation, sent-reminder authorization, typed callback parser,
+  ownership revalidation, two-step cancellation, location reuse, and deterministic
+  graph routing. Work-unit commits: `913ebeb`, `2ee589c`, `b10def9`, `572162f`,
+  `82783c8`, `fb1768a`, `129b508`. Verification: 713 broader graph/node tests plus
+  92 focused action/gateway tests passed; ruff and mypy passed. Runtime dependency
+  injection remains T5.
+- T5 complete: session-bound runtime dependencies, reminder-capable real/fake gateway
+  factories, gated resilient worker lifecycle, and staged rollout runbook. Work-unit
+  commits: `7573288`, `4f8c121`, plus the documentation/progress commit containing
+  this update. Final verification: 2,954 tests passed and 84 skipped; 3 Redis
+  integration tests plus their 3 teardowns failed on the environment's pre-existing
+  authentication mismatch (`HELLO must be called with the client already
+  authenticated`). Ruff, mypy, Alembic head `0020_review_opt_out`, diff checks, and
+  every reminder acceptance criterion passed. Native review remained unavailable
+  (`package-local-binary-missing`). No live message was sent.
 
 ## Next step
 
-T4.
+Obtain and explicitly approve one E.164 test recipient, apply migrations, and follow
+`docs/appointment-reminders-runbook.md` for the manual one-number staged trial. Push,
+PR, deployment, enablement, and allowlist expansion remain user decisions.
