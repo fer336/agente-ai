@@ -57,9 +57,8 @@ _REMINDER_WORKER_INTERVAL_SECONDS = 60
 
 def start_appointment_reminder_worker(settings: Settings) -> asyncio.Task[None] | None:
     """Start the disabled-by-default reminder worker only when safely configured."""
-    if (
-        not settings.appointment_reminders_enabled
-        or not settings.appointment_reminders_phone_allowlist_set
+    if not settings.appointment_reminders_recipient_policy.can_run(
+        enabled=settings.appointment_reminders_enabled
     ):
         return None
     return asyncio.create_task(

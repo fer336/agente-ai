@@ -7,6 +7,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.application.reminders.plan_reminders import ReminderSettings, plan_reminders
+from app.application.reminders.recipient_policy import ReminderRecipientPolicy
 from app.domain.entities.appointment import Appointment
 from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.entities.appointment_slot import AppointmentSlot
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ReminderSchedulingSettings:
     enabled: bool
-    phone_allowlist: set[str] | frozenset[str]
+    recipient_policy: ReminderRecipientPolicy
     clinic_timezone: ZoneInfo | str
     day_before_time: time
     same_day_offset_hours: int
@@ -43,7 +44,7 @@ async def schedule_reminders(
     contact_preferences: ContactRepository | None = None,
 ) -> int:
     """Plan yesterday through tomorrow, with no external call unless enabled."""
-    if not settings.enabled or not settings.phone_allowlist:
+    if not settings.recipient_policy.can_run(enabled=settings.enabled):
         return 0
     timezone = (
         ZoneInfo(settings.clinic_timezone)
@@ -69,7 +70,7 @@ async def schedule_reminders(
             if (
                 patient is None
                 or patient.patient_id != source.patient_id
-                or str(patient.mobile) not in settings.phone_allowlist
+                or not settings.recipient_policy.allows(patient.mobile)
             ):
                 continue
             appointment = Appointment(

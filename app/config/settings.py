@@ -1,9 +1,11 @@
 from datetime import time
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.application.reminders.recipient_policy import ReminderRecipientPolicy
 from app.domain.value_objects.phone_number import PhoneNumber
 
 
@@ -125,6 +127,7 @@ class Settings(BaseSettings):
     #: feature alone is insufficient; the recipient must also be in this
     #: comma-separated E.164 allowlist. An empty allowlist blocks everyone.
     appointment_reminders_enabled: bool = False
+    appointment_reminders_rollout_mode: Literal["allowlist", "all"] = "allowlist"
     appointment_reminders_phone_allowlist: str = ""
     appointment_reminders_confirmation_template_name: str = "recordatorio_turno_confirmar"
     appointment_reminders_location_template_name: str = "recordatorio_turno_ubicacion"
@@ -350,9 +353,17 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def appointment_reminders_phone_allowlist_set(self) -> frozenset[str]:
-        """Normalized allowlist used by the future reminder delivery path."""
+        """Normalized source values for the reminder recipient policy."""
         return frozenset(
             value for value in self.appointment_reminders_phone_allowlist.split(",") if value
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def appointment_reminders_recipient_policy(self) -> ReminderRecipientPolicy:
+        return ReminderRecipientPolicy(
+            self.appointment_reminders_rollout_mode,
+            self.appointment_reminders_phone_allowlist_set,
         )
 
     @computed_field  # type: ignore[prop-decorator]

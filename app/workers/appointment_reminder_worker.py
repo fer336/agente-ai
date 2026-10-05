@@ -45,9 +45,8 @@ async def run_appointment_reminder_tick(
     now: datetime | None = None,
 ) -> tuple[int, int]:
     """Run bounded scheduling then delivery once."""
-    if (
-        not settings.appointment_reminders_enabled
-        or not settings.appointment_reminders_phone_allowlist_set
+    if not settings.appointment_reminders_recipient_policy.can_run(
+        enabled=settings.appointment_reminders_enabled
     ):
         return (0, 0)
     current = now or datetime.now(UTC)
@@ -58,7 +57,7 @@ async def run_appointment_reminder_tick(
         current,
         ReminderSchedulingSettings(
             True,
-            settings.appointment_reminders_phone_allowlist_set,
+            settings.appointment_reminders_recipient_policy,
             settings.clinic_timezone,
             settings.appointment_reminders_day_before_time,
             settings.appointment_reminders_same_day_offset_hours,
@@ -84,7 +83,7 @@ async def run_appointment_reminder_tick(
             settings.appointment_reminders_confirmation_template_name,
             settings.appointment_reminders_location_template_name,
             settings.appointment_reminders_review_template_name,
-            settings.appointment_reminders_phone_allowlist_set,
+            settings.appointment_reminders_recipient_policy,
         ),
     )
     return scheduled, delivered

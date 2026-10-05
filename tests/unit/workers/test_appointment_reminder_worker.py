@@ -67,6 +67,27 @@ async def test_enabled_allowlisted_tick_uses_no_token_reminder_gateways_without_
 
 
 @pytest.mark.asyncio
+async def test_enabled_all_tick_runs_without_an_allowlist():
+    repository = AsyncMock()
+    repository.list_due.return_value = []
+
+    result = await run_appointment_reminder_tick(
+        repository,
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        Settings(
+            _env_file=None,
+            appointment_reminders_enabled=True,
+            appointment_reminders_rollout_mode="all",
+        ),
+        now=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+
+    assert result == (0, 0)
+
+
+@pytest.mark.asyncio
 async def test_reminder_loop_repeats_survives_failures_and_propagates_cancellation(monkeypatch):
     repository = AsyncMock()
     calls = 0
