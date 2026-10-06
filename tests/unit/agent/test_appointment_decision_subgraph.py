@@ -1718,3 +1718,65 @@ async def test_a_valid_specialty_pick_offers_up_to_26_slots_found_beyond_the_fir
     assert [s.id for s in result["collected_data"]["available_slots"]] == [
         s.id for s in slots[:26]
     ]
+
+
+def _twenty_seven_slots():
+    start = datetime.now(UTC) + timedelta(days=3)
+    return [
+        AppointmentSlot(
+            id=f"prof-1-{i:02d}",
+            professional_id="prof-1",
+            specialty_id="cleaning",
+            time_range=DateTimeRange(
+                start + timedelta(hours=i), start + timedelta(hours=i, minutes=30)
+            ),
+        )
+        for i in range(27)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_27_slots_are_reachable_in_three_pages_with_ver_mas_and_volver_atras():
+    slots = _twenty_seven_slots()
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Endodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        available_slots=slots,
+    )
+    collected_data: dict[str, object] = {
+        "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+        "specialty_options": [make_specialty(id_="cleaning", name="Endodoncia")],
+    }
+    result = await graph.ainvoke(
+        _decision_state(
+            button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning", collected_data=collected_data
+        )
+    )
+
+    pages = [result["response_list"].rows]
+    for _ in range(2):
+        result = await graph.ainvoke(
+            _decision_state(
+                button_payload=LIST_MORE_PAYLOAD, collected_data=result["collected_data"]
+            )
+        )
+        pages.append(result["response_list"].rows)
+
+    assert [len(page) for page in pages] == [10, 10, 10]
+    assert [page[-1].id for page in pages] == [
+        LIST_MORE_PAYLOAD,
+        LIST_MORE_PAYLOAD,
+        LIST_BACK_PAYLOAD,
+    ]
+    offered = [
+        row.id for page in pages for row in page if row.id.startswith(SELECT_SLOT_PAYLOAD_PREFIX)
+    ]
+    assert offered == [f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}" for slot in slots]
+    assert len(offered) == len(set(offered))
+
+    # "Volver atrás" on the last page leaves the slot list for the
+    # specialty screen (the aggregated list has no screen in between).
+    back = await graph.ainvoke(
+        _decision_state(button_payload=LIST_BACK_PAYLOAD, collected_data=result["collected_data"])
+    )
+    assert back["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION

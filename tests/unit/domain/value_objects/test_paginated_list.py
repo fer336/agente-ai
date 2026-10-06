@@ -114,6 +114,23 @@ class TestPaginateRows:
         # 'Volver atrás' instead of 'Ver más'.
         assert [r.id for r in page2] == ["r18", "r19", LIST_BACK_PAYLOAD]
 
+    def test_twenty_seven_items_fill_exactly_three_pages_of_ten_rows(self):
+        # The aggregated slot list offers up to 27 slots: 9 + 9 + 9, each
+        # message at Meta's 10-row cap including its single navigation row.
+        from app.domain.value_objects.list_message import ListRow
+
+        items = [ListRow(id=f"r{i}", title=f"Row {i}") for i in range(27)]
+        pages = [paginate_rows(items, page=p, include_back=True) for p in range(3)]
+        assert [len(page) for page in pages] == [10, 10, 10]
+        assert [r.id for r in pages[0]][-1] == LIST_MORE_PAYLOAD
+        assert [r.id for r in pages[1]][-1] == LIST_MORE_PAYLOAD
+        assert [r.id for r in pages[2]][-1] == LIST_BACK_PAYLOAD
+        item_ids = [r.id for page in pages for r in page if r.id.startswith("r")]
+        assert item_ids == [f"r{i}" for i in range(27)]
+        for page in pages:
+            ids = [r.id for r in page]
+            assert len(ids) == len(set(ids))
+
     def test_single_page_list_includes_volver_atras_when_asked(self):
         from app.domain.value_objects.list_message import ListRow
 
