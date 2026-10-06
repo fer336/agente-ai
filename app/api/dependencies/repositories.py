@@ -9,11 +9,15 @@ from app.api.dependencies.db import (
     get_committing_db_session,
     get_db_session,
 )
+from app.api.dependencies.redis import get_shared_redis_client
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.audio.transcribe_audio import TranscriptionRepositories
 from app.application.conversations.rotate_workflow_session import WorkflowSessionRepositories
+from app.application.conversations.start_fresh_session import StartFreshSessionUseCase
+from app.application.memory.memory_service import MemoryService
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
+from app.config.settings import get_settings
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -223,11 +227,26 @@ async def open_sqlalchemy_appointment_reminder_worker_repositories() -> AsyncIte
     AppointmentReminderWorkerRepositories
 ]:
     """Provide one fresh, committing transaction for each reminder poll tick."""
+    # Deferred: `gateways` imports this module at import time (circular otherwise).
+    from app.api.dependencies.gateways import get_llm_provider
+
     session_factory = _get_session_factory()
     async with session_factory() as session:
+        contacts = SqlAlchemyContactRepository(session)
         yield AppointmentReminderWorkerRepositories(
             reminders=SqlAlchemyAppointmentReminderRepository(session),
-            contacts=SqlAlchemyContactRepository(session),
+            contacts=contacts,
+            start_fresh_session=StartFreshSessionUseCase(
+                contacts,
+                SqlAlchemyConversationRepository(session),
+                MemoryService(
+                    contact_memory_repository=SqlAlchemyContactMemoryRepository(session),
+                    message_repository=SqlAlchemyMessageRepository(session),
+                    llm_provider=get_llm_provider(),
+                    recent_window_size=get_settings().memory_recent_window_size,
+                    redis_client=get_shared_redis_client(),
+                ),
+            ),
         )
         await session.commit()
 
