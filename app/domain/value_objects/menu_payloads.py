@@ -47,8 +47,11 @@ OPERATION_VIEW_PAYLOAD = "OPERATION_VIEW"
 #: Interactive-list navigation payloads (this change). `LIST_MORE` pages a
 #: list forward (the pagination position lives in `collected_data`);
 #: `LIST_BACK` pops one screen off the per-conversation navigation stack.
+#: `LIST_PREV` pages a list backward by exactly one page (slot lists only); it
+#: is deliberately distinct from `LIST_BACK`, which means "leave this screen".
 LIST_MORE_PAYLOAD = "LIST_MORE"
 LIST_BACK_PAYLOAD = "LIST_BACK"
+LIST_PREV_PAYLOAD = "LIST_PREV"
 
 #: Row-id prefixes for the paginated specialty/professional lists — stable
 #: ids round-trip through WhatsApp's `list_reply.id` (parsed into

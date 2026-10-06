@@ -8,6 +8,7 @@ from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -152,7 +153,7 @@ async def test_naming_a_specialty_in_the_catalog_never_lists_its_professionals()
 
 
 @pytest.mark.asyncio
-async def test_specialty_with_many_professionals_and_booking_context_shows_one_page_of_slots():
+async def test_specialty_with_many_professionals_and_booking_context_shows_first_slots_page():
     professionals = [
         make_professional(id_=f"prof-{i}", full_name=f"Profesional {i}", specialty_id="spec-1")
         for i in range(12)
@@ -170,7 +171,8 @@ async def test_specialty_with_many_professionals_and_booking_context_shows_one_p
 
     ids = [r.id for r in result["response_list"].rows]
     assert len(ids) == 10
-    assert all(row_id.startswith("SELECT_SLOT:") for row_id in ids)
+    assert all(row_id.startswith("SELECT_SLOT:") for row_id in ids[:9])
+    assert ids[9] == LIST_MORE_PAYLOAD
     assert result["collected_data"]["stage"] == "awaiting_slot_selection"
 
 
@@ -186,6 +188,7 @@ class TestResolveInteractionRouting:
             (f"{SPECIALTY_PAYLOAD_PREFIX}spec-1", "specialties"),
             (LIST_MORE_PAYLOAD, "specialties"),
             (LIST_BACK_PAYLOAD, "appointment"),
+            (LIST_PREV_PAYLOAD, "appointment"),
             ("PROFESSIONAL:prof-1", "unknown"),
         ],
     )
@@ -194,3 +197,15 @@ class TestResolveInteractionRouting:
         state = make_agent_state(user_message="", button_payload=payload, collected_data={})
         result = await node(state)
         assert result["intent"] == expected
+
+    @pytest.mark.asyncio
+    async def test_the_previous_page_payload_stays_with_the_active_slot_stage(self):
+        node = _resolver(LIST_PREV_PAYLOAD)
+        state = make_agent_state(
+            user_message="",
+            button_payload=LIST_PREV_PAYLOAD,
+            collected_data={"stage": "awaiting_slot_selection", "operation": "create_appointment"},
+        )
+        result = await node(state)
+        assert result["intent"] == "appointment"
+        assert "interruption" not in result

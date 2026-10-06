@@ -1,5 +1,3 @@
-from datetime import datetime, time, timedelta
-
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.repositories.gateways import AppointmentGateway
 from app.domain.value_objects.date_time_range import DateTimeRange
@@ -11,41 +9,31 @@ class SearchAvailabilityAnyProfessionalUseCase:
     patients are new and don't know any professional by name, so being
     forced to pick one before seeing a single slot was pure friction).
 
-    One Dentalink request per calendar day in `date_range`, NOT one per
-    (professional, day) pair. `/v5/agendas` with `professional_id=None`
-    already returns every professional's slots at the branch for that day
-    in a single response — filtering to this specialty's professionals is
-    done client-side against the `id_dentista` set from `list_professionals`.
-    This is a fix for a real production incident: an earlier version of
-    this use case looped `search_availability(professional_id=p.id, ...)`
-    per professional, multiplying request volume by the professional count
-    (up to 6 professionals x 7 days = 42 sequential requests) and hit a
-    live Dentalink `429 Too Many Attempts` — worse than the single-
-    professional flow's own earlier 429 incident (an uncapped ~14-day
-    walk), despite believing "sequential, not parallel" was enough to stay
-    safe. Walking by day instead of by (professional, day) bounds the
-    request count to `date_range`'s length regardless of how many
-    professionals the specialty has, while keeping the early-cutoff that
-    made the per-professional design cheap in the common case: most days
-    the first one or two requests already have enough slots, since
-    multiple professionals typically have near-term availability.
+    The search is scoped BY SPECIALTY: `AppointmentGateway.
+    search_specialty_availability` asks Dentalink for that specialty's slots
+    (server-side `id_especialidad` filter) and walks forward from the start
+    of `date_range` with a bounded number of requests — see its own docstring
+    for the walk. This replaced a per-calendar-day query of the WHOLE
+    branch's agenda filtered client-side: `/v5/agendas` answers at most 10
+    rows per request, so on every day the general dentists filled the response
+    and a specialty with few professionals (Endodoncia, Ortodoncia) was cut
+    off to an empty result.
 
-    Each per-request window is aligned to a single calendar date (the
-    caller's own timezone — this use case never needs the clinic's, see
-    `app.infrastructure.dentalink.appointment_gateway.
-    DentalinkAppointmentGateway.search_availability`, which derives its
-    `fecha` filter from `date_range.start.date()`/`date_range.end.date()`
-    of whatever `date_range` it's handed). A fix for a second, related
-    production issue: this use case used to chunk `date_range` into plain
-    now-anchored 24h windows (`day_start`, `day_start + 1 day`) instead of
-    calendar-day-aligned ones — a `date_range` starting at, say, 19:58
-    turned each one of those 24h windows into a window that itself spans
-    TWO calendar dates, doubling the real `/v5/agendas` HTTP call count
-    the gateway makes for that one use-case iteration (one per date it
-    contains) to up to 14 for a nominal 7-day search. Aligning window ends
-    to the next midnight (in whatever tz `date_range` carries) keeps every
-    iteration's window within one calendar date, so it costs exactly one
-    real HTTP request.
+    Two earlier designs caused real production incidents and must not come
+    back: looping `search_availability` once per professional (up to
+    6 professionals x 7 days = 42 sequential requests -> live Dentalink
+    `429 Too Many Attempts`), and chunking the range into now-anchored 24h
+    windows that each spanned two calendar dates (double the requests). The
+    request count is now bounded inside the gateway, independent of the
+    window length and of how many professionals the specialty has.
+
+    `list_professionals` still runs, for two reasons: it provides the
+    professional names (used only to keep a name out of the chat text), and
+    it is a safety net — a slot from anyone who is not an enabled
+    professional of the specialty (e.g. a disabled one the agenda still
+    lists) is never offered. The server-side filter and this set agree on
+    enabled professionals (a dentist carries a single `id_especialidad`),
+    so the net does not hide valid slots.
     """
 
     def __init__(self, gateway: AppointmentGateway) -> None:
@@ -63,35 +51,24 @@ class SearchAvailabilityAnyProfessionalUseCase:
             return [], professional_names
         professional_ids = frozenset(professional_names)
 
+        slots = await self._gateway.search_specialty_availability(
+            specialty_id=specialty_id,
+            date_range=date_range,
+            limit=target_slot_count,
+        )
+
         collected: list[AppointmentSlot] = []
-        # Dedupe by id, keeping the first occurrence: slot ids are now
-        # derived deterministically from professional + start (see
-        # `slot_from_agenda`), so a genuine duplicate here would only come
-        # from the same slot being re-fetched across overlapping windows —
-        # defensive, but cheap insurance against ever re-offering the same
-        # id twice in one aggregated list (the root cause of WhatsApp's
-        # `[131009] Duplicated row id`).
+        # Dedupe by id, keeping the first occurrence: slot ids are derived
+        # deterministically from professional + start (see
+        # `slot_from_agenda`), so this is cheap insurance against ever
+        # re-offering the same id twice in one aggregated list (the root
+        # cause of WhatsApp's `[131009] Duplicated row id`).
         seen_ids: set[str] = set()
-        day_start = date_range.start
-        while day_start < date_range.end:
-            midnight_after_day_start = datetime.combine(
-                day_start.date() + timedelta(days=1), time.min, tzinfo=day_start.tzinfo
-            )
-            day_end = min(midnight_after_day_start, date_range.end)
-            slots = await self._gateway.search_availability(
-                specialty_id=None,
-                professional_id=None,
-                date_range=DateTimeRange(day_start, day_end),
-                limit=None,
-            )
-            for slot in slots:
-                if slot.professional_id not in professional_ids or slot.id in seen_ids:
-                    continue
-                seen_ids.add(slot.id)
-                collected.append(slot)
-            day_start = day_end
-            if len(collected) >= target_slot_count:
-                break
+        for slot in slots:
+            if slot.professional_id not in professional_ids or slot.id in seen_ids:
+                continue
+            seen_ids.add(slot.id)
+            collected.append(slot)
 
         collected.sort(key=lambda slot: slot.time_range.start)
         return collected[:target_slot_count], professional_names

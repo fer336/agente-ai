@@ -41,6 +41,7 @@ from app.domain.value_objects.menu_payloads import (
     FAQ_TOPIC_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     LOCATION_DETAIL_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
@@ -190,7 +191,7 @@ __all__ = [
 ]
 
 # These are truly global navigation/actions. They must win even while an
-# appointment stage is active. LIST_MORE/LIST_BACK and row payloads are NOT in
+# appointment stage is active. LIST_MORE/LIST_PREV/LIST_BACK and row payloads are NOT in
 # this table because their meaning depends on the currently rendered screen.
 _GLOBAL_BUTTON_INTENTS = {
     MENU_APPOINTMENT_PAYLOAD: "appointment",
@@ -237,6 +238,7 @@ _NAVIGATION_TARGETS = frozenset({"specialty", "service", "professional", "slot",
 _IDLE_BUTTON_INTENTS = {
     LIST_MORE_PAYLOAD: "specialties",
     LIST_BACK_PAYLOAD: "appointment",
+    LIST_PREV_PAYLOAD: "appointment",
 }
 
 

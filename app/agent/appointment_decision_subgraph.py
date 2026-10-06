@@ -41,13 +41,13 @@ from app.agent.nodes.appointment_selection import (
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
     decision_entry_node_for_stage,
-    is_single_page_slots,
     next_page,
     resolve_list_choice,
     slot_by_id,
     slot_payload_id,
     slots_list_message,
     slots_screen,
+    step_slots_page,
     text_leaks_a_name,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
@@ -76,6 +76,7 @@ from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
@@ -102,22 +103,26 @@ _MAX_SLOTS_SEARCHED = 27
 
 #: A specialty request (a list tap, a typed mention, a topic that books a
 #: fixed specialty) goes straight here: the agent NEVER asks the patient to
-#: choose a professional, it shows the NEXT 10 FREE SLOTS (soonest first)
-#: across ALL enabled professionals of the specialty, with date/day/time only.
-#: 10 is exactly WhatsApp's list cap, so the screen is a single page with no
-#: "Ver más"/"Volver" navigation row (see `slots_screen`). One Dentalink
-#: request per calendar day in the window (see
-#: `SearchAvailabilityAnyProfessionalUseCase`'s own docstring), so request
-#: volume scales with `_AGGREGATE_SEARCH_WINDOW.days`, not with the
-#: specialty's professional count — worst case is 7 sequential Dentalink
-#: requests. An earlier version looped one `search_availability` call PER
-#: professional and hit a live `429 Too Many Attempts` in production. The
-#: window is narrow on purpose: a patient asking for "the soonest slot,
-#: don't care who" cares about near-term availability. The search
+#: choose a professional, it shows the NEXT FREE SLOTS (soonest first) across
+#: ALL enabled professionals of the specialty, with date/day/time only.
+#: The search is BY SPECIALTY: the gateway filters server-side
+#: (`id_especialidad`) and walks forward from today with a bounded request
+#: count (see `SearchAvailabilityAnyProfessionalUseCase` and
+#: `search_specialty_availability`), so request volume depends neither on the
+#: window length nor on the specialty's professional count. An earlier
+#: version looped one `search_availability` call PER professional and hit a
+#: live `429 Too Many Attempts` in production; a later one queried the whole
+#: branch per day, whose 10-row responses drowned out specialties with few
+#: professionals (Endodoncia, Ortodoncia).
+#: The window is wide (up to 60 days) because a small specialty's first slot
+#: can be 10+ days out; the walk stops as soon as the target is reached.
+#: 26 slots = 3 WhatsApp list pages with bidirectional navigation (9 + 8 + 9,
+#: the 10-row cap including the "Ver más"/"Volver atrás" rows); this
+#: supersedes #174's single page of 10 (see `slots_screen`). The search
 #: `date_range` is built from TODAY's midnight, not from `now` directly, which
 #: keeps the window at exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates.
-_AGGREGATE_TARGET_SLOTS = 10
-_AGGREGATE_SEARCH_WINDOW = timedelta(days=7)
+_AGGREGATE_TARGET_SLOTS = 26
+_AGGREGATE_SEARCH_WINDOW = timedelta(days=60)
 
 #: One-shot `collected_data` flag: the caller already resolved the specialty
 #: (`chosen_specialty_id`/`chosen_specialty_name`) and wants its next slots now.
@@ -276,7 +281,6 @@ async def _staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     the module docstring's one-way-dependency note."""
     professionals = await gateway.list_professionals()
     return {p.specialty_id for p in professionals if p.specialty_id}
-
 
 
 async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] | None:
@@ -610,26 +614,22 @@ def build_appointment_decision_graph(
     ) -> tuple[list[AppointmentSlot], dict[str, str]]:
         # CLINIC-LOCAL `now`, not UTC (regression fixed here, T5a): a
         # calendar "day" only means what Dentalink itself means by one —
-        # the clinic's own local date — and `SearchAvailabilityAnyProfessionalUseCase`
-        # aligns its per-day windows to midnight in whatever tz `now` (and
-        # therefore `search_range`) carries. A UTC-aligned `now` used to
-        # make a late clinic-local slot (e.g. 22:00 in a UTC-3 clinic,
-        # already the NEXT calendar date in UTC) fall in the wrong day's
-        # window, and the real gateway would then ask Dentalink for the
-        # wrong `fecha` — silently losing that slot from every window.
+        # the clinic's own local date — and the gateway derives the first
+        # `fecha` it asks Dentalink for from `search_range.start`. A
+        # UTC-aligned `now` used to make a late clinic-local slot (e.g.
+        # 22:00 in a UTC-3 clinic, already the NEXT calendar date in UTC)
+        # fall in the wrong day's window, and the real gateway would then
+        # ask Dentalink for the wrong `fecha` — silently losing that slot.
         # `AppointmentGateway.clinic_timezone` is exposed on the PORT
         # itself precisely so this agent-layer caller can get it without
         # importing infrastructure/`Settings` directly.
         now = datetime.now(appointment_gateway.clinic_timezone)
-        # Aligned to TODAY's midnight (not `now` itself) so the range spans
-        # exactly `_AGGREGATE_SEARCH_WINDOW.days` calendar dates — today
-        # (partial, from `now` on) plus the next 6 full days — instead of
-        # `_AGGREGATE_SEARCH_WINDOW` literal hours from `now`, which would
-        # touch 8 distinct calendar dates (e.g. 19:58 today through 19:58
-        # in 7 days spans today AND the following 7 days). The use case's
-        # own walk is calendar-day-aligned, so this is what keeps the real
-        # Dentalink request count at `_AGGREGATE_SEARCH_WINDOW.days` (7),
-        # not 8.
+        # Aligned to TODAY's midnight (not `now` itself) so the window ends on
+        # a calendar-day boundary: today (partial, from `now` on) plus the
+        # following full days, `_AGGREGATE_SEARCH_WINDOW.days` calendar dates
+        # in total, instead of `_AGGREGATE_SEARCH_WINDOW` literal hours from
+        # `now` (which would touch one extra calendar date). The gateway
+        # walks forward from `search_range.start`, never per day.
         today_midnight = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
         search_range = DateTimeRange(now, today_midnight + _AGGREGATE_SEARCH_WINDOW)
         return await search_availability_any_professional.execute(
@@ -1110,20 +1110,21 @@ def build_appointment_decision_graph(
         recent_messages = state.get("recent_messages", [])
         contact_memory = state.get("contact_memory_summary")
 
-        if button_payload == LIST_MORE_PAYLOAD and available_slots:
-            updated_page = next_page(collected_data, "slots_page")
-            if is_single_page_slots(available_slots, collected_data):
-                # No next page exists on a single-page screen (a stale tap):
-                # show the same slots again.
-                updated_page = current_page(collected_data, "slots_page")
+        if button_payload in (LIST_MORE_PAYLOAD, LIST_PREV_PAYLOAD) and available_slots:
+            # One page forward / back from the CURRENT position, clamped to the
+            # ends: a stale tap on an old list re-shows the nearest valid page.
+            updated_page = step_slots_page(
+                available_slots,
+                collected_data,
+                1 if button_payload == LIST_MORE_PAYLOAD else -1,
+            )
             more_text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),
                 "choose_slot",
                 {
                     "situacion": (
-                        "Hay más horarios disponibles y hay que invitar al paciente a "
-                        "elegir uno."
+                        "Hay más horarios disponibles y hay que invitar al paciente a elegir uno."
                     ),
                     "instruccion": (
                         "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
@@ -1234,8 +1235,7 @@ def build_appointment_decision_graph(
                 "stale_slot_selection",
                 {
                     "situacion": (
-                        "El paciente tocó un horario de un mensaje anterior que ya no "
-                        "está vigente."
+                        "El paciente tocó un horario de un mensaje anterior que ya no está vigente."
                     ),
                     "instruccion": (
                         "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
@@ -1290,9 +1290,7 @@ def build_appointment_decision_graph(
     graph.add_node("choose_specialty", _traced("choose_specialty", choose_specialty))
     graph.add_node("choose_browse_mode", _traced("choose_browse_mode", choose_browse_mode))
     graph.add_node("choose_professional", _traced("choose_professional", choose_professional))
-    graph.add_node(
-        "search_availability", _traced("search_availability", search_availability_node)
-    )
+    graph.add_node("search_availability", _traced("search_availability", search_availability_node))
     graph.add_node("choose_slot", _traced("choose_slot", choose_slot))
 
     graph.add_edge(START, "route_entry")

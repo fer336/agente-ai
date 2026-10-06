@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -11,36 +11,25 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 
 
 class _RecordingGateway:
-    """Spy `AppointmentGateway` that records every `search_availability`
-    call's `date_range`.
-
-    The real `DentalinkAppointmentGateway` issues one `/v5/agendas` HTTP
-    call PER CALENDAR DATE within whatever `date_range` it receives (see
-    its own `search_availability` docstring/loop). So a `date_range` that
-    spans two calendar dates costs two real HTTP requests even though the
-    use case only made one port call — recording the `date_range` each
-    call carried lets these tests assert the use case never hands the
-    gateway a window spanning more than one calendar date, which is what
-    keeps the real request count at one per iteration.
-    """
+    """Spy `AppointmentGateway` recording every `search_specialty_availability`
+    call; it returns the slots it was built with (already "the specialty's")
+    exactly as the real gateway's server-side `id_especialidad` filter would,
+    sorted and cut at `limit`."""
 
     def __init__(
         self, slots: list[AppointmentSlot], professionals: list[Professional]
     ) -> None:
         self._slots = slots
         self._professionals = professionals
-        self.calls: list[DateTimeRange] = []
+        self.calls: list[tuple[str, DateTimeRange, int]] = []
 
-    async def search_availability(
-        self,
-        specialty_id: str | None,
-        professional_id: str | None,
-        date_range: DateTimeRange,
-        limit: int | None = None,
+    async def search_specialty_availability(
+        self, specialty_id: str, date_range: DateTimeRange, limit: int
     ) -> list[AppointmentSlot]:
-        self.calls.append(date_range)
+        self.calls.append((specialty_id, date_range, limit))
         matches = [slot for slot in self._slots if date_range.contains(slot.time_range.start)]
-        return matches if limit is None else matches[:limit]
+        matches.sort(key=lambda slot: slot.time_range.start)
+        return matches[:limit]
 
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:
         return [
@@ -63,56 +52,72 @@ def _slot(id_: str, professional_id: str, start: datetime) -> AppointmentSlot:
     )
 
 
-def _seven_calendar_day_range(now: datetime) -> DateTimeRange:
-    today_midnight = datetime.combine(now.date(), time.min, tzinfo=now.tzinfo)
-    return DateTimeRange(now, today_midnight + timedelta(days=7))
+def _sixty_day_range(now: datetime) -> DateTimeRange:
+    return DateTimeRange(now, now + timedelta(days=60))
 
 
 @pytest.mark.asyncio
-async def test_execute_never_asks_for_a_window_spanning_more_than_one_calendar_date():
-    now = datetime(2026, 9, 22, 19, 58, tzinfo=UTC)  # deliberately not midnight
-    gateway = _RecordingGateway(slots=[], professionals=[_professional(1)])
-    use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
-
-    await use_case.execute(
-        specialty_id="ortho", date_range=_seven_calendar_day_range(now), target_slot_count=18
-    )
-
-    assert gateway.calls
-    for call_range in gateway.calls:
-        last_included_moment = call_range.end - timedelta(microseconds=1)
-        assert call_range.start.date() == last_included_moment.date()
-
-
-@pytest.mark.asyncio
-async def test_execute_makes_at_most_one_request_per_calendar_day_in_a_seven_day_window():
+async def test_execute_searches_by_specialty_with_one_gateway_call():
     now = datetime(2026, 9, 22, 19, 58, tzinfo=UTC)
+    window = _sixty_day_range(now)
     gateway = _RecordingGateway(slots=[], professionals=[_professional(1)])
     use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
 
-    await use_case.execute(
-        specialty_id="ortho", date_range=_seven_calendar_day_range(now), target_slot_count=18
-    )
+    await use_case.execute(specialty_id="ortho", date_range=window, target_slot_count=27)
 
-    assert len(gateway.calls) <= 7
+    # The specialty filter and the day walk live in the gateway: the use
+    # case no longer issues one query per calendar day.
+    assert gateway.calls == [("ortho", window, 27)]
 
 
 @pytest.mark.asyncio
-async def test_execute_stops_walking_once_the_target_slot_count_is_reached():
+async def test_execute_skips_the_search_when_the_specialty_has_no_professionals():
+    now = datetime(2026, 9, 22, 8, 0, tzinfo=UTC)
+    gateway = _RecordingGateway(slots=[], professionals=[_professional(1, "other")])
+    use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
+
+    result, names = await use_case.execute(
+        specialty_id="ortho", date_range=_sixty_day_range(now), target_slot_count=27
+    )
+
+    assert result == []
+    assert names == {}
+    assert gateway.calls == []
+
+
+@pytest.mark.asyncio
+async def test_execute_returns_names_and_slots_far_beyond_the_first_week():
     now = datetime(2026, 9, 22, 8, 0, tzinfo=UTC)
     professional = _professional(1)
-    slots = [_slot(f"slot-{i}", professional.id, now + timedelta(hours=i)) for i in range(3)]
+    slots = [_slot("far", professional.id, now + timedelta(days=12))]
     gateway = _RecordingGateway(slots=slots, professionals=[professional])
     use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
 
-    result, _ = await use_case.execute(
-        specialty_id="ortho", date_range=_seven_calendar_day_range(now), target_slot_count=2
+    result, names = await use_case.execute(
+        specialty_id="ortho", date_range=_sixty_day_range(now), target_slot_count=27
     )
 
-    assert len(result) == 2
-    # All 3 slots fall on `now`'s own calendar day, so the target is
-    # already reached after the first request.
-    assert len(gateway.calls) == 1
+    assert [slot.id for slot in result] == ["far"]
+    assert names == {professional.id: professional.full_name}
+
+
+@pytest.mark.asyncio
+async def test_execute_drops_slots_of_professionals_outside_the_specialty():
+    # Safety net kept on purpose: `list_professionals` only returns ENABLED
+    # professionals of the specialty, so a slot of anyone else (e.g. a
+    # disabled one the agenda still lists) is never offered.
+    now = datetime(2026, 9, 22, 8, 0, tzinfo=UTC)
+    professional = _professional(1)
+    mine = _slot("mine", professional.id, now + timedelta(hours=1))
+    foreign = _slot("foreign", "prof-99", now + timedelta(hours=2))
+    gateway = _RecordingGateway(slots=[mine, foreign], professionals=[professional])
+    use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
+
+    result, _ = await use_case.execute(
+        specialty_id="ortho", date_range=_sixty_day_range(now), target_slot_count=27
+    )
+
+    assert [slot.id for slot in result] == ["mine"]
 
 
 @pytest.mark.asyncio
@@ -125,8 +130,23 @@ async def test_execute_dedupes_slots_that_share_an_id_keeping_the_first():
     use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
 
     result, _ = await use_case.execute(
-        specialty_id="ortho", date_range=_seven_calendar_day_range(now), target_slot_count=18
+        specialty_id="ortho", date_range=_sixty_day_range(now), target_slot_count=27
     )
 
     assert [slot.id for slot in result] == ["dup-id"]
     assert result[0].time_range.start == earlier.time_range.start
+
+
+@pytest.mark.asyncio
+async def test_execute_returns_at_most_the_target_sorted_by_start():
+    now = datetime(2026, 9, 22, 8, 0, tzinfo=UTC)
+    professional = _professional(1)
+    slots = [_slot(f"slot-{i}", professional.id, now + timedelta(hours=3 - i)) for i in range(3)]
+    gateway = _RecordingGateway(slots=slots, professionals=[professional])
+    use_case = SearchAvailabilityAnyProfessionalUseCase(gateway)
+
+    result, _ = await use_case.execute(
+        specialty_id="ortho", date_range=_sixty_day_range(now), target_slot_count=2
+    )
+
+    assert [slot.id for slot in result] == ["slot-2", "slot-1"]

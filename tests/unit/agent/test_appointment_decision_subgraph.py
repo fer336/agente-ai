@@ -36,6 +36,7 @@ from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
@@ -278,9 +279,7 @@ async def test_staffed_specialty_lookup_wrapper_times_out_and_completes_cancella
 @pytest.mark.asyncio
 async def test_create_path_shows_all_specialties_when_staffed_lookup_fails(monkeypatch):
     safe_lookup = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
-    )
+    monkeypatch.setattr(appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup)
     specialties = [
         make_specialty(id_="cleaning", name="Ortodoncia"),
         make_specialty(id_="whitening", name="Endodoncia"),
@@ -301,9 +300,7 @@ async def test_create_path_keeps_no_specialties_result_for_successful_empty_staf
     monkeypatch,
 ):
     safe_lookup = AsyncMock(return_value=set())
-    monkeypatch.setattr(
-        appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup
-    )
+    monkeypatch.setattr(appointment_decision_subgraph, "_staffed_specialty_ids_safe", safe_lookup)
     graph, _, appointment_gateway = await _make_graph(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
@@ -1049,18 +1046,17 @@ async def test_a_valid_specialty_pick_lists_the_soonest_slot_across_professional
 
 class _FechaScopedGateway:
     """Minimal `AppointmentGateway` double that mimics Dentalink's real
-    per-`fecha` indexing: a slot is only returned when the LITERAL date
-    implied by `date_range.start.date()` — taken verbatim, no tz
-    conversion, exactly like `DentalinkAppointmentGateway.search_availability`
-    computes its own `fecha` filter — matches the slot's OWN clinic-local
-    calendar date.
+    "from `fecha`" indexing: a slot is only returned when its OWN
+    clinic-local calendar date is on or after the LITERAL date implied by
+    `date_range.start.date()` — taken verbatim, no tz conversion, exactly
+    like `DentalinkAppointmentGateway.search_specialty_availability`
+    derives its first `fecha` filter.
 
-    This is what actually exposes the T5a regression: a UTC-midnight-
-    aligned window's naive `.date()` can land on the wrong clinic-local
-    day for a late-evening clinic slot, so the request for that day never
-    asks Dentalink for the right `fecha` at all — the bug is invisible to
-    a plain `date_range.contains(...)` fake like `FakeDentalinkGateway`,
-    which never simulates the per-day `fecha` filter losing a slot.
+    This is what exposes the T5a regression: a UTC-aligned window's naive
+    `.date()` can land on the wrong clinic-local day for a late-evening
+    clinic slot, so the request never asks Dentalink for the right `fecha`
+    — invisible to a plain `date_range.contains(...)` fake like
+    `FakeDentalinkGateway`.
     """
 
     def __init__(self, slots, professionals, clinic_timezone):
@@ -1069,16 +1065,17 @@ class _FechaScopedGateway:
         self.clinic_timezone = clinic_timezone
         self.calls: list[DateTimeRange] = []
 
-    async def search_availability(self, specialty_id, professional_id, date_range, limit=None):
+    async def search_specialty_availability(self, specialty_id, date_range, limit):
+        del specialty_id
         self.calls.append(date_range)
-        requested_date = date_range.start.date()
+        first_date = date_range.start.date()
         matches = [
             slot
             for slot in self._slots
-            if slot.time_range.start.astimezone(self.clinic_timezone).date() == requested_date
+            if slot.time_range.start.astimezone(self.clinic_timezone).date() >= first_date
             and date_range.contains(slot.time_range.start)
         ]
-        return matches if limit is None else matches[:limit]
+        return matches[:limit]
 
     async def list_professionals(self, specialty_id=None):
         return [
@@ -1186,13 +1183,14 @@ async def test_offer_any_professional_slots_passes_a_clinic_local_range_and_the_
 
     assert len(captured) == 1
     date_range, target_slot_count = captured[0]
-    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 10
+    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 26
     # Starts at "now", in the CLINIC timezone (not UTC — its utcoffset is
     # the clinic's, distinguishing this from the pre-fix UTC-anchored range).
     assert before <= date_range.start <= after
     assert date_range.start.utcoffset() == clinic_timezone.utcoffset(date_range.start)
     # Ends at clinic-local midnight TODAY (the calendar day `date_range.start`
-    # itself falls on, in its own tz) + the 7-day search window.
+    # itself falls on, in its own tz) + the search window.
+    assert _AGGREGATE_SEARCH_WINDOW == timedelta(days=60)
     expected_today_midnight = datetime.combine(
         date_range.start.date(), time.min, tzinfo=date_range.start.tzinfo
     )
@@ -1342,15 +1340,27 @@ async def _aggregated_result(slot_count: int = 14, llm_provider=None):
 
 
 @pytest.mark.asyncio
-async def test_the_aggregated_screen_is_one_page_of_ten_slots_with_no_navigation_row():
-    result = await _aggregated_result(slot_count=14)
+async def test_a_short_aggregated_screen_is_one_page_with_no_navigation_row():
+    result = await _aggregated_result(slot_count=10)
 
     row_ids = [row.id for row in result["response_list"].rows]
     assert len(row_ids) == 10
     assert all(row_id.startswith(SELECT_SLOT_PAYLOAD_PREFIX) for row_id in row_ids)
     assert LIST_MORE_PAYLOAD not in row_ids
+    assert LIST_PREV_PAYLOAD not in row_ids
     assert LIST_BACK_PAYLOAD not in row_ids
-    assert len(result["collected_data"]["available_slots"]) == 10
+    assert result["collected_data"]["slots_page"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_longer_aggregated_screen_starts_on_page_one_with_nine_slots_and_ver_mas():
+    result = await _aggregated_result(slot_count=14)
+
+    row_ids = [row.id for row in result["response_list"].rows]
+    assert len(row_ids) == 10
+    assert row_ids[:9] == [f"{SELECT_SLOT_PAYLOAD_PREFIX}prof-1-slot-{i}" for i in range(9)]
+    assert row_ids[-1] == LIST_MORE_PAYLOAD
+    assert len(result["collected_data"]["available_slots"]) == 14
     assert result["collected_data"]["slots_page"] == 0
 
 
@@ -1365,7 +1375,7 @@ async def test_the_aggregated_screen_text_tells_how_to_escape_without_naming_a_p
 
 @pytest.mark.asyncio
 async def test_a_stale_list_more_tap_on_the_single_page_aggregated_screen_reshows_the_same_slots():
-    first = await _aggregated_result(slot_count=14)
+    first = await _aggregated_result(slot_count=8)
     graph, _, _ = await _make_graph(
         specialties=[make_specialty(id_="cleaning", name="Ortodoncia")],
         professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
@@ -1681,3 +1691,199 @@ async def test_a_reschedule_without_slots_offers_the_fallback_not_other_professi
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
+
+
+@pytest.mark.asyncio
+async def test_a_valid_specialty_pick_offers_up_to_26_slots_found_beyond_the_first_week():
+    # Endodoncia-like: nothing for ~2 weeks, then plenty. Before searching
+    # by specialty over a 60-day window the first slot was out of reach.
+    now = datetime.now(UTC)
+    slots = [
+        AppointmentSlot(
+            id=f"prof-1-{i:02d}",
+            professional_id="prof-1",
+            specialty_id="cleaning",
+            time_range=DateTimeRange(
+                now + timedelta(days=14, hours=i), now + timedelta(days=14, hours=i, minutes=30)
+            ),
+        )
+        for i in range(30)
+    ]
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Endodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        available_slots=slots,
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Endodoncia")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert [s.id for s in result["collected_data"]["available_slots"]] == [s.id for s in slots[:26]]
+
+
+async def _slot_list_after_specialty_pick(count: int):
+    slots = _slot_series(count)
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Endodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        available_slots=slots,
+    )
+    result = await graph.ainvoke(
+        _decision_state(
+            button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+            collected_data={
+                "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+                "specialty_options": [make_specialty(id_="cleaning", name="Endodoncia")],
+            },
+        )
+    )
+    return graph, slots, result
+
+
+def _slot_series(count: int):
+    start = datetime.now(UTC) + timedelta(days=3)
+    return [
+        AppointmentSlot(
+            id=f"prof-1-{i:02d}",
+            professional_id="prof-1",
+            specialty_id="cleaning",
+            time_range=DateTimeRange(
+                start + timedelta(hours=i), start + timedelta(hours=i, minutes=30)
+            ),
+        )
+        for i in range(count)
+    ]
+
+
+async def _tap(graph, result, payload):
+    return await graph.ainvoke(
+        _decision_state(button_payload=payload, collected_data=result["collected_data"])
+    )
+
+
+def _slot_ids(result) -> list[str]:
+    return [
+        row.id
+        for row in result["response_list"].rows
+        if row.id.startswith(SELECT_SLOT_PAYLOAD_PREFIX)
+    ]
+
+
+def _nav_ids(result) -> list[str]:
+    return [row.id for row in result["response_list"].rows if not row.id.startswith("SELECT_SLOT:")]
+
+
+_LAYOUTS = {
+    1: [(1, [])],
+    9: [(9, [])],
+    10: [(10, [])],
+    11: [(9, [LIST_MORE_PAYLOAD]), (2, [LIST_PREV_PAYLOAD])],
+    17: [(9, [LIST_MORE_PAYLOAD]), (8, [LIST_PREV_PAYLOAD])],
+    18: [(9, [LIST_MORE_PAYLOAD]), (9, [LIST_PREV_PAYLOAD])],
+    26: [
+        (9, [LIST_MORE_PAYLOAD]),
+        (8, [LIST_PREV_PAYLOAD, LIST_MORE_PAYLOAD]),
+        (9, [LIST_PREV_PAYLOAD]),
+    ],
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", sorted(_LAYOUTS))
+async def test_the_slot_list_is_paged_with_next_and_previous_navigation(count):
+    graph, slots, result = await _slot_list_after_specialty_pick(count)
+    expected = _LAYOUTS[count]
+
+    forward = [result]
+    for _ in expected[1:]:
+        forward.append(await _tap(graph, forward[-1], LIST_MORE_PAYLOAD))
+    backward = [forward[-1]]
+    for _ in expected[1:]:
+        backward.append(await _tap(graph, backward[-1], LIST_PREV_PAYLOAD))
+
+    for walk in (forward, list(reversed(backward))):
+        assert [(len(_slot_ids(page)), _nav_ids(page)) for page in walk] == expected
+        assert all(len(page["response_list"].rows) <= 10 for page in walk)
+        for page in walk:
+            ids = [row.id for row in page["response_list"].rows]
+            assert len(ids) == len(set(ids))
+        offered = [row_id for page in walk for row_id in _slot_ids(page)]
+        assert offered == [f"{SELECT_SLOT_PAYLOAD_PREFIX}{slot.id}" for slot in slots]
+    # Walking back lands on page 0 again.
+    assert backward[-1]["collected_data"]["slots_page"] == 0
+
+
+@pytest.mark.asyncio
+async def test_previous_page_moves_exactly_one_page_and_never_leaves_the_slot_screen():
+    graph, _, page0 = await _slot_list_after_specialty_pick(26)
+    page1 = await _tap(graph, page0, LIST_MORE_PAYLOAD)
+    page2 = await _tap(graph, page1, LIST_MORE_PAYLOAD)
+
+    back = await _tap(graph, page2, LIST_PREV_PAYLOAD)
+
+    assert back["collected_data"]["slots_page"] == 1
+    assert back["collected_data"]["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert _slot_ids(back) == _slot_ids(page1)
+
+
+@pytest.mark.asyncio
+async def test_more_on_the_last_page_and_previous_on_the_first_page_stay_in_range():
+    graph, _, page0 = await _slot_list_after_specialty_pick(26)
+
+    still_first = await _tap(graph, page0, LIST_PREV_PAYLOAD)
+    assert still_first["collected_data"]["slots_page"] == 0
+    assert _slot_ids(still_first) == _slot_ids(page0)
+
+    last = await _tap(graph, await _tap(graph, page0, LIST_MORE_PAYLOAD), LIST_MORE_PAYLOAD)
+    still_last = await _tap(graph, last, LIST_MORE_PAYLOAD)
+    assert still_last["collected_data"]["slots_page"] == 2
+    assert _slot_ids(still_last) == _slot_ids(last)
+
+
+@pytest.mark.asyncio
+async def test_navigation_taps_on_a_single_page_list_reshow_the_same_slots():
+    graph, _, page0 = await _slot_list_after_specialty_pick(10)
+
+    for payload in (LIST_MORE_PAYLOAD, LIST_PREV_PAYLOAD):
+        again = await _tap(graph, page0, payload)
+        assert again["collected_data"]["slots_page"] == 0
+        assert _slot_ids(again) == _slot_ids(page0)
+        assert _nav_ids(again) == []
+
+
+@pytest.mark.asyncio
+async def test_a_slot_tapped_from_any_page_resolves_to_that_exact_slot():
+    graph, slots, page0 = await _slot_list_after_specialty_pick(26)
+    page1 = await _tap(graph, page0, LIST_MORE_PAYLOAD)
+    # The patient taps a page-0 row while the checkpoint says page 1 (old list).
+    picked = await _tap(graph, page1, f"{SELECT_SLOT_PAYLOAD_PREFIX}{slots[2].id}")
+
+    assert picked["collected_data"]["pending_selected_slot"] == slots[2]
+
+
+@pytest.mark.asyncio
+async def test_a_tap_on_a_slot_that_is_no_longer_offered_re_offers_the_current_page():
+    graph, _, page0 = await _slot_list_after_specialty_pick(26)
+    page1 = await _tap(graph, page0, LIST_MORE_PAYLOAD)
+
+    stale = await _tap(graph, page1, f"{SELECT_SLOT_PAYLOAD_PREFIX}gone-slot")
+
+    assert "pending_selected_slot" not in stale["collected_data"]
+    assert stale["collected_data"]["slots_page"] == 1
+    assert _slot_ids(stale) == _slot_ids(page1)
+
+
+@pytest.mark.asyncio
+async def test_the_leave_screen_payload_still_goes_back_to_the_specialties():
+    graph, _, page0 = await _slot_list_after_specialty_pick(26)
+
+    left = await _tap(graph, page0, LIST_BACK_PAYLOAD)
+
+    assert left["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
