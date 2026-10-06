@@ -41,13 +41,13 @@ from app.agent.nodes.appointment_selection import (
     STAGE_AWAITING_SPECIALTY_SELECTION,
     current_page,
     decision_entry_node_for_stage,
-    is_single_page_slots,
     next_page,
     resolve_list_choice,
     slot_by_id,
     slot_payload_id,
     slots_list_message,
     slots_screen,
+    step_slots_page,
     text_leaks_a_name,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
@@ -76,6 +76,7 @@ from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_MAIN_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
@@ -280,7 +281,6 @@ async def _staffed_specialty_ids(gateway: AppointmentGateway) -> set[str]:
     the module docstring's one-way-dependency note."""
     professionals = await gateway.list_professionals()
     return {p.specialty_id for p in professionals if p.specialty_id}
-
 
 
 async def _staffed_specialty_ids_safe(gateway: AppointmentGateway) -> set[str] | None:
@@ -1110,20 +1110,21 @@ def build_appointment_decision_graph(
         recent_messages = state.get("recent_messages", [])
         contact_memory = state.get("contact_memory_summary")
 
-        if button_payload == LIST_MORE_PAYLOAD and available_slots:
-            updated_page = next_page(collected_data, "slots_page")
-            if is_single_page_slots(available_slots, collected_data):
-                # No next page exists on a single-page screen (a stale tap):
-                # show the same slots again.
-                updated_page = current_page(collected_data, "slots_page")
+        if button_payload in (LIST_MORE_PAYLOAD, LIST_PREV_PAYLOAD) and available_slots:
+            # One page forward / back from the CURRENT position, clamped to the
+            # ends: a stale tap on an old list re-shows the nearest valid page.
+            updated_page = step_slots_page(
+                available_slots,
+                collected_data,
+                1 if button_payload == LIST_MORE_PAYLOAD else -1,
+            )
             more_text = await generate_or_fallback(
                 llm_provider,
                 str(conversation_id),
                 "choose_slot",
                 {
                     "situacion": (
-                        "Hay más horarios disponibles y hay que invitar al paciente a "
-                        "elegir uno."
+                        "Hay más horarios disponibles y hay que invitar al paciente a elegir uno."
                     ),
                     "instruccion": (
                         "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
@@ -1234,8 +1235,7 @@ def build_appointment_decision_graph(
                 "stale_slot_selection",
                 {
                     "situacion": (
-                        "El paciente tocó un horario de un mensaje anterior que ya no "
-                        "está vigente."
+                        "El paciente tocó un horario de un mensaje anterior que ya no está vigente."
                     ),
                     "instruccion": (
                         "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
@@ -1290,9 +1290,7 @@ def build_appointment_decision_graph(
     graph.add_node("choose_specialty", _traced("choose_specialty", choose_specialty))
     graph.add_node("choose_browse_mode", _traced("choose_browse_mode", choose_browse_mode))
     graph.add_node("choose_professional", _traced("choose_professional", choose_professional))
-    graph.add_node(
-        "search_availability", _traced("search_availability", search_availability_node)
-    )
+    graph.add_node("search_availability", _traced("search_availability", search_availability_node))
     graph.add_node("choose_slot", _traced("choose_slot", choose_slot))
 
     graph.add_edge(START, "route_entry")

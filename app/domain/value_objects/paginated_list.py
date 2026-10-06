@@ -20,6 +20,7 @@ from app.domain.value_objects.list_message import MAX_LIST_ROWS, ListMessage, Li
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     PROFESSIONAL_PAYLOAD_PREFIX,
     SPECIALTY_PAYLOAD_PREFIX,
 )
@@ -31,7 +32,8 @@ PAGE_SIZE = MAX_ROWS - 1
 #: Meta's row-title cap, in characters (not code points).
 TITLE_MAX_CHARS = 24
 
-#: Row titles for the two navigation rows.
+#: Row titles for the navigation rows ("Volver atrás" is both the leave-screen
+#: row and, on bidirectional lists, the previous-page row).
 MORE_TITLE = "Ver más"
 BACK_TITLE = "Volver atrás"
 
@@ -94,9 +96,7 @@ def professional_emoji(full_name: str) -> str:
     return "👨‍⚕️"
 
 
-def paginate_rows(
-    rows: list[ListRow], page: int, include_back: bool
-) -> list[ListRow]:
+def paginate_rows(rows: list[ListRow], page: int, include_back: bool) -> list[ListRow]:
     """One page of rows for a paginated list screen.
 
     - `rows` are the real item rows for the WHOLE catalog (not a slice).
@@ -121,6 +121,48 @@ def paginate_rows(
         page_rows.append(ListRow(id=LIST_MORE_PAYLOAD, title=MORE_TITLE))
     elif include_back:
         page_rows.append(ListRow(id=LIST_BACK_PAYLOAD, title=BACK_TITLE))
+    return page_rows
+
+
+def _bidirectional_bounds(total: int) -> list[tuple[int, int]]:
+    """`(start, end)` item slices per page for a bidirectional list.
+
+    The 10-row cap includes navigation rows, so: a list of up to `MAX_ROWS`
+    items is one page with no navigation; otherwise the first page holds 9
+    items (+ "Ver más"), a middle page 8 (+ "Volver atrás" + "Ver más") and
+    the last page up to 9 (+ "Volver atrás").
+    """
+    if total <= MAX_ROWS:
+        return [(0, total)]
+    bounds = [(0, PAGE_SIZE)]
+    start = PAGE_SIZE
+    while total - start > PAGE_SIZE:
+        bounds.append((start, start + PAGE_SIZE - 1))
+        start += PAGE_SIZE - 1
+    bounds.append((start, total))
+    return bounds
+
+
+def bidirectional_page_count(total: int) -> int:
+    """Number of pages `paginate_rows_bidirectional` splits `total` items into."""
+    return len(_bidirectional_bounds(total))
+
+
+def paginate_rows_bidirectional(rows: list[ListRow], page: int) -> list[ListRow]:
+    """One page of a list that can be walked forward AND backward.
+
+    `LIST_PREV` ("Volver atrás") goes to the previous page and `LIST_MORE`
+    ("Ver más") to the next; neither is shown past the ends. `page` is
+    clamped into range so a stale position can never fall off the list.
+    """
+    bounds = _bidirectional_bounds(len(rows))
+    index = min(max(page, 0), len(bounds) - 1)
+    start, end = bounds[index]
+    page_rows = list(rows[start:end])
+    if index > 0:
+        page_rows.append(ListRow(id=LIST_PREV_PAYLOAD, title=BACK_TITLE))
+    if index < len(bounds) - 1:
+        page_rows.append(ListRow(id=LIST_MORE_PAYLOAD, title=MORE_TITLE))
     return page_rows
 
 

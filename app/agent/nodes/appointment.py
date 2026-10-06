@@ -59,7 +59,6 @@ from app.agent.nodes.appointment_selection import (
 )
 from app.agent.nodes.appointment_selection import (
     current_page,
-    next_page,
     slot_by_id,
     slot_payload_id,
     spanish_weekday,
@@ -69,9 +68,6 @@ from app.agent.nodes.appointment_selection import (
     format_confirmation_datetime as _format_confirmation_datetime,
 )
 from app.agent.nodes.appointment_selection import (
-    is_single_page_slots as _is_single_page_slots,
-)
-from app.agent.nodes.appointment_selection import (
     numbered_list as _numbered_list,
 )
 from app.agent.nodes.appointment_selection import (
@@ -79,6 +75,9 @@ from app.agent.nodes.appointment_selection import (
 )
 from app.agent.nodes.appointment_selection import (
     slots_screen as _slots_screen,
+)
+from app.agent.nodes.appointment_selection import (
+    step_slots_page as _step_slots_page,
 )
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
@@ -141,6 +140,7 @@ from app.domain.value_objects.menu_payloads import (
     FAQ_OPTION_PAYLOAD_PREFIX,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
@@ -2112,9 +2112,7 @@ def create_appointment_node(
                     try:
                         if result.get("next_action") == "use_existing":
                             # The patient confirmed the record on file for their DNI.
-                            new_patient = await patient_gateway.find_patient_by_dni(
-                                details["dni"]
-                            )
+                            new_patient = await patient_gateway.find_patient_by_dni(details["dni"])
                             patient_recovered = new_patient is not None
                         if new_patient is None:
                             new_patient = await patient_gateway.create_patient(
@@ -2129,9 +2127,7 @@ def create_appointment_node(
                         )
                         if recovered is None:
                             try:
-                                on_file = await patient_gateway.find_patient_by_dni(
-                                    details["dni"]
-                                )
+                                on_file = await patient_gateway.find_patient_by_dni(details["dni"])
                             except Exception as exc:  # noqa: BLE001 -- external gateway boundary
                                 logger.warning("first-visit DNI lookup failed", exc_info=exc)
                                 on_file = None
@@ -3532,11 +3528,12 @@ def create_appointment_node(
                     state["contact_memory_summary"],
                 )
 
-            if button_payload == LIST_MORE_PAYLOAD:
-                updated_page = next_page(collected_data, "slots_page")
-                if _is_single_page_slots(available_slots, collected_data):
-                    # Single-page screen (a stale tap): there is no next page.
-                    updated_page = current_page(collected_data, "slots_page")
+            if button_payload in (LIST_MORE_PAYLOAD, LIST_PREV_PAYLOAD):
+                updated_page = _step_slots_page(
+                    available_slots,
+                    collected_data,
+                    1 if button_payload == LIST_MORE_PAYLOAD else -1,
+                )
                 more_text = await generate_or_fallback(
                     llm_provider,
                     str(conversation_id),

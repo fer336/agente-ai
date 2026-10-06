@@ -62,6 +62,7 @@ from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
     LIST_BACK_PAYLOAD,
+    LIST_MORE_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
     MENU_MAIN_PAYLOAD,
@@ -1025,7 +1026,8 @@ def _assert_next_slots_screen(result, *, max_rows: int = 10) -> None:
     assert response_list is not None
     assert response_list.section_title == "Horarios disponibles"
     assert 0 < len(response_list.rows) <= max_rows
-    assert all(row.id.startswith(SELECT_SLOT_PAYLOAD_PREFIX) for row in response_list.rows)
+    slot_rows = [row for row in response_list.rows if row.id != LIST_MORE_PAYLOAD]
+    assert all(row.id.startswith(SELECT_SLOT_PAYLOAD_PREFIX) for row in slot_rows)
     assert "profesional" not in result["response_text"].lower().replace("[fake-response", "")
     assert "Dra. Laura Pérez" not in result["response_text"]
     assert all("Laura" not in row.title for row in response_list.rows)
@@ -1042,7 +1044,7 @@ def _ortodoncia_node_kwargs(slot_count: int = 12):
 
 
 @pytest.mark.asyncio
-async def test_a_named_specialty_shows_the_next_ten_slots_not_a_professional_list():
+async def test_a_named_specialty_shows_the_next_slots_not_a_professional_list():
     # Live bug (2026-10-01): "Quería un turno de ortodoncia" -> first-visit question ->
     # Cancelar -> name + DNI -> the agent asked "con qué profesional preferís atenderte".
     node, _, _ = await _make_node_and_conversation(**_ortodoncia_node_kwargs())
@@ -1058,7 +1060,9 @@ async def test_a_named_specialty_shows_the_next_ten_slots_not_a_professional_lis
     result = await _answer_as_existing_patient(node, intake)
 
     _assert_next_slots_screen(result)
+    # 12 slots: the first page is 9 slots + "Ver más".
     assert len(result["response_list"].rows) == 10
+    assert result["response_list"].rows[-1].id == LIST_MORE_PAYLOAD
     assert "menú" in result["response_text"]
     assert "administración" in result["response_text"]
 

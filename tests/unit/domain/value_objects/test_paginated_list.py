@@ -7,13 +7,16 @@ from app.domain.entities.specialty import Specialty
 from app.domain.value_objects.menu_payloads import (
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
+    LIST_PREV_PAYLOAD,
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
     MAX_ROWS,
     PAGE_SIZE,
     TITLE_MAX_CHARS,
+    bidirectional_page_count,
     paginate_rows,
+    paginate_rows_bidirectional,
     professional_emoji,
     professional_rows,
     professionals_list_message,
@@ -182,9 +185,7 @@ class TestListMessages:
         assert message.rows[0].title.startswith("🦷 ")
 
     def test_professionals_list_message_rows(self):
-        message = professionals_list_message(
-            [_professional(1)], page=0, include_back=True
-        )
+        message = professionals_list_message([_professional(1)], page=0, include_back=True)
         assert len(message.button_label) <= 20
         assert message.rows[0].id == "PROFESSIONAL:prof-1"
         assert message.rows[0].title.startswith(("👨‍⚕️ ", "👩‍⚕️ "))
@@ -200,3 +201,81 @@ class TestListMessages:
         long_name = Specialty(id="spec-x", name="Ortodoncia infantil avanzada premium deluxe")
         rows = specialty_rows([long_name])
         assert len(rows[0].title) <= TITLE_MAX_CHARS
+
+
+class TestBidirectionalPagination:
+    """Slot lists: 10-row cap INCLUDING nav rows, "Volver atrás" = previous page."""
+
+    @staticmethod
+    def _items(count: int):
+        from app.domain.value_objects.list_message import ListRow
+
+        return [ListRow(id=f"r{i}", title=f"Row {i}") for i in range(count)]
+
+    @staticmethod
+    def _shape(rows) -> tuple[int, list[str]]:
+        nav = [r.id for r in rows if r.id in (LIST_MORE_PAYLOAD, LIST_PREV_PAYLOAD)]
+        return len(rows) - len(nav), nav
+
+    @pytest.mark.parametrize(
+        ("count", "expected_layout"),
+        [
+            (0, [(0, [])]),
+            (1, [(1, [])]),
+            (9, [(9, [])]),
+            (10, [(10, [])]),
+            (11, [(9, [LIST_MORE_PAYLOAD]), (2, [LIST_PREV_PAYLOAD])]),
+            (17, [(9, [LIST_MORE_PAYLOAD]), (8, [LIST_PREV_PAYLOAD])]),
+            (18, [(9, [LIST_MORE_PAYLOAD]), (9, [LIST_PREV_PAYLOAD])]),
+            (
+                19,
+                [
+                    (9, [LIST_MORE_PAYLOAD]),
+                    (8, [LIST_PREV_PAYLOAD, LIST_MORE_PAYLOAD]),
+                    (2, [LIST_PREV_PAYLOAD]),
+                ],
+            ),
+            (
+                26,
+                [
+                    (9, [LIST_MORE_PAYLOAD]),
+                    (8, [LIST_PREV_PAYLOAD, LIST_MORE_PAYLOAD]),
+                    (9, [LIST_PREV_PAYLOAD]),
+                ],
+            ),
+        ],
+    )
+    def test_layout_per_page(self, count, expected_layout):
+        items = self._items(count)
+        assert bidirectional_page_count(count) == len(expected_layout)
+        layout = [
+            self._shape(paginate_rows_bidirectional(items, page))
+            for page in range(len(expected_layout))
+        ]
+        assert layout == expected_layout
+
+    def test_previous_row_comes_before_more_and_after_the_slots(self):
+        rows = paginate_rows_bidirectional(self._items(26), 1)
+        assert [r.id for r in rows][-2:] == [LIST_PREV_PAYLOAD, LIST_MORE_PAYLOAD]
+        assert rows[0].id == "r9"
+
+    @pytest.mark.parametrize("count", range(0, 60))
+    def test_walk_reaches_every_item_once_within_the_row_cap_with_unique_ids(self, count):
+        items = self._items(count)
+        pages = [
+            paginate_rows_bidirectional(items, page)
+            for page in range(bidirectional_page_count(count))
+        ]
+        assert all(len(page) <= MAX_ROWS for page in pages)
+        assert all(len({r.id for r in page}) == len(page) for page in pages)
+        item_ids = [r.id for page in pages for r in page if r.id.startswith("r")]
+        assert item_ids == [f"r{i}" for i in range(count)]
+        assert len(item_ids) == len(set(item_ids))
+
+    def test_a_page_past_either_end_is_clamped(self):
+        items = self._items(26)
+        assert paginate_rows_bidirectional(items, 99) == paginate_rows_bidirectional(items, 2)
+        assert paginate_rows_bidirectional(items, -4) == paginate_rows_bidirectional(items, 0)
+
+    def test_previous_is_not_the_leave_screen_payload(self):
+        assert LIST_PREV_PAYLOAD not in (LIST_BACK_PAYLOAD, LIST_MORE_PAYLOAD)

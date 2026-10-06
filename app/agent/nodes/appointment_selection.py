@@ -15,8 +15,13 @@ from datetime import datetime
 from typing import cast
 
 from app.domain.entities.appointment_slot import AppointmentSlot
-from app.domain.value_objects.list_message import MAX_LIST_ROWS, ListMessage, ListRow
-from app.domain.value_objects.paginated_list import paginate_rows, truncate_title
+from app.domain.value_objects.list_message import ListMessage, ListRow
+from app.domain.value_objects.paginated_list import (
+    bidirectional_page_count,
+    paginate_rows,
+    paginate_rows_bidirectional,
+    truncate_title,
+)
 
 #: `datetime.strftime('%A')` is locale-dependent, and this codebase never
 #: sets a Spanish process locale (deliberately — `locale.setlocale` is
@@ -46,6 +51,7 @@ def format_confirmation_datetime(moment: datetime) -> str:
     date_part = f"{spanish_weekday(moment)} {moment.strftime('%d/%m/%Y')}"
     time_part = f"{moment.strftime('%H:%M')} hs 🕐"
     return f"{date_part}\n{time_part}"
+
 
 #: Mirrors `app.agent.nodes.appointment.SELECT_SLOT_PAYLOAD_PREFIX`. Owned
 #: here now — `appointment.py` imports this constant instead of redefining
@@ -225,10 +231,8 @@ _SLOT_ROW_CLOCK_EMOJI = "🕐"
 _SLOT_ROW_TITLE_MAX_CHARS = 20
 
 
-def slot_rows(
-    slots: list[AppointmentSlot], page: int = 0, include_back: bool = False
-) -> list[ListRow]:
-    """Builds the paginated rows for the available-slots screen — each row
+def _slot_item_rows(slots: list[AppointmentSlot]) -> list[ListRow]:
+    """Builds the item rows for the available-slots screen — each row
     shows the abbreviated weekday, date and time (PRD requirement: patients
     must see "Mié 17/09 14:30", not just the date, so they never have to
     tap a row to find out what day it falls on), kept at or under
@@ -258,7 +262,14 @@ def slot_rows(
                 ),
             )
         )
-    return paginate_rows(rows, page, include_back)
+    return rows
+
+
+def slot_rows(
+    slots: list[AppointmentSlot], page: int = 0, include_back: bool = False
+) -> list[ListRow]:
+    """Paginated slot rows with a single trailing navigation row (see `paginate_rows`)."""
+    return paginate_rows(_slot_item_rows(slots), page, include_back)
 
 
 def slots_list_message(
@@ -277,20 +288,44 @@ def slots_list_message(
     )
 
 
-def is_single_page_slots(slots: list[AppointmentSlot], collected_data: dict[str, object]) -> bool:
-    """The next-slots screen (no professional chosen) holds at most `MAX_LIST_ROWS` rows: one
-    page, no "Ver más"/"Volver" row. A longer list (an old checkpoint, or one specific
-    professional's agenda) keeps the paginated layout with its back row."""
-    return collected_data.get("chosen_professional_id") is None and len(slots) <= MAX_LIST_ROWS
+def has_bidirectional_slot_pages(collected_data: dict[str, object]) -> bool:
+    """The next-slots screen (no professional chosen) pages in both directions;
+    one specific professional's agenda keeps the legacy forward-only layout."""
+    return collected_data.get("chosen_professional_id") is None
 
 
 def slots_screen(
     slots: list[AppointmentSlot], page: int, collected_data: dict[str, object]
 ) -> ListMessage:
-    """Slot list for the current stage data (see `is_single_page_slots`)."""
-    if is_single_page_slots(slots, collected_data):
-        return slots_list_message(slots, page=0, include_back=False)
+    """Slot list for the current stage data.
+
+    The next-slots screen holds up to 10 slots on one page with no navigation
+    row; longer lists are walked with "Ver más" / "Volver atrás" (previous
+    page), always within WhatsApp's 10-row cap (see
+    `paginate_rows_bidirectional`). `page` is clamped into range.
+    """
+    if has_bidirectional_slot_pages(collected_data):
+        return ListMessage(
+            button_label="Elegí horario",
+            rows=paginate_rows_bidirectional(_slot_item_rows(slots), page),
+            section_title="Horarios disponibles",
+        )
     return slots_list_message(slots, page=page, include_back=True)
+
+
+def step_slots_page(
+    slots: list[AppointmentSlot], collected_data: dict[str, object], delta: int
+) -> int:
+    """The slot-list page after a `LIST_MORE` (+1) / `LIST_PREV` (-1) tap.
+
+    The position lives in `collected_data["slots_page"]`, so a tap on an old
+    list moves relative to the CURRENT screen and never past either end.
+    """
+    page = current_page(collected_data, "slots_page") + delta
+    if not has_bidirectional_slot_pages(collected_data):
+        return max(page, 0)
+    last = bidirectional_page_count(len(_slot_item_rows(slots))) - 1
+    return min(max(page, 0), last)
 
 
 def slot_payload_id(button_payload: str | None) -> str | None:
