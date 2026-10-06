@@ -93,6 +93,18 @@ _MAX_SEARCH_AVAILABILITY_DAYS = 60
 #: `/v5/agendas` notably has NO specialty column — see
 #: `search_availability`'s own docstring.
 _AGENDA_FILTER_FIELDS = frozenset({"id_sucursal", "fecha", "duracion", "id_profesional"})
+#: `search_specialty_availability` only: `/v5/agendas` ACCEPTS `id_especialidad`
+#: as a server-side filter (confirmed live) even though its rows never carry
+#: it back, so the generic `search_availability` path above must not use it.
+_SPECIALTY_AGENDA_FILTER_FIELDS = _AGENDA_FILTER_FIELDS | {"id_especialidad"}
+
+#: Hard cap on `/v5/agendas` requests one `search_specialty_availability`
+#: call may issue. Each response holds at most 10 rows and the walk jumps
+#: straight to the day after the latest slot seen, so a handful of requests
+#: reaches 27+ slots; the cap only bounds a pathological agenda (one new day
+#: per response) so a search can never trigger the 429 a per-professional
+#: fan-out once caused in production.
+_MAX_SPECIALTY_SEARCH_REQUESTS = 8
 _DENTISTA_FILTER_FIELDS = frozenset({"id_especialidad", "especialidad", "habilitado"})
 
 
@@ -261,6 +273,93 @@ class DentalinkAppointmentGateway:
             provider=_PROVIDER,
             operation="search_availability",
             request_summary=f"specialty_id={specialty_id} professional_id={professional_id}",
+            call=_call,
+            response_summary=lambda slots: f"{len(slots)} slots",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def search_specialty_availability(
+        self,
+        specialty_id: str,
+        date_range: DateTimeRange,
+        limit: int,
+    ) -> list[AppointmentSlot]:
+        """The soonest slots of ONE specialty inside `date_range`, ascending.
+
+        Confirmed live against `/v5/agendas`: `fecha eq D` means "from D
+        onward" (not "on D"), a response holds at most 10 rows, `page` is
+        ignored, and `id_especialidad` filters server-side. So the walk
+        asks from the range start, then from the day AFTER the latest slot
+        date seen, until it has `limit` slots, the response is empty, the
+        server stops moving forward, the window ends or
+        `_MAX_SPECIALTY_SEARCH_REQUESTS` is hit.
+
+        Accepted limit: when a single day holds more than 10 slots, the
+        remainder of that day is never seen (the next request starts the
+        following day). Acceptable for "show the soonest options"; a
+        specialty that dense still yields a full first page of slots.
+        """
+
+        async def _call() -> list[AppointmentSlot]:
+            slots: list[AppointmentSlot] = []
+            seen_ids: set[str] = set()
+            from_day = self._clinic_local_date(date_range.start)
+            last_day = self._clinic_local_date(date_range.end - timedelta(microseconds=1))
+            requests = 0
+            while (
+                from_day <= last_day
+                and requests < _MAX_SPECIALTY_SEARCH_REQUESTS
+                and len(slots) < limit
+            ):
+                filters: dict[str, tuple[str, object]] = {
+                    "id_sucursal": ("eq", self._default_branch_id),
+                    "fecha": ("eq", from_day.isoformat()),
+                    "duracion": ("eq", str(self._default_duration_minutes)),
+                    "id_especialidad": ("eq", specialty_id),
+                }
+                raw_slots = await self._client.get(
+                    "/v5/agendas",
+                    params=build_q_param(filters, allowed_fields=_SPECIALTY_AGENDA_FILTER_FIELDS),
+                )
+                requests += 1
+
+                latest_day: date | None = None
+                for raw_slot in as_list(raw_slots):
+                    try:
+                        slot = slot_from_agenda(
+                            raw_slot,
+                            default_duration_minutes=self._default_duration_minutes,
+                            timezone=self._clinic_timezone,
+                        )
+                    except DentalinkInvalidResponseError:
+                        logger.warning(
+                            "dentalink.unparseable_agenda_slot day=%s raw=%r", from_day, raw_slot
+                        )
+                        continue
+                    slot_day = self._clinic_local_date(slot.time_range.start)
+                    if latest_day is None or slot_day > latest_day:
+                        latest_day = slot_day
+                    if not date_range.contains(slot.time_range.start) or slot.id in seen_ids:
+                        continue
+                    seen_ids.add(slot.id)
+                    slots.append(slot)
+
+                # Empty/unreadable response, or one that did not reach the
+                # day we asked from (a server ignoring `fecha`): no forward
+                # progress is possible, so stop instead of burning requests.
+                if latest_day is None or latest_day < from_day:
+                    break
+                from_day = latest_day + timedelta(days=1)
+
+            slots.sort(key=lambda slot: slot.time_range.start)
+            return slots[:limit]
+
+        return await traced_call(
+            tool_name="SearchAvailabilityTool",
+            provider=_PROVIDER,
+            operation="search_specialty_availability",
+            request_summary=f"specialty_id={specialty_id}",
             call=_call,
             response_summary=lambda slots: f"{len(slots)} slots",
             http_status_of=_http_status_of,

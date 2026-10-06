@@ -65,6 +65,34 @@ class FakeDentalinkGateway:
             matches.append(slot)
         return matches if limit is None else matches[:limit]
 
+    async def search_specialty_availability(
+        self,
+        specialty_id: str,
+        date_range: DateTimeRange,
+        limit: int,
+    ) -> list[AppointmentSlot]:
+        # Mirrors the real gateway: free-slot rows carry no specialty id, so
+        # the specialty is resolved through the slot's professional (a slot
+        # that does carry its own specialty id matches too).
+        specialty_professional_ids = {
+            professional.id
+            for professional in self._professionals
+            if professional.specialty_id == specialty_id
+        }
+        matches: list[AppointmentSlot] = []
+        seen_ids: set[str] = set()
+        for slot in self._available_slots:
+            if slot.specialty_id != specialty_id and (
+                slot.professional_id not in specialty_professional_ids
+            ):
+                continue
+            if not date_range.contains(slot.time_range.start) or slot.id in seen_ids:
+                continue
+            seen_ids.add(slot.id)
+            matches.append(slot)
+        matches.sort(key=lambda slot: slot.time_range.start)
+        return matches[:limit]
+
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]:
         return [
             professional

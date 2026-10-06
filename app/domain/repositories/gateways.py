@@ -50,6 +50,20 @@ class AppointmentGateway(Protocol):
         what got this integration rate-limited (429) in production."""
         ...
 
+    async def search_specialty_availability(
+        self,
+        specialty_id: str,
+        date_range: DateTimeRange,
+        limit: int,
+    ) -> list[AppointmentSlot]:
+        """The soonest slots (ascending, deduped by id) of ONE specialty
+        inside `date_range`, at most `limit`. The specialty filter is applied
+        by the scheduling system itself, so a specialty with few
+        professionals is not drowned out by the rest of the branch's agenda;
+        an implementation walks forward from the range start with a bounded
+        request count instead of querying every day of the range."""
+        ...
+
     async def list_professionals(self, specialty_id: str | None = None) -> list[Professional]: ...
 
     async def get_patient_appointments(self, patient_id: str) -> list[Appointment]: ...

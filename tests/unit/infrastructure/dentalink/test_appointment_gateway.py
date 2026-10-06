@@ -825,3 +825,215 @@ async def test_search_availability_does_not_record_anything_outside_a_trace_cont
     )
 
     assert slots == []
+
+
+def _ddmmyyyy(day: datetime) -> str:
+    return day.strftime("%d/%m/%Y")
+
+
+def _agenda_row(professional_id: str, day: datetime, hhmm: str) -> dict[str, object]:
+    # Live `/v5/agendas` rows carry day-first dates and no specialty id.
+    return {
+        "id_profesional": professional_id,
+        "fecha": _ddmmyyyy(day),
+        "hora_inicio": hhmm,
+        "duracion": 30,
+    }
+
+
+def _by_from_date(pages: dict[str, list[dict[str, object]]]):
+    """`/v5/agendas` stub that answers by the `fecha` ("from this date")
+    the caller asked for; any date not in `pages` answers empty."""
+
+    def _respond(params: dict[str, str] | None) -> list[dict[str, object]]:
+        assert params is not None
+        return pages.get(json.loads(params["q"])["fecha"]["eq"], [])
+
+    return _respond
+
+
+def _client_with_pages(pages: dict[str, list[dict[str, object]]]) -> _StubDentalinkClient:
+    return _StubDentalinkClient(get_responses={"/v5/agendas": _by_from_date(pages)})
+
+
+def _requested_from_dates(client: _StubDentalinkClient) -> list[str]:
+    return [json.loads(params["q"])["fecha"]["eq"] for _, params in client.get_calls if params]
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_filters_by_specialty_server_side():
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+
+    await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 12, 5, 0, 0)),
+        limit=27,
+    )
+
+    assert len(client.get_calls) == 1
+    path, params = client.get_calls[0]
+    assert path == "/v5/agendas"
+    assert json.loads(params["q"]) == {
+        "id_sucursal": {"eq": "1"},
+        "fecha": {"eq": "2026-10-06"},
+        "duracion": {"eq": "30"},
+        "id_especialidad": {"eq": "endo"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_walks_forward_from_the_latest_slot_date():
+    # Live: `fecha eq D` means "from D", at most 10 rows per response and
+    # `page` is ignored. The next request therefore starts the day after
+    # the latest slot already seen.
+    first = [_agenda_row("7", _at(2026, 10, 16), f"{9 + i:02d}:00") for i in range(10)]
+    second = [_agenda_row("7", _at(2026, 10, 20), f"{9 + i:02d}:00") for i in range(4)]
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v5/agendas": _by_from_date({"2026-10-06": first, "2026-10-17": second}),
+        }
+    )
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 12, 5, 0, 0)),
+        limit=27,
+    )
+
+    # The third request (from 2026-10-21) answers empty and ends the walk.
+    assert _requested_from_dates(client) == ["2026-10-06", "2026-10-17", "2026-10-21"]
+    assert len(slots) == 14
+    assert slots == sorted(slots, key=lambda s: s.time_range.start)
+    assert slots[0].time_range.start == _at(2026, 10, 16, 9, 0)
+    assert slots[-1].time_range.start == _at(2026, 10, 20, 12, 0)
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_stops_once_the_limit_is_reached():
+    first = [_agenda_row("7", _at(2026, 10, 7), f"{9 + i:02d}:00") for i in range(10)]
+    second = [_agenda_row("7", _at(2026, 10, 8), f"{9 + i:02d}:00") for i in range(10)]
+    client = _StubDentalinkClient(
+        get_responses={"/v5/agendas": _by_from_date({"2026-10-06": first, "2026-10-08": second})}
+    )
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 12, 5, 0, 0)),
+        limit=12,
+    )
+
+    assert _requested_from_dates(client) == ["2026-10-06", "2026-10-08"]
+    assert len(slots) == 12
+    assert slots[-1].time_range.start == _at(2026, 10, 8, 10, 0)
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_skips_an_unparseable_row():
+    rows = [
+        {"id_profesional": "7", "fecha": "el martes", "hora_inicio": "09:00"},
+        _agenda_row("7", _at(2026, 10, 7), "10:00"),
+    ]
+    client = _client_with_pages({"2026-10-06": rows})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 10, 20, 0, 0)),
+        limit=27,
+    )
+
+    assert [s.id for s in slots] == ["7-202610071000"]
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_caps_requests_per_search():
+    # One new day per response, forever: the walk must stop at the cap
+    # (a previous fan-out design caused a production 429).
+    def _one_new_day_per_request(params: dict[str, str] | None) -> list[dict[str, object]]:
+        assert params is not None
+        fecha = datetime.fromisoformat(json.loads(params["q"])["fecha"]["eq"]).replace(tzinfo=_TZ)
+        return [_agenda_row("7", fecha, "09:00")]
+
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": _one_new_day_per_request})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 12, 5, 0, 0)),
+        limit=27,
+    )
+
+    assert len(client.get_calls) == 8
+    assert len(slots) == 8
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_dedupes_repeated_slots():
+    rows = [_agenda_row("7", _at(2026, 10, 7), "10:00") for _ in range(3)]
+    client = _client_with_pages({"2026-10-06": rows})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 10, 20, 0, 0)),
+        limit=27,
+    )
+
+    assert [s.id for s in slots] == ["7-202610071000"]
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_ignores_slots_outside_the_window():
+    rows = [
+        _agenda_row("7", _at(2026, 10, 6), "07:00"),  # earlier today, before `start`
+        _agenda_row("7", _at(2026, 10, 6), "09:00"),
+        _agenda_row("7", _at(2026, 10, 13), "09:00"),  # on/after `end`
+    ]
+    client = _client_with_pages({"2026-10-06": rows})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 10, 13, 0, 0)),
+        limit=27,
+    )
+
+    assert [s.id for s in slots] == ["7-202610060900"]
+    # The latest slot seen is already past the window end: nothing to walk.
+    assert len(client.get_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_stops_on_an_empty_response():
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": []})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 12, 5, 0, 0)),
+        limit=27,
+    )
+
+    assert slots == []
+    assert len(client.get_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_specialty_availability_stops_when_the_server_makes_no_forward_progress():
+    # A server that ignores `fecha` and keeps answering with already-seen
+    # rows must not burn the whole request cap.
+    rows = [_agenda_row("7", _at(2026, 10, 7), "10:00")]
+    client = _StubDentalinkClient(get_responses={"/v5/agendas": lambda params: rows})
+    gateway = _gateway(client)
+
+    slots = await gateway.search_specialty_availability(
+        specialty_id="endo",
+        date_range=DateTimeRange(_at(2026, 10, 6, 8, 0), _at(2026, 12, 5, 0, 0)),
+        limit=27,
+    )
+
+    assert [s.id for s in slots] == ["7-202610071000"]
+    assert len(client.get_calls) == 2
