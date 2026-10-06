@@ -1049,18 +1049,17 @@ async def test_a_valid_specialty_pick_lists_the_soonest_slot_across_professional
 
 class _FechaScopedGateway:
     """Minimal `AppointmentGateway` double that mimics Dentalink's real
-    per-`fecha` indexing: a slot is only returned when the LITERAL date
-    implied by `date_range.start.date()` — taken verbatim, no tz
-    conversion, exactly like `DentalinkAppointmentGateway.search_availability`
-    computes its own `fecha` filter — matches the slot's OWN clinic-local
-    calendar date.
+    "from `fecha`" indexing: a slot is only returned when its OWN
+    clinic-local calendar date is on or after the LITERAL date implied by
+    `date_range.start.date()` — taken verbatim, no tz conversion, exactly
+    like `DentalinkAppointmentGateway.search_specialty_availability`
+    derives its first `fecha` filter.
 
-    This is what actually exposes the T5a regression: a UTC-midnight-
-    aligned window's naive `.date()` can land on the wrong clinic-local
-    day for a late-evening clinic slot, so the request for that day never
-    asks Dentalink for the right `fecha` at all — the bug is invisible to
-    a plain `date_range.contains(...)` fake like `FakeDentalinkGateway`,
-    which never simulates the per-day `fecha` filter losing a slot.
+    This is what exposes the T5a regression: a UTC-aligned window's naive
+    `.date()` can land on the wrong clinic-local day for a late-evening
+    clinic slot, so the request never asks Dentalink for the right `fecha`
+    — invisible to a plain `date_range.contains(...)` fake like
+    `FakeDentalinkGateway`.
     """
 
     def __init__(self, slots, professionals, clinic_timezone):
@@ -1069,16 +1068,17 @@ class _FechaScopedGateway:
         self.clinic_timezone = clinic_timezone
         self.calls: list[DateTimeRange] = []
 
-    async def search_availability(self, specialty_id, professional_id, date_range, limit=None):
+    async def search_specialty_availability(self, specialty_id, date_range, limit):
+        del specialty_id
         self.calls.append(date_range)
-        requested_date = date_range.start.date()
+        first_date = date_range.start.date()
         matches = [
             slot
             for slot in self._slots
-            if slot.time_range.start.astimezone(self.clinic_timezone).date() == requested_date
+            if slot.time_range.start.astimezone(self.clinic_timezone).date() >= first_date
             and date_range.contains(slot.time_range.start)
         ]
-        return matches if limit is None else matches[:limit]
+        return matches[:limit]
 
     async def list_professionals(self, specialty_id=None):
         return [
@@ -1186,13 +1186,14 @@ async def test_offer_any_professional_slots_passes_a_clinic_local_range_and_the_
 
     assert len(captured) == 1
     date_range, target_slot_count = captured[0]
-    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 10
+    assert target_slot_count == _AGGREGATE_TARGET_SLOTS == 26
     # Starts at "now", in the CLINIC timezone (not UTC — its utcoffset is
     # the clinic's, distinguishing this from the pre-fix UTC-anchored range).
     assert before <= date_range.start <= after
     assert date_range.start.utcoffset() == clinic_timezone.utcoffset(date_range.start)
     # Ends at clinic-local midnight TODAY (the calendar day `date_range.start`
-    # itself falls on, in its own tz) + the 7-day search window.
+    # itself falls on, in its own tz) + the search window.
+    assert _AGGREGATE_SEARCH_WINDOW == timedelta(days=60)
     expected_today_midnight = datetime.combine(
         date_range.start.date(), time.min, tzinfo=date_range.start.tzinfo
     )
@@ -1681,3 +1682,39 @@ async def test_a_reschedule_without_slots_offers_the_fallback_not_other_professi
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"
+
+@pytest.mark.asyncio
+async def test_a_valid_specialty_pick_offers_up_to_26_slots_found_beyond_the_first_week():
+    # Endodoncia-like: nothing for ~2 weeks, then plenty. Before searching
+    # by specialty over a 60-day window the first slot was out of reach.
+    now = datetime.now(UTC)
+    slots = [
+        AppointmentSlot(
+            id=f"prof-1-{i:02d}",
+            professional_id="prof-1",
+            specialty_id="cleaning",
+            time_range=DateTimeRange(
+                now + timedelta(days=14, hours=i), now + timedelta(days=14, hours=i, minutes=30)
+            ),
+        )
+        for i in range(30)
+    ]
+    graph, _, _ = await _make_graph(
+        specialties=[make_specialty(id_="cleaning", name="Endodoncia")],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+        available_slots=slots,
+    )
+    state = _decision_state(
+        button_payload=f"{SPECIALTY_PAYLOAD_PREFIX}cleaning",
+        collected_data={
+            "stage": STAGE_AWAITING_SPECIALTY_SELECTION,
+            "specialty_options": [make_specialty(id_="cleaning", name="Endodoncia")],
+        },
+    )
+
+    result = await graph.ainvoke(state)
+
+    assert result["decision_node"] == "search_availability_any_professional"
+    assert [s.id for s in result["collected_data"]["available_slots"]] == [
+        s.id for s in slots[:26]
+    ]
