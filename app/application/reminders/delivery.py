@@ -178,4 +178,3 @@ def _matches(
         and patient.patient_id == reminder.patient_id
         and str(patient.mobile) == reminder.recipient_phone
     )
-
