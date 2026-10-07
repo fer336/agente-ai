@@ -3,7 +3,6 @@ from datetime import datetime
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -38,10 +37,10 @@ class AppointmentReminderModel(Base):
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    appointment_id: Mapped[str] = mapped_column(
-        String, ForeignKey("appointments.id"), nullable=False
-    )
-    patient_id: Mapped[str] = mapped_column(String, ForeignKey("patients.id"), nullable=False)
+    # Dentalink EXTERNAL ids: appointments and patients live in Dentalink and no local
+    # row exists, so these columns must not reference the local tables.
+    appointment_id: Mapped[str] = mapped_column(String, nullable=False)
+    patient_id: Mapped[str] = mapped_column(String, nullable=False)
     kind: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
