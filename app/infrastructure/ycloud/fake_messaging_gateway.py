@@ -1,3 +1,4 @@
+from app.domain.repositories.gateways import TemplateMessage
 from app.domain.value_objects.flow_request import FlowRequest
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage
@@ -9,6 +10,7 @@ class FakeYCloudMessagingGateway:
     """In-memory fake implementing `MessagingGateway` for local dev and tests."""
 
     def __init__(self) -> None:
+        self.sent_templates: list[tuple[PhoneNumber, TemplateMessage]] = []
         self.sent_messages: list[tuple[PhoneNumber, str]] = []
         self.sent_buttons: list[tuple[PhoneNumber, str, list[InteractiveButton], str | None]] = []
         self.sent_flows: list[tuple[PhoneNumber, str, FlowRequest]] = []
@@ -20,6 +22,11 @@ class FakeYCloudMessagingGateway:
         self.contact_phones: dict[str, PhoneNumber] = {}
         self.typing_indicators_sent: list[str] = []
         self._next_id = 1
+
+    async def send_template(self, to: PhoneNumber, template: TemplateMessage) -> str:
+        self.sent_templates.append((to, template))
+        self.sent_log.append(("template", len(self.sent_templates) - 1))
+        return self._next_external_id()
 
     async def send_text_message(self, to: PhoneNumber, text: str) -> str:
         self.sent_messages.append((to, text))

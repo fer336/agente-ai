@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 import app.infrastructure.ycloud.client as client_module
+from app.domain.repositories.gateways import TemplateMessage, TemplateQuickReplyButton
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListRow
 from app.infrastructure.ycloud.client import YCloudClient
@@ -31,6 +32,65 @@ def _capture_requests(monkeypatch: pytest.MonkeyPatch, json_response: dict | Non
 
     monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
     return captured
+
+
+@pytest.mark.asyncio
+async def test_send_template_posts_body_parameters_and_quick_reply_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com",
+        api_key="yc-key-abc",
+        whatsapp_number="+5491100000001",
+    )
+    template = TemplateMessage(
+        name="recordatorio_turno_confirmar",
+        language="es_AR",
+        body_parameters=("Ana", "lunes 10:00"),
+        quick_reply_buttons=(
+            TemplateQuickReplyButton(index=0, payload="REMINDER:appt-1:CONFIRM"),
+            TemplateQuickReplyButton(index=1, payload="REMINDER:appt-1:CANCEL"),
+        ),
+    )
+
+    external_id = await client.send_template("+5491122334455", template)
+
+    assert external_id == "wamid.fake-1"
+    assert json.loads(captured[0].content) == {
+        "from": "+5491100000001",
+        "to": "+5491122334455",
+        "type": "template",
+        "template": {
+            "name": "recordatorio_turno_confirmar",
+            "language": {"code": "es_AR"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": "Ana"},
+                        {"type": "text", "text": "lunes 10:00"},
+                    ],
+                },
+                {
+                    "type": "button",
+                    "sub_type": "quick_reply",
+                    "index": "0",
+                    "parameters": [
+                        {"type": "payload", "payload": "REMINDER:appt-1:CONFIRM"}
+                    ],
+                },
+                {
+                    "type": "button",
+                    "sub_type": "quick_reply",
+                    "index": "1",
+                    "parameters": [
+                        {"type": "payload", "payload": "REMINDER:appt-1:CANCEL"}
+                    ],
+                },
+            ],
+        },
+    }
 
 
 @pytest.mark.asyncio

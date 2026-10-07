@@ -10,6 +10,8 @@ from app.infrastructure.dentalink.schemas import (
     appointment_from_cita,
     full_names_match,
     professional_from_dentista,
+    reminder_appointment_from_cita,
+    reminder_statuses_from_estados,
     resolve_cancellation_state_id,
     resolve_cancellation_state_ids,
     slot_from_agenda,
@@ -260,6 +262,69 @@ def test_agreement_from_convenio_falls_back_to_id_convenio():
 def test_agreement_from_convenio_raises_when_id_is_missing():
     with pytest.raises(DentalinkInvalidResponseError):
         agreement_from_convenio({"nombre": "OSDE"})
+
+
+def test_reminder_appointment_preserves_raw_status_and_only_classifies_explicit_metadata():
+    statuses = reminder_statuses_from_estados(
+        [
+            {"id": 1, "nombre": "Confirmada", "anulacion": 0},
+            {"id": 2, "nombre": "Atendida", "anulacion": 0},
+            {"id": 3, "nombre": "No asistió", "anulacion": 0},
+            {"id": 4, "nombre": "Anulada por paciente", "anulacion": 1},
+            {"id": 5, "nombre": "Finalizada", "anulacion": 0},
+            {"id": 6, "nombre": "En espera", "anulacion": 0, "reservado": 1},
+        ]
+    )
+
+    appointments = [
+        reminder_appointment_from_cita(
+            {
+                "id": 10,
+                "id_paciente": 20,
+                "fecha": "2026-10-10",
+                "hora_inicio": "09:30",
+                "id_estado": status_id,
+            },
+            statuses=statuses,
+            timezone=_TZ,
+        )
+        for status_id in range(1, 7)
+    ]
+
+    assert [(a.raw_status_id, a.raw_status_name, a.state) for a in appointments] == [
+        ("1", "Confirmada", "confirmed"),
+        ("2", "Atendida", "attended"),
+        ("3", "No asistió", "no_show"),
+        ("4", "Anulada por paciente", "cancelled"),
+        ("5", "Finalizada", "unknown"),
+        ("6", "En espera", "active"),
+    ]
+    assert appointments[0].id == "10"
+    assert appointments[0].patient_id == "20"
+    assert appointments[0].starts_at == datetime(2026, 10, 10, 9, 30, tzinfo=_TZ)
+
+
+def test_reminder_appointment_rejects_unresolved_or_malformed_status_metadata():
+    with pytest.raises(DentalinkInvalidResponseError):
+        reminder_statuses_from_estados([{"id": 1, "nombre": "Confirmada"}])
+    with pytest.raises(DentalinkInvalidResponseError, match="reservado"):
+        reminder_statuses_from_estados(
+            [{"id": 1, "nombre": "Finalizada", "anulacion": 0, "reservado": "yes"}]
+        )
+
+    statuses = reminder_statuses_from_estados([{"id": 1, "nombre": "Confirmada", "anulacion": 0}])
+    with pytest.raises(DentalinkInvalidResponseError):
+        reminder_appointment_from_cita(
+            {
+                "id": 10,
+                "id_paciente": 20,
+                "fecha": "2026-10-10",
+                "hora_inicio": "09:30",
+                "id_estado": 99,
+            },
+            statuses=statuses,
+            timezone=_TZ,
+        )
 
 
 def test_resolve_cancellation_state_id_matches_anulada_by_name():

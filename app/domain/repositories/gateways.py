@@ -1,5 +1,6 @@
-from datetime import tzinfo
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass
+from datetime import date, datetime, tzinfo
+from typing import Literal, Protocol, runtime_checkable
 
 from app.domain.entities.agreement import Agreement
 from app.domain.entities.appointment import Appointment
@@ -15,6 +16,41 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.list_message import ListMessage
 from app.domain.value_objects.location_request import LocationRequest
 from app.domain.value_objects.phone_number import PhoneNumber
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateQuickReplyButton:
+    """A template quick-reply button and its deterministic callback payload."""
+
+    index: int
+    payload: str
+
+    def __post_init__(self) -> None:
+        if self.index < 0:
+            raise ValueError("Template quick-reply button index cannot be negative")
+        if not self.payload.strip():
+            raise ValueError("Template quick-reply button payload cannot be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateMessage:
+    """Vendor-neutral WhatsApp template message.
+
+    Template names and language are configuration-owned; body parameters and
+    quick-reply payloads stay structured so the adapter cannot accidentally
+    serialize a display label as a callback payload.
+    """
+
+    name: str
+    language: str
+    body_parameters: tuple[str, ...] = ()
+    quick_reply_buttons: tuple[TemplateQuickReplyButton, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("Template name cannot be empty")
+        if not self.language.strip():
+            raise ValueError("Template language cannot be empty")
 
 
 @runtime_checkable
@@ -88,6 +124,47 @@ class AppointmentGateway(Protocol):
         appointment_id: str,
         idempotency_key: str,
     ) -> None: ...
+
+
+ReminderAppointmentState = Literal[
+    "active", "confirmed", "attended", "cancelled", "no_show", "unknown"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderAppointment:
+    """Read model used only to decide whether and when to send a reminder."""
+
+    id: str
+    patient_id: str
+    starts_at: datetime
+    raw_status_id: str
+    raw_status_name: str
+    state: ReminderAppointmentState
+
+
+@dataclass(frozen=True, slots=True)
+class ReminderPatient:
+    """Minimum patient data required for reminder delivery."""
+
+    patient_id: str
+    mobile: PhoneNumber
+
+
+@runtime_checkable
+class ReminderAppointmentGateway(Protocol):
+    """Read-only appointment port for reminder scheduling."""
+
+    async def list_reminder_appointments_for_date_window(
+        self, start_date: date, end_date: date
+    ) -> list[ReminderAppointment]: ...
+
+
+@runtime_checkable
+class ReminderPatientGateway(Protocol):
+    """Read-only patient contact port for reminder delivery."""
+
+    async def get_reminder_patient(self, patient_id: str) -> ReminderPatient | None: ...
 
 
 @runtime_checkable
@@ -179,6 +256,10 @@ class TreatmentGateway(Protocol):
 @runtime_checkable
 class MessagingGateway(Protocol):
     """Port to the outbound messaging channel (e.g. YCloud/WhatsApp)."""
+
+    async def send_template(self, to: PhoneNumber, template: TemplateMessage) -> str:
+        """Sends an approved WhatsApp template and returns its external id."""
+        ...
 
     async def send_text_message(self, to: PhoneNumber, text: str) -> str:
         """Sends a text message and returns the external_message_id."""

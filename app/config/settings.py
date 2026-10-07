@@ -1,7 +1,10 @@
+from datetime import time
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field, computed_field
+from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.domain.value_objects.phone_number import PhoneNumber
 
 
 class Settings(BaseSettings):
@@ -119,6 +122,35 @@ class Settings(BaseSettings):
     #: trace, which showed it building dates with `America/Argentina/...`.
     #: Getting it wrong silently books every appointment at the wrong hour.
     clinic_timezone: str = "America/Argentina/Buenos_Aires"
+
+    #: Appointment reminders are intentionally fail-closed: enabling the
+    #: feature alone is insufficient; the recipient must also be in this
+    #: comma-separated E.164 allowlist. An empty allowlist blocks everyone.
+    appointment_reminders_enabled: bool = False
+    appointment_reminders_phone_allowlist: str = ""
+    appointment_reminders_confirmation_template_name: str = "recordatorio_turno_confirmar"
+    appointment_reminders_location_template_name: str = "recordatorio_turno_ubicacion"
+    appointment_reminders_review_template_name: str = "solicitud_resena_google"
+    appointment_reminders_template_language: str = "es_AR"
+    appointment_reminders_day_before_time: time = time(18, 0)
+    appointment_reminders_same_day_offset_hours: int = 3
+    appointment_reminders_send_window_start: time = time(9, 0)
+    appointment_reminders_send_window_end: time = time(20, 0)
+    appointment_reminders_review_time: time = time(10, 0)
+    appointment_reminders_review_cooldown_days: int = 90
+
+    @field_validator("appointment_reminders_phone_allowlist")
+    @classmethod
+    def _normalize_appointment_reminders_phone_allowlist(cls, value: str) -> str:
+        normalized: list[str] = []
+        for raw_phone in value.split(","):
+            stripped_phone = raw_phone.strip()
+            if not stripped_phone:
+                continue
+            normalized_phone = str(PhoneNumber(stripped_phone))
+            if normalized_phone not in normalized:
+                normalized.append(normalized_phone)
+        return ",".join(normalized)
 
     #: How long FREE TEXT waits before the agent starts, so it is charged
     #: on top of the LLM's own ~2-3s. `DebounceTracker.touch()` RESTARTS
@@ -301,6 +333,14 @@ class Settings(BaseSettings):
     #: summary — a cache miss/expiry always falls back to PostgreSQL, never
     #: a permanent loss (PostgreSQL is this module's source of truth).
     memory_cache_ttl_seconds: int = 3600
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def appointment_reminders_phone_allowlist_set(self) -> frozenset[str]:
+        """Normalized allowlist used by the future reminder delivery path."""
+        return frozenset(
+            value for value in self.appointment_reminders_phone_allowlist.split(",") if value
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

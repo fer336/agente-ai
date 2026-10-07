@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import date, datetime, timedelta, tzinfo
 
@@ -12,6 +13,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.exceptions.errors import AppointmentNotFoundError
+from app.domain.repositories.gateways import ReminderAppointment
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.exceptions import (
@@ -26,6 +28,8 @@ from app.infrastructure.dentalink.schemas import (
     as_dict,
     as_list,
     professional_from_dentista,
+    reminder_appointment_from_cita,
+    reminder_statuses_from_estados,
     resolve_cancellation_state_id,
     resolve_cancellation_state_ids,
     slot_from_agenda,
@@ -106,6 +110,8 @@ _SPECIALTY_AGENDA_FILTER_FIELDS = _AGENDA_FILTER_FIELDS | {"id_especialidad"}
 #: fan-out once caused in production.
 _MAX_SPECIALTY_SEARCH_REQUESTS = 8
 _DENTISTA_FILTER_FIELDS = frozenset({"id_especialidad", "especialidad", "habilitado"})
+_CITA_FILTER_FIELDS = frozenset({"fecha"})
+_MAX_REMINDER_APPOINTMENTS = 500
 
 
 def _is_enabled(raw_dentista: dict[str, object]) -> bool:
@@ -405,6 +411,58 @@ class DentalinkAppointmentGateway:
             request_summary=f"specialty_id={specialty_id}",
             call=_call,
             response_summary=lambda professionals: f"{len(professionals)} professionals",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def list_reminder_appointments_for_date_window(
+        self, start_date: date, end_date: date
+    ) -> list[ReminderAppointment]:
+        """Reads one bounded, inclusive clinic-date window for reminder scheduling.
+
+        Dentalink's list API uses its JSON `q` filter; this endpoint has no
+        cursor convention elsewhere in this client, so the request and its
+        accepted response are both capped rather than silently retrieving an
+        unbounded clinic-wide list.
+        """
+        if end_date < start_date:
+            raise ValueError("reminder appointment window end precedes start")
+
+        async def _call() -> list[ReminderAppointment]:
+            raw_estados = await self._client.get("/v1/citas/estados")
+            statuses = reminder_statuses_from_estados(as_list(raw_estados))
+            params = build_q_param(
+                {"fecha": ("gte", start_date.isoformat())},
+                allowed_fields=_CITA_FILTER_FIELDS,
+                allowed_operators=frozenset({"gte", "lte"}),
+            )
+            # The shared builder validates the field/operator/value. Add
+            # the second validated bound to its serialized single-field
+            # object because its tuple input shape represents one operator
+            # per field.
+            query = json.loads(params["q"])
+            query["fecha"]["lte"] = end_date.isoformat()
+            params["q"] = json.dumps(query, separators=(",", ":"))
+            params["limit"] = str(_MAX_REMINDER_APPOINTMENTS)
+            raw_citas = as_list(await self._client.get("/v1/citas", params=params))
+            if len(raw_citas) >= _MAX_REMINDER_APPOINTMENTS:
+                raise DentalinkInvalidResponseError(
+                    "reminder cita response may be truncated at the bounded limit"
+                )
+            return [
+                reminder_appointment_from_cita(
+                    raw, statuses=statuses, timezone=self._clinic_timezone
+                )
+                for raw in raw_citas
+            ]
+
+        return await traced_call(
+            tool_name="ListReminderAppointmentsTool",
+            provider=_PROVIDER,
+            operation="list_reminder_appointments_for_date_window",
+            request_summary=f"start_date={start_date.isoformat()} end_date={end_date.isoformat()}",
+            call=_call,
+            response_summary=lambda appointments: f"{len(appointments)} appointments",
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
         )

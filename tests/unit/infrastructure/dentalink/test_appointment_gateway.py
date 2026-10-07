@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -462,6 +462,66 @@ async def test_list_professionals_drops_a_disabled_one_even_if_the_server_ignore
     professionals = await gateway.list_professionals()
 
     assert [p.id for p in professionals] == ["33"]
+
+
+@pytest.mark.asyncio
+async def test_list_reminder_appointments_for_date_window_uses_fecha_range_and_metadata():
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v1/citas/estados": [
+                {"id": 1, "nombre": "Confirmada", "anulacion": 0},
+                {"id": 2, "nombre": "Atendida", "anulacion": 0},
+            ],
+            "/v1/citas": [
+                {
+                    "id": 10,
+                    "id_paciente": "pat-1",
+                    "fecha": "2026-10-10",
+                    "hora_inicio": "09:30",
+                    "id_estado": 2,
+                }
+            ],
+        }
+    )
+    gateway = _gateway(client)
+
+    appointments = await gateway.list_reminder_appointments_for_date_window(
+        date(2026, 10, 10), date(2026, 10, 11)
+    )
+
+    assert [
+        (a.id, a.patient_id, a.raw_status_id, a.raw_status_name, a.state) for a in appointments
+    ] == [("10", "pat-1", "2", "Atendida", "attended")]
+    cita_request = next(call for call in client.get_calls if call[0] == "/v1/citas")
+    assert cita_request[1] is not None
+    assert json.loads(cita_request[1]["q"]) == {
+        "fecha": {"gte": "2026-10-10", "lte": "2026-10-11"}
+    }
+    assert cita_request[1]["limit"] == "500"
+
+
+@pytest.mark.asyncio
+async def test_list_reminder_appointments_rejects_a_response_at_the_bound():
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v1/citas/estados": [{"id": 1, "nombre": "Confirmada", "anulacion": 0}],
+            "/v1/citas": [
+                {
+                    "id": index,
+                    "id_paciente": "pat-1",
+                    "fecha": "2026-10-10",
+                    "hora_inicio": "09:30",
+                    "id_estado": 1,
+                }
+                for index in range(500)
+            ],
+        }
+    )
+
+    with pytest.raises(DentalinkInvalidResponseError, match="may be truncated"):
+        await _gateway(client).list_reminder_appointments_for_date_window(
+            date(2026, 10, 10), date(2026, 10, 10)
+        )
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,5 @@
+import pytest
+
 from app.config.settings import Settings, get_settings
 
 
@@ -91,6 +93,65 @@ def test_settings_defaults_ycloud_and_debounce_fields_when_no_env_vars(monkeypat
     assert settings.ycloud_webhook_secret == ""
     assert settings.ycloud_whatsapp_number == ""
     assert settings.message_debounce_seconds == 6
+
+
+def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(monkeypatch):
+    for var in (
+        "APPOINTMENT_REMINDERS_ENABLED",
+        "APPOINTMENT_REMINDERS_PHONE_ALLOWLIST",
+        "APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME",
+        "APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME",
+        "APPOINTMENT_REMINDERS_REVIEW_TEMPLATE_NAME",
+        "APPOINTMENT_REMINDERS_TEMPLATE_LANGUAGE",
+        "APPOINTMENT_REMINDERS_DAY_BEFORE_TIME",
+        "APPOINTMENT_REMINDERS_SAME_DAY_OFFSET_HOURS",
+        "APPOINTMENT_REMINDERS_SEND_WINDOW_START",
+        "APPOINTMENT_REMINDERS_SEND_WINDOW_END",
+        "APPOINTMENT_REMINDERS_REVIEW_TIME",
+        "APPOINTMENT_REMINDERS_REVIEW_COOLDOWN_DAYS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.appointment_reminders_enabled is False
+    assert settings.appointment_reminders_phone_allowlist == ""
+    assert settings.appointment_reminders_phone_allowlist_set == frozenset()
+    assert (
+        settings.appointment_reminders_confirmation_template_name
+        == "recordatorio_turno_confirmar"
+    )
+    assert settings.appointment_reminders_location_template_name == "recordatorio_turno_ubicacion"
+    assert settings.appointment_reminders_review_template_name == "solicitud_resena_google"
+    assert settings.appointment_reminders_template_language == "es_AR"
+    assert settings.clinic_timezone == "America/Argentina/Buenos_Aires"
+    assert str(settings.appointment_reminders_day_before_time) == "18:00:00"
+    assert settings.appointment_reminders_same_day_offset_hours == 3
+    assert str(settings.appointment_reminders_send_window_start) == "09:00:00"
+    assert str(settings.appointment_reminders_send_window_end) == "20:00:00"
+    assert str(settings.appointment_reminders_review_time) == "10:00:00"
+    assert settings.appointment_reminders_review_cooldown_days == 90
+
+
+def test_settings_normalizes_and_validates_appointment_reminder_allowlist(monkeypatch):
+    monkeypatch.setenv(
+        "APPOINTMENT_REMINDERS_PHONE_ALLOWLIST",
+        " +5491122334455, +5491166667777 ,+5491122334455 ",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.appointment_reminders_phone_allowlist_set == {
+        "+5491122334455",
+        "+5491166667777",
+    }
+
+
+def test_settings_rejects_invalid_appointment_reminder_allowlist_phone(monkeypatch):
+    monkeypatch.setenv("APPOINTMENT_REMINDERS_PHONE_ALLOWLIST", "not-a-phone")
+
+    with pytest.raises(ValueError, match="PhoneNumber"):
+        Settings(_env_file=None)
 
 
 def test_settings_reads_ycloud_and_debounce_fields_from_env(monkeypatch):
