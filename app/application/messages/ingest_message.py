@@ -25,6 +25,7 @@ from app.application.conversations.set_conversation_mode import SetConversationM
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
+from app.application.reminders.action_payloads import parse_reminder_action
 from app.domain.entities.conversation import Conversation
 from app.domain.entities.media_processing_job import PENDING as JOB_PENDING
 from app.domain.entities.media_processing_job import MediaProcessingJob
@@ -81,6 +82,10 @@ class MessageRepositories:
 # for one unit of work. See `IngestMessageUseCase`'s docstring for why this
 # indirection exists instead of injecting bound repository instances directly.
 RepositoriesProvider = Callable[[], AbstractAsyncContextManager[MessageRepositories]]
+
+
+def _is_reminder_action(button_payload: str | None) -> bool:
+    return button_payload is not None and parse_reminder_action(button_payload) is not None
 
 
 class IngestMessageUseCase:
@@ -178,6 +183,11 @@ class IngestMessageUseCase:
                 repositories.conversations, dto.from_phone, contact.id
             )
             conversation_key = str(conversation.id)
+            # A reminder button tap is an answer to a message we sent, not a first
+            # contact: the welcome menu would bury it and its action must still run.
+            welcome_first_contact = is_new_conversation and not _is_reminder_action(
+                dto.button_payload
+            )
             received_at = datetime.now(UTC)
             rotate_workflow = RotateWorkflowSessionUseCase(
                 self._workflow_session_repositories_provider or repositories.conversations
@@ -266,7 +276,7 @@ class IngestMessageUseCase:
                 repositories.scheduled_actions, self._conversation_idle_reset_delay_seconds
             ).reconcile(conversation.id)
 
-            if is_new_conversation:
+            if welcome_first_contact:
                 # Sent synchronously, inline in this same request — NOT
                 # fire-and-forget — so a delivery failure surfaces as this
                 # request's own error (and gets retried by the caller's
@@ -390,7 +400,7 @@ class IngestMessageUseCase:
             # handoff to the Etapa 5 seam is skipped.
             return
 
-        if is_new_conversation:
+        if welcome_first_contact:
             # The welcome sent above IS the answer to a first message: it
             # greets, says what the bot can do, and offers the menu.
             # Running the agent for that same turn sent the patient two

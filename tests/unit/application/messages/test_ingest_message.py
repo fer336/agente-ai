@@ -477,6 +477,75 @@ async def test_the_welcome_is_the_whole_reply_for_a_brand_new_conversation():
 
 
 @pytest.mark.asyncio
+async def test_a_first_ever_reminder_button_tap_reaches_the_agent_instead_of_only_the_welcome():
+    # The recipient got a reminder template but its send-time context record
+    # failed, so no conversation exists: the tap must still be processed, and
+    # the welcome menu would only bury it.
+    messaging_gateway = make_ycloud_messaging_gateway()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        agent_invoker=agent_invoker,
+        debounce_seconds=30,
+    )
+
+    await use_case.execute(
+        _make_dto(
+            from_phone="+5491122334455",
+            text="Confirmar turno",
+            button_payload="REMINDER_CONFIRM:apt-1",
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    assert messaging_gateway.sent_lists == []
+    assert len(agent_invoker.calls) == 1
+    assert "REMINDER_CONFIRM:apt-1" in repr(agent_invoker.calls[0])
+
+
+@pytest.mark.asyncio
+async def test_a_first_ever_non_reminder_button_still_gets_only_the_welcome():
+    messaging_gateway = make_ycloud_messaging_gateway()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        agent_invoker=agent_invoker,
+        debounce_seconds=0.01,
+    )
+
+    await use_case.execute(
+        _make_dto(from_phone="+5491122334455", button_payload="CONFIRM_APPOINTMENT")
+    )
+    await asyncio.sleep(0.05)
+
+    assert len(messaging_gateway.sent_lists) == 1
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_free_text_from_a_recipient_with_a_reminder_conversation_goes_to_the_agent():
+    # The reminder worker pre-creates the conversation, so the recipient's
+    # first "hola" is not a first-ever turn: no welcome menu, the agent answers
+    # with the reminder context.
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    messaging_gateway = make_ycloud_messaging_gateway()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        agent_invoker=agent_invoker,
+        debounce_seconds=0.01,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455", text="hola"))
+    await asyncio.sleep(0.05)
+
+    assert messaging_gateway.sent_lists == []
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_a_button_tap_skips_the_debounce_window_entirely():
     # A button tap is atomic and deliberate — nobody taps "Confirmar" and
     # then keeps typing the same thought — so there is nothing to wait
