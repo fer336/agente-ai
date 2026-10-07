@@ -459,3 +459,14 @@ def test_aligners_image_url_env_var_overrides_the_derived_url(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.effective_aligners_image_url == "https://cdn.example.com/aligners.jpg"
+
+
+def test_conversation_idle_reset_delay_defaults_to_three_hours():
+    from app.application.conversations.schedule_conversation_reset import (
+        DEFAULT_IDLE_RESET_DELAY_SECONDS,
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.conversation_idle_reset_delay_seconds == 10800
+    assert DEFAULT_IDLE_RESET_DELAY_SECONDS == settings.conversation_idle_reset_delay_seconds

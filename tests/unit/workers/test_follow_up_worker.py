@@ -12,6 +12,9 @@ from app.domain.entities.scheduled_action import ScheduledAction
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.idempotency_key import IdempotencyKey
+from app.infrastructure.agent.fake_session_checkpoint_repository import (
+    FakeSessionCheckpointRepository,
+)
 from app.infrastructure.database.fake_scheduled_action_repository import (
     FakeScheduledActionRepository,
 )
@@ -21,9 +24,12 @@ from app.workers.follow_up_worker import (
     run_follow_up_tick,
 )
 from tests.fixtures.gateways import (
+    make_contact_memory_repository,
     make_contact_repository,
     make_conversation_repository,
     make_message_repository,
+    make_pending_action_repository,
+    make_scheduled_action_repository,
     make_send_reply_use_case,
     make_ycloud_messaging_gateway,
 )
@@ -152,9 +158,12 @@ async def test_conversation_idle_reset_in_agent_mode_rotates_silently():
     assert conversation.workflow_session_generation == 2
     assert messaging_gateway.sent_lists == []
     assert messaging_gateway.sent_messages == []
-    assert await message_repository.get_recent_by_conversation_id(
-        ConversationId("ycloud-+5491122334455"), limit=10
-    ) == []
+    assert (
+        await message_repository.get_recent_by_conversation_id(
+            ConversationId("ycloud-+5491122334455"), limit=10
+        )
+        == []
+    )
     action = await scheduled_action_repository.get_by_id("action-1")
     assert action is not None
     assert action.status == "executed"
@@ -239,3 +248,159 @@ async def test_appointment_flow_follow_up_reset_rotates_the_workflow_generation(
     assert conversation is not None
     assert conversation.workflow_session_generation == 2
     assert len(messaging_gateway.sent_messages) == 1
+
+
+def _cleanup_use_case(conversations, contacts, checkpoints, contact_memories):
+    from app.application.conversations.cleanup_conversation_session import (
+        CleanupConversationSessionUseCase,
+    )
+    from app.application.conversations.rotate_workflow_session import (
+        RotateWorkflowSessionUseCase,
+    )
+    from tests.fixtures.gateways import make_memory_service
+
+    pending_actions = make_pending_action_repository()
+    scheduled_actions = make_scheduled_action_repository()
+
+    @asynccontextmanager
+    async def provider():
+        yield RotateWorkflowSessionUseCase.Repositories(
+            conversations=conversations,
+            pending_actions=pending_actions,
+            scheduled_actions=scheduled_actions,
+        )
+
+    return CleanupConversationSessionUseCase(
+        conversations=conversations,
+        contacts=contacts,
+        rotate_workflow_session=RotateWorkflowSessionUseCase(provider),
+        session_checkpoints=checkpoints,
+        memory_service=make_memory_service(contact_memory_repository=contact_memories),
+    )
+
+
+async def _seed_idle_conversation(mode: str):
+    from app.domain.entities.contact_memory import ContactMemory
+
+    conversations = make_conversation_repository()
+    await conversations.save(make_conversation(mode=mode))
+    contacts = make_contact_repository()
+    await contacts.save(make_contact())
+    contact_memories = make_contact_memory_repository()
+    await contact_memories.save(
+        ContactMemory(
+            id="mem-1",
+            contact_id="contact-1",
+            summary="old",
+            last_compacted_message_id=None,
+            last_compacted_at=None,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    scheduled = FakeScheduledActionRepository()
+    await scheduled.save(_due_action(CONVERSATION_IDLE_RESET_ACTION))
+    return conversations, contacts, contact_memories, scheduled
+
+
+async def _tick(scheduled, conversations, contacts, cleanup, messaging_gateway):
+    return await run_follow_up_tick(
+        scheduled,
+        make_message_repository(),
+        conversations,
+        contacts,
+        make_send_reply_use_case(messaging_gateway=messaging_gateway),
+        None,
+        now=datetime.now(UTC),
+        limit=50,
+        reset_delay_seconds=1200,
+        cleanup_conversation_session=cleanup,
+    )
+
+
+@pytest.mark.asyncio
+async def test_idle_action_in_agent_mode_runs_the_scoped_cleanup_silently():
+    conversations, contacts, memories, scheduled = await _seed_idle_conversation("agent")
+    checkpoints = FakeSessionCheckpointRepository(
+        threads={"ycloud-+5491122334455:session:1", "ycloud-+5491122334456:session:1"}
+    )
+    messaging_gateway = make_ycloud_messaging_gateway()
+
+    processed = await _tick(
+        scheduled,
+        conversations,
+        contacts,
+        _cleanup_use_case(conversations, contacts, checkpoints, memories),
+        messaging_gateway,
+    )
+
+    assert processed == 1
+    assert checkpoints.threads == {"ycloud-+5491122334456:session:1"}
+    assert await memories.get_by_contact_id("contact-1") is None
+    conversation = await conversations.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    assert conversation.workflow_session_generation == 2
+    assert messaging_gateway.sent_lists == []
+    assert messaging_gateway.sent_messages == []
+    action = await scheduled.get_by_id("action-1")
+    assert action is not None
+    assert action.status == "executed"
+
+
+@pytest.mark.asyncio
+async def test_idle_action_in_human_mode_keeps_checkpoints_and_memory():
+    conversations, contacts, memories, scheduled = await _seed_idle_conversation("human")
+    checkpoints = FakeSessionCheckpointRepository(threads={"ycloud-+5491122334455:session:1"})
+
+    await _tick(
+        scheduled,
+        conversations,
+        contacts,
+        _cleanup_use_case(conversations, contacts, checkpoints, memories),
+        make_ycloud_messaging_gateway(),
+    )
+
+    assert checkpoints.threads == {"ycloud-+5491122334455:session:1"}
+    assert await memories.get_by_contact_id("contact-1") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_failing_cleanup_never_breaks_the_tick(caplog):
+    conversations, contacts, memories, scheduled = await _seed_idle_conversation("agent")
+
+    class _Exploding:
+        async def execute(self, conversation_id):
+            raise RuntimeError("db down for +5491122334455")
+
+    processed = await _tick(
+        scheduled, conversations, contacts, _Exploding(), make_ycloud_messaging_gateway()
+    )
+
+    assert processed == 1
+    action = await scheduled.get_by_id("action-1")
+    assert action is not None
+    assert action.status == "executed"
+    assert "idle_cleanup_failed" in caplog.text
+    assert "+5491122334455" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_follow_up_loop_builds_the_cleanup_use_case_per_tick():
+    built: list[tuple[object, object]] = []
+
+    def factory(repositories, checkpointer):
+        built.append((repositories, checkpointer))
+        return None
+
+    await run_follow_up_loop(
+        _repositories_provider_counting([]),
+        _checkpointer_provider,
+        make_send_reply_use_case(),
+        interval_seconds=0,
+        batch_limit=50,
+        reset_delay_seconds=1200,
+        max_iterations=2,
+        cleanup_factory=factory,
+    )
+
+    assert len(built) == 2
+    assert all(isinstance(repositories, FollowUpWorkerRepositories) for repositories, _ in built)

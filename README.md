@@ -159,6 +159,24 @@ python -m app.main
 Once running, `GET /health` reports liveness (no dependency checks) and
 `GET /ready` reports readiness (checks Postgres and Redis connectivity).
 
+## Idle conversation cleanup
+
+After `CONVERSATION_IDLE_RESET_DELAY_SECONDS` of total silence (default
+`10800`, 3 hours) the follow-up worker wipes the agent's working memory for
+that one conversation, so the next message starts a fresh session with the
+welcome menu.
+
+- Wiped: LangGraph checkpoints of every session generation of the
+  conversation, the contact's compacted memory (`contact_memories` and its
+  Redis cache), and the conversation's pending/scheduled actions (marked
+  expired/cancelled, not deleted).
+- Kept: messages, agent runs, errors, incidents, contacts, conversations,
+  Chatwoot mappings, handoffs, outbox and sent messages.
+- Skipped: conversations in `mode="human"` (handoff) keep their context, as do
+  missing conversations/contacts. A lost rotation race (a new turn won) deletes
+  nothing.
+- Failures are logged without patient data and never break the worker tick.
+
 ## Run tests
 
 ```bash

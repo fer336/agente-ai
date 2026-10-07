@@ -11,6 +11,9 @@ from app.application.appointments.schedule_follow_up import (
     APPOINTMENT_FLOW_FOLLOW_UP_PROMPT,
     APPOINTMENT_FLOW_FOLLOW_UP_RESET,
 )
+from app.application.conversations.cleanup_conversation_session import (
+    CleanupConversationSessionUseCase,
+)
 from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
 from app.application.conversations.schedule_conversation_reset import (
     CONVERSATION_IDLE_RESET_ACTION,
@@ -22,6 +25,7 @@ from app.application.conversations.set_conversation_input_state import (
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.message import ROLE_ASSISTANT, Message
 from app.domain.entities.scheduled_action import ScheduledAction
+from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.message_repository import MessageRepository
@@ -64,6 +68,7 @@ async def run_follow_up_tick(
     now: datetime,
     limit: int,
     reset_delay_seconds: int,
+    cleanup_conversation_session: CleanupConversationSessionUseCase | None = None,
 ) -> int:
     """Inactivity follow-up sweep — one poll tick (this session's own
     brief, no PRD.md section): claims up to `limit` due `ScheduledAction`s
@@ -117,7 +122,9 @@ async def run_follow_up_tick(
             # `_agent_is_last_to_speak` would wrongly skip a conversation
             # whose last message was the patient's own (e.g. a closing
             # "Gracias" the agent already answered).
-            await _handle_conversation_idle_reset(conversation_repository, conversation_id)
+            await _handle_conversation_idle_reset(
+                conversation_repository, conversation_id, cleanup_conversation_session
+            )
             await scheduled_action_repository.transition_status(
                 scheduled_action.id, from_status="processing", to_status="executed"
             )
@@ -200,6 +207,7 @@ async def _resolve_contact(
 async def _handle_conversation_idle_reset(
     conversation_repository: ConversationRepository,
     conversation_id: ConversationId,
+    cleanup_conversation_session: CleanupConversationSessionUseCase | None = None,
 ) -> None:
     """The patient's own ask (revised — an earlier version of this sent the
     welcome menu proactively here, which the user explicitly asked to
@@ -210,10 +218,26 @@ async def _handle_conversation_idle_reset(
     left in — the patient never sees a "empezamos de cero" message unless
     they write again and normal turn routing decides to send one.
 
+    When `cleanup_conversation_session` is wired (production), the idle
+    window also wipes the conversation's agent working memory (checkpoints
+    of every generation, compacted contact memory, pending/scheduled
+    actions) through that use case, which owns the rotation itself. Its
+    failure is isolated: logged without PII and never raised, so one bad
+    conversation cannot break the worker tick.
+
     Never fires in `mode="human"`: a staff handoff owns its own
     reactivation timing
     (`IngestMessageUseCase._HUMAN_MODE_REACTIVATION_TIMEOUT`).
     """
+    if cleanup_conversation_session is not None:
+        try:
+            outcome = await cleanup_conversation_session.execute(conversation_id)
+        except Exception as exc:  # noqa: BLE001 - one failing cleanup must not break the tick
+            logger.error("follow_up_worker.idle_cleanup_failed error_type=%s", type(exc).__name__)
+        else:
+            logger.info("follow_up_worker.idle_cleanup outcome=%s", outcome.value)
+        return
+
     conversation = await conversation_repository.get_by_id(conversation_id)
     if conversation is None or conversation.mode != "agent":
         return
@@ -277,12 +301,19 @@ class FollowUpWorkerRepositories:
     messages: MessageRepository
     conversations: ConversationRepository
     contacts: ContactRepository
+    #: Only needed to build the idle cleanup use case (see `cleanup_factory`).
+    contact_memories: ContactMemoryRepository | None = None
 
 
 FollowUpWorkerRepositoriesProvider = Callable[
     [], AbstractAsyncContextManager[FollowUpWorkerRepositories]
 ]
 CheckpointerProvider = Callable[[], Awaitable[Any]]
+#: Builds the per-tick idle cleanup use case from that tick's repositories
+#: and checkpointer; `None` means cleanup is unavailable this tick.
+CleanupFactory = Callable[
+    [FollowUpWorkerRepositories, Any], CleanupConversationSessionUseCase | None
+]
 
 
 async def run_follow_up_loop(
@@ -294,6 +325,7 @@ async def run_follow_up_loop(
     batch_limit: int,
     reset_delay_seconds: int,
     max_iterations: int | None = None,
+    cleanup_factory: CleanupFactory | None = None,
 ) -> None:
     """Turns `run_follow_up_tick` into an actual running process — this
     module's own docstrings always claimed "`app.main`'s `lifespan` is what
@@ -329,6 +361,11 @@ async def run_follow_up_loop(
                     now=datetime.now(UTC),
                     limit=batch_limit,
                     reset_delay_seconds=reset_delay_seconds,
+                    cleanup_conversation_session=(
+                        cleanup_factory(repositories, checkpointer)
+                        if cleanup_factory is not None
+                        else None
+                    ),
                 )
         except asyncio.CancelledError:
             raise

@@ -14,6 +14,7 @@ from app.application.conversations.rotate_workflow_session import (
     WorkflowSessionRepositoriesProvider,
 )
 from app.application.conversations.schedule_conversation_reset import (
+    DEFAULT_IDLE_RESET_DELAY_SECONDS,
     ScheduleConversationResetUseCase,
 )
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
@@ -151,7 +152,7 @@ class IngestMessageUseCase:
         audio_rate_limit_per_minute: int = 0,
         welcome_image_url: str | None = None,
         workflow_session_repositories_provider: WorkflowSessionRepositoriesProvider | None = None,
-        conversation_idle_reset_delay_seconds: int = 7200,
+        conversation_idle_reset_delay_seconds: int = DEFAULT_IDLE_RESET_DELAY_SECONDS,
         mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     ) -> None:
         self._repositories_provider = repositories_provider
@@ -189,7 +190,7 @@ class IngestMessageUseCase:
         #: silence. Reconciled on every inbound message below; actually
         #: consumed by `app.workers.follow_up_worker`, the same poller
         #: that already owns the appointment-flow follow-up/reset pair.
-        #: Default: 2 hours.
+        #: Default: 3 hours.
         self._conversation_idle_reset_delay_seconds = conversation_idle_reset_delay_seconds
         self._mirror_to_chatwoot = mirror_to_chatwoot
         # Per-conversation accumulator of (message_id, text, button_payload,
