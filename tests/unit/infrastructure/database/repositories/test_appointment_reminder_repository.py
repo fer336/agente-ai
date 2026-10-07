@@ -5,21 +5,37 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.domain.entities.appointment_reminder import AppointmentReminder
+from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.database.models.appointment_reminder import AppointmentReminderModel
 from app.infrastructure.database.repositories.appointment_reminder_repository import (
     SqlAlchemyAppointmentReminderRepository,
 )
 
 
+class _Scalars:
+    def __init__(self, values: list[object]) -> None:
+        self._values = values
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def first(self):
+        return self._values[0] if self._values else None
+
+
 class _Result:
-    def __init__(self, *, rowcount: int = 0, scalar: object = None) -> None:
+    def __init__(
+        self, *, rowcount: int = 0, scalar: object = None, scalars: list[object] | None = None
+    ) -> None:
         self.rowcount = rowcount
         self._scalar = scalar
+        self._scalars = scalars or []
 
     def scalar(self):
         return self._scalar
 
     def scalars(self):
-        return []
+        return _Scalars(self._scalars)
 
 
 @pytest.fixture
@@ -195,3 +211,128 @@ async def test_has_sent_review_request_since_scopes_to_patient_kind_status_and_c
     assert "appointment_reminders.kind = %(kind_1)s" in sql
     assert "appointment_reminders.status = %(status_1)s" in sql
     assert "appointment_reminders.sent_at >= %(sent_at_1)s" in sql
+
+
+@pytest.mark.asyncio
+async def test_find_sent_for_inbound_action_returns_the_matching_terminal_reminder():
+    sent_at = datetime(2026, 10, 2, 13, tzinfo=UTC)
+    model = AppointmentReminderModel(
+        id="reminder-1",
+        appointment_id="appointment-1",
+        patient_id="patient-1",
+        kind="confirm_day_before",
+        status="sent",
+        due_at=sent_at,
+        attempts=1,
+        recipient_phone="+5491112345678",
+        sent_at=sent_at,
+    )
+    session = AsyncMock()
+    session.execute.return_value = _Result(scalars=[model])
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+
+    found = await repository.find_sent_for_inbound_action(
+        "appointment-1",
+        PhoneNumber("+5491112345678"),
+        frozenset({"confirm_day_before"}),
+    )
+
+    assert found is not None
+    assert found.id == "reminder-1"
+
+
+@pytest.mark.asyncio
+async def test_find_sent_for_inbound_action_fails_closed_when_no_match_exists():
+    session = AsyncMock()
+    session.execute.return_value = _Result()
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+
+    found = await repository.find_sent_for_inbound_action(
+        "appointment-1",
+        PhoneNumber("+5491112345678"),
+        frozenset({"confirm_day_before"}),
+    )
+
+    assert found is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rejection",
+    ["non_sent_status", "different_phone", "different_appointment", "disallowed_kind"],
+)
+async def test_find_sent_for_inbound_action_rejects_rows_outside_its_authorization_scope(
+    rejection: str,
+):
+    session = AsyncMock()
+    session.execute.return_value = _Result()
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+
+    await repository.find_sent_for_inbound_action(
+        "appointment-1",
+        PhoneNumber("+5491112345678"),
+        frozenset({"confirm_day_before", "confirm_or_location_same_day"}),
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+    expected_predicates = {
+        "non_sent_status": "appointment_reminders.status = %(status_1)s",
+        "different_phone": "appointment_reminders.recipient_phone = %(recipient_phone_1)s",
+        "different_appointment": "appointment_reminders.appointment_id = %(appointment_id_1)s",
+        "disallowed_kind": "appointment_reminders.kind IN",
+    }
+    assert expected_predicates[rejection] in sql
+    assert "sent" in compiled.params.values()
+    assert "appointment-1" in compiled.params.values()
+    assert "+5491112345678" in compiled.params.values()
+    assert any(
+        set(value) == {"confirm_day_before", "confirm_or_location_same_day"}
+        for value in compiled.params.values()
+        if isinstance(value, (tuple, list, frozenset))
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_sent_for_inbound_action_fails_closed_for_no_allowed_kinds():
+    session = AsyncMock()
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+
+    found = await repository.find_sent_for_inbound_action(
+        "appointment-1", PhoneNumber("+5491112345678"), frozenset()
+    )
+
+    assert found is None
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_has_sent_review_request_for_recipient_requires_a_terminal_review_request_for_phone():
+    session = AsyncMock()
+    session.execute.return_value = _Result(scalar=True)
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+
+    assert await repository.has_sent_review_request_for_recipient(
+        PhoneNumber("+5491112345678")
+    )
+
+    statement = session.execute.await_args.args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+    assert "appointment_reminders.recipient_phone = %(recipient_phone_1)s" in sql
+    assert "appointment_reminders.kind = %(kind_1)s" in sql
+    assert "appointment_reminders.status = %(status_1)s" in sql
+    assert {"+5491112345678", "review_request", "sent"}.issubset(compiled.params.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result", [False, None])
+async def test_has_sent_review_request_for_recipient_fails_closed_without_an_authorized_row(result):
+    session = AsyncMock()
+    session.execute.return_value = _Result(scalar=result)
+    repository = SqlAlchemyAppointmentReminderRepository(session)
+
+    assert (
+        await repository.has_sent_review_request_for_recipient(PhoneNumber("+5491112345678"))
+    ) is False

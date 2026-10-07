@@ -501,6 +501,11 @@ async def _resolve(
     payload = state["button_payload"]
 
     if payload is not None:
+        # Reminder callbacks are security-sensitive machine actions. Every
+        # REMINDER_ payload, including malformed/stale variants, reaches the
+        # fail-closed reminder node before any active-stage or LLM handling.
+        if payload.startswith("REMINDER_"):
+            return {"intent": "reminder_action"}
         if payload.startswith(FAQ_TOPIC_PAYLOAD_PREFIX):
             # A tapped FAQ row names its topic; it is an information request that may
             # interrupt a booking without losing the stage.

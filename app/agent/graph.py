@@ -16,6 +16,7 @@ from app.agent.nodes.handoff import create_handoff_node
 from app.agent.nodes.location import create_location_node
 from app.agent.nodes.payment_admin import create_payment_admin_node
 from app.agent.nodes.question import create_question_node
+from app.agent.nodes.reminder_action import create_reminder_action_node
 from app.agent.nodes.resolve_interaction import (
     POST_ACTION_CLOSE_INTENT,
     THANKS_INTENT,
@@ -27,6 +28,8 @@ from app.agent.state import AgentState
 from app.application.appointments.propose_appointment import ProposalRepositoriesProvider
 from app.application.errors.error_service import ErrorService
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
+from app.application.reminders.actions import HandleReminderActionUseCase
+from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import (
     AgreementGateway,
@@ -69,6 +72,7 @@ QUESTION_NODE = "question"
 LOCATION_NODE = "location"
 FAQ_TOPIC_NODE = "faq_topic"
 PAYMENT_ADMIN_NODE = "payment_admin"
+REMINDER_ACTION_NODE = "reminder_action"
 FALLBACK_NODE = "fallback"
 HANDLE_ERROR_NODE = "handle_error"
 
@@ -125,6 +129,8 @@ def _route_after_resolve_interaction(state: AgentState) -> str:
         return FAQ_TOPIC_NODE
     if intent == "payment_admin":
         return PAYMENT_ADMIN_NODE
+    if intent == "reminder_action":
+        return REMINDER_ACTION_NODE
     return FALLBACK_NODE
 
 
@@ -160,6 +166,8 @@ def build_graph(
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     location_image_url: str = "",
     aligners_image_url: str = "",
+    reminder_action_use_case: HandleReminderActionUseCase | None = None,
+    contact_repository: ContactRepository | None = None,
 ) -> StateGraph[AgentState, None, AgentState, AgentState]:
     """Builds the (uncompiled) agent graph (PRD.md §29):
 
@@ -312,6 +320,19 @@ def build_graph(
         ),
     )
     graph.add_node(
+        REMINDER_ACTION_NODE,
+        with_error_handling(
+            REMINDER_ACTION_NODE,
+            create_reminder_action_node(
+                reminder_action_use_case, conversation_repository, contact_repository
+            ),
+            node_execution_repository,
+            agent_run_id,
+            tool_execution_repository,
+            error_service,
+        ),
+    )
+    graph.add_node(
         FAQ_TOPIC_NODE,
         with_error_handling(
             FAQ_TOPIC_NODE,
@@ -372,6 +393,7 @@ def build_graph(
             LOCATION_NODE: LOCATION_NODE,
             FAQ_TOPIC_NODE: FAQ_TOPIC_NODE,
             PAYMENT_ADMIN_NODE: PAYMENT_ADMIN_NODE,
+            REMINDER_ACTION_NODE: REMINDER_ACTION_NODE,
             FALLBACK_NODE: FALLBACK_NODE,
         },
     )
@@ -388,6 +410,7 @@ def build_graph(
         LOCATION_NODE,
         FAQ_TOPIC_NODE,
         PAYMENT_ADMIN_NODE,
+        REMINDER_ACTION_NODE,
         FALLBACK_NODE,
     ):
         graph.add_conditional_edges(
@@ -421,6 +444,8 @@ def compile_graph(
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
     location_image_url: str = "",
     aligners_image_url: str = "",
+    reminder_action_use_case: HandleReminderActionUseCase | None = None,
+    contact_repository: ContactRepository | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Compiles the graph, optionally with a checkpointer.
 
@@ -451,6 +476,8 @@ def compile_graph(
         mirror_to_chatwoot=mirror_to_chatwoot,
         location_image_url=location_image_url,
         aligners_image_url=aligners_image_url,
+        reminder_action_use_case=reminder_action_use_case,
+        contact_repository=contact_repository,
     ).compile(checkpointer=checkpointer)
 
 

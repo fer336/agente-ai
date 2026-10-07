@@ -38,6 +38,16 @@ async def test_fake_reminder_appointment_gateway_keeps_an_inclusive_date_window(
 
 
 @pytest.mark.asyncio
+async def test_fake_reminder_appointment_gateway_records_patient_whatsapp_confirmation_calls():
+    gateway = FakeReminderAppointmentGateway()
+
+    await gateway.mark_appointment_confirmed_via_patient_whatsapp("appointment-1")
+
+    assert isinstance(gateway, ReminderAppointmentGateway)
+    assert gateway.patient_whatsapp_confirmation_calls == ["appointment-1"]
+
+
+@pytest.mark.asyncio
 async def test_fake_reminder_appointment_gateway_reads_current_appointment_by_id():
     current = ReminderAppointment(
         id="1",
@@ -51,3 +61,13 @@ async def test_fake_reminder_appointment_gateway_reads_current_appointment_by_id
 
     assert await gateway.get_reminder_appointment("1") == current
     assert await gateway.get_reminder_appointment("missing") is None
+
+
+@pytest.mark.asyncio
+async def test_fake_reminder_appointment_gateway_records_cancellation_calls():
+    gateway = FakeReminderAppointmentGateway()
+
+    await gateway.cancel_appointment("appointment-1", "key-1")
+
+    assert isinstance(gateway, ReminderAppointmentGateway)
+    assert gateway.cancellation_calls == [("appointment-1", "key-1")]

@@ -14,6 +14,9 @@ Use a safe staged rollout in an isolated worktree:
 - Same-day reminder 3 hours before the appointment, only inside 09:00–20:00.
 - Review request at 10:00 the next day, only for appointments marked attended.
 - Respect the approved `No recibir más` quick reply.
+- A `Confirmar` tap writes Dentalink status `Confirmado por pcte. vía WhatsApp`
+  (clinic status ID `22`, confirmed by the user after a live metadata-only check).
+- A `Cancelar` tap still requires a second explicit confirmation before cancellation.
 - Keep production recipients blocked behind an off-by-default feature flag and explicit
   phone allowlist.
 

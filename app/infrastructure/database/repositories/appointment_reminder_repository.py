@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, cast
 
@@ -5,7 +6,8 @@ from sqlalchemy import CursorResult, and_, case, exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.entities.appointment_reminder import AppointmentReminder
+from app.domain.entities.appointment_reminder import AppointmentReminder, ReminderKind
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.database.models.appointment_reminder import AppointmentReminderModel
 
 
@@ -210,6 +212,40 @@ class SqlAlchemyAppointmentReminderRepository:
                 AppointmentReminderModel.kind == "review_request",
                 AppointmentReminderModel.status == "sent",
                 AppointmentReminderModel.sent_at >= cutoff,
+            )
+        )
+        result = await self._session.execute(statement)
+        return bool(result.scalar())
+
+    async def find_sent_for_inbound_action(
+        self,
+        appointment_id: str,
+        recipient_phone: PhoneNumber,
+        allowed_kinds: Collection[ReminderKind],
+    ) -> AppointmentReminder | None:
+        if not allowed_kinds:
+            return None
+        result = await self._session.execute(
+            select(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.appointment_id == appointment_id,
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind.in_(tuple(allowed_kinds)),
+                AppointmentReminderModel.status == "sent",
+            )
+            .limit(1)
+        )
+        model = result.scalars().first()
+        if model is None:
+            return None
+        return _to_entity(model)
+
+    async def has_sent_review_request_for_recipient(self, recipient_phone: PhoneNumber) -> bool:
+        statement = select(
+            exists().where(
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind == "review_request",
+                AppointmentReminderModel.status == "sent",
             )
         )
         result = await self._session.execute(statement)

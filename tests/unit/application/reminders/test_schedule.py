@@ -6,6 +6,7 @@ import pytest
 from app.application.reminders.schedule import ReminderSchedulingSettings, schedule_reminders
 from app.domain.repositories.gateways import ReminderAppointment, ReminderPatient
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 
 NOW = datetime(2026, 10, 2, 13, tzinfo=UTC)
 TZ = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -26,6 +27,16 @@ class ReminderRepository:
 
     async def has_sent_review_request_since(self, patient_id, cutoff):
         return self.cooldown
+
+
+class ContactPreferences:
+    def __init__(self, opted_out=False):
+        self.opted_out = opted_out
+        self.phones = []
+
+    async def is_review_opted_out(self, phone):
+        self.phones.append(phone)
+        return self.opted_out
 
 
 class Appointments:
@@ -107,3 +118,64 @@ async def test_scheduling_is_idempotent_and_observes_review_cooldown():
     assert await schedule_reminders(appointments, patients, repository, NOW, settings()) == 0
     repository.cooldown = True
     assert await schedule_reminders(appointments, patients, repository, NOW, settings()) == 0
+
+
+@pytest.mark.asyncio
+async def test_review_opt_out_suppresses_only_review_requests():
+    rows = [
+        appointment(),
+        ReminderAppointment(
+            "apt-2",
+            "patient-1",
+            datetime(2026, 10, 1, 14, tzinfo=TZ),
+            "2",
+            "attended",
+            "attended",
+        ),
+    ]
+    repository = ReminderRepository()
+    preferences = ContactPreferences(opted_out=True)
+
+    assert (
+        await schedule_reminders(
+            Appointments(rows),
+            Patients(patient()),
+            repository,
+            NOW,
+            settings(),
+            preferences,
+        )
+        == 2
+    )
+    assert {row.kind for row in repository.rows.values()} == {
+        "confirm_day_before",
+        "confirm_or_location_same_day",
+    }
+    assert preferences.phones == [PHONE]
+
+
+@pytest.mark.asyncio
+async def test_missing_contact_is_eligible_for_a_review_request():
+    repository = ReminderRepository()
+    preferences = FakeContactRepository()
+    attended = ReminderAppointment(
+        "apt-2",
+        "patient-1",
+        datetime(2026, 10, 1, 14, tzinfo=TZ),
+        "2",
+        "attended",
+        "attended",
+    )
+
+    assert (
+        await schedule_reminders(
+            Appointments([attended]),
+            Patients(patient()),
+            repository,
+            NOW,
+            settings(),
+            preferences,
+        )
+        == 1
+    )
+    assert {row.kind for row in repository.rows.values()} == {"review_request"}

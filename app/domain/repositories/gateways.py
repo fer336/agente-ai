@@ -165,6 +165,18 @@ class ReminderAppointmentGateway(Protocol):
         """Re-read one appointment immediately before reminder delivery."""
         ...
 
+    async def mark_appointment_confirmed_via_patient_whatsapp(self, appointment_id: str) -> None:
+        """Record the clinic's patient-WhatsApp confirmation state.
+
+        Callers own appointment ownership and current-state revalidation;
+        this low-level operation only performs the validated state transition.
+        """
+        ...
+
+    async def cancel_appointment(self, appointment_id: str, idempotency_key: str) -> None:
+        """Cancel a revalidated reminder appointment using the shared operation."""
+        ...
+
 
 @runtime_checkable
 class ReminderPatientGateway(Protocol):

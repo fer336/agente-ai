@@ -155,6 +155,10 @@ def reminder_statuses_from_estados(
     named_states: dict[str, ReminderAppointmentState] = {
         "confirmada": "confirmed",
         "confirmado": "confirmed",
+        "confirmado por pcte. via whatsapp": "confirmed",
+        "confirmado por whatsapp": "confirmed",
+        "confirmado por email": "confirmed",
+        "confirmado por telefono": "confirmed",
         "atendida": "attended",
         "atendido": "attended",
         "no asistio": "no_show",
@@ -313,6 +317,30 @@ def treatment_from_tratamiento(raw: dict[str, object]) -> Treatment:
         paid=_as_float(raw.get("abonado")),
         debt=_as_float(raw.get("deuda")),
     )
+
+
+def resolve_patient_whatsapp_confirmation_state_id(estados: list[dict[str, object]]) -> str | None:
+    """Returns the one clinic-owned WhatsApp confirmation state when safe to write.
+
+    State 22 is intentionally pinned to the account's normalized exact name
+    and enabled, non-cancellation metadata. Never substitute a generic
+    confirmation state: a metadata mismatch means the clinic changed its
+    workflow and the caller must fail closed.
+    """
+    for estado in estados:
+        if str(estado.get("id")) != "22":
+            continue
+        name = estado.get("nombre")
+        if (
+            isinstance(name, str)
+            and _normalized_status_name(name)
+            == _normalized_status_name("Confirmado por pcte. vía WhatsApp")
+            and estado.get("anulacion") == 0
+            and estado.get("habilitado") == 1
+        ):
+            return "22"
+        return None
+    return None
 
 
 def _is_cancellation_estado(estado: dict[str, object]) -> bool:

@@ -367,6 +367,33 @@ async def test_admin_menu_button_payload_routes_to_handoff_even_with_an_active_s
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "collected_data"),
+    [
+        ("REMINDER_CONFIRM:appointment-1", {}),
+        ("REMINDER_CANCEL_CONFIRM:appointment-1", {"stage": "awaiting_confirmation"}),
+        ("REMINDER_CONFIRM:", {}),
+        ("REMINDER_UNKNOWN:appointment-1", {"stage": "awaiting_slot_selection"}),
+    ],
+)
+async def test_reminder_machine_payloads_route_to_reminder_action_before_active_stages_or_llm(
+    payload: str, collected_data: dict[str, object]
+) -> None:
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def understand(self, message, context):
+            raise AssertionError("reminder machine payloads must never reach the LLM")
+
+    node = create_resolve_interaction_node(_ExplodingLLMProvider())
+
+    result = await node(
+        make_agent_state(button_payload=payload, collected_data=collected_data)
+    )
+
+    assert result["intent"] == "reminder_action"
+
+
+@pytest.mark.asyncio
 async def test_unrecognized_button_payload_routes_to_unknown_without_classification():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def classify_intent(self, message, context):
