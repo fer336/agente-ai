@@ -2,7 +2,7 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, and_, case, exists, select, update
+from sqlalchemy import CursorResult, and_, case, exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -274,6 +274,19 @@ class SqlAlchemyAppointmentReminderRepository:
         )
         model = result.scalars().first()
         return None if model is None else _to_entity(model)
+
+    async def latest_pending_appointment_start(
+        self, recipient_phone: PhoneNumber, *, now: datetime
+    ) -> datetime | None:
+        result = await self._session.execute(
+            select(func.max(AppointmentReminderModel.appointment_starts_at)).where(
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind.in_(APPOINTMENT_REMINDER_KINDS),
+                AppointmentReminderModel.status == "sent",
+                AppointmentReminderModel.appointment_starts_at > now,
+            )
+        )
+        return result.scalar()
 
 
 def _to_entity(model: AppointmentReminderModel) -> AppointmentReminder:
