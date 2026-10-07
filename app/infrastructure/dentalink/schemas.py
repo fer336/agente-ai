@@ -220,12 +220,19 @@ def _normalized_status_name(name: str) -> str:
 
 
 def reminder_patient_from_paciente(raw: dict[str, object]) -> ReminderPatient:
-    """Maps only the identifier and normalized mobile needed for a reminder."""
+    """Maps only id, normalized mobile, and safe first name for a reminder."""
     patient_id = raw.get("id")
     raw_phone = raw.get("celular") or raw.get("telefono")
-    if patient_id is None or not raw_phone:
-        raise DentalinkInvalidResponseError("paciente record is missing id/celular/telefono")
-    return ReminderPatient(patient_id=str(patient_id), mobile=_phone_from_dentalink(str(raw_phone)))
+    display_name = (
+        str(raw.get("nombre", "")).strip().split(maxsplit=1)[0] if raw.get("nombre") else ""
+    )
+    if patient_id is None or not raw_phone or not display_name:
+        raise DentalinkInvalidResponseError("paciente record is missing id/celular/telefono/nombre")
+    return ReminderPatient(
+        patient_id=str(patient_id),
+        mobile=_phone_from_dentalink(str(raw_phone)),
+        display_name=display_name,
+    )
 
 
 def patient_from_paciente(raw: dict[str, object]) -> Patient:

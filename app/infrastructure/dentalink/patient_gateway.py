@@ -131,9 +131,7 @@ class DentalinkPatientGateway:
             operation="find_patient",
             request_summary=f"dni_len={len(dni)}",
             call=_call,
-            response_summary=lambda patient: (
-                f"patient_id={patient.id}" if patient else "not_found"
-            ),
+            response_summary=lambda patient: f"patient_id={patient.id}" if patient else "not_found",
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
         )

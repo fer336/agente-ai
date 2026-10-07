@@ -17,3 +17,6 @@ class FakeReminderAppointmentGateway:
             for appointment in self._appointments
             if start_date <= appointment.starts_at.date() <= end_date
         ]
+
+    async def get_reminder_appointment(self, appointment_id: str) -> ReminderAppointment | None:
+        return next((item for item in self._appointments if item.id == appointment_id), None)

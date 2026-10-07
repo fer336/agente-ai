@@ -56,7 +56,7 @@ Use a safe staged rollout in an isolated worktree:
   include off-by-default reminder settings and allowlist validation.
 - [x] T2 — Add Dentalink date-window appointment reads, patient lookup, and explicit
   confirmed/attended/cancelled status resolution from clinic metadata.
-- [ ] T3 — Add durable reminder persistence, scheduler, claim/retry behavior, and
+- [x] T3 — Add durable reminder persistence, scheduler, claim/retry behavior, and
   allowlisted template delivery for the three timing rules.
 - [ ] T4 — Handle Confirmar, Cancelar, Cómo llegar, and No recibir más payloads with
   stale/duplicate safeguards and durable opt-out.
@@ -113,7 +113,14 @@ Use a safe staged rollout in an isolated worktree:
   reads. Verification: 171 Dentalink tests passed; ruff, mypy, and diff check passed.
   Work-unit commits: `cb1ff28`, `67d4992`. Live response metadata remains unverified;
   unknown states fail closed.
+- T3 complete: timing planner, migration/model, atomic repository, allowlisted
+  scheduling, configured template construction, state-revalidated delivery, lease
+  renewal, and bounded retries. Work-unit commits: `97f688d`, `6e01837`, `e491abe`,
+  `eb029fa`, `caa42b9`, `c8abc25`, `e0b7ec8`, plus the worker/config commit recorded
+  with this progress update. Verification: 243 focused tests passed; ruff, mypy,
+  Alembic single-head, and diff checks passed. Provider exactly-once remains impossible
+  only for a crash after YCloud accepts a send and before the DB terminal write.
 
 ## Next step
 
-T3.
+T4.

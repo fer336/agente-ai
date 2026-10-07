@@ -494,9 +494,7 @@ async def test_list_reminder_appointments_for_date_window_uses_fecha_range_and_m
     ] == [("10", "pat-1", "2", "Atendida", "attended")]
     cita_request = next(call for call in client.get_calls if call[0] == "/v1/citas")
     assert cita_request[1] is not None
-    assert json.loads(cita_request[1]["q"]) == {
-        "fecha": {"gte": "2026-10-10", "lte": "2026-10-11"}
-    }
+    assert json.loads(cita_request[1]["q"]) == {"fecha": {"gte": "2026-10-10", "lte": "2026-10-11"}}
     assert cita_request[1]["limit"] == "500"
 
 
