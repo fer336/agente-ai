@@ -324,7 +324,10 @@ def build_graph(
         with_error_handling(
             REMINDER_ACTION_NODE,
             create_reminder_action_node(
-                reminder_action_use_case, conversation_repository, contact_repository
+                reminder_action_use_case,
+                conversation_repository,
+                contact_repository,
+                location_image_url,
             ),
             node_execution_repository,
             agent_run_id,

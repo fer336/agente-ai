@@ -59,6 +59,18 @@ def clinic_location_reply() -> dict[str, object]:
     }
 
 
+def clinic_location_prompt_reply(image_url: str) -> dict[str, object]:
+    """The clinic image with a short caption and the "Cómo llegar" button."""
+
+    return {
+        "response_text": _IMAGE_CAPTION,
+        "response_buttons": [_HOW_TO_ARRIVE_BUTTON],
+        "response_image_url": image_url,
+        "response_location": None,
+        "requires_handoff": False,
+    }
+
+
 def create_location_node(image_url: str = "") -> AgentNode:
     """Answer a location request.
 
@@ -71,13 +83,7 @@ def create_location_node(image_url: str = "") -> AgentNode:
     async def node(state: AgentState) -> dict[str, object]:
         if not image_url or state["button_payload"] == LOCATION_DETAIL_PAYLOAD:
             return clinic_location_reply()
-        return {
-            "response_text": _IMAGE_CAPTION,
-            "response_buttons": [_HOW_TO_ARRIVE_BUTTON],
-            "response_image_url": image_url,
-            "response_location": None,
-            "requires_handoff": False,
-        }
+        return clinic_location_prompt_reply(image_url)
 
     return node
 

@@ -1,6 +1,6 @@
 """Deterministic handler for appointment-reminder interactive callbacks."""
 
-from app.agent.nodes.location import clinic_location_reply
+from app.agent.nodes.location import clinic_location_prompt_reply, clinic_location_reply
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
 from app.application.reminders.actions import HandleReminderActionUseCase
@@ -25,6 +25,7 @@ def create_reminder_action_node(
     reminder_actions: HandleReminderActionUseCase | None,
     conversations: ConversationRepository | None,
     contacts: ContactRepository | None,
+    location_image_url: str = "",
 ) -> AgentNode:
     """Resolve the inbound phone and handle a reminder callback fail-closed.
 
@@ -53,6 +54,10 @@ def create_reminder_action_node(
         if not result.handled or result.stale:
             return _stale_reply()
         if result.location_requested:
+            # Same two-step flow as the menu: image + "Cómo llegar", whose tap
+            # routes to the native location card. No image configured → card.
+            if location_image_url:
+                return clinic_location_prompt_reply(location_image_url)
             return clinic_location_reply()
         return {
             "response_text": result.text,

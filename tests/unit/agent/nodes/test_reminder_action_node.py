@@ -8,6 +8,7 @@ from app.domain.entities.contact import Contact
 from app.domain.entities.conversation import Conversation
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.interactive_button import InteractiveButton
+from app.domain.value_objects.menu_payloads import LOCATION_DETAIL_PAYLOAD
 from app.domain.value_objects.phone_number import PhoneNumber
 from tests.fixtures.agent_state import make_agent_state
 
@@ -108,6 +109,26 @@ async def test_reminder_action_node_uses_the_existing_native_location_reply() ->
     assert result["response_buttons"] is None
     assert result["response_location"] is not None
     assert result["response_location"].latitude == -34.437762
+
+
+@pytest.mark.asyncio
+async def test_reminder_location_tap_sends_the_clinic_image_prompt_when_configured() -> None:
+    actions = _Actions(ReminderActionResult(True, "location", location_requested=True))
+    node = create_reminder_action_node(
+        actions,
+        _Conversations(_conversation()),
+        _Contacts(_contact()),
+        location_image_url="https://example.test/clinic.jpg",
+    )
+
+    result = await node(make_agent_state(button_payload="REMINDER_LOCATION:apt-1"))
+
+    assert result["response_image_url"] == "https://example.test/clinic.jpg"
+    assert result["response_location"] is None
+    assert result["response_text"] is not None
+    assert result["response_buttons"] == [
+        InteractiveButton(LOCATION_DETAIL_PAYLOAD, "Cómo llegar")
+    ]
 
 
 @pytest.mark.asyncio
