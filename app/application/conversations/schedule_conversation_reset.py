@@ -15,6 +15,11 @@ from app.domain.value_objects.idempotency_key import IdempotencyKey
 #: what this schedules.
 CONVERSATION_IDLE_RESET_ACTION = "conversation_idle_reset"
 
+#: Silence (seconds) after which an idle `mode="agent"` conversation has its
+#: agent working memory wiped (3 hours). `Settings.
+#: conversation_idle_reset_delay_seconds` mirrors this default.
+DEFAULT_IDLE_RESET_DELAY_SECONDS = 10_800
+
 
 class ScheduleConversationResetUseCase:
     """Reconciles one conversation's idle-reset timer at the end of every

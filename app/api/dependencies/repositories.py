@@ -279,6 +279,7 @@ async def open_sqlalchemy_follow_up_worker_repositories() -> AsyncIterator[
             messages=SqlAlchemyMessageRepository(session),
             conversations=SqlAlchemyConversationRepository(session),
             contacts=SqlAlchemyContactRepository(session),
+            contact_memories=SqlAlchemyContactMemoryRepository(session),
         )
         await session.commit()
 

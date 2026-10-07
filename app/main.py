@@ -14,6 +14,7 @@ from app.api.dependencies.repositories import (
     open_sqlalchemy_follow_up_worker_repositories,
     open_sqlalchemy_sent_message_repository,
 )
+from app.api.dependencies.session_cleanup import build_idle_cleanup_use_case
 from app.api.routes.admin import router as admin_router
 from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
@@ -77,6 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             interval_seconds=settings.follow_up_worker_interval_seconds,
             batch_limit=settings.follow_up_worker_batch_limit,
             reset_delay_seconds=settings.appointment_follow_up_reset_delay_seconds,
+            cleanup_factory=build_idle_cleanup_use_case,
         )
     )
     yield

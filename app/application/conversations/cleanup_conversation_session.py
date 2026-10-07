@@ -74,8 +74,6 @@ class CleanupConversationSessionUseCase:
         await self._session_checkpoints.delete_generations(conversation_id, retired_generation)
         await self._memory_service.reset(contact.id)
         logger.info(
-            "cleanup_conversation_session.cleaned conversation=%s retired_generation=%d",
-            conversation_id,
-            retired_generation,
+            "cleanup_conversation_session.cleaned retired_generation=%d", retired_generation
         )
         return CleanupOutcome.CLEANED
