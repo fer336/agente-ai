@@ -313,9 +313,7 @@ async def test_has_sent_review_request_for_recipient_requires_a_terminal_review_
     session.execute.return_value = _Result(scalar=True)
     repository = SqlAlchemyAppointmentReminderRepository(session)
 
-    assert await repository.has_sent_review_request_for_recipient(
-        PhoneNumber("+5491112345678")
-    )
+    assert await repository.has_sent_review_request_for_recipient(PhoneNumber("+5491112345678"))
 
     statement = session.execute.await_args.args[0]
     compiled = statement.compile(dialect=postgresql.dialect())
@@ -336,3 +334,19 @@ async def test_has_sent_review_request_for_recipient_fails_closed_without_an_aut
     assert (
         await repository.has_sent_review_request_for_recipient(PhoneNumber("+5491112345678"))
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_upsert_persists_and_refreshes_the_appointment_start(reminder: AppointmentReminder):
+    starts_at = datetime(2026, 10, 8, 13, 30, tzinfo=UTC)
+    reminder.appointment_starts_at = starts_at
+    session = AsyncMock()
+    session.execute.return_value = _Result(rowcount=1)
+
+    await SqlAlchemyAppointmentReminderRepository(session).upsert(reminder)
+
+    compiled = session.execute.await_args.args[0].compile(dialect=postgresql.dialect())
+    assert starts_at in compiled.params.values()
+    assert "appointment_starts_at=excluded.appointment_starts_at" in str(compiled).replace(
+        " ", ""
+    ) or "appointment_starts_at = excluded.appointment_starts_at" in str(compiled)

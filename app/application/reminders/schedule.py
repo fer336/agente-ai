@@ -110,6 +110,7 @@ async def schedule_reminders(
                 status="pending",
                 due_at=candidate.due_at,
                 recipient_phone=candidate.recipient_phone,
+                appointment_starts_at=source.starts_at,
             )
             if await repository.upsert(reminder):
                 inserted += 1

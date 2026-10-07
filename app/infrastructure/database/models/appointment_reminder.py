@@ -57,3 +57,4 @@ class AppointmentReminderModel(Base):
         DateTime(timezone=True), onupdate=func.now()
     )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    appointment_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
