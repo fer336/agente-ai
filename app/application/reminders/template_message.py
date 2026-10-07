@@ -20,6 +20,7 @@ def build_template_message(
     confirmation_template_name: str,
     location_template_name: str,
     review_template_name: str,
+    unconfirmed_template_name: str,
 ) -> TemplateMessage | None:
     """Build only the dynamic parts of one approved WhatsApp template."""
     time_label = appointment.starts_at.strftime("%H:%M")
@@ -28,7 +29,7 @@ def build_template_message(
             confirmation_template_name,
             language,
             (patient.display_name, spanish_date(appointment.starts_at), time_label),
-            confirm_buttons(appointment.id),
+            (TemplateQuickReplyButton(0, f"REMINDER_CONFIRM:{appointment.id}"),),
         )
     if reminder.kind == "confirm_or_location_same_day" and appointment.state == "confirmed":
         return TemplateMessage(
@@ -39,10 +40,13 @@ def build_template_message(
         )
     if reminder.kind == "confirm_or_location_same_day" and appointment.state == "active":
         return TemplateMessage(
-            confirmation_template_name,
+            unconfirmed_template_name,
             language,
-            (patient.display_name, "hoy", time_label),
-            confirm_buttons(appointment.id),
+            (patient.display_name, spanish_date(appointment.starts_at), time_label),
+            (
+                TemplateQuickReplyButton(0, f"REMINDER_CONFIRM:{appointment.id}"),
+                TemplateQuickReplyButton(1, f"REMINDER_RESCHEDULE:{appointment.id}"),
+            ),
         )
     if reminder.kind == "review_request" and appointment.state == "attended":
         return TemplateMessage(
@@ -53,15 +57,6 @@ def build_template_message(
             (TemplateQuickReplyButton(1, "REMINDER_REVIEW_OPTOUT"),),
         )
     return None
-
-
-def confirm_buttons(
-    appointment_id: str,
-) -> tuple[TemplateQuickReplyButton, TemplateQuickReplyButton]:
-    return (
-        TemplateQuickReplyButton(0, f"REMINDER_CONFIRM:{appointment_id}"),
-        TemplateQuickReplyButton(1, f"REMINDER_CANCEL:{appointment_id}"),
-    )
 
 
 def spanish_date(value: datetime) -> str:

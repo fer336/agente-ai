@@ -116,6 +116,70 @@ async def test_confirmed_and_location_are_idempotent_or_deferred_to_the_native_l
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["active", "confirmed"])
+async def test_reschedule_for_an_owned_active_or_confirmed_appointment_requests_the_flow(state):
+    handler, appointments, _ = use_case(
+        reminder("confirm_or_location_same_day"), current(state), patient()
+    )
+
+    result = await handler.handle("REMINDER_RESCHEDULE:appointment-1", PHONE)
+
+    assert result.handled and not result.stale
+    assert result.outcome == "reschedule_requested"
+    assert result.reschedule_requested
+    assert result.appointment_id == "appointment-1"
+    assert result.patient == patient()
+    assert appointments.patient_whatsapp_confirmation_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reschedule_looks_up_only_the_two_appointment_reminder_kinds():
+    reminders = Reminders(reminder())
+    handler = HandleReminderActionUseCase(
+        reminders,
+        FakeReminderAppointmentGateway([current()]),
+        Patients(patient()),
+        Contacts(),
+        now=lambda: NOW,
+    )
+
+    await handler.handle("REMINDER_RESCHEDULE:appointment-1", PHONE)
+
+    assert reminders.lookups == [
+        (
+            "appointment-1",
+            PHONE,
+            frozenset({"confirm_day_before", "confirm_or_location_same_day"}),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reminder_row,current_appointment,current_patient",
+    [
+        (None, current(), patient()),
+        (reminder(), None, patient()),
+        (reminder(), current(patient_id="other"), patient()),
+        (reminder(), current(), patient("other")),
+        (reminder(), current(), patient(mobile=PhoneNumber("+5491199999999"))),
+        *((reminder(), current(state), patient()) for state in ("cancelled", "no_show")),
+        (reminder(), current("attended"), patient()),
+    ],
+)
+async def test_reschedule_fails_closed_on_missing_mismatched_or_terminal_ownership(
+    reminder_row, current_appointment, current_patient
+):
+    handler, _, _ = use_case(reminder_row, current_appointment, current_patient)
+
+    result = await handler.handle("REMINDER_RESCHEDULE:appointment-1", PHONE)
+
+    assert result.handled and result.stale
+    assert not result.reschedule_requested
+    assert result.appointment_id is None and result.patient is None
+
+
+@pytest.mark.asyncio
 async def test_review_opt_out_requires_sent_review_and_existing_contact_then_is_idempotent():
     handler, _, contacts = use_case(review_sent=True)
 

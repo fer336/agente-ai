@@ -20,6 +20,7 @@ class ReminderSettings:
     confirmation_template_name: str = "recordatorio_turno_confirmar"
     location_template_name: str = "recordatorio_turno_ubicacion"
     review_template_name: str = "solicitud_resena_google"
+    unconfirmed_template_name: str = "recordatorio_turno_sin_confirmar"
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,7 @@ def plan_reminders(
                     template_name=(
                         settings.location_template_name
                         if appointment.status == "confirmed"
-                        else settings.confirmation_template_name
+                        else settings.unconfirmed_template_name
                     ),
                 )
             )

@@ -37,6 +37,11 @@ class ReminderActionResult:
     buttons: tuple[InteractiveButton, ...] = ()
     stale: bool = False
     location_requested: bool = False
+    #: The patient asked to move this appointment: the agent starts the existing
+    #: reschedule flow for ``appointment_id`` on behalf of ``patient``.
+    reschedule_requested: bool = False
+    appointment_id: str | None = None
+    patient: ReminderPatient | None = None
 
 
 class HandleReminderActionUseCase:
@@ -117,6 +122,14 @@ class HandleReminderActionUseCase:
             )
         if action.kind is ReminderActionKind.CANCEL_KEEP:
             return ReminderActionResult(True, "maintained", "Tu turno se mantiene.")
+        if action.kind is ReminderActionKind.RESCHEDULE:
+            return ReminderActionResult(
+                True,
+                "reschedule_requested",
+                reschedule_requested=True,
+                appointment_id=appointment.id,
+                patient=patient,
+            )
         return ReminderActionResult(True, "location", location_requested=True)
 
     async def _review_opt_out(self, inbound_phone: PhoneNumber) -> ReminderActionResult:

@@ -56,6 +56,7 @@ from app.agent.nodes.appointment import (
     create_appointment_node,
     should_use_appointment_decision_subgraph,
 )
+from app.agent.nodes.reminder_action import REMINDER_IDENTITY_KEY, REMINDER_RESCHEDULE_KEY
 from app.domain.exceptions.errors import AgreementAlreadyLinkedError
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
@@ -5518,3 +5519,59 @@ async def test_rejecting_the_dni_on_file_asks_for_the_dni_again_and_creates_nobo
     assert intake["stage"] == "collect"
     assert intake["editing_field"] == "dni"
     assert len(patient_gateway._patients) == 1
+
+
+def _reminder_reschedule_state(appointment_id, **overrides):
+    return make_agent_state(
+        conversation_id="conv-1",
+        button_payload=f"REMINDER_RESCHEDULE:{appointment_id}",
+        collected_data={
+            REMINDER_RESCHEDULE_KEY: str(appointment_id),
+            "patient": {"id": "pat-1", "full_name": "Ada", "phone": "+5491122334455", "dni": None},
+            REMINDER_IDENTITY_KEY: True,
+            **overrides,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_reschedule_preload_shows_the_slots_of_that_appointments_specialty():
+    old_slot = _future_slot(id_="slot-old", professional_id="prof-1")
+    new_slot = _future_slot(id_="slot-new", days=2, professional_id="prof-1")
+    node, _, appointment_gateway = await _make_node_and_conversation(
+        available_slots=[new_slot],
+        professionals=[make_professional(id_="prof-1", specialty_id="cleaning")],
+    )
+    appointment = await appointment_gateway.create_appointment(
+        patient=make_patient(id_="pat-1"), slot=old_slot, idempotency_key="seed-1"
+    )
+
+    result = await node(_reminder_reschedule_state(appointment.id))
+
+    data = result["collected_data"]
+    assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert data["operation"] == RESCHEDULE_APPOINTMENT_ACTION
+    assert data["rescheduling_appointment_id"] == str(appointment.id)
+    assert data["rescheduling_professional_id"] == "prof-1"
+    assert REMINDER_RESCHEDULE_KEY not in data
+    assert [row.id for row in result["response_list"].rows] == [
+        f"{SELECT_SLOT_PAYLOAD_PREFIX}slot-new"
+    ]
+    # A phone-authorized reminder tap must not become a remembered, verified identity.
+    assert "patient_identity" not in result
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_reschedule_for_an_appointment_the_patient_does_not_own_is_stale():
+    node, _, appointment_gateway = await _make_node_and_conversation()
+    other = await appointment_gateway.create_appointment(
+        patient=make_patient(id_="someone-else"),
+        slot=_future_slot(id_="slot-old"),
+        idempotency_key="seed-1",
+    )
+
+    result = await node(_reminder_reschedule_state(other.id))
+
+    assert result["response_text"] == "Este recordatorio ya no está disponible."
+    assert result["collected_data"] == {}
+    assert result.get("response_list") is None

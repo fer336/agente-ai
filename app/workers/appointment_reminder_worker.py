@@ -89,6 +89,7 @@ async def run_appointment_reminder_tick(
             settings.appointment_reminders_location_template_name,
             settings.appointment_reminders_review_template_name,
             settings.appointment_reminders_recipient_policy,
+            settings.appointment_reminders_unconfirmed_template_name,
         ),
         on_sent=_review_sent_hook(start_fresh_session),
     )

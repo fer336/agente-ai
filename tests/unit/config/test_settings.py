@@ -114,6 +114,7 @@ def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(m
         "APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_REVIEW_TEMPLATE_NAME",
+        "APPOINTMENT_REMINDERS_UNCONFIRMED_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_TEMPLATE_LANGUAGE",
         "APPOINTMENT_REMINDERS_DAY_BEFORE_TIME",
         "APPOINTMENT_REMINDERS_SAME_DAY_OFFSET_HOURS",
@@ -136,6 +137,10 @@ def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(m
     )
     assert settings.appointment_reminders_location_template_name == "recordatorio_turno_ubicacion"
     assert settings.appointment_reminders_review_template_name == "solicitud_resena_google"
+    assert (
+        settings.appointment_reminders_unconfirmed_template_name
+        == "recordatorio_turno_sin_confirmar"
+    )
     assert settings.appointment_reminders_template_language == "es_AR"
     assert settings.clinic_timezone == "America/Argentina/Buenos_Aires"
     assert str(settings.appointment_reminders_day_before_time) == "18:00:00"

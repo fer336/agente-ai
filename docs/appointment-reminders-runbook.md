@@ -52,7 +52,8 @@ These settings and defaults are already documented in [`dotenv_example_template.
 | `APPOINTMENT_REMINDERS_ENABLED` | `false` | Master opt-in; it must be `true` in every sending mode. |
 | `APPOINTMENT_REMINDERS_ROLLOUT_MODE` | `allowlist` | Safe staged mode. `all` is an explicit production mode; changing modes requires restart/reload. |
 | `APPOINTMENT_REMINDERS_PHONE_ALLOWLIST` | empty | Comma-separated E.164 recipients used only in `allowlist` mode; empty blocks all sends in that mode and never implies `all`. |
-| `APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME` | `recordatorio_turno_confirmar` | Day-before and active same-day template. |
+| `APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME` | `recordatorio_turno_confirmar` | Day-before template (one "Confirmar turno" button). |
+| `APPOINTMENT_REMINDERS_UNCONFIRMED_TEMPLATE_NAME` | `recordatorio_turno_sin_confirmar` | Same-day template for unconfirmed appointments (confirm and reschedule buttons). |
 | `APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME` | `recordatorio_turno_ubicacion` | Confirmed same-day location template. |
 | `APPOINTMENT_REMINDERS_REVIEW_TEMPLATE_NAME` | `solicitud_resena_google` | Attended-appointment review template. |
 | `APPOINTMENT_REMINDERS_TEMPLATE_LANGUAGE` | `es_AR` | Provider template language. |

@@ -35,6 +35,7 @@ class ReminderDeliverySettings:
     location_template_name: str = "recordatorio_turno_ubicacion"
     review_template_name: str = "solicitud_resena_google"
     recipient_policy: ReminderRecipientPolicy = ReminderRecipientPolicy()
+    unconfirmed_template_name: str = "recordatorio_turno_sin_confirmar"
 
 
 async def deliver_due_reminders(
@@ -87,6 +88,7 @@ async def deliver_due_reminders(
                 confirmation_template_name=settings.confirmation_template_name,
                 location_template_name=settings.location_template_name,
                 review_template_name=settings.review_template_name,
+                unconfirmed_template_name=settings.unconfirmed_template_name,
             )
             if template is None:
                 await repository.mark_skipped(
@@ -176,4 +178,3 @@ def _matches(
         and patient.patient_id == reminder.patient_id
         and str(patient.mobile) == reminder.recipient_phone
     )
-
