@@ -53,7 +53,7 @@ done
 
 EVALS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Pinned on purpose: this runs with production admin cookies. Bump deliberately.
-PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.123.1}"
+PROMPTFOO_VERSION="${PROMPTFOO_VERSION:-0.124.0}"
 # Grader-host allowlist and quote stripping live in check_grader_host.py (tested).
 HELPER="$EVALS_DIR/check_grader_host.py"
 BASE_URL="${INTERNAL_EVAL_BASE_URL:-https://agent.qeva-ai.com}"
