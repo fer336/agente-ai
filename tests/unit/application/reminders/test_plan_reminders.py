@@ -51,7 +51,8 @@ def test_active_appointment_gets_day_before_and_confirmation_same_day_in_utc():
         ("confirm_day_before", datetime(2026, 10, 1, 21, tzinfo=UTC)),
         ("confirm_or_location_same_day", datetime(2026, 10, 2, 14, tzinfo=UTC)),
     ]
-    assert candidates[1].template_name == "recordatorio_turno_confirmar"
+    assert candidates[0].template_name == "recordatorio_turno_confirmar"
+    assert candidates[1].template_name == "recordatorio_turno_sin_confirmar"
     assert candidates[0].recipient_phone == "+5491112345678"
 
 

@@ -132,6 +132,7 @@ class Settings(BaseSettings):
     appointment_reminders_confirmation_template_name: str = "recordatorio_turno_confirmar"
     appointment_reminders_location_template_name: str = "recordatorio_turno_ubicacion"
     appointment_reminders_review_template_name: str = "solicitud_resena_google"
+    appointment_reminders_unconfirmed_template_name: str = "recordatorio_turno_sin_confirmar"
     appointment_reminders_template_language: str = "es_AR"
     appointment_reminders_day_before_time: time = time(18, 0)
     appointment_reminders_same_day_offset_hours: int = 3

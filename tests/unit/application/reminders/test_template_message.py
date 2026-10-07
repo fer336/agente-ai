@@ -38,6 +38,7 @@ def build(kind: str, state: str):
         confirmation_template_name="recordatorio_turno_confirmar",
         location_template_name="recordatorio_turno_ubicacion",
         review_template_name="solicitud_resena_google",
+        unconfirmed_template_name="recordatorio_turno_sin_confirmar",
     )
 
 
@@ -49,7 +50,14 @@ def build(kind: str, state: str):
             "active",
             "recordatorio_turno_confirmar",
             ("Ada", "sábado 3 de octubre", "14:00"),
-            ("REMINDER_CONFIRM:apt-1", "REMINDER_CANCEL:apt-1"),
+            ("REMINDER_CONFIRM:apt-1",),
+        ),
+        (
+            "confirm_day_before",
+            "confirmed",
+            "recordatorio_turno_confirmar",
+            ("Ada", "sábado 3 de octubre", "14:00"),
+            ("REMINDER_CONFIRM:apt-1",),
         ),
         (
             "confirm_or_location_same_day",
@@ -61,9 +69,9 @@ def build(kind: str, state: str):
         (
             "confirm_or_location_same_day",
             "active",
-            "recordatorio_turno_confirmar",
-            ("Ada", "hoy", "14:00"),
-            ("REMINDER_CONFIRM:apt-1", "REMINDER_CANCEL:apt-1"),
+            "recordatorio_turno_sin_confirmar",
+            ("Ada", "sábado 3 de octubre", "14:00"),
+            ("REMINDER_CONFIRM:apt-1", "REMINDER_RESCHEDULE:apt-1"),
         ),
         (
             "review_request",
@@ -92,6 +100,7 @@ def test_builds_configured_template_and_preserves_review_button_index_one():
         confirmation_template_name="custom-confirm",
         location_template_name="custom-location",
         review_template_name="custom-review",
+        unconfirmed_template_name="custom-unconfirmed",
     )
 
     assert message is not None
@@ -101,3 +110,22 @@ def test_builds_configured_template_and_preserves_review_button_index_one():
         TemplateQuickReplyButton(index=1, payload="REMINDER_REVIEW_OPTOUT"),
     )
 
+
+def test_unconfirmed_same_day_template_uses_configured_name_and_button_indexes():
+    message = build_template_message(
+        reminder("confirm_or_location_same_day"),
+        appointment("active"),
+        patient(),
+        language="es_AR",
+        confirmation_template_name="custom-confirm",
+        location_template_name="custom-location",
+        review_template_name="custom-review",
+        unconfirmed_template_name="custom-unconfirmed",
+    )
+
+    assert message is not None
+    assert message.name == "custom-unconfirmed"
+    assert message.quick_reply_buttons == (
+        TemplateQuickReplyButton(index=0, payload="REMINDER_CONFIRM:apt-1"),
+        TemplateQuickReplyButton(index=1, payload="REMINDER_RESCHEDULE:apt-1"),
+    )
