@@ -138,6 +138,13 @@ def _route_after_business_node(state: AgentState) -> str:
     return HANDLE_ERROR_NODE if state.get("error") else END
 
 
+def _route_after_reminder_action(state: AgentState) -> str:
+    """A reminder reschedule tap hands over to the appointment node (existing flow)."""
+    if state.get("error"):
+        return HANDLE_ERROR_NODE
+    return APPOINTMENT_NODE if state.get("intent") == "appointment" else END
+
+
 def _route_after_appointment(state: AgentState) -> str:
     """The appointment node may end a stuck flow by setting `intent="handoff"` (e.g. the
     patient-not-found choice looping): hand over exactly like the handoff button."""
@@ -413,7 +420,6 @@ def build_graph(
         LOCATION_NODE,
         FAQ_TOPIC_NODE,
         PAYMENT_ADMIN_NODE,
-        REMINDER_ACTION_NODE,
         FALLBACK_NODE,
     ):
         graph.add_conditional_edges(
@@ -421,6 +427,11 @@ def build_graph(
             _route_after_business_node,
             {HANDLE_ERROR_NODE: HANDLE_ERROR_NODE, END: END},
         )
+    graph.add_conditional_edges(
+        REMINDER_ACTION_NODE,
+        _route_after_reminder_action,
+        {HANDLE_ERROR_NODE: HANDLE_ERROR_NODE, APPOINTMENT_NODE: APPOINTMENT_NODE, END: END},
+    )
     graph.add_edge(HANDLE_ERROR_NODE, END)
 
     return graph

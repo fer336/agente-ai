@@ -10,6 +10,7 @@ class ReminderActionKind(StrEnum):
     CANCEL_CONFIRM = "cancel_confirm"
     CANCEL_KEEP = "cancel_keep"
     LOCATION = "location"
+    RESCHEDULE = "reschedule"
     REVIEW_OPTOUT = "review_optout"
 
 
@@ -25,6 +26,7 @@ _PREFIXES = (
     ("REMINDER_CONFIRM:", ReminderActionKind.CONFIRM),
     ("REMINDER_CANCEL:", ReminderActionKind.CANCEL),
     ("REMINDER_LOCATION:", ReminderActionKind.LOCATION),
+    ("REMINDER_RESCHEDULE:", ReminderActionKind.RESCHEDULE),
 )
 
 
