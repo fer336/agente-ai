@@ -109,6 +109,7 @@ def test_settings_defaults_ycloud_and_debounce_fields_when_no_env_vars(monkeypat
 def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(monkeypatch):
     for var in (
         "APPOINTMENT_REMINDERS_ENABLED",
+        "APPOINTMENT_REMINDERS_ROLLOUT_MODE",
         "APPOINTMENT_REMINDERS_PHONE_ALLOWLIST",
         "APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME",
@@ -126,8 +127,10 @@ def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(m
     settings = Settings(_env_file=None)
 
     assert settings.appointment_reminders_enabled is False
+    assert settings.appointment_reminders_rollout_mode == "allowlist"
     assert settings.appointment_reminders_phone_allowlist == ""
     assert settings.appointment_reminders_phone_allowlist_set == frozenset()
+    assert settings.appointment_reminders_recipient_policy.can_run(enabled=True) is False
     assert (
         settings.appointment_reminders_confirmation_template_name == "recordatorio_turno_confirmar"
     )
@@ -173,6 +176,18 @@ def test_settings_rejects_invalid_appointment_reminder_allowlist_phone(monkeypat
     monkeypatch.setenv("APPOINTMENT_REMINDERS_PHONE_ALLOWLIST", "not-a-phone")
 
     with pytest.raises(ValueError, match="PhoneNumber"):
+        Settings(_env_file=None)
+
+
+def test_settings_validates_rollout_mode_and_allows_all_without_an_allowlist(monkeypatch):
+    monkeypatch.setenv("APPOINTMENT_REMINDERS_ROLLOUT_MODE", "all")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.appointment_reminders_recipient_policy.can_run(enabled=True) is True
+
+    monkeypatch.setenv("APPOINTMENT_REMINDERS_ROLLOUT_MODE", "unknown")
+    with pytest.raises(ValueError, match="rollout_mode"):
         Settings(_env_file=None)
 
 

@@ -23,6 +23,8 @@ from app.domain.repositories.gateways import (
     HumanHandoffGateway,
     MessagingGateway,
     PatientGateway,
+    ReminderAppointmentGateway,
+    ReminderPatientGateway,
     SpecialtyGateway,
     TreatmentGateway,
 )
@@ -39,6 +41,7 @@ from app.infrastructure.dentalink.agreement_gateway import DentalinkAgreementGat
 from app.infrastructure.dentalink.appointment_gateway import DentalinkAppointmentGateway
 from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
+from app.infrastructure.dentalink.fake_appointment_gateway import FakeReminderAppointmentGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
@@ -183,6 +186,25 @@ def _get_fake_patient_gateway() -> FakePatientGateway:
 @lru_cache
 def _get_real_patient_gateway() -> DentalinkPatientGateway:
     return DentalinkPatientGateway(_get_dentalink_client())
+
+
+@lru_cache
+def _get_fake_reminder_appointment_gateway() -> FakeReminderAppointmentGateway:
+    return FakeReminderAppointmentGateway()
+
+
+def get_reminder_appointment_gateway() -> ReminderAppointmentGateway:
+    """Return a reminder-capable adapter without duplicating real clients."""
+    if get_settings().dentalink_access_token:
+        return _get_real_appointment_gateway()
+    return _get_fake_reminder_appointment_gateway()
+
+
+def get_reminder_patient_gateway() -> ReminderPatientGateway:
+    """Return the existing reminder-capable patient adapter."""
+    if get_settings().dentalink_access_token:
+        return _get_real_patient_gateway()
+    return _get_fake_patient_gateway()
 
 
 def get_patient_gateway() -> PatientGateway:

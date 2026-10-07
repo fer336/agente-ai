@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.application.reminders.recipient_policy import ReminderRecipientPolicy
 from app.application.reminders.schedule import ReminderSchedulingSettings, schedule_reminders
 from app.domain.repositories.gateways import ReminderAppointment, ReminderPatient
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -69,9 +70,17 @@ def patient():
     return ReminderPatient("patient-1", PHONE, "Ada")
 
 
-def settings(enabled=True):
+def settings(enabled=True, mode="allowlist", allowlist=frozenset({str(PHONE)})):
     return ReminderSchedulingSettings(
-        enabled, {str(PHONE)}, TZ, time(18), 3, time(9), time(20), time(10), 90
+        enabled,
+        ReminderRecipientPolicy(mode, allowlist),
+        TZ,
+        time(18),
+        3,
+        time(9),
+        time(20),
+        time(10),
+        90,
     )
 
 
@@ -88,13 +97,27 @@ async def test_disabled_or_empty_allowlist_never_calls_dentalink():
             patients,
             repository,
             NOW,
-            ReminderSchedulingSettings(
-                False, set(), TZ, time(18), 3, time(9), time(20), time(10), 90
-            ),
+            settings(False, allowlist=frozenset()),
         )
         == 0
     )
     assert appointments.calls == patients.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_all_mode_schedules_with_an_empty_allowlist():
+    appointments = Appointments([appointment()])
+    patients = Patients(patient())
+    repository = ReminderRepository()
+
+    assert (
+        await schedule_reminders(
+            appointments, patients, repository, NOW, settings(mode="all", allowlist=frozenset())
+        )
+        == 2
+    )
+    assert appointments.calls == 1
+    assert patients.calls == 1
 
 
 @pytest.mark.asyncio

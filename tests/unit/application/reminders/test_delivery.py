@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.application.reminders.delivery import ReminderDeliverySettings, deliver_due_reminders
+from app.application.reminders.recipient_policy import ReminderRecipientPolicy
 from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.repositories.gateways import ReminderAppointment, ReminderPatient
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -115,7 +116,7 @@ def settings(**changes):
         "batch_size": 10,
         "max_attempts": 3,
         "claim_timeout_seconds": 60,
-        "phone_allowlist": frozenset({str(PHONE)}),
+        "recipient_policy": ReminderRecipientPolicy("allowlist", frozenset({str(PHONE)})),
     }
     values.update(changes)
     return ReminderDeliverySettings(**values)
@@ -214,10 +215,30 @@ async def test_delivery_skips_recipient_removed_from_current_allowlist_before_cl
         Patients(patient()),
         messaging,
         NOW,
-        settings(phone_allowlist=frozenset()),
+        settings(recipient_policy=ReminderRecipientPolicy("allowlist", frozenset())),
     )
     assert row.status == "skipped"
     assert messaging.sent == []
+
+
+@pytest.mark.asyncio
+async def test_delivery_all_mode_sends_with_an_empty_allowlist():
+    row = reminder()
+    messaging = Messaging()
+
+    assert (
+        await deliver_due_reminders(
+            ReminderRepository([row]),
+            Appointments([appointment()]),
+            Patients(patient()),
+            messaging,
+            NOW,
+            settings(recipient_policy=ReminderRecipientPolicy("all", frozenset())),
+        )
+        == 1
+    )
+    assert row.status == "sent"
+    assert len(messaging.sent) == 1
 
 
 @pytest.mark.asyncio

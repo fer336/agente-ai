@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from app.application.reminders.recipient_policy import ReminderRecipientPolicy
 from app.application.reminders.template_message import build_template_message
 from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.repositories.appointment_reminder_repository import AppointmentReminderRepository
@@ -29,7 +30,7 @@ class ReminderDeliverySettings:
     confirmation_template_name: str = "recordatorio_turno_confirmar"
     location_template_name: str = "recordatorio_turno_ubicacion"
     review_template_name: str = "solicitud_resena_google"
-    phone_allowlist: frozenset[str] = frozenset()
+    recipient_policy: ReminderRecipientPolicy = ReminderRecipientPolicy()
 
 
 async def deliver_due_reminders(
@@ -45,7 +46,7 @@ async def deliver_due_reminders(
     await repository.reclaim_stale_claims(now - timedelta(seconds=settings.claim_timeout_seconds))
     handled = 0
     for reminder in await repository.list_due(now, settings.batch_size):
-        if reminder.recipient_phone not in settings.phone_allowlist:
+        if not settings.recipient_policy.allows(reminder.recipient_phone):
             await repository.skip_pending(
                 reminder.id, reason="recipient_not_allowlisted", skipped_at=now
             )
