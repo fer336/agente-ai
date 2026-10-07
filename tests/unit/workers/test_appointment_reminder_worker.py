@@ -235,3 +235,63 @@ async def test_loop_forwards_the_repositories_fresh_session_use_case(monkeypatch
     )
 
     assert seen["start_fresh_session"] is fresh_session
+
+
+@pytest.mark.asyncio
+async def test_tick_forwards_the_record_sent_hook_to_delivery(monkeypatch):
+    captured = {}
+
+    async def fake_deliver(*args, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        "app.workers.appointment_reminder_worker.deliver_due_reminders", fake_deliver
+    )
+    repository = AsyncMock()
+    repository.list_due.return_value = []
+    record_sent = AsyncMock()
+
+    await run_appointment_reminder_tick(
+        repository,
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        _enabled_settings(),
+        record_sent=record_sent,
+        now=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+
+    assert captured["record_sent"] is record_sent
+
+
+@pytest.mark.asyncio
+async def test_loop_forwards_the_repositories_record_sent_hook(monkeypatch):
+    record_sent = AsyncMock()
+    seen = {}
+
+    @asynccontextmanager
+    async def repositories_provider() -> AsyncIterator[AppointmentReminderWorkerRepositories]:
+        yield AppointmentReminderWorkerRepositories(
+            reminders=AsyncMock(), contacts=AsyncMock(), record_sent=record_sent
+        )
+
+    async def tick(*args, **kwargs):
+        seen.update(kwargs)
+        return (0, 0)
+
+    monkeypatch.setattr(
+        "app.workers.appointment_reminder_worker.run_appointment_reminder_tick", tick
+    )
+
+    await run_appointment_reminder_loop(
+        repositories_provider,
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        _enabled_settings(),
+        interval_seconds=0,
+        max_iterations=1,
+    )
+
+    assert seen["record_sent"] is record_sent

@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.application.conversations.start_fresh_session import StartFreshSessionUseCase
-from app.application.reminders.delivery import ReminderDeliverySettings, deliver_due_reminders
+from app.application.reminders.delivery import (
+    ReminderDeliverySettings,
+    ReminderSentRecorder,
+    deliver_due_reminders,
+)
 from app.application.reminders.schedule import ReminderSchedulingSettings, schedule_reminders
 from app.config.settings import Settings
 from app.domain.entities.appointment_reminder import AppointmentReminder
@@ -31,6 +35,9 @@ class AppointmentReminderWorkerRepositories:
     reminders: AppointmentReminderRepository
     contacts: ContactRepository
     start_fresh_session: StartFreshSessionUseCase | None = None
+    #: Keeps the recipient's conversation context after a send. Owns its own
+    #: transaction so a failure can never poison the tick's delivery state.
+    record_sent: ReminderSentRecorder | None = None
 
 
 AppointmentReminderWorkerRepositoriesProvider = Callable[
@@ -47,6 +54,7 @@ async def run_appointment_reminder_tick(
     *,
     contacts: ContactRepository | None = None,
     start_fresh_session: StartFreshSessionUseCase | None = None,
+    record_sent: ReminderSentRecorder | None = None,
     now: datetime | None = None,
 ) -> tuple[int, int]:
     """Run bounded scheduling then delivery once."""
@@ -92,6 +100,7 @@ async def run_appointment_reminder_tick(
             settings.appointment_reminders_unconfirmed_template_name,
         ),
         on_sent=_review_sent_hook(start_fresh_session),
+        record_sent=record_sent,
     )
     return scheduled, delivered
 
@@ -140,6 +149,7 @@ async def run_appointment_reminder_loop(
                     settings,
                     contacts=repositories.contacts,
                     start_fresh_session=repositories.start_fresh_session,
+                    record_sent=repositories.record_sent,
                     now=datetime.now(UTC),
                 )
                 logger.info(

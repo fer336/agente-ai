@@ -17,15 +17,18 @@ PHONE = PhoneNumber("+5491112345678")
 class ReminderRepository:
     def __init__(self, rows=()):
         self.rows = {row.id: row for row in rows}
+
     async def list_due(self, now, limit):
         due = [row for row in self.rows.values() if row.status == "pending" and row.due_at <= now]
         return due[:limit]
+
     async def claim(self, reminder_id, claimed_at):
         row = self.rows[reminder_id]
         if row.status != "pending":
             return False
         row.status, row.claimed_at, row.attempts = "processing", claimed_at, row.attempts + 1
         return True
+
     async def reclaim_stale_claims(self, stale_before):
         count = 0
         for row in self.rows.values():
@@ -33,12 +36,14 @@ class ReminderRepository:
                 row.status, row.claimed_at = "pending", None
                 count += 1
         return count
+
     async def skip_pending(self, reminder_id, *, reason, skipped_at):
         row = self.rows[reminder_id]
         if row.status != "pending":
             return False
         row.status, row.last_error = "skipped", reason
         return True
+
     async def renew_claim(self, reminder_id, *, claimed_at, renewed_at):
         row = self.rows[reminder_id]
         if row.status != "processing" or row.claimed_at != claimed_at:
@@ -46,6 +51,7 @@ class ReminderRepository:
         row.claimed_at = renewed_at
         self.last_renewed_at = renewed_at
         return True
+
     async def mark_skipped(self, reminder_id, *, claimed_at, reason, skipped_at):
         row = self.rows[reminder_id]
         if row.status != "processing" or row.claimed_at != claimed_at:
@@ -323,3 +329,89 @@ async def test_on_sent_failure_never_changes_reminder_state_or_stops_the_tick():
     assert row.last_error is None
     assert row.attempts == 1
     assert repository.rows["r-review"].status == "sent"
+
+
+async def _deliver_with_hooks(
+    row, *, record_sent=None, on_sent=None, state="active", messaging=None
+):
+    repository = ReminderRepository([row])
+    await deliver_due_reminders(
+        repository,
+        Appointments([appointment(state)]),
+        Patients(patient()),
+        messaging or Messaging(),
+        NOW,
+        settings(),
+        record_sent=record_sent,
+        on_sent=on_sent,
+    )
+    return repository
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("row", "state"),
+    [(reminder(), "active"), (review_reminder(), "attended")],
+)
+async def test_record_sent_runs_after_mark_sent_for_every_kind(row, state):
+    calls = []
+
+    async def record_sent(reminder, phone, template):
+        calls.append((reminder.id, reminder.status, phone, template.name))
+
+    await _deliver_with_hooks(row, record_sent=record_sent, state=state)
+
+    assert len(calls) == 1
+    assert calls[0][1:3] == ("sent", PHONE)
+
+
+@pytest.mark.asyncio
+async def test_record_sent_is_not_called_when_the_send_fails_or_is_skipped():
+    calls = []
+
+    async def record_sent(reminder, phone, template):
+        calls.append(reminder.id)
+
+    await _deliver_with_hooks(
+        reminder(), record_sent=record_sent, messaging=Messaging(RuntimeError("boom"))
+    )
+    await _deliver_with_hooks(review_reminder(), record_sent=record_sent, state="active")
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_record_sent_failure_never_changes_the_reminder_or_skips_the_review_cleanup():
+    cleanup = []
+
+    async def record_sent(reminder, phone, template):
+        raise RuntimeError("database unavailable")
+
+    async def on_sent(reminder, phone):
+        cleanup.append(reminder.id)
+
+    row = review_reminder()
+    repository = await _deliver_with_hooks(
+        row, record_sent=record_sent, on_sent=on_sent, state="attended"
+    )
+
+    assert (row.status, row.last_error, row.attempts) == ("sent", None, 1)
+    assert repository.rows["r-review"].status == "sent"
+    assert cleanup == ["r-review"]
+
+
+@pytest.mark.asyncio
+async def test_record_sent_runs_before_the_review_cleanup():
+    order = []
+
+    async def record_sent(reminder, phone, template):
+        order.append("record")
+
+    async def on_sent(reminder, phone):
+        order.append("cleanup")
+
+    await _deliver_with_hooks(
+        review_reminder(), record_sent=record_sent, on_sent=on_sent, state="attended"
+    )
+
+    assert order == ["record", "cleanup"]
