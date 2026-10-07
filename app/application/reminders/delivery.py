@@ -1,7 +1,7 @@
 """CAS-safe appointment-reminder delivery orchestration."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -16,8 +16,12 @@ from app.domain.repositories.gateways import (
     ReminderPatient,
     ReminderPatientGateway,
 )
+from app.domain.value_objects.phone_number import PhoneNumber
 
 logger = logging.getLogger(__name__)
+
+#: Post-send hook for a successfully delivered review request: (reminder, recipient phone).
+ReviewRequestSentHook = Callable[[AppointmentReminder, PhoneNumber], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ async def deliver_due_reminders(
     settings: ReminderDeliverySettings,
     *,
     utc_clock: Callable[[], datetime] | None = None,
+    on_sent: ReviewRequestSentHook | None = None,
 ) -> int:
     await repository.reclaim_stale_claims(now - timedelta(seconds=settings.claim_timeout_seconds))
     handled = 0
@@ -109,7 +114,7 @@ async def deliver_due_reminders(
                 continue
             ownership_claimed_at = renewed_at
             external_id = await messaging.send_template(patient.mobile, template)
-            await repository.mark_sent(
+            marked_sent = await repository.mark_sent(
                 reminder.id,
                 claimed_at=ownership_claimed_at,
                 external_message_id=external_id,
@@ -118,6 +123,8 @@ async def deliver_due_reminders(
             logger.info(
                 "appointment_reminder.sent reminder_id=%s kind=%s", reminder.id, reminder.kind
             )
+            if marked_sent and on_sent is not None and reminder.kind == "review_request":
+                await _run_on_sent(on_sent, reminder, patient.mobile)
         except Exception as exc:
             # Integration failures are retryable; deterministic data checks are handled above.
             retry_at = (
@@ -141,6 +148,21 @@ async def deliver_due_reminders(
                 retry_at is not None,
             )
     return handled
+
+
+async def _run_on_sent(
+    on_sent: ReviewRequestSentHook, reminder: AppointmentReminder, phone: PhoneNumber
+) -> None:
+    # The reminder is already terminal ("sent"): a hook failure must never reach the
+    # delivery failure path, which would try to release or fail the row.
+    try:
+        await on_sent(reminder, phone)
+    except Exception as exc:  # noqa: BLE001 - hook is best-effort
+        logger.warning(
+            "appointment_reminder.on_sent_failed reminder_id=%s error_type=%s",
+            reminder.id,
+            type(exc).__name__,
+        )
 
 
 def _matches(

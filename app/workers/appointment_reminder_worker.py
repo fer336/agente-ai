@@ -2,14 +2,16 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.application.conversations.start_fresh_session import StartFreshSessionUseCase
 from app.application.reminders.delivery import ReminderDeliverySettings, deliver_due_reminders
 from app.application.reminders.schedule import ReminderSchedulingSettings, schedule_reminders
 from app.config.settings import Settings
+from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.repositories.appointment_reminder_repository import AppointmentReminderRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.gateways import (
@@ -17,6 +19,7 @@ from app.domain.repositories.gateways import (
     ReminderAppointmentGateway,
     ReminderPatientGateway,
 )
+from app.domain.value_objects.phone_number import PhoneNumber
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,7 @@ class AppointmentReminderWorkerRepositories:
 
     reminders: AppointmentReminderRepository
     contacts: ContactRepository
+    start_fresh_session: StartFreshSessionUseCase | None = None
 
 
 AppointmentReminderWorkerRepositoriesProvider = Callable[
@@ -42,6 +46,7 @@ async def run_appointment_reminder_tick(
     settings: Settings,
     *,
     contacts: ContactRepository | None = None,
+    start_fresh_session: StartFreshSessionUseCase | None = None,
     now: datetime | None = None,
 ) -> tuple[int, int]:
     """Run bounded scheduling then delivery once."""
@@ -85,8 +90,26 @@ async def run_appointment_reminder_tick(
             settings.appointment_reminders_review_template_name,
             settings.appointment_reminders_recipient_policy,
         ),
+        on_sent=_review_sent_hook(start_fresh_session),
     )
     return scheduled, delivered
+
+
+def _review_sent_hook(
+    start_fresh_session: StartFreshSessionUseCase | None,
+) -> Callable[[AppointmentReminder, PhoneNumber], Awaitable[None]] | None:
+    if start_fresh_session is None:
+        return None
+
+    async def on_review_sent(reminder: AppointmentReminder, phone: PhoneNumber) -> None:
+        outcome = await start_fresh_session.execute(phone)
+        logger.info(
+            "appointment_reminder_worker.fresh_session reminder_id=%s outcome=%s",
+            reminder.id,
+            outcome,
+        )
+
+    return on_review_sent
 
 
 async def run_appointment_reminder_loop(
@@ -115,6 +138,7 @@ async def run_appointment_reminder_loop(
                     messaging,
                     settings,
                     contacts=repositories.contacts,
+                    start_fresh_session=repositories.start_fresh_session,
                     now=datetime.now(UTC),
                 )
                 logger.info(

@@ -11,6 +11,7 @@ from app.api.dependencies.gateways import (
     get_reminder_patient_gateway,
 )
 from app.config.settings import Settings
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.workers.appointment_reminder_worker import (
     AppointmentReminderWorkerRepositories,
     run_appointment_reminder_loop,
@@ -138,3 +139,99 @@ async def test_reminder_loop_repeats_survives_failures_and_propagates_cancellati
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+def _enabled_settings() -> Settings:
+    return Settings(
+        _env_file=None,
+        appointment_reminders_enabled=True,
+        appointment_reminders_rollout_mode="all",
+    )
+
+
+@pytest.mark.asyncio
+async def test_tick_passes_a_fresh_session_hook_that_resets_the_patient_session(monkeypatch):
+    captured = {}
+
+    async def fake_deliver(*args, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        "app.workers.appointment_reminder_worker.deliver_due_reminders", fake_deliver
+    )
+    repository = AsyncMock()
+    repository.list_due.return_value = []
+    fresh_session = AsyncMock()
+    phone = PhoneNumber("+5491112345678")
+
+    await run_appointment_reminder_tick(
+        repository,
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        _enabled_settings(),
+        start_fresh_session=fresh_session,
+        now=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+    await captured["on_sent"](AsyncMock(), phone)
+
+    fresh_session.execute.assert_awaited_once_with(phone)
+
+
+@pytest.mark.asyncio
+async def test_tick_without_a_fresh_session_use_case_passes_no_hook(monkeypatch):
+    captured = {}
+
+    async def fake_deliver(*args, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(
+        "app.workers.appointment_reminder_worker.deliver_due_reminders", fake_deliver
+    )
+    repository = AsyncMock()
+    repository.list_due.return_value = []
+
+    await run_appointment_reminder_tick(
+        repository,
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        _enabled_settings(),
+        now=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+
+    assert captured["on_sent"] is None
+
+
+@pytest.mark.asyncio
+async def test_loop_forwards_the_repositories_fresh_session_use_case(monkeypatch):
+    fresh_session = AsyncMock()
+    seen = {}
+
+    @asynccontextmanager
+    async def repositories_provider() -> AsyncIterator[AppointmentReminderWorkerRepositories]:
+        yield AppointmentReminderWorkerRepositories(
+            reminders=AsyncMock(), contacts=AsyncMock(), start_fresh_session=fresh_session
+        )
+
+    async def tick(*args, **kwargs):
+        seen.update(kwargs)
+        return (0, 0)
+
+    monkeypatch.setattr(
+        "app.workers.appointment_reminder_worker.run_appointment_reminder_tick", tick
+    )
+
+    await run_appointment_reminder_loop(
+        repositories_provider,
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        _enabled_settings(),
+        interval_seconds=0,
+        max_iterations=1,
+    )
+
+    assert seen["start_fresh_session"] is fresh_session

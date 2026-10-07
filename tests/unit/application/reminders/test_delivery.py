@@ -263,3 +263,63 @@ async def test_renewed_claim_cannot_be_reclaimed_during_bounded_provider_send():
         utc_clock=lambda: fresh_now,
     )
     assert row.status == "sent"
+
+
+def review_reminder():
+    return AppointmentReminder(
+        "r-review", "apt-1", "patient-1", "review_request", "pending", NOW, str(PHONE)
+    )
+
+
+async def _deliver(row, on_sent, state="attended", messaging=None):
+    repository = ReminderRepository([row])
+    await deliver_due_reminders(
+        repository,
+        Appointments([appointment(state)]),
+        Patients(patient()),
+        messaging or Messaging(),
+        NOW,
+        settings(),
+        on_sent=on_sent,
+    )
+    return repository
+
+
+@pytest.mark.asyncio
+async def test_on_sent_runs_after_mark_sent_for_review_request_only():
+    calls = []
+
+    async def on_sent(reminder, phone):
+        calls.append((reminder.id, reminder.status, phone))
+
+    await _deliver(review_reminder(), on_sent)
+    await _deliver(reminder(), on_sent, state="active")
+
+    assert calls == [("r-review", "sent", PHONE)]
+
+
+@pytest.mark.asyncio
+async def test_on_sent_is_not_called_when_the_send_fails_or_is_skipped():
+    calls = []
+
+    async def on_sent(reminder, phone):
+        calls.append(reminder.id)
+
+    await _deliver(review_reminder(), on_sent, messaging=Messaging(RuntimeError("boom")))
+    await _deliver(review_reminder(), on_sent, state="active")
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_sent_failure_never_changes_reminder_state_or_stops_the_tick():
+    async def on_sent(reminder, phone):
+        raise RuntimeError("reset failed")
+
+    row = review_reminder()
+    repository = await _deliver(row, on_sent)
+
+    assert row.status == "sent"
+    assert row.last_error is None
+    assert row.attempts == 1
+    assert repository.rows["r-review"].status == "sent"

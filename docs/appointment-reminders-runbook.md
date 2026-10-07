@@ -123,6 +123,15 @@ For any unexpected recipient, template, timing, callback, or delivery failure:
 
 Review requests apply to **all attended eligible patients** in scope, subject to the configured cooldown and a recorded opt-out. Do not sentiment-gate recipients, offer incentives, or suppress negative experiences. Honor review opt-out requests: they suppress review requests while appointment reminders remain independently eligible.
 
+## Fresh agent session after a review request
+
+Right after a `review_request` is sent and marked `sent`, the worker starts a fresh agent session for that patient: the conversation's workflow session generation is rotated (+1) and the contact's compacted memory (database row and cache key) is cleared. This is scoped to one patient; it is not a table truncate.
+
+- Skipped, with no error: unknown contact, missing conversation, a conversation whose contact does not match, `mode` other than `agent` (human/Chatwoot handoff keeps its context), and a lost rotation race (memory is only cleared when the rotation won).
+- Only `review_request` triggers it; other reminder kinds never do.
+- History is kept: messages, checkpoints, and agent runs are not deleted, and the old thread stays under the previous generation.
+- Failures are isolated: the reminder stays `sent`, the tick continues, and the log shows `appointment_reminder.on_sent_failed` (error type only, no phone numbers). Outcomes appear as `appointment_reminder_worker.fresh_session ... outcome=<value>`.
+
 ## Rollout exit checklist
 
 - [ ] Migrations report `0020_review_opt_out` as the single current head, with `0019_appointment_reminder` applied earlier in the chain.
