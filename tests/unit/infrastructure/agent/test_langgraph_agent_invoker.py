@@ -24,6 +24,7 @@ from app.agent.nodes.appointment import (
 )
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF
+from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.contact_memory import ContactMemory
 from app.domain.value_objects.conversation_id import ConversationId
@@ -36,6 +37,9 @@ from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.langgraph_agent_invoker import (
     AgentRepositories,
     LangGraphAgentInvoker,
+)
+from app.infrastructure.database.fake_appointment_reminder_repository import (
+    FakeAppointmentReminderRepository,
 )
 from app.infrastructure.database.fake_scheduled_action_repository import (
     FakeScheduledActionRepository,
@@ -187,6 +191,7 @@ async def test_handle_wires_reminder_actions_only_for_capable_gateways(monkeypat
         return original_compile_graph(*args, **kwargs)
 
     monkeypatch.setattr(invoker_module, "compile_graph", capture_compile_graph)
+
     class ReminderAppointments:
         async def list_reminder_appointments_for_date_window(self, start_date, end_date):
             return []
@@ -431,9 +436,7 @@ async def test_handle_schedules_a_follow_up_when_a_stage_stays_active():
         make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
     )
 
-    await invoker.handle(
-        ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD
-    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "", OPERATION_CREATE_PAYLOAD)
 
     scheduled = await scheduled_action_repository.get_scheduled_by_conversation_id("conv-1")
     assert len(scheduled) == 1
@@ -540,9 +543,7 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
-    await invoker.handle(
-        ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD
-    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD)
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
 
     compiled_graph = compile_graph(
@@ -614,9 +615,7 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
-    await invoker.handle(
-        ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD
-    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD)
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
     # Turn 5: pick the offered slot — the subgraph's `choose_slot` stores
     # `pending_selected_slot` and exits to legacy `_begin_identification`.
@@ -697,9 +696,7 @@ async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
-    await invoker.handle(
-        ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD
-    )
+    await invoker.handle(ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD)
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
     await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
@@ -1309,9 +1306,12 @@ async def _book_a_verified_patient_then_return_the_invoker():
 async def test_the_patient_is_remembered_across_the_rotation_after_a_booking():
     # Chat A root cause candidate: the booking rotates the workflow session (a new
     # checkpoint thread), which used to drop the verified patient.
-    invoker, conversation_repository, messaging_gateway, cid = (
-        await _book_a_verified_patient_then_return_the_invoker()
-    )
+    (
+        invoker,
+        conversation_repository,
+        messaging_gateway,
+        cid,
+    ) = await _book_a_verified_patient_then_return_the_invoker()
     conversation = await conversation_repository.get_by_id(cid)
     assert conversation is not None and conversation.workflow_session_generation > 1
     messaging_gateway.sent_buttons.clear()
@@ -1324,9 +1324,12 @@ async def test_the_patient_is_remembered_across_the_rotation_after_a_booking():
 
 @pytest.mark.asyncio
 async def test_an_idle_rotation_after_a_booking_forgets_the_patient():
-    invoker, conversation_repository, messaging_gateway, cid = (
-        await _book_a_verified_patient_then_return_the_invoker()
-    )
+    (
+        invoker,
+        conversation_repository,
+        messaging_gateway,
+        cid,
+    ) = await _book_a_verified_patient_then_return_the_invoker()
     conversation = await conversation_repository.get_by_id(cid)
     assert conversation is not None
     # What `IngestMessageUseCase` does after an hour of inactivity.
@@ -1456,3 +1459,120 @@ async def test_an_aligners_question_sends_the_image_and_an_option_tap_starts_the
         FIRST_VISIT_CONFIRM_PAYLOAD,
         FIRST_VISIT_CANCEL_PAYLOAD,
     ]
+
+
+class _RecordingGraph:
+    """Stands in for the compiled graph: records the state the turn starts from."""
+
+    def __init__(self) -> None:
+        self.initial_state = None
+
+    async def aget_state(self, config):
+        return type("Snapshot", (), {"values": {}})()
+
+    async def ainvoke(self, state, config=None):
+        self.initial_state = state
+        return {"collected_data": {}, "response_text": None}
+
+
+async def _reminder_context_summary(monkeypatch, reminders, *, memory_summary=None):
+    import app.infrastructure.agent.langgraph_agent_invoker as invoker_module
+
+    graph = _RecordingGraph()
+    monkeypatch.setattr(invoker_module, "compile_graph", lambda *args, **kwargs: graph)
+    memories = make_contact_memory_repository()
+    if memory_summary is not None:
+        await memories.save(
+            ContactMemory(
+                id="mem-1",
+                contact_id="contact-1",
+                summary=memory_summary,
+                last_compacted_message_id=None,
+                last_compacted_at=None,
+                updated_at=datetime.now(UTC),
+            )
+        )
+    invoker, conversations, contacts, _, _ = _make_invoker(
+        contact_memory_repository=memories, appointment_reminder_repository=reminders
+    )
+    await contacts.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversations.save(make_conversation(id_="conv-1", contact_id="contact-1", mode="agent"))
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "no puedo ir", None)
+
+    return graph.initial_state["contact_memory_summary"]
+
+
+def _sent_reminder(*, sent_ago=timedelta(hours=1), starts_in=timedelta(hours=20)):
+    now = datetime.now(UTC)
+    return AppointmentReminder(
+        "r-1",
+        "apt-1",
+        "patient-1",
+        "confirm_day_before",
+        "sent",
+        now,
+        "+5491122334455",
+        sent_at=now - sent_ago,
+        appointment_starts_at=now + starts_in,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_recent_pending_reminder_is_added_to_the_agent_context(monkeypatch):
+    reminders = FakeAppointmentReminderRepository([_sent_reminder()])
+
+    summary = await _reminder_context_summary(monkeypatch, reminders)
+
+    assert summary is not None
+    assert "Recordatorio de turno reciente" in summary
+
+
+@pytest.mark.asyncio
+async def test_the_reminder_context_is_appended_to_the_existing_memory_summary(monkeypatch):
+    reminders = FakeAppointmentReminderRepository([_sent_reminder()])
+
+    summary = await _reminder_context_summary(
+        monkeypatch, reminders, memory_summary="Paciente frecuente."
+    )
+
+    assert summary is not None
+    assert summary.startswith("Paciente frecuente.")
+    assert "Recordatorio de turno reciente" in summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stale",
+    [
+        _sent_reminder(sent_ago=timedelta(hours=49)),
+        _sent_reminder(starts_in=timedelta(minutes=-5)),
+    ],
+)
+async def test_no_reminder_context_after_the_window_or_once_the_appointment_passed(
+    monkeypatch, stale
+):
+    summary = await _reminder_context_summary(
+        monkeypatch, FakeAppointmentReminderRepository([stale])
+    )
+
+    assert summary is None
+
+
+@pytest.mark.asyncio
+async def test_a_failing_reminder_lookup_never_breaks_the_turn(monkeypatch):
+    reminders = AsyncMock()
+    reminders.find_latest_sent_pending_appointment_reminder.side_effect = RuntimeError("db down")
+
+    summary = await _reminder_context_summary(
+        monkeypatch, reminders, memory_summary="Paciente frecuente."
+    )
+
+    assert summary == "Paciente frecuente."
+
+
+@pytest.mark.asyncio
+async def test_without_a_reminder_repository_the_summary_is_untouched(monkeypatch):
+    summary = await _reminder_context_summary(monkeypatch, None, memory_summary="Memoria.")
+
+    assert summary == "Memoria."
