@@ -17,11 +17,13 @@ This runbook is for an operator conducting a deliberately narrow rollout. **No l
    ```
 
    The database must be upgraded through the single current head
-   `0020_review_opt_out`; the linear chain applies both
-   `0019_appointment_reminder` (durable `appointment_reminders` rows) and
-   `0020_review_opt_out` (the `contacts.review_opted_out_at` preference).
-3. Verify the three approved template names are available in the configured WhatsApp provider account before enabling any send:
+   `0021_reminder_appointment_start`; the linear chain applies
+   `0019_appointment_reminder` (durable `appointment_reminders` rows),
+   `0020_review_opt_out` (the `contacts.review_opted_out_at` preference) and
+   `0021_reminder_appointment_start` (the nullable `appointment_reminders.appointment_starts_at` column).
+3. Verify the four approved template names are available in the configured WhatsApp provider account before enabling any send, with the definitions in [Template definitions](#template-definitions-metaycloud):
    - `recordatorio_turno_confirmar`
+   - `recordatorio_turno_sin_confirmar`
    - `recordatorio_turno_ubicacion`
    - `solicitud_resena_google`
 
@@ -36,12 +38,62 @@ Do not invent or substitute a recipient. Obtain explicit authorization for **one
 
    | Path | Eligibility and timing | Expected template/callback |
    | --- | --- | --- |
-   | Day-before confirmation | `active` or `confirmed` appointment; previous clinic day at `APPOINTMENT_REMINDERS_DAY_BEFORE_TIME` | `recordatorio_turno_confirmar`; confirm and cancel quick replies |
-   | Same-day reminder/location | `active` or `confirmed` appointment; `APPOINTMENT_REMINDERS_SAME_DAY_OFFSET_HOURS` before start, only inside the configured send window | Active: confirmation template with confirm/cancel. Confirmed: `recordatorio_turno_ubicacion` with location quick reply. |
+   | Day-before confirmation | `active` or `confirmed` appointment; previous clinic day at `APPOINTMENT_REMINDERS_DAY_BEFORE_TIME` | `recordatorio_turno_confirmar`; one "Confirmar turno" quick reply |
+   | Same-day reminder/location | `active` or `confirmed` appointment; `APPOINTMENT_REMINDERS_SAME_DAY_OFFSET_HOURS` before start, only inside the configured send window | Active (not confirmed): `recordatorio_turno_sin_confirmar` with "Confirmar turno" and "Reprogramar turno" quick replies. Confirmed: `recordatorio_turno_ubicacion` with location quick reply. |
    | Review request | `attended` appointment; next clinic day at `APPOINTMENT_REMINDERS_REVIEW_TIME` | `solicitud_resena_google`; its static URL and review opt-out quick reply |
 
-5. Test callbacks from the same authorized number: confirmation updates the appointment; cancellation requires the follow-up confirmation; location responds only for the matching sent reminder; review opt-out records the preference and suppresses later review requests. Treat a stale/mismatched callback as safely unavailable, not as permission to retry against another recipient.
+5. Test callbacks from the same authorized number: confirmation updates the appointment; rescheduling starts the reschedule flow for that appointment; location responds only for the matching sent reminder; review opt-out records the preference and suppresses later review requests. Treat a stale/mismatched callback as safely unavailable, not as permission to retry against another recipient.
 6. Keep the allowlist at one number while reviewing evidence. Decide on expansion in a separate, explicit approval; expansion is not part of this test.
+
+## Template definitions (Meta/YCloud)
+
+Create or edit these templates in the WhatsApp provider account **before** deploying this code. Category `UTILITY`, language `es_AR` (`APPOINTMENT_REMINDERS_TEMPLATE_LANGUAGE`). Body variables are positional: `{{1}}` patient name, `{{2}}` date such as `jueves 8 de octubre`, `{{3}}` time as `HH:MM`. Use the sample values `Sofía` / `jueves 8 de octubre` / `10:30` when submitting for review. Buttons are quick replies; the application supplies each button's payload at send time, so the buttons carry no payload in the template itself.
+
+| Template | Action | Body variables | Quick-reply buttons (index: label) |
+| --- | --- | --- | --- |
+| `recordatorio_turno_confirmar` | **Edit** the existing template | `{{1}}` name, `{{2}}` date, `{{3}}` time | `0`: "Confirmar turno" (the only button; remove the former cancel button) |
+| `recordatorio_turno_sin_confirmar` | **Create** (new) | `{{1}}` name, `{{2}}` date, `{{3}}` time | `0`: "Confirmar turno"; `1`: "Reprogramar turno" |
+| `recordatorio_turno_ubicacion` | Unchanged | name, time | `0`: location button |
+| `solicitud_resena_google` | Unchanged | name | `0`: static review URL; `1`: review opt-out quick reply |
+
+Body of `recordatorio_turno_confirmar`:
+
+```text
+¡Hola, {{1}}! 😊 Somos de Smiling Pilar. Tenemos reservado tu turno para el *{{2}} a las {{3}}* 🦷✨
+*¿Contamos con vos?* Tocá el botón de abajo para confirmar tu asistencia. ✅ ¡Te esperamos! 💙
+```
+
+Body of `recordatorio_turno_sin_confirmar` (the wording of the confirm line may still change):
+
+```text
+¡Hola, {{1}}! 😊 Vimos que todavía no confirmaste tu turno para el *{{2}} a las {{3}}*.
+*¡Todavía estás a tiempo de confirmar!* ✅ *¿Preferís que lo reprogramemos?* Tocá «Reprogramar turno»
+y te ayudamos a elegir otro día y horario. 💙
+```
+
+Button payloads sent by the application (for reference, not for the template): `REMINDER_CONFIRM:<appointment_id>` (index 0), `REMINDER_RESCHEDULE:<appointment_id>` (index 1 of the unconfirmed template), `REMINDER_LOCATION:<appointment_id>`, `REMINDER_REVIEW_OPTOUT`. The "Cancelar" button no longer exists in any template; a patient can still cancel by talking to the agent.
+
+### Deploy order warning
+
+The code and the Meta/YCloud approval must switch **together**:
+
+- The code sends one button for the confirm template and two buttons for the unconfirmed template. A template whose approved definition does not match (for example the old two-button version of `recordatorio_turno_confirmar`) can be rejected by the provider or send a different button set than the application expects.
+- An edited template goes back through Meta review, which can take **up to 24 hours**. How the previously approved version behaves while the edit is in review is not documented by the provider: do not assume it stays usable.
+- Recommended order: submit both templates and wait for approval; keep `APPOINTMENT_REMINDERS_ENABLED=false` (or the single-number allowlist) until both show as approved; then deploy this release and run the staged one-number test below.
+- Roll back by disabling reminders first (see incident handling); reverting the code alone does not restore the old template definition.
+
+## What a reply does
+
+- **Buttons are deterministic.** A tap on "Confirmar turno", "Reprogramar turno" or the location button is processed by the reminder action for that exact appointment and recipient; it does not depend on agent memory. "Reprogramar turno" starts the existing reschedule flow for that appointment.
+- **First inbound.** Right after a successful send (every reminder kind) the worker creates the recipient's contact and conversation (`ycloud-{phone}`, mode `agent`) if they do not exist and stores one assistant message with a readable Spanish equivalent of the template (name, date and time only). It does not set `workflow_last_activity_at`, does not schedule the idle reset and is not mirrored to Chatwoot. Because the conversation already exists, the recipient's first free-text message (for example "hola") goes straight to the agent and does **not** receive the once-ever welcome menu. If this step failed, a first-ever reminder button tap is still processed (the welcome menu is skipped for reminder payloads); a first free-text message from such a recipient still gets the welcome menu.
+- **Free text.** For up to 48 hours after a sent day-before or same-day reminder, and only while the appointment has not started, the agent receives a short note with the appointment date and time and what the reminder asked (appended to the contact memory summary that the agent already reads). A message such as "no puedo ir" therefore reaches an agent that knows which appointment it is about. There is no extra intent routing.
+- **Idle cleanup deferral and rescheduling.** The idle cleanup (wipes the agent checkpoints and contact memory three hours after the last inbound message) is skipped, with outcome `skipped_pending_reminder`, while a sent day-before or same-day reminder exists for the patient's phone whose appointment start is still in the future. The skipped cleanup is rescheduled once (one scheduled idle action per conversation) for the appointment start plus the idle delay (`CONVERSATION_IDLE_RESET_DELAY_SECONDS`, default 10800), and it runs normally then. A newer inbound message replaces that schedule with the usual three-hour idle timer, which re-checks the same condition when it fires. Reminder rows created before `0021_reminder_appointment_start` have no appointment start and never defer the cleanup or add reply context. Human/Chatwoot-handled conversations are still skipped.
+- **Review requests.** Unchanged: after a `review_request` is sent the worker still starts a fresh agent session (see below), after the conversation record above has been created.
+
+## Dentalink state facts
+
+- A "Confirmar turno" tap writes Dentalink appointment state `22` ("Confirmado por pcte. vía WhatsApp"), only after the application re-validates ownership and the current appointment state, and only if state `22` still has exactly that name and is enabled and not a cancellation state; otherwise it fails closed.
+- Sending a reminder does **not** change the Dentalink appointment state; an appointment stays `active` until the patient confirms it (or the clinic changes it). The same-day job uses that state to choose the confirmed (location) or unconfirmed (confirm/reschedule) template at send time.
 
 ## Reminder environment settings
 
@@ -91,7 +143,7 @@ Run the focused checks before rollout; they do not perform a live provider send:
 ```bash
 uv run alembic upgrade head
 uv run alembic current
-uv run --extra dev pytest tests/unit/application/reminders tests/unit/workers/test_appointment_reminder_worker.py tests/unit/infrastructure/database/repositories/test_appointment_reminder_repository.py tests/unit/agent/nodes/test_reminder_action_node.py tests/unit/api/routes/test_webhook.py
+uv run --extra dev pytest tests/unit/application/reminders tests/unit/application/conversations/test_cleanup_conversation_session.py tests/unit/workers/test_appointment_reminder_worker.py tests/unit/infrastructure/database/repositories/test_appointment_reminder_repository.py tests/unit/agent/nodes/test_reminder_action_node.py tests/unit/api/routes/test_webhook.py
 ```
 
 Watch for these structured event names (identifiers and error types only; avoid adding PII to log searches or evidence):
@@ -135,9 +187,10 @@ Right after a `review_request` is sent and marked `sent`, the worker starts a fr
 
 ## Rollout exit checklist
 
-- [ ] Migrations report `0020_review_opt_out` as the single current head, with `0019_appointment_reminder` applied earlier in the chain.
+- [ ] Migrations report `0021_reminder_appointment_start` as the single current head, with `0019_appointment_reminder` and `0020_review_opt_out` applied earlier in the chain.
+- [ ] The edited and the new template are approved at the provider before reminders are enabled.
 - [ ] The allowlist contained exactly one explicitly authorized E.164 test number during the trial.
-- [ ] All three template/timing paths and their callbacks were observed for that number.
+- [ ] All template/timing paths (day-before, same-day unconfirmed, same-day confirmed, review) and their callbacks were observed for that number.
 - [ ] Logs and aggregate DB checks showed no out-of-scope recipient activity.
 - [ ] Review-policy constraints and opt-out behavior were verified.
 - [ ] Expansion, if any, has a separate recorded approval.
