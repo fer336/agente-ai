@@ -32,6 +32,7 @@ class SqlAlchemyAppointmentReminderRepository:
             external_message_id=None,
             last_error=None,
             sent_at=None,
+            appointment_starts_at=reminder.appointment_starts_at,
         )
         statement = statement.on_conflict_do_update(
             index_elements=(
@@ -58,6 +59,7 @@ class SqlAlchemyAppointmentReminderRepository:
                 "external_message_id": None,
                 "last_error": None,
                 "sent_at": None,
+                "appointment_starts_at": statement.excluded.appointment_starts_at,
             },
             where=AppointmentReminderModel.status.in_(("pending", "failed")),
         )
@@ -268,4 +270,5 @@ def _to_entity(model: AppointmentReminderModel) -> AppointmentReminder:
         created_at=model.created_at,
         updated_at=model.updated_at,
         sent_at=model.sent_at,
+        appointment_starts_at=model.appointment_starts_at,
     )

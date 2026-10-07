@@ -28,3 +28,6 @@ class AppointmentReminder:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     sent_at: datetime | None = None
+    #: Start of the appointment the reminder is about. Nullable: rows scheduled before
+    #: this column existed (or by older code) do not know it.
+    appointment_starts_at: datetime | None = None

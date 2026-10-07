@@ -17,14 +17,18 @@ from app.application.conversations.start_fresh_session import StartFreshSessionU
 from app.application.memory.memory_service import MemoryService
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
+from app.application.reminders.record_sent import RecordReminderSentUseCase
 from app.config.settings import get_settings
+from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
+from app.domain.repositories.gateways import TemplateMessage
 from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.runtime_config_repository import RuntimeConfigRepository
 from app.domain.repositories.sent_message_repository import SentMessageRepository
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
@@ -222,6 +226,25 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
         await session.commit()
 
 
+async def record_reminder_sent_in_own_session(
+    reminder: AppointmentReminder, phone: PhoneNumber, template: TemplateMessage
+) -> None:
+    """Keep the reply context of a delivered reminder in its own transaction.
+
+    The tick's session carries the delivery state (a `sent` row must never be
+    lost). A repository can roll its session back on a creation race, so this
+    recording uses a separate session and can fail without touching the tick.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        await RecordReminderSentUseCase(
+            SqlAlchemyContactRepository(session),
+            SqlAlchemyConversationRepository(session),
+            SqlAlchemyMessageRepository(session),
+        ).execute(reminder, phone, template)
+        await session.commit()
+
+
 @asynccontextmanager
 async def open_sqlalchemy_appointment_reminder_worker_repositories() -> AsyncIterator[
     AppointmentReminderWorkerRepositories
@@ -247,6 +270,7 @@ async def open_sqlalchemy_appointment_reminder_worker_repositories() -> AsyncIte
                     redis_client=get_shared_redis_client(),
                 ),
             ),
+            record_sent=record_reminder_sent_in_own_session,
         )
         await session.commit()
 

@@ -11,6 +11,7 @@ from app.api.dependencies.repositories import (
     get_incident_repository,
     get_message_repository,
     open_sqlalchemy_appointment_reminder_worker_repositories,
+    record_reminder_sent_in_own_session,
 )
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -130,3 +131,86 @@ async def test_reminder_worker_repository_provider_rolls_back_on_failure(monkeyp
 
     session.rollback.assert_awaited_once()
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reminder_worker_provider_wires_the_own_session_record_sent_hook(monkeypatch):
+    @asynccontextmanager
+    async def session_context():
+        yield AsyncMock()
+
+    monkeypatch.setattr(
+        "app.api.dependencies.repositories._get_session_factory", lambda: session_context
+    )
+
+    async with open_sqlalchemy_appointment_reminder_worker_repositories() as repositories:
+        assert repositories.record_sent is record_reminder_sent_in_own_session
+
+
+@pytest.mark.asyncio
+async def test_record_sent_hook_commits_in_its_own_session_apart_from_the_tick(monkeypatch):
+    sessions = []
+    built = {}
+
+    @asynccontextmanager
+    async def session_context():
+        session = AsyncMock()
+        sessions.append(session)
+        yield session
+
+    class FakeUseCase:
+        def __init__(self, contacts, conversations, messages):
+            built["repositories"] = (contacts, conversations, messages)
+
+        async def execute(self, reminder, phone, template):
+            built["args"] = (reminder, phone, template)
+
+    monkeypatch.setattr(
+        "app.api.dependencies.repositories._get_session_factory", lambda: session_context
+    )
+    monkeypatch.setattr("app.api.dependencies.repositories.RecordReminderSentUseCase", FakeUseCase)
+
+    async with open_sqlalchemy_appointment_reminder_worker_repositories() as repositories:
+        await repositories.record_sent("reminder", "phone", "template")
+        tick_session = sessions[0]
+        hook_session = sessions[1]
+
+    assert built["args"] == ("reminder", "phone", "template")
+    assert [type(repository) for repository in built["repositories"]] == [
+        SqlAlchemyContactRepository,
+        SqlAlchemyConversationRepository,
+        SqlAlchemyMessageRepository,
+    ]
+    assert all(repository._session is hook_session for repository in built["repositories"])
+    hook_session.commit.assert_awaited_once()
+    tick_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_record_sent_hook_failure_does_not_commit_its_session(monkeypatch):
+    sessions = []
+
+    @asynccontextmanager
+    async def session_context():
+        session = AsyncMock()
+        sessions.append(session)
+        yield session
+
+    class FailingUseCase:
+        def __init__(self, *repositories):
+            pass
+
+        async def execute(self, reminder, phone, template):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "app.api.dependencies.repositories._get_session_factory", lambda: session_context
+    )
+    monkeypatch.setattr(
+        "app.api.dependencies.repositories.RecordReminderSentUseCase", FailingUseCase
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await record_reminder_sent_in_own_session("reminder", "phone", "template")
+
+    sessions[0].commit.assert_not_awaited()

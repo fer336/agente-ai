@@ -15,6 +15,7 @@ from app.domain.repositories.gateways import (
     ReminderAppointmentGateway,
     ReminderPatient,
     ReminderPatientGateway,
+    TemplateMessage,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -22,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 #: Post-send hook for a successfully delivered review request: (reminder, recipient phone).
 ReviewRequestSentHook = Callable[[AppointmentReminder, PhoneNumber], Awaitable[None]]
+
+#: Post-send hook for every successfully delivered reminder: (reminder, phone, template sent).
+ReminderSentRecorder = Callable[
+    [AppointmentReminder, PhoneNumber, TemplateMessage], Awaitable[None]
+]
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,7 @@ async def deliver_due_reminders(
     *,
     utc_clock: Callable[[], datetime] | None = None,
     on_sent: ReviewRequestSentHook | None = None,
+    record_sent: ReminderSentRecorder | None = None,
 ) -> int:
     await repository.reclaim_stale_claims(now - timedelta(seconds=settings.claim_timeout_seconds))
     handled = 0
@@ -125,6 +132,8 @@ async def deliver_due_reminders(
             logger.info(
                 "appointment_reminder.sent reminder_id=%s kind=%s", reminder.id, reminder.kind
             )
+            if marked_sent and record_sent is not None:
+                await _run_record_sent(record_sent, reminder, patient.mobile, template)
             if marked_sent and on_sent is not None and reminder.kind == "review_request":
                 await _run_on_sent(on_sent, reminder, patient.mobile)
         except Exception as exc:
@@ -150,6 +159,24 @@ async def deliver_due_reminders(
                 retry_at is not None,
             )
     return handled
+
+
+async def _run_record_sent(
+    record_sent: ReminderSentRecorder,
+    reminder: AppointmentReminder,
+    phone: PhoneNumber,
+    template: TemplateMessage,
+) -> None:
+    # Same isolation as `_run_on_sent`: the row is already terminal, and the
+    # recipient has been messaged, so a recording failure only costs the context.
+    try:
+        await record_sent(reminder, phone, template)
+    except Exception as exc:  # noqa: BLE001 - hook is best-effort
+        logger.warning(
+            "appointment_reminder.record_sent_failed reminder_id=%s error_type=%s",
+            reminder.id,
+            type(exc).__name__,
+        )
 
 
 async def _run_on_sent(

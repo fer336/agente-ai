@@ -202,3 +202,15 @@ async def test_missing_contact_is_eligible_for_a_review_request():
         == 1
     )
     assert {row.kind for row in repository.rows.values()} == {"review_request"}
+
+
+@pytest.mark.asyncio
+async def test_scheduled_rows_carry_the_appointment_start_for_reply_context_and_cleanup():
+    source = appointment()
+    repository = ReminderRepository()
+
+    await schedule_reminders(
+        Appointments([source]), Patients(patient()), repository, NOW, settings()
+    )
+
+    assert {row.appointment_starts_at for row in repository.rows.values()} == {source.starts_at}
