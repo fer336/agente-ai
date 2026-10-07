@@ -86,7 +86,7 @@ none itself, but the shared Postgres/Redis services on this host may use
    ```bash
    export INTERNAL_EVAL_BASE_URL=http://127.0.0.1:18000
    export EVAL_RUN_ID="$(date +%s)"   # unique per run: keeps conversation ids fresh
-   npx promptfoo@0.123.1 eval -c evals/promptfooconfig.yaml --no-cache \
+   npx promptfoo@0.124.0 eval -c evals/promptfooconfig.yaml --no-cache \
      --filter-metadata requires_real_llm=false
    ```
 
@@ -173,7 +173,7 @@ The script:
 - reads the grader key from `EVAL_GRADER_API_KEY`, or else from the running backend's
   secret file (`LLM_API_KEY`, then `OPENROUTER_API_KEY`), and never prints it;
 - pins promptfoo to an exact version (`PROMPTFOO_VERSION` in the script, currently
-  `0.123.1`) because it runs with production admin cookies; bump it deliberately after
+  `0.124.0`) because it runs with production admin cookies; bump it deliberately after
   checking the release, never with a floating tag;
 - prints the approximate session expiry: the admin session lasts
   `ADMIN_SESSION_TTL_SECONDS` (default 3600 s; export the same variable to the script to adjust the printed estimate), so if a long run fails with 401s, re-run;
