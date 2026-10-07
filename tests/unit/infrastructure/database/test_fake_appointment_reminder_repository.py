@@ -76,3 +76,48 @@ async def test_returns_the_most_recently_sent_matching_reminder():
     newer = row("newer", kind="confirm_or_location_same_day", sent_at=NOW - timedelta(hours=2))
 
     assert (await find(FakeAppointmentReminderRepository([older, newer]))).id == "newer"
+
+
+@pytest.mark.asyncio
+async def test_latest_pending_appointment_start_is_the_furthest_future_start_of_sent_reminders():
+    near = row("near", starts_at=NOW + timedelta(hours=3), appointment_id="apt-1")
+    far = row("far", starts_at=NOW + timedelta(hours=30), appointment_id="apt-2")
+
+    repository = FakeAppointmentReminderRepository([near, far])
+
+    assert (
+        await repository.latest_pending_appointment_start(PHONE, now=NOW)
+        == far.appointment_starts_at
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ignored",
+    [
+        row(status="pending"),
+        row(status="skipped"),
+        row(kind="review_request"),
+        row(phone="+5491199999999"),
+        row(starts_at=NOW),
+        row(starts_at=NOW - timedelta(hours=1)),
+        row(starts_at=None),
+        # Unlike the reply context, an old send does not matter: only the start does.
+    ],
+)
+async def test_latest_pending_appointment_start_ignores_non_pending_rows(ignored):
+    repository = FakeAppointmentReminderRepository([ignored])
+
+    assert await repository.latest_pending_appointment_start(PHONE, now=NOW) is None
+
+
+@pytest.mark.asyncio
+async def test_latest_pending_appointment_start_does_not_depend_on_the_send_age():
+    old_send = row(sent_at=NOW - timedelta(hours=70))
+
+    repository = FakeAppointmentReminderRepository([old_send])
+
+    assert (
+        await repository.latest_pending_appointment_start(PHONE, now=NOW)
+        == old_send.appointment_starts_at
+    )

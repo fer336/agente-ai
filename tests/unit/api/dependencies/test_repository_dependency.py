@@ -11,6 +11,7 @@ from app.api.dependencies.repositories import (
     get_incident_repository,
     get_message_repository,
     open_sqlalchemy_appointment_reminder_worker_repositories,
+    open_sqlalchemy_follow_up_worker_repositories,
     record_reminder_sent_in_own_session,
 )
 from app.domain.repositories.contact_repository import ContactRepository
@@ -214,3 +215,23 @@ async def test_record_sent_hook_failure_does_not_commit_its_session(monkeypatch)
         await record_reminder_sent_in_own_session("reminder", "phone", "template")
 
     sessions[0].commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_follow_up_worker_provider_exposes_the_reminder_repository_for_the_cleanup_guard(
+    monkeypatch,
+):
+    session = AsyncMock()
+
+    @asynccontextmanager
+    async def session_context():
+        yield session
+
+    monkeypatch.setattr(
+        "app.api.dependencies.repositories._get_session_factory", lambda: session_context
+    )
+
+    async with open_sqlalchemy_follow_up_worker_repositories() as repositories:
+        assert isinstance(
+            repositories.appointment_reminders, SqlAlchemyAppointmentReminderRepository
+        )

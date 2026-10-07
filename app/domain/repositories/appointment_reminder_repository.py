@@ -80,3 +80,13 @@ class AppointmentReminderRepository(Protocol):
         Rows with an unknown appointment start never match.
         """
         ...
+
+    async def latest_pending_appointment_start(
+        self, recipient_phone: PhoneNumber, *, now: datetime
+    ) -> datetime | None:
+        """Furthest appointment start (`> now`) among the appointment reminders (confirm
+        kinds) already sent to this phone, or None when no such appointment is pending.
+
+        Independent of when the reminder was sent: only the appointment start matters.
+        """
+        ...

@@ -411,3 +411,40 @@ async def test_find_latest_sent_pending_reminder_returns_none_without_a_match():
     )
 
     assert found is None
+
+
+@pytest.mark.asyncio
+async def test_latest_pending_appointment_start_selects_the_max_future_start_of_sent_reminders():
+    session = AsyncMock()
+    expected = datetime(2026, 10, 8, 13, 30, tzinfo=UTC)
+    session.execute.return_value = _Result(scalar=expected)
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+
+    found = await SqlAlchemyAppointmentReminderRepository(session).latest_pending_appointment_start(
+        PhoneNumber("+5491112345678"), now=now
+    )
+
+    assert found == expected
+    compiled = session.execute.await_args.args[0].compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+    assert "max(appointment_reminders.appointment_starts_at)" in sql
+    assert "appointment_reminders.recipient_phone = %(recipient_phone_1)s" in sql
+    assert "appointment_reminders.status = %(status_1)s" in sql
+    assert "appointment_reminders.kind IN" in sql
+    assert "appointment_reminders.appointment_starts_at > %(appointment_starts_at_1)s" in sql
+    assert "appointment_reminders.sent_at" not in sql
+    for expected_value in ("+5491112345678", "sent", now):
+        assert expected_value in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_latest_pending_appointment_start_is_none_without_a_match():
+    session = AsyncMock()
+    session.execute.return_value = _Result(scalar=None)
+
+    assert (
+        await SqlAlchemyAppointmentReminderRepository(session).latest_pending_appointment_start(
+            PhoneNumber("+5491112345678"), now=datetime(2026, 10, 7, tzinfo=UTC)
+        )
+        is None
+    )

@@ -7,6 +7,9 @@ from app.application.conversations.cleanup_conversation_session import (
     CleanupConversationSessionUseCase,
 )
 from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
+from app.application.conversations.schedule_conversation_reset import (
+    ScheduleConversationResetUseCase,
+)
 from app.application.memory.memory_service import MemoryService
 from app.config.settings import get_settings
 from app.infrastructure.agent.langgraph_session_checkpoint_repository import (
@@ -37,5 +40,9 @@ def build_idle_cleanup_use_case(
             llm_provider=get_llm_provider(),
             recent_window_size=get_settings().memory_recent_window_size,
             redis_client=get_shared_redis_client(),
+        ),
+        appointment_reminders=repositories.appointment_reminders,
+        schedule_conversation_reset=ScheduleConversationResetUseCase(
+            repositories.scheduled_actions, get_settings().conversation_idle_reset_delay_seconds
         ),
     )

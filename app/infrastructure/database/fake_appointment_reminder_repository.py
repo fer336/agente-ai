@@ -146,6 +146,20 @@ class FakeAppointmentReminderRepository:
         ]
         return max(matches, key=lambda r: r.sent_at or sent_since, default=None)
 
+    async def latest_pending_appointment_start(
+        self, recipient_phone: PhoneNumber, *, now: datetime
+    ) -> datetime | None:
+        starts = [
+            r.appointment_starts_at
+            for r in self.rows.values()
+            if r.recipient_phone == str(recipient_phone)
+            and r.kind in APPOINTMENT_REMINDER_KINDS
+            and r.status == "sent"
+            and r.appointment_starts_at is not None
+            and r.appointment_starts_at > now
+        ]
+        return max(starts, default=None)
+
     def _owned(self, reminder_id: str, claimed_at: datetime) -> AppointmentReminder | None:
         row = self.rows.get(reminder_id)
         if row is None or row.status != "processing" or row.claimed_at != claimed_at:
