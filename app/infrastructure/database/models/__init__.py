@@ -3,6 +3,7 @@ from app.infrastructure.database.models.admin_user import AdminUserModel
 from app.infrastructure.database.models.agent_run import AgentRunModel
 from app.infrastructure.database.models.appointment import AppointmentModel
 from app.infrastructure.database.models.appointment_action import AppointmentActionModel
+from app.infrastructure.database.models.appointment_reminder import AppointmentReminderModel
 from app.infrastructure.database.models.approved_content import ApprovedContentModel
 from app.infrastructure.database.models.base import Base
 from app.infrastructure.database.models.chatwoot_conversation_mapping import (
@@ -31,6 +32,7 @@ __all__ = [
     "AgentRunModel",
     "AppointmentActionModel",
     "AppointmentModel",
+    "AppointmentReminderModel",
     "ApprovedContentModel",
     "Base",
     "ChatwootConversationMappingModel",

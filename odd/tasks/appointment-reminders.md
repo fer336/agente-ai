@@ -54,7 +54,7 @@ Use a safe staged rollout in an isolated worktree:
 
 - [x] T1 — Add YCloud template transport and parse template quick-reply callbacks;
   include off-by-default reminder settings and allowlist validation.
-- [ ] T2 — Add Dentalink date-window appointment reads, patient lookup, and explicit
+- [x] T2 — Add Dentalink date-window appointment reads, patient lookup, and explicit
   confirmed/attended/cancelled status resolution from clinic metadata.
 - [ ] T3 — Add durable reminder persistence, scheduler, claim/retry behavior, and
   allowlisted template delivery for the three timing rules.
@@ -109,7 +109,11 @@ Use a safe staged rollout in an isolated worktree:
   mypy, and `git diff --check` passed. Work-unit commit: `7fd0765`. Native review
   was unavailable (`package-local-binary-missing`). Live YCloud send intentionally
   deferred.
+- T2 complete: conservative Dentalink reminder states and bounded date-window/patient
+  reads. Verification: 171 Dentalink tests passed; ruff, mypy, and diff check passed.
+  Work-unit commits: `cb1ff28`, `67d4992`. Live response metadata remains unverified;
+  unknown states fail closed.
 
 ## Next step
 
-T2.
+T3.
