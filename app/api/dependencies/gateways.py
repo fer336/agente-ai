@@ -521,6 +521,7 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         mirror_to_chatwoot=get_mirror_to_chatwoot_use_case(),
         location_image_url=get_settings().effective_location_image_url,
         aligners_image_url=get_settings().effective_aligners_image_url,
+        clinic_timezone=get_settings().clinic_timezone,
     )
 
 

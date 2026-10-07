@@ -6,7 +6,11 @@ from sqlalchemy import CursorResult, and_, case, exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.entities.appointment_reminder import AppointmentReminder, ReminderKind
+from app.domain.entities.appointment_reminder import (
+    APPOINTMENT_REMINDER_KINDS,
+    AppointmentReminder,
+    ReminderKind,
+)
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.database.models.appointment_reminder import AppointmentReminderModel
 
@@ -252,6 +256,24 @@ class SqlAlchemyAppointmentReminderRepository:
         )
         result = await self._session.execute(statement)
         return bool(result.scalar())
+
+    async def find_latest_sent_pending_appointment_reminder(
+        self, recipient_phone: PhoneNumber, *, sent_since: datetime, now: datetime
+    ) -> AppointmentReminder | None:
+        result = await self._session.execute(
+            select(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind.in_(APPOINTMENT_REMINDER_KINDS),
+                AppointmentReminderModel.status == "sent",
+                AppointmentReminderModel.sent_at >= sent_since,
+                AppointmentReminderModel.appointment_starts_at > now,
+            )
+            .order_by(AppointmentReminderModel.sent_at.desc())
+            .limit(1)
+        )
+        model = result.scalars().first()
+        return None if model is None else _to_entity(model)
 
 
 def _to_entity(model: AppointmentReminderModel) -> AppointmentReminder:

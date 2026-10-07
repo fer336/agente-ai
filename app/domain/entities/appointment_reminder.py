@@ -7,6 +7,11 @@ ReminderKind = Literal[
     "confirm_or_location_same_day",
     "review_request",
 ]
+#: Kinds that ask the patient about an upcoming appointment (not the post-visit review).
+APPOINTMENT_REMINDER_KINDS: tuple[ReminderKind, ...] = (
+    "confirm_day_before",
+    "confirm_or_location_same_day",
+)
 ReminderStatus = Literal["pending", "processing", "sent", "skipped", "failed"]
 
 
