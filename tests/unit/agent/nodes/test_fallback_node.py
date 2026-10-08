@@ -3,6 +3,7 @@ import pytest
 from app.agent.nodes.fallback import create_fallback_node
 from app.domain.repositories.llm_provider import ResponseContext
 from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.llm.exceptions import LLMTimeoutError
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
@@ -269,3 +270,93 @@ async def test_fallback_answer_offering_administration_carries_the_handoff_butto
 
     assert [b.id for b in result["response_buttons"]] == [MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD]
     assert result["collected_data"]["handoff_offer_pending"] is True
+
+
+def _capturing_provider(captured: list[ResponseContext]) -> FakeLLMProvider:
+    class _CapturingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            captured.append(context)
+            return "ok"
+
+    return _CapturingLLMProvider()
+
+
+@pytest.mark.asyncio
+async def test_after_the_welcome_menu_the_llm_is_told_to_ask_for_a_menu_option():
+    captured: list[ResponseContext] = []
+    node = create_fallback_node(_capturing_provider(captured))
+
+    await node(
+        make_agent_state(
+            user_message="Holaa",
+            recent_messages=[
+                {"role": "assistant", "content": WELCOME_TEXT},
+                {"role": "user", "content": "Holaa"},
+            ],
+        )
+    )
+
+    context = captured[0].collected_data
+    assert "menú de bienvenida" in str(context["situacion"])
+    assert "saludá" not in str(context["instruccion"])
+    assert "elija una de las opciones del menú" in str(context["instruccion"])
+
+
+@pytest.mark.asyncio
+async def test_without_a_recent_welcome_menu_the_generic_situation_is_kept():
+    captured: list[ResponseContext] = []
+    node = create_fallback_node(_capturing_provider(captured))
+
+    await node(
+        make_agent_state(
+            user_message="Holaa",
+            recent_messages=[
+                {"role": "assistant", "content": WELCOME_TEXT},
+                {"role": "user", "content": "quiero un turno"},
+                {"role": "assistant", "content": "Elegí una especialidad"},
+                {"role": "user", "content": "Holaa"},
+            ],
+        )
+    )
+
+    assert "menú de bienvenida" not in str(captured[0].collected_data["situacion"])
+
+
+@pytest.mark.asyncio
+async def test_after_the_welcome_menu_the_static_text_asks_for_a_menu_option_when_the_llm_fails():
+    class _ExplodingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            raise LLMTimeoutError("boom")
+
+    node = create_fallback_node(_ExplodingLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="Holaa",
+            recent_messages=[
+                {"role": "assistant", "content": WELCOME_TEXT},
+                {"role": "user", "content": "Holaa"},
+            ],
+        )
+    )
+
+    assert not result["response_text"].startswith("¡Hola")
+    assert "opciones del menú" in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_after_the_welcome_menu_the_welcome_list_is_re_attached_instead_of_buttons():
+    node = create_fallback_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="Holaa",
+            recent_messages=[
+                {"role": "assistant", "content": WELCOME_TEXT},
+                {"role": "user", "content": "Holaa"},
+            ],
+        )
+    )
+
+    assert result["response_list"] is WELCOME_LIST
+    assert result["response_buttons"] is None
