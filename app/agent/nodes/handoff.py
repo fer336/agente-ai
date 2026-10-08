@@ -1,4 +1,6 @@
 import asyncio
+import random
+from collections.abc import Callable, Sequence
 
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.state import AgentState
@@ -14,9 +16,30 @@ from app.domain.repositories.gateways import HumanHandoffGateway
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.phone_number import PhoneNumber
 
-_HANDOFF_ACK_MESSAGE = (
-    "Perfecto. Te comunico con un asesor de la clínica.\n\n"
-    "Podrán continuar la conversación desde este mismo chat."
+#: Patient-facing acknowledgements, picked at random so the reply is not always the
+#: same. They all say the same things: an advisor will get in touch soon, in this very
+#: chat, and the assistant pauses so the team can take over (the node really does put
+#: the conversation in human mode). They never name the internal "administración"
+#: destination (the node tests pin that) and never promise a concrete time.
+HANDOFF_ACK_MESSAGES: tuple[str, ...] = (
+    "¡Listo! 😊 Te paso con una persona del equipo de Smiling Pilar: "
+    "en breve un asesor se va a comunicar con vos por este mismo chat. "
+    "Yo me pauso para que ellos puedan seguir con la conversación.",
+    "Perfecto, ya aviso al equipo de la clínica 💙 "
+    "Un asesor se comunicará con vos en breve, en este mismo chat. "
+    "Mientras tanto me pauso, así pueden continuar la conversación sin interrupciones.",
+    "¡Gracias por avisarnos! 🙌 Te derivo con el equipo de la clínica: "
+    "un asesor te va a escribir en breve por este mismo chat. "
+    "Me pauso para que puedan seguir con la conversación.",
+    "Dale, te conecto con el equipo de la clínica 🦷 "
+    "En breve un asesor te contesta por este mismo chat. "
+    "Yo me quedo en pausa para que ellos sigan la conversación.",
+    "Entendido 😊 Ya le dejo tu consulta a una persona de la clínica. "
+    "Un asesor se va a comunicar con vos en breve, en este mismo chat. "
+    "Me pauso para que el equipo pueda seguir con vos.",
+    "Con gusto 💙 Te comunico con el equipo de Smiling Pilar. "
+    "En breve un asesor continuará la conversación con vos desde este mismo chat. "
+    "Yo me pauso para no interrumpirlos.",
 )
 
 
@@ -24,6 +47,7 @@ def create_handoff_node(
     handoff_gateway: HumanHandoffGateway,
     conversation_repository: ConversationRepository,
     mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
+    choose_message: Callable[[Sequence[str]], str] = random.choice,
 ) -> AgentNode:
     """Derives the conversation to administración (PRD.md §21-22).
 
@@ -59,6 +83,9 @@ def create_handoff_node(
                 )
             )
 
-        return {"response_text": _HANDOFF_ACK_MESSAGE, "requires_handoff": True}
+        return {
+            "response_text": choose_message(HANDOFF_ACK_MESSAGES),
+            "requires_handoff": True,
+        }
 
     return node
