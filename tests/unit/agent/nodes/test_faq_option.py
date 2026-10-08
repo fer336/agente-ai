@@ -1,10 +1,11 @@
 """Alineadores: the price image with three `Opción n` buttons; each option starts the
-booking on the "General" specialty and is remembered until the confirmation."""
+booking on the Alineadores specialty and is remembered until the confirmation."""
 
 import pytest
 
 from app.agent.clinic_topics import (
     ALIGNER_OPTION_KEY,
+    ALIGNERS_SPECIALTY_ID,
     CLINIC_TOPICS,
     PRESELECTED_SPECIALTY_KEY,
     topic_by_id,
@@ -46,13 +47,13 @@ def test_a_malformed_option_payload_does_not_parse(payload):
     assert parse_faq_option_payload(payload) is None
 
 
-def test_alineadores_carries_the_image_the_three_options_and_the_general_specialty():
+def test_alineadores_carries_the_image_the_three_options_and_the_alineadores_specialty():
     topic = topic_by_id("alineadores")
 
     assert topic is not None
     assert topic.image_filename == "alineadores-opciones.jpg"
     assert topic.options == ("1", "2", "3")
-    assert topic.book_specialty == "General"
+    assert topic.book_specialty == ALIGNERS_SPECIALTY_ID
     assert len(topic.text) <= 1024
 
 
@@ -98,13 +99,13 @@ async def test_other_topics_never_carry_the_image():
 
 
 @pytest.mark.asyncio
-async def test_an_idle_option_tap_starts_the_create_flow_on_general_and_remembers_the_option():
+async def test_an_idle_option_tap_starts_the_create_flow_on_alineadores_and_remembers_the_option():
     node = create_resolve_interaction_node(FakeLLMProvider())
 
     result = await node(make_agent_state(button_payload=_OPTION_2, user_message="Opción 2"))
 
     assert result["intent"] == "appointment"
-    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == "General"
+    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == ALIGNERS_SPECIALTY_ID
     assert result["collected_data"][ALIGNER_OPTION_KEY] == "2"
     assert "interruption" not in result
 
@@ -120,7 +121,7 @@ async def test_a_mid_flow_option_tap_replaces_the_flow_and_carries_both_keys():
 
     assert result["intent"] == "appointment"
     assert result["interruption"] == "replace"
-    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == "General"
+    assert result["collected_data"][PRESELECTED_SPECIALTY_KEY] == ALIGNERS_SPECIALTY_ID
     assert result["collected_data"][ALIGNER_OPTION_KEY] == "3"
 
 

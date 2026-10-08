@@ -334,3 +334,43 @@ async def test_a_non_booking_operation_drops_the_key():
     )
 
     assert PRESELECTED_SPECIALTY_KEY not in result["collected_data"]
+
+
+def _aligners_world(aligners_name: str):
+    return {
+        "specialties": [
+            make_specialty(id_="gen", name="General"),
+            make_specialty(id_="14", name=aligners_name),
+        ],
+        "professionals": [
+            make_professional(id_="prof-gen", specialty_id="gen"),
+            make_professional(id_="prof-ali", specialty_id="14"),
+        ],
+        "available_slots": [
+            _slot("slot-gen", "prof-gen", "gen"),
+            _slot("slot-ali", "prof-ali", "14", days=2),
+        ],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("aligners_name", ["Alineadores Invisibles", "Alineadores", "Renamed"])
+async def test_a_specialty_id_reference_is_matched_by_id_whatever_the_name(aligners_name):
+    graph = await _subgraph(_aligners_world(aligners_name))
+
+    result = await graph.ainvoke(_decision_state(**{PRESELECTED_SPECIALTY_KEY: "14"}))
+
+    data = result["collected_data"]
+    assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert data["chosen_specialty_id"] == "14"
+    assert [slot.id for slot in data["available_slots"]] == ["slot-ali"]
+    assert PRESELECTED_SPECIALTY_KEY not in data
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_specialty_id_falls_back_to_the_specialty_list():
+    graph = await _subgraph(_aligners_world("Alineadores Invisibles"))
+
+    result = await graph.ainvoke(_decision_state(**{PRESELECTED_SPECIALTY_KEY: "99"}))
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION

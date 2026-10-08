@@ -571,7 +571,7 @@
     requires_real_llm: false
 
 # Alineadores: the price image with three option buttons; choosing one starts the booking
-# (first-visit question first, then straight to the "General" specialty). Consecutive cases
+# (first-visit question first, then straight to the "Alineadores Invisibles" specialty). Consecutive cases
 # share one conversation_id.
 - description: "Alineadores por texto libre: imagen con Opción 1, 2 y 3 — turn 1"
   vars:
@@ -622,7 +622,7 @@
   metadata:
     requires_real_llm: false
 
-- description: "Alineadores: muestra los horarios de General sin la lista de especialidades — turn 4"
+- description: "Alineadores: muestra los horarios de Alineadores sin la lista de especialidades — turn 4"
   vars:
     conversation_id: "eval-topics-aligners-01"
     message: "Lucía Prueba, 39000111"
@@ -630,7 +630,7 @@
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
       config:
-        ids: ["SELECT_SLOT:eval-free-4"]
+        ids: ["SELECT_SLOT:eval-free-5"]
         exact: true
   metadata:
     requires_real_llm: false
@@ -638,8 +638,8 @@
 - description: "Alineadores: la confirmación menciona la opción elegida — turn 5"
   vars:
     conversation_id: "eval-topics-aligners-01"
-    message: "Horario de General"
-    button_payload: "SELECT_SLOT:eval-free-4"
+    message: "Horario de Alineadores"
+    button_payload: "SELECT_SLOT:eval-free-5"
   assert:
     - type: javascript
       value: file://assertions/custom.js:mentionsAll

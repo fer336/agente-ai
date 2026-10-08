@@ -713,18 +713,23 @@ def build_appointment_decision_graph(
 
     async def _offer_preselected_specialty(
         conversation_id: ConversationId,
-        specialty_name: str,
+        specialty_ref: str,
         collected_data: dict[str, object],
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object] | None:
         """Slots of the specialty a topic books (a consulta particular -> "General"),
-        skipping the specialty list. `None` means "show the normal list": the specialty
-        is not in the catalog, or has no slots (never a dead end)."""
-        wanted = normalize_text(specialty_name)
+        skipping the specialty list. `specialty_ref` is a Dentalink specialty id or its
+        exact name. `None` means "show the normal list": the specialty is not in the
+        catalog, or has no slots (never a dead end)."""
+        wanted = normalize_text(specialty_ref)
         catalog = await _specialty_catalog_for_reroute_safe(list_specialties)
-        # Exact name, not a substring: "Odontología general" must never match "General".
+        # By id first (precise, survives a rename in Dentalink), then by exact name, not a
+        # substring: "Odontología general" must never match "General".
         chosen = next(
+            (s for s in catalog or [] if s.id == specialty_ref.strip()),
+            None,
+        ) or next(
             (s for s in catalog or [] if normalize_text(s.name) == wanted),
             None,
         )
@@ -732,7 +737,7 @@ def build_appointment_decision_graph(
             logger.warning(
                 "preselected specialty %r not found in the Dentalink catalog; "
                 "showing the specialty list",
-                specialty_name,
+                specialty_ref,
             )
             return None
         try:
@@ -740,7 +745,7 @@ def build_appointment_decision_graph(
         except Exception as exc:  # noqa: BLE001 -- external gateway boundary
             logger.warning(
                 "slot search for the preselected specialty %r failed; showing the list",
-                specialty_name,
+                specialty_ref,
                 exc_info=exc,
             )
             return None
