@@ -24,8 +24,14 @@ def test_settings_uses_defaults_and_derives_urls_when_no_env_vars(monkeypatch):
     assert settings.app_port == 8000
     assert settings.postgres_host == "localhost"
     assert settings.postgres_port == 5432
-    assert settings.database_url == "postgresql+asyncpg://postgres:postgres@localhost:5432/clinic_ai_agent"
-    assert settings.checkpointer_database_url == "postgresql://postgres:postgres@localhost:5432/clinic_ai_agent"
+    assert (
+        settings.database_url
+        == "postgresql+asyncpg://postgres:postgres@localhost:5432/clinic_ai_agent"
+    )
+    assert (
+        settings.checkpointer_database_url
+        == "postgresql://postgres:postgres@localhost:5432/clinic_ai_agent"
+    )
     assert settings.redis_host == "localhost"
     assert settings.redis_port == 6379
     assert settings.redis_password is None
@@ -48,8 +54,13 @@ def test_settings_reads_discrete_fields_from_env_and_derives_matching_urls(monke
 
     assert settings.app_host == "127.0.0.1"
     assert settings.app_port == 9000
-    assert settings.database_url == "postgresql+asyncpg://clinic:s3cret@db.internal:5433/clinic_prod"
-    assert settings.checkpointer_database_url == "postgresql://clinic:s3cret@db.internal:5433/clinic_prod"
+    assert (
+        settings.database_url == "postgresql+asyncpg://clinic:s3cret@db.internal:5433/clinic_prod"
+    )
+    assert (
+        settings.checkpointer_database_url
+        == "postgresql://clinic:s3cret@db.internal:5433/clinic_prod"
+    )
     assert settings.redis_url == "redis://cache.internal:6380/0"
 
 
@@ -98,10 +109,12 @@ def test_settings_defaults_ycloud_and_debounce_fields_when_no_env_vars(monkeypat
 def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(monkeypatch):
     for var in (
         "APPOINTMENT_REMINDERS_ENABLED",
+        "APPOINTMENT_REMINDERS_ROLLOUT_MODE",
         "APPOINTMENT_REMINDERS_PHONE_ALLOWLIST",
         "APPOINTMENT_REMINDERS_CONFIRMATION_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_LOCATION_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_REVIEW_TEMPLATE_NAME",
+        "APPOINTMENT_REMINDERS_UNCONFIRMED_TEMPLATE_NAME",
         "APPOINTMENT_REMINDERS_TEMPLATE_LANGUAGE",
         "APPOINTMENT_REMINDERS_DAY_BEFORE_TIME",
         "APPOINTMENT_REMINDERS_SAME_DAY_OFFSET_HOURS",
@@ -115,14 +128,19 @@ def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(m
     settings = Settings(_env_file=None)
 
     assert settings.appointment_reminders_enabled is False
+    assert settings.appointment_reminders_rollout_mode == "allowlist"
     assert settings.appointment_reminders_phone_allowlist == ""
     assert settings.appointment_reminders_phone_allowlist_set == frozenset()
+    assert settings.appointment_reminders_recipient_policy.can_run(enabled=True) is False
     assert (
-        settings.appointment_reminders_confirmation_template_name
-        == "recordatorio_turno_confirmar"
+        settings.appointment_reminders_confirmation_template_name == "recordatorio_turno_confirmar"
     )
     assert settings.appointment_reminders_location_template_name == "recordatorio_turno_ubicacion"
     assert settings.appointment_reminders_review_template_name == "solicitud_resena_google"
+    assert (
+        settings.appointment_reminders_unconfirmed_template_name
+        == "recordatorio_turno_sin_confirmar"
+    )
     assert settings.appointment_reminders_template_language == "es_AR"
     assert settings.clinic_timezone == "America/Argentina/Buenos_Aires"
     assert str(settings.appointment_reminders_day_before_time) == "18:00:00"
@@ -131,6 +149,18 @@ def test_settings_defaults_appointment_reminders_to_a_disabled_empty_allowlist(m
     assert str(settings.appointment_reminders_send_window_end) == "20:00:00"
     assert str(settings.appointment_reminders_review_time) == "10:00:00"
     assert settings.appointment_reminders_review_cooldown_days == 90
+    assert settings.appointment_reminders_poll_interval_seconds == 60
+    assert settings.appointment_reminders_batch_size == 50
+    assert settings.appointment_reminders_max_attempts == 3
+    assert settings.appointment_reminders_claim_timeout_seconds == 300
+    assert settings.appointment_reminders_retry_backoff_seconds == 60
+
+
+def test_settings_rejects_an_unsafe_appointment_reminder_claim_timeout(monkeypatch):
+    monkeypatch.setenv("APPOINTMENT_REMINDERS_CLAIM_TIMEOUT_SECONDS", "59")
+
+    with pytest.raises(ValueError, match="claim timeout"):
+        Settings(_env_file=None)
 
 
 def test_settings_normalizes_and_validates_appointment_reminder_allowlist(monkeypatch):
@@ -151,6 +181,18 @@ def test_settings_rejects_invalid_appointment_reminder_allowlist_phone(monkeypat
     monkeypatch.setenv("APPOINTMENT_REMINDERS_PHONE_ALLOWLIST", "not-a-phone")
 
     with pytest.raises(ValueError, match="PhoneNumber"):
+        Settings(_env_file=None)
+
+
+def test_settings_validates_rollout_mode_and_allows_all_without_an_allowlist(monkeypatch):
+    monkeypatch.setenv("APPOINTMENT_REMINDERS_ROLLOUT_MODE", "all")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.appointment_reminders_recipient_policy.can_run(enabled=True) is True
+
+    monkeypatch.setenv("APPOINTMENT_REMINDERS_ROLLOUT_MODE", "unknown")
+    with pytest.raises(ValueError, match="rollout_mode"):
         Settings(_env_file=None)
 
 

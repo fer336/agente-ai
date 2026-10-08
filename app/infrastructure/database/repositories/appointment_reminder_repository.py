@@ -1,11 +1,17 @@
+from collections.abc import Collection
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, and_, case, exists, select, update
+from sqlalchemy import CursorResult, and_, case, exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.entities.appointment_reminder import AppointmentReminder
+from app.domain.entities.appointment_reminder import (
+    APPOINTMENT_REMINDER_KINDS,
+    AppointmentReminder,
+    ReminderKind,
+)
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.database.models.appointment_reminder import AppointmentReminderModel
 
 
@@ -30,6 +36,7 @@ class SqlAlchemyAppointmentReminderRepository:
             external_message_id=None,
             last_error=None,
             sent_at=None,
+            appointment_starts_at=reminder.appointment_starts_at,
         )
         statement = statement.on_conflict_do_update(
             index_elements=(
@@ -56,6 +63,7 @@ class SqlAlchemyAppointmentReminderRepository:
                 "external_message_id": None,
                 "last_error": None,
                 "sent_at": None,
+                "appointment_starts_at": statement.excluded.appointment_starts_at,
             },
             where=AppointmentReminderModel.status.in_(("pending", "failed")),
         )
@@ -215,6 +223,71 @@ class SqlAlchemyAppointmentReminderRepository:
         result = await self._session.execute(statement)
         return bool(result.scalar())
 
+    async def find_sent_for_inbound_action(
+        self,
+        appointment_id: str,
+        recipient_phone: PhoneNumber,
+        allowed_kinds: Collection[ReminderKind],
+    ) -> AppointmentReminder | None:
+        if not allowed_kinds:
+            return None
+        result = await self._session.execute(
+            select(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.appointment_id == appointment_id,
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind.in_(tuple(allowed_kinds)),
+                AppointmentReminderModel.status == "sent",
+            )
+            .limit(1)
+        )
+        model = result.scalars().first()
+        if model is None:
+            return None
+        return _to_entity(model)
+
+    async def has_sent_review_request_for_recipient(self, recipient_phone: PhoneNumber) -> bool:
+        statement = select(
+            exists().where(
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind == "review_request",
+                AppointmentReminderModel.status == "sent",
+            )
+        )
+        result = await self._session.execute(statement)
+        return bool(result.scalar())
+
+    async def find_latest_sent_pending_appointment_reminder(
+        self, recipient_phone: PhoneNumber, *, sent_since: datetime, now: datetime
+    ) -> AppointmentReminder | None:
+        result = await self._session.execute(
+            select(AppointmentReminderModel)
+            .where(
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind.in_(APPOINTMENT_REMINDER_KINDS),
+                AppointmentReminderModel.status == "sent",
+                AppointmentReminderModel.sent_at >= sent_since,
+                AppointmentReminderModel.appointment_starts_at > now,
+            )
+            .order_by(AppointmentReminderModel.sent_at.desc())
+            .limit(1)
+        )
+        model = result.scalars().first()
+        return None if model is None else _to_entity(model)
+
+    async def latest_pending_appointment_start(
+        self, recipient_phone: PhoneNumber, *, now: datetime
+    ) -> datetime | None:
+        result = await self._session.execute(
+            select(func.max(AppointmentReminderModel.appointment_starts_at)).where(
+                AppointmentReminderModel.recipient_phone == str(recipient_phone),
+                AppointmentReminderModel.kind.in_(APPOINTMENT_REMINDER_KINDS),
+                AppointmentReminderModel.status == "sent",
+                AppointmentReminderModel.appointment_starts_at > now,
+            )
+        )
+        return result.scalar()
+
 
 def _to_entity(model: AppointmentReminderModel) -> AppointmentReminder:
     return AppointmentReminder(
@@ -232,4 +305,5 @@ def _to_entity(model: AppointmentReminderModel) -> AppointmentReminder:
         created_at=model.created_at,
         updated_at=model.updated_at,
         sent_at=model.sent_at,
+        appointment_starts_at=model.appointment_starts_at,
     )

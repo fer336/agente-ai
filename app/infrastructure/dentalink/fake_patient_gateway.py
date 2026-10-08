@@ -15,7 +15,11 @@ class FakePatientGateway:
     async def get_reminder_patient(self, patient_id: str) -> ReminderPatient | None:
         for patient in self._patients:
             if patient.id == patient_id:
-                return ReminderPatient(patient_id=patient.id, mobile=patient.phone)
+                return ReminderPatient(
+                    patient_id=patient.id,
+                    mobile=patient.phone,
+                    display_name=patient.full_name.strip().split(maxsplit=1)[0],
+                )
         return None
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None:

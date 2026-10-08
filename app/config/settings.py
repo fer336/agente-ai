@@ -1,9 +1,11 @@
 from datetime import time
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.application.reminders.recipient_policy import ReminderRecipientPolicy
 from app.domain.value_objects.phone_number import PhoneNumber
 
 
@@ -21,9 +23,7 @@ class Settings(BaseSettings):
     #: env-var injection isn't how Swarm secrets work. Whichever path exists
     #: on disk is used; a missing one is silently skipped by pydantic-settings,
     #: so this is safe in both environments without an if/else.
-    model_config = SettingsConfigDict(
-        env_file=(".env", "/run/secrets/backend.env"), extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=(".env", "/run/secrets/backend.env"), extra="ignore")
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
@@ -127,10 +127,12 @@ class Settings(BaseSettings):
     #: feature alone is insufficient; the recipient must also be in this
     #: comma-separated E.164 allowlist. An empty allowlist blocks everyone.
     appointment_reminders_enabled: bool = False
+    appointment_reminders_rollout_mode: Literal["allowlist", "all"] = "allowlist"
     appointment_reminders_phone_allowlist: str = ""
     appointment_reminders_confirmation_template_name: str = "recordatorio_turno_confirmar"
     appointment_reminders_location_template_name: str = "recordatorio_turno_ubicacion"
     appointment_reminders_review_template_name: str = "solicitud_resena_google"
+    appointment_reminders_unconfirmed_template_name: str = "recordatorio_turno_sin_confirmar"
     appointment_reminders_template_language: str = "es_AR"
     appointment_reminders_day_before_time: time = time(18, 0)
     appointment_reminders_same_day_offset_hours: int = 3
@@ -138,6 +140,21 @@ class Settings(BaseSettings):
     appointment_reminders_send_window_end: time = time(20, 0)
     appointment_reminders_review_time: time = time(10, 0)
     appointment_reminders_review_cooldown_days: int = 90
+    #: Worker defaults are conservative; T5 owns process-lifetime wiring.
+    appointment_reminders_poll_interval_seconds: int = 60
+    appointment_reminders_batch_size: int = 50
+    appointment_reminders_max_attempts: int = 3
+    #: Must comfortably outlast YCloud's bounded outbound HTTP request (15s)
+    #: plus DB scheduling jitter; smaller leases risk concurrent reclamation.
+    appointment_reminders_claim_timeout_seconds: int = 300
+    appointment_reminders_retry_backoff_seconds: int = 60
+
+    @field_validator("appointment_reminders_claim_timeout_seconds")
+    @classmethod
+    def _validate_appointment_reminder_claim_timeout(cls, value: int) -> int:
+        if value < 60:
+            raise ValueError("appointment reminder claim timeout must be at least 60 seconds")
+        return value
 
     @field_validator("appointment_reminders_phone_allowlist")
     @classmethod
@@ -337,9 +354,17 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def appointment_reminders_phone_allowlist_set(self) -> frozenset[str]:
-        """Normalized allowlist used by the future reminder delivery path."""
+        """Normalized source values for the reminder recipient policy."""
         return frozenset(
             value for value in self.appointment_reminders_phone_allowlist.split(",") if value
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def appointment_reminders_recipient_policy(self) -> ReminderRecipientPolicy:
+        return ReminderRecipientPolicy(
+            self.appointment_reminders_rollout_mode,
+            self.appointment_reminders_phone_allowlist_set,
         )
 
     @computed_field  # type: ignore[prop-decorator]

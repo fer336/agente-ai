@@ -18,6 +18,7 @@ class ContactModel(Base):
     #: (see that migration's own docstring).
     phone: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     patient_id: Mapped[str | None] = mapped_column(String, ForeignKey("patients.id"))
+    review_opted_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

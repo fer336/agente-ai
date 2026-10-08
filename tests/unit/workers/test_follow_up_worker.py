@@ -6,6 +6,7 @@ import pytest
 from app.application.appointments.schedule_follow_up import APPOINTMENT_FLOW_FOLLOW_UP_RESET
 from app.application.conversations.schedule_conversation_reset import (
     CONVERSATION_IDLE_RESET_ACTION,
+    ScheduleConversationResetUseCase,
 )
 from app.domain.entities.message import ROLE_ASSISTANT, Message
 from app.domain.entities.scheduled_action import ScheduledAction
@@ -250,7 +251,9 @@ async def test_appointment_flow_follow_up_reset_rotates_the_workflow_generation(
     assert len(messaging_gateway.sent_messages) == 1
 
 
-def _cleanup_use_case(conversations, contacts, checkpoints, contact_memories):
+def _cleanup_use_case(
+    conversations, contacts, checkpoints, contact_memories, reminders=None, scheduled_actions=None
+):
     from app.application.conversations.cleanup_conversation_session import (
         CleanupConversationSessionUseCase,
     )
@@ -260,7 +263,7 @@ def _cleanup_use_case(conversations, contacts, checkpoints, contact_memories):
     from tests.fixtures.gateways import make_memory_service
 
     pending_actions = make_pending_action_repository()
-    scheduled_actions = make_scheduled_action_repository()
+    scheduled_actions = scheduled_actions or make_scheduled_action_repository()
 
     @asynccontextmanager
     async def provider():
@@ -276,6 +279,8 @@ def _cleanup_use_case(conversations, contacts, checkpoints, contact_memories):
         rotate_workflow_session=RotateWorkflowSessionUseCase(provider),
         session_checkpoints=checkpoints,
         memory_service=make_memory_service(contact_memory_repository=contact_memories),
+        appointment_reminders=reminders,
+        schedule_conversation_reset=ScheduleConversationResetUseCase(scheduled_actions, 10_800),
     )
 
 
@@ -344,6 +349,49 @@ async def test_idle_action_in_agent_mode_runs_the_scoped_cleanup_silently():
     action = await scheduled.get_by_id("action-1")
     assert action is not None
     assert action.status == "executed"
+
+
+@pytest.mark.asyncio
+async def test_idle_action_with_a_pending_reminder_keeps_the_session_and_is_rescheduled():
+    from app.domain.entities.appointment_reminder import AppointmentReminder
+    from app.infrastructure.database.fake_appointment_reminder_repository import (
+        FakeAppointmentReminderRepository,
+    )
+
+    conversations, contacts, memories, scheduled = await _seed_idle_conversation("agent")
+    checkpoints = FakeSessionCheckpointRepository(threads={"ycloud-+5491122334455:session:1"})
+    starts_at = datetime.now(UTC) + timedelta(hours=20)
+    reminders = FakeAppointmentReminderRepository(
+        [
+            AppointmentReminder(
+                "r-1",
+                "apt-1",
+                "patient-1",
+                "confirm_day_before",
+                "sent",
+                datetime.now(UTC),
+                "+5491122334455",
+                sent_at=datetime.now(UTC),
+                appointment_starts_at=starts_at,
+            )
+        ]
+    )
+    cleanup = _cleanup_use_case(
+        conversations, contacts, checkpoints, memories, reminders, scheduled
+    )
+
+    processed = await _tick(
+        scheduled, conversations, contacts, cleanup, make_ycloud_messaging_gateway()
+    )
+
+    assert processed == 1
+    assert checkpoints.threads == {"ycloud-+5491122334455:session:1"}
+    assert await memories.get_by_contact_id("contact-1") is not None
+    first = await scheduled.get_by_id("action-1")
+    assert first is not None and first.status == "executed"
+    [rescheduled] = await scheduled.get_scheduled_by_conversation_id("ycloud-+5491122334455")
+    assert rescheduled.action_type == CONVERSATION_IDLE_RESET_ACTION
+    assert rescheduled.scheduled_for == starts_at + timedelta(seconds=10_800)
 
 
 @pytest.mark.asyncio

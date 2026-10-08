@@ -304,6 +304,28 @@ def test_reminder_appointment_preserves_raw_status_and_only_classifies_explicit_
     assert appointments[0].starts_at == datetime(2026, 10, 10, 9, 30, tzinfo=_TZ)
 
 
+def test_reminder_statuses_classify_patient_confirmation_variants_but_not_no_confirmado():
+    statuses = reminder_statuses_from_estados(
+        [
+            {"id": 1, "nombre": "Confirmado", "anulacion": 0},
+            {"id": 2, "nombre": "Confirmado por pcte. vía WhatsApp", "anulacion": 0},
+            {"id": 3, "nombre": "Confirmado por Whatsapp", "anulacion": 0},
+            {"id": 4, "nombre": "Confirmado por email", "anulacion": 0},
+            {"id": 5, "nombre": "Confirmado por teléfono", "anulacion": 0},
+            {"id": 6, "nombre": "No confirmado", "anulacion": 0, "reservado": 1},
+        ]
+    )
+
+    assert [statuses[str(status_id)][1] for status_id in range(1, 7)] == [
+        "confirmed",
+        "confirmed",
+        "confirmed",
+        "confirmed",
+        "confirmed",
+        "active",
+    ]
+
+
 def test_reminder_appointment_rejects_unresolved_or_malformed_status_metadata():
     with pytest.raises(DentalinkInvalidResponseError):
         reminder_statuses_from_estados([{"id": 1, "nombre": "Confirmada"}])

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -10,3 +11,4 @@ class Contact:
     id: str
     phone: PhoneNumber
     patient_id: str | None
+    review_opted_out_at: datetime | None = None

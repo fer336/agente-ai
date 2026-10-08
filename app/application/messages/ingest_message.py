@@ -9,6 +9,10 @@ from uuid import uuid4
 from redis.asyncio import Redis
 
 from app.application.config.runtime_config_service import RuntimeConfigService
+from app.application.conversations.ensure_conversation import (
+    resolve_or_create_contact,
+    resolve_or_create_conversation,
+)
 from app.application.conversations.rotate_workflow_session import (
     RotateWorkflowSessionUseCase,
     WorkflowSessionRepositoriesProvider,
@@ -21,12 +25,11 @@ from app.application.conversations.set_conversation_mode import SetConversationM
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
-from app.domain.entities.contact import Contact
+from app.application.reminders.action_payloads import parse_reminder_action
 from app.domain.entities.conversation import Conversation
 from app.domain.entities.media_processing_job import PENDING as JOB_PENDING
 from app.domain.entities.media_processing_job import MediaProcessingJob
 from app.domain.entities.message import MEDIA_PENDING, Message
-from app.domain.exceptions.errors import ContactAlreadyExistsError, ConversationAlreadyExistsError
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -35,7 +38,6 @@ from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
-from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.redis.debounce import DebounceTracker
 from app.infrastructure.redis.lock import redis_lock
@@ -65,44 +67,6 @@ _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
 _HUMAN_MODE_REACTIVATION_TIMEOUT = timedelta(hours=1)
 
 
-def _new_conversation_workflow_generation_seed(created_at: datetime) -> int:
-    """Seeds a brand-new `Conversation` row's `workflow_session_generation`.
-
-    T4 (R3-new-conversation-rotation-can-collide-with-prior-incarnation-
-    generation): the domain entity's own dataclass default (a fixed `1`)
-    makes a RECREATED conversation's checkpoint thread id
-    (`f"{conversation_id}:session:N"`, computed below) fully deterministic
-    across incarnations. If this exact conversation id (`ycloud-{phone}`)
-    ever existed before — its row deleted and recreated, e.g. by tooling
-    outside this application's own `ResetConversationUseCase` (which never
-    deletes the row at all) — and a PRIOR incarnation ever reached that
-    same generation number itself, the very next real turn would revive
-    whatever checkpoint state (stage/pending_action_id) that old
-    generation's thread still holds (seen live for generation 1, T1's own
-    fix; the exact same collision remains possible one generation later,
-    for whichever fixed number a rotation would otherwise always land on).
-
-    `pending_actions` rows cannot carry this same risk on their own —
-    `PendingActionModel.conversation_id` is a hard FK to `conversations.id`,
-    so whatever deleted that row must already have cleared its pending
-    actions first (`RotateWorkflowSessionUseCase`'s own
-    `expire_all_pending_generations` still runs defensively for this exact
-    call site, in case that isn't so in a particular deployment). Only the
-    LangGraph checkpoint thread carries the real risk: this application has
-    no FK/query relationship to it at all, so there is no reachable prior
-    generation value to look up from data.
-
-    Seeding from the current epoch second instead of a fixed default makes
-    an accidental collision require the PRIOR incarnation to have rotated
-    into the high hundreds of millions of generations — never reachable
-    through this codebase's own rotation triggers (at most a handful of
-    times a day, per conversation). `workflow_session_generation` is
-    already a `BigInteger` column (`ConversationModel`), so this needs no
-    migration.
-    """
-    return int(created_at.timestamp())
-
-
 @dataclass(frozen=True)
 class MessageRepositories:
     """Bundles the repositories one `IngestMessageUseCase` unit of work needs."""
@@ -118,6 +82,10 @@ class MessageRepositories:
 # for one unit of work. See `IngestMessageUseCase`'s docstring for why this
 # indirection exists instead of injecting bound repository instances directly.
 RepositoriesProvider = Callable[[], AbstractAsyncContextManager[MessageRepositories]]
+
+
+def _is_reminder_action(button_payload: str | None) -> bool:
+    return button_payload is not None and parse_reminder_action(button_payload) is not None
 
 
 class IngestMessageUseCase:
@@ -210,11 +178,16 @@ class IngestMessageUseCase:
             if await repositories.messages.exists_by_external_id(external_message_id):
                 return
 
-            contact = await self._resolve_or_create_contact(repositories.contacts, dto.from_phone)
-            conversation, is_new_conversation = await self._resolve_or_create_conversation(
+            contact = await resolve_or_create_contact(repositories.contacts, dto.from_phone)
+            conversation, is_new_conversation = await resolve_or_create_conversation(
                 repositories.conversations, dto.from_phone, contact.id
             )
             conversation_key = str(conversation.id)
+            # A reminder button tap is an answer to a message we sent, not a first
+            # contact: the welcome menu would bury it and its action must still run.
+            welcome_first_contact = is_new_conversation and not _is_reminder_action(
+                dto.button_payload
+            )
             received_at = datetime.now(UTC)
             rotate_workflow = RotateWorkflowSessionUseCase(
                 self._workflow_session_repositories_provider or repositories.conversations
@@ -303,7 +276,7 @@ class IngestMessageUseCase:
                 repositories.scheduled_actions, self._conversation_idle_reset_delay_seconds
             ).reconcile(conversation.id)
 
-            if is_new_conversation:
+            if welcome_first_contact:
                 # Sent synchronously, inline in this same request — NOT
                 # fire-and-forget — so a delivery failure surfaces as this
                 # request's own error (and gets retried by the caller's
@@ -427,7 +400,7 @@ class IngestMessageUseCase:
             # handoff to the Etapa 5 seam is skipped.
             return
 
-        if is_new_conversation:
+        if welcome_first_contact:
             # The welcome sent above IS the answer to a first message: it
             # greets, says what the bot can do, and offers the menu.
             # Running the agent for that same turn sent the patient two
@@ -662,73 +635,3 @@ class IngestMessageUseCase:
             await self._agent_invoker.handle(
                 ConversationId(conversation_id_value), message_ids, user_message, button_payload
             )
-
-    async def _resolve_or_create_contact(
-        self, contact_repository: ContactRepository, phone: PhoneNumber
-    ) -> Contact:
-        contact = await contact_repository.get_by_phone(phone)
-        if contact is not None:
-            return contact
-        contact = Contact(id=str(uuid4()), phone=phone, patient_id=None)
-        try:
-            await contact_repository.save(contact)
-        except ContactAlreadyExistsError:
-            # Race: another concurrent webhook for this same brand-new
-            # phone number already created a contact row between our own
-            # get_by_phone and save() (see that exception's own
-            # docstring). Re-read rather than proceed with two contact
-            # records for the same person.
-            existing = await contact_repository.get_by_phone(phone)
-            if existing is not None:
-                return existing
-            # Flushed a moment too late for us to see it yet under READ
-            # COMMITTED — provably about to exist with these exact fields
-            # either way, so continue with our own in-memory copy rather
-            # than fail the whole turn over a read-timing gap.
-            return contact
-        return contact
-
-    async def _resolve_or_create_conversation(
-        self,
-        conversation_repository: ConversationRepository,
-        from_phone: PhoneNumber,
-        contact_id: str,
-    ) -> tuple[Conversation, bool]:
-        # YCloud/WhatsApp conversations are 1:1 with the sender's phone
-        # number (no separate vendor conversation-id concept, unlike
-        # Chatwoot's ticket-style `conversation.id`) — so our ConversationId
-        # IS `ycloud-{phone}`, a deliberate zero-migration id-encoding
-        # convention, not a hack.
-        conversation_id = ConversationId(f"ycloud-{from_phone}")
-        conversation = await conversation_repository.get_by_id(conversation_id)
-        if conversation is not None:
-            return conversation, False
-        created_at = datetime.now(UTC)
-        conversation = Conversation(
-            id=conversation_id,
-            contact_id=contact_id,
-            mode="agent",
-            created_at=created_at,
-            workflow_session_generation=_new_conversation_workflow_generation_seed(created_at),
-        )
-        try:
-            await conversation_repository.save(conversation)
-        except ConversationAlreadyExistsError:
-            # Race: another concurrent webhook for this same brand-new
-            # contact already created this conversation row between our
-            # own get_by_id and save() (see that exception's own
-            # docstring) — seen live, this crashed the whole webhook
-            # request outright with an unhandled IntegrityError. Re-read
-            # and report it as NOT new, same posture as the ordinary
-            # repeat-visitor branch above: whichever concurrent request
-            # actually won gets to send the once-ever welcome message.
-            existing = await conversation_repository.get_by_id(conversation_id)
-            if existing is not None:
-                return existing, False
-            return conversation, False
-        # The `bool` here is the ONLY place in this class that can tell a
-        # conversation's first-ever turn apart from any later one — by the
-        # time any other method runs, the row this same call just saved is
-        # already indistinguishable from an old one. `execute()` uses it to
-        # fire the once-ever welcome message (PRD.md §7).
-        return conversation, True

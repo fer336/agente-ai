@@ -1,7 +1,9 @@
+from collections.abc import Collection
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from app.domain.entities.appointment_reminder import AppointmentReminder
+from app.domain.entities.appointment_reminder import AppointmentReminder, ReminderKind
+from app.domain.value_objects.phone_number import PhoneNumber
 
 
 @runtime_checkable
@@ -55,3 +57,36 @@ class AppointmentReminderRepository(Protocol):
     ) -> bool: ...
 
     async def has_sent_review_request_since(self, patient_id: str, cutoff: datetime) -> bool: ...
+
+    async def find_sent_for_inbound_action(
+        self,
+        appointment_id: str,
+        recipient_phone: PhoneNumber,
+        allowed_kinds: Collection[ReminderKind],
+    ) -> AppointmentReminder | None:
+        """Returns only a terminal sent reminder eligible for an inbound action."""
+        ...
+
+    async def has_sent_review_request_for_recipient(self, recipient_phone: PhoneNumber) -> bool:
+        """Whether this normalized recipient was sent a terminal review request."""
+        ...
+
+    async def find_latest_sent_pending_appointment_reminder(
+        self, recipient_phone: PhoneNumber, *, sent_since: datetime, now: datetime
+    ) -> AppointmentReminder | None:
+        """Latest appointment reminder (confirm kinds) sent to this phone since `sent_since`
+        whose appointment has not started yet (`appointment_starts_at > now`).
+
+        Rows with an unknown appointment start never match.
+        """
+        ...
+
+    async def latest_pending_appointment_start(
+        self, recipient_phone: PhoneNumber, *, now: datetime
+    ) -> datetime | None:
+        """Furthest appointment start (`> now`) among the appointment reminders (confirm
+        kinds) already sent to this phone, or None when no such appointment is pending.
+
+        Independent of when the reminder was sent: only the appointment start matters.
+        """
+        ...

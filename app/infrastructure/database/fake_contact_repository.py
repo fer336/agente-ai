@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.domain.entities.contact import Contact
 from app.domain.value_objects.phone_number import PhoneNumber
 
@@ -19,3 +21,15 @@ class FakeContactRepository:
 
     async def save(self, contact: Contact) -> None:
         self._contacts_by_id[contact.id] = contact
+
+    async def mark_review_opt_out(self, phone: PhoneNumber, opted_out_at: datetime) -> bool:
+        contact = await self.get_by_phone(phone)
+        if contact is None:
+            return False
+        if contact.review_opted_out_at is None:
+            contact.review_opted_out_at = opted_out_at
+        return True
+
+    async def is_review_opted_out(self, phone: PhoneNumber) -> bool:
+        contact = await self.get_by_phone(phone)
+        return contact is not None and contact.review_opted_out_at is not None

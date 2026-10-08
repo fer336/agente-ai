@@ -155,6 +155,10 @@ def reminder_statuses_from_estados(
     named_states: dict[str, ReminderAppointmentState] = {
         "confirmada": "confirmed",
         "confirmado": "confirmed",
+        "confirmado por pcte. via whatsapp": "confirmed",
+        "confirmado por whatsapp": "confirmed",
+        "confirmado por email": "confirmed",
+        "confirmado por telefono": "confirmed",
         "atendida": "attended",
         "atendido": "attended",
         "no asistio": "no_show",
@@ -220,12 +224,19 @@ def _normalized_status_name(name: str) -> str:
 
 
 def reminder_patient_from_paciente(raw: dict[str, object]) -> ReminderPatient:
-    """Maps only the identifier and normalized mobile needed for a reminder."""
+    """Maps only id, normalized mobile, and safe first name for a reminder."""
     patient_id = raw.get("id")
     raw_phone = raw.get("celular") or raw.get("telefono")
-    if patient_id is None or not raw_phone:
-        raise DentalinkInvalidResponseError("paciente record is missing id/celular/telefono")
-    return ReminderPatient(patient_id=str(patient_id), mobile=_phone_from_dentalink(str(raw_phone)))
+    display_name = (
+        str(raw.get("nombre", "")).strip().split(maxsplit=1)[0] if raw.get("nombre") else ""
+    )
+    if patient_id is None or not raw_phone or not display_name:
+        raise DentalinkInvalidResponseError("paciente record is missing id/celular/telefono/nombre")
+    return ReminderPatient(
+        patient_id=str(patient_id),
+        mobile=_phone_from_dentalink(str(raw_phone)),
+        display_name=display_name,
+    )
 
 
 def patient_from_paciente(raw: dict[str, object]) -> Patient:
@@ -306,6 +317,30 @@ def treatment_from_tratamiento(raw: dict[str, object]) -> Treatment:
         paid=_as_float(raw.get("abonado")),
         debt=_as_float(raw.get("deuda")),
     )
+
+
+def resolve_patient_whatsapp_confirmation_state_id(estados: list[dict[str, object]]) -> str | None:
+    """Returns the one clinic-owned WhatsApp confirmation state when safe to write.
+
+    State 22 is intentionally pinned to the account's normalized exact name
+    and enabled, non-cancellation metadata. Never substitute a generic
+    confirmation state: a metadata mismatch means the clinic changed its
+    workflow and the caller must fail closed.
+    """
+    for estado in estados:
+        if str(estado.get("id")) != "22":
+            continue
+        name = estado.get("nombre")
+        if (
+            isinstance(name, str)
+            and _normalized_status_name(name)
+            == _normalized_status_name("Confirmado por pcte. vía WhatsApp")
+            and estado.get("anulacion") == 0
+            and estado.get("habilitado") == 1
+        ):
+            return "22"
+        return None
+    return None
 
 
 def _is_cancellation_estado(estado: dict[str, object]) -> bool:

@@ -71,3 +71,30 @@ class ScheduleConversationResetUseCase:
                 attempts=0,
             )
         )
+
+    async def defer_after(self, conversation_id: ConversationId, anchor: datetime) -> None:
+        """Makes sure ONE idle reset is scheduled at `anchor` + the idle delay.
+
+        For a cleanup that was skipped and must not be lost. Leaves an already
+        scheduled idle reset alone: it is either this same deferral or one set
+        by a newer inbound message, and a cleanup that fires too early simply
+        defers again.
+        """
+        existing = await self._scheduled_action_repository.get_scheduled_by_conversation_id(
+            str(conversation_id)
+        )
+        if any(action.action_type == CONVERSATION_IDLE_RESET_ACTION for action in existing):
+            return
+        new_id = str(uuid4())
+        await self._scheduled_action_repository.save(
+            ScheduledAction(
+                id=new_id,
+                conversation_id=conversation_id,
+                pending_action_id=None,
+                action_type=CONVERSATION_IDLE_RESET_ACTION,
+                status="scheduled",
+                scheduled_for=anchor + timedelta(seconds=self._delay_seconds),
+                idempotency_key=IdempotencyKey(value=f"conversation_idle_reset:{new_id}"),
+                attempts=0,
+            )
+        )

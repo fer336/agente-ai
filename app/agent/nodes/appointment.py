@@ -81,6 +81,11 @@ from app.agent.nodes.appointment_selection import (
 )
 from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.node_protocol import AgentNode
+from app.agent.nodes.reminder_action import (
+    REMINDER_IDENTITY_KEY,
+    REMINDER_RESCHEDULE_KEY,
+    REMINDER_STALE_TEXT,
+)
 from app.agent.state import AgentState
 from app.agent.workflow_state import invalidate_from
 from app.application.appointments.cancel_appointment import CancelAppointmentUseCase
@@ -2807,6 +2812,40 @@ def create_appointment_node(
             },
         }
 
+    async def _begin_reminder_reschedule(
+        conversation_id: ConversationId,
+        appointment_id: str,
+        collected_data: dict[str, object],
+        state: AgentState,
+    ) -> dict[str, object]:
+        """Enters the regular reschedule flow for the appointment a reminder tap named.
+
+        The reminder use case already authorized the tap (reminder sent to that phone, owned
+        appointment, open state). Here the appointment is re-read from the patient's own list
+        so the flow gets its real professional; anything missing ends in the safe stale text.
+        """
+        patient = cast(dict[str, object] | None, collected_data.get("patient"))
+        target: Appointment | None = None
+        if patient is not None and patient.get("id"):
+            owned = await get_patient_appointments.execute(str(patient["id"]))
+            target = next((a for a in owned if str(a.id) == appointment_id), None)
+        if patient is None or target is None:
+            return {
+                "response_text": REMINDER_STALE_TEXT,
+                "response_buttons": None,
+                "requires_handoff": False,
+                "pending_action_id": None,
+                "collected_data": {},
+            }
+        preloaded = {k: v for k, v in collected_data.items() if k != REMINDER_RESCHEDULE_KEY}
+        return await _begin_reschedule(
+            conversation_id,
+            {**preloaded, "operation": RESCHEDULE_APPOINTMENT_ACTION},
+            target,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+
     async def _turn(state: AgentState) -> dict[str, object]:
         conversation_id = ConversationId(state["conversation_id"])
         workflow_conversation = await conversation_repository.get_by_id(conversation_id)
@@ -2817,6 +2856,12 @@ def create_appointment_node(
         )
         collected_data = state["collected_data"]
         stage = collected_data.get("stage")
+
+        reminder_appointment_id = collected_data.get(REMINDER_RESCHEDULE_KEY)
+        if reminder_appointment_id is not None:
+            return await _begin_reminder_reschedule(
+                conversation_id, str(reminder_appointment_id), collected_data, state
+            )
 
         preselected_specialty: object = None
         aligner_option: object = None
@@ -4796,8 +4841,10 @@ def create_appointment_node(
             )
         result = await _turn(state)
         result_data = result.get("collected_data")
-        if isinstance(result_data, dict) and (
-            result_data.get("stage") != STAGE_AWAITING_VERIFICATION_CONFIRMATION
+        if (
+            isinstance(result_data, dict)
+            and result_data.get("stage") != STAGE_AWAITING_VERIFICATION_CONFIRMATION
+            and not result_data.get(REMINDER_IDENTITY_KEY)
         ):
             patient = result_data.get("patient")
             if isinstance(patient, dict) and patient.get("id"):

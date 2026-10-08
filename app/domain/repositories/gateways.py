@@ -149,6 +149,8 @@ class ReminderPatient:
 
     patient_id: str
     mobile: PhoneNumber
+    #: Safe, non-empty display value for approved template parameter {{1}}.
+    display_name: str
 
 
 @runtime_checkable
@@ -158,6 +160,22 @@ class ReminderAppointmentGateway(Protocol):
     async def list_reminder_appointments_for_date_window(
         self, start_date: date, end_date: date
     ) -> list[ReminderAppointment]: ...
+
+    async def get_reminder_appointment(self, appointment_id: str) -> ReminderAppointment | None:
+        """Re-read one appointment immediately before reminder delivery."""
+        ...
+
+    async def mark_appointment_confirmed_via_patient_whatsapp(self, appointment_id: str) -> None:
+        """Record the clinic's patient-WhatsApp confirmation state.
+
+        Callers own appointment ownership and current-state revalidation;
+        this low-level operation only performs the validated state transition.
+        """
+        ...
+
+    async def cancel_appointment(self, appointment_id: str, idempotency_key: str) -> None:
+        """Cancel a revalidated reminder appointment using the shared operation."""
+        ...
 
 
 @runtime_checkable

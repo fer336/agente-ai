@@ -51,7 +51,8 @@ def test_active_appointment_gets_day_before_and_confirmation_same_day_in_utc():
         ("confirm_day_before", datetime(2026, 10, 1, 21, tzinfo=UTC)),
         ("confirm_or_location_same_day", datetime(2026, 10, 2, 14, tzinfo=UTC)),
     ]
-    assert candidates[1].template_name == "recordatorio_turno_confirmar"
+    assert candidates[0].template_name == "recordatorio_turno_confirmar"
+    assert candidates[1].template_name == "recordatorio_turno_sin_confirmar"
     assert candidates[0].recipient_phone == "+5491112345678"
 
 
@@ -89,10 +90,12 @@ def test_same_day_candidate_includes_window_boundaries_and_excludes_outside_them
     )
 
     assert [candidate.kind for candidate in opening_candidates] == [
-        "confirm_day_before", "confirm_or_location_same_day"
+        "confirm_day_before",
+        "confirm_or_location_same_day",
     ]
     assert [candidate.kind for candidate in closing_candidates] == [
-        "confirm_day_before", "confirm_or_location_same_day"
+        "confirm_day_before",
+        "confirm_or_location_same_day",
     ]
     assert [candidate.kind for candidate in before_opening_candidates] == ["confirm_day_before"]
 
@@ -149,8 +152,7 @@ def test_attended_appointment_gets_review_next_day_at_clinic_ten_am():
     )
 
     actual = [
-        (candidate.kind, candidate.due_at, candidate.template_name)
-        for candidate in candidates
+        (candidate.kind, candidate.due_at, candidate.template_name) for candidate in candidates
     ]
     assert actual == [
         ("review_request", datetime(2026, 10, 3, 13, tzinfo=UTC), "solicitud_resena_google")
@@ -163,6 +165,9 @@ def test_terminal_or_unknown_statuses_do_not_produce_candidates():
             status=status, start_at=datetime(2026, 10, 2, 14, 0, tzinfo=CLINIC_TZ)
         )
 
-        assert plan_reminders(
-            appointment, _patient(), datetime(2026, 10, 1, 9, tzinfo=CLINIC_TZ), SETTINGS
-        ) == []
+        assert (
+            plan_reminders(
+                appointment, _patient(), datetime(2026, 10, 1, 9, tzinfo=CLINIC_TZ), SETTINGS
+            )
+            == []
+        )

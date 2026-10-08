@@ -494,9 +494,7 @@ async def test_list_reminder_appointments_for_date_window_uses_fecha_range_and_m
     ] == [("10", "pat-1", "2", "Atendida", "attended")]
     cita_request = next(call for call in client.get_calls if call[0] == "/v1/citas")
     assert cita_request[1] is not None
-    assert json.loads(cita_request[1]["q"]) == {
-        "fecha": {"gte": "2026-10-10", "lte": "2026-10-11"}
-    }
+    assert json.loads(cita_request[1]["q"]) == {"fecha": {"gte": "2026-10-10", "lte": "2026-10-11"}}
     assert cita_request[1]["limit"] == "500"
 
 
@@ -755,6 +753,51 @@ async def test_reschedule_appointment_raises_not_found_on_404():
 
     with pytest.raises(AppointmentNotFoundError):
         await gateway.reschedule_appointment("missing", make_slot(), idempotency_key="key-1")
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_confirmed_via_patient_whatsapp_validates_live_state_then_puts_it():
+    client = _StubDentalinkClient(
+        get_responses={
+            "/v1/citas/estados": [
+                {
+                    "id": 22,
+                    "nombre": "Confirmado por pcte. vía WhatsApp",
+                    "anulacion": 0,
+                    "habilitado": 1,
+                }
+            ]
+        }
+    )
+
+    await _gateway(client).mark_appointment_confirmed_via_patient_whatsapp("55")
+
+    assert client.get_calls == [("/v1/citas/estados", None)]
+    assert client.put_calls == [("/v1/citas/55", {"id_estado": "22"})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "estado",
+    [
+        {"id": 22, "nombre": "Confirmado", "anulacion": 0, "habilitado": 1},
+        {
+            "id": 22,
+            "nombre": "Confirmado por pcte. vía WhatsApp",
+            "anulacion": 0,
+            "habilitado": 0,
+        },
+    ],
+)
+async def test_whatsapp_confirmation_fails_closed_for_invalid_state_metadata(
+    estado: dict[str, object],
+):
+    client = _StubDentalinkClient(get_responses={"/v1/citas/estados": [estado]})
+
+    with pytest.raises(DentalinkInvalidResponseError):
+        await _gateway(client).mark_appointment_confirmed_via_patient_whatsapp("55")
+
+    assert client.put_calls == []
 
 
 @pytest.mark.asyncio
