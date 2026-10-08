@@ -63,6 +63,28 @@ _AGREEMENT_CORE = frozenset(
 )
 _AGREEMENT_FILLER = frozenset({"por", "favor", "de", "acuerdo", "que", "si"})
 
+#: What may follow a leading refusal word ("no, gracias", "no, está bien"). "No está bien"
+#: (comma missing) is read as "no, it's fine" because it only counts right after an offer.
+_DECLINE_LEADS = frozenset({"no", "nop", "nope"})
+_DECLINE_TAILS = frozenset(
+    {
+        (),
+        ("gracias",),
+        ("muchas", "gracias"),
+        ("por", "ahora"),
+        ("hace", "falta"),
+        ("es", "necesario"),
+        ("necesito",),
+        ("quiero",),
+        ("esta", "bien"),
+        ("dejalo",),
+    }
+)
+#: Refusals that do not start with "no".
+_DECLINE_PHRASES = frozenset(
+    {("por", "ahora", "no"), ("asi", "esta", "bien"), ("esta", "bien", "asi"), ("dejalo", "asi")}
+)
+
 _MAIN_MENU_REQUESTS = frozenset(
     {
         "menu principal",
@@ -101,6 +123,17 @@ def is_handoff_offer_acceptance(text: str) -> bool:
     if not all(token in _AGREEMENT_CORE or token in _AGREEMENT_FILLER for token in tokens):
         return False
     return any(token in _AGREEMENT_CORE for token in tokens)
+
+
+def is_handoff_offer_decline(text: str) -> bool:
+    """True for a short whitelisted refusal of an offer ("no", "no gracias", "no, está bien").
+
+    Conservative on purpose: anything else after a "no" ("no sé", "no puedo ir", "no llego")
+    is a real message, so it is not a decline."""
+    tokens = tuple(normalize_text(text).split())
+    if tokens in _DECLINE_PHRASES:
+        return True
+    return bool(tokens) and tokens[0] in _DECLINE_LEADS and tokens[1:] in _DECLINE_TAILS
 
 
 def is_main_menu_request(text: str) -> bool:

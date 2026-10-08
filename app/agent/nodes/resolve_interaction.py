@@ -13,8 +13,10 @@ from app.agent.handoff_offer import (
     HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
     is_handoff_offer_acceptance,
+    is_handoff_offer_decline,
     is_main_menu_request,
     normalize_text,
+    offers_administration_handoff,
 )
 from app.agent.nodes.appointment import (
     STAGE_AWAITING_CONFIRMATION,
@@ -35,6 +37,7 @@ from app.agent.third_party_guard import (
     claims_to_act_for_someone_else,
 )
 from app.domain.repositories.llm_provider import LLMProvider, UnderstandingResult
+from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
     FAQ_OPTION_PAYLOAD_PREFIX,
@@ -81,6 +84,15 @@ THANKS_INTENT = "thanks"
 #: Set when a message claims to act for another person (see `third_party_guard.py`): the
 #: router itself answers, so no business node ever sees that person's name or DNI.
 THIRD_PARTY_GUARD_INTENT = "third_party_guard"
+
+#: Set when the patient refuses the administration offer just made ("no gracias"): the router
+#: itself answers with a short friendly reply and the main menu, never a handoff.
+HANDOFF_DECLINED_INTENT = "handoff_declined"
+HANDOFF_DECLINED_STATIC_MESSAGE = (
+    "Perfecto, sin problema 😊 Si más adelante querés hablar con alguien, avisame. "
+    "Mientras tanto, si necesitás otra cosa podés volver al menú."
+)
+_HANDOFF_DECLINED_BUTTONS = [InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal")]
 _THIRD_PARTY_STAGES_EXEMPT = frozenset({STAGE_AWAITING_CONFIRMATION})
 
 #: Stages that ask the patient for a specific data field (first-visit intake, name + DNI,
@@ -185,6 +197,8 @@ __all__ = [
     "MENU_LOCATION_PAYLOAD",
     "MENU_SPECIALTIES_PAYLOAD",
     "POST_ACTION_CLOSE_INTENT",
+    "HANDOFF_DECLINED_INTENT",
+    "HANDOFF_DECLINED_STATIC_MESSAGE",
     "THANKS_INTENT",
     "THIRD_PARTY_GUARD_INTENT",
     "create_resolve_interaction_node",
@@ -420,6 +434,20 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
                 "interruption": "terminate",
                 "collected_data": collected_data,
             }
+        if (
+            state["button_payload"] is None
+            and state["collected_data"].get(HANDOFF_OFFER_KEY)
+            and is_handoff_offer_decline(state["user_message"])
+            and not requires_automatic_handoff(state["user_message"])
+        ):
+            # "No, gracias" / "no, está bien" after the offer: stay in the conversation.
+            return {
+                "intent": HANDOFF_DECLINED_INTENT,
+                "response_text": HANDOFF_DECLINED_STATIC_MESSAGE,
+                "response_buttons": _HANDOFF_DECLINED_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": collected_data,
+            }
         result = await _resolve(state, collected_data, llm_provider)
         if "collected_data" not in result and collected_data is not state["collected_data"]:
             # Something WAS stripped this turn but the branch below forwarded
@@ -431,6 +459,17 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
         return result
 
     return node
+
+
+def _thanks_reply_is_safe(text: str) -> bool:
+    """A thanks reply carries no buttons and sets no offer, so it must never offer (or even
+    name) administration: the patient's next "sí"/"no" would have nothing to answer."""
+    normalized = normalize_text(text)
+    return not (
+        offers_administration_handoff(text)
+        or "administracion" in normalized
+        or re.search(r"\basesor", normalized)
+    )
 
 
 async def _thanks_reply(
@@ -463,6 +502,7 @@ async def _thanks_reply(
             state["recent_messages"],
             state["contact_memory_summary"],
             action_executed=True,
+            validator=_thanks_reply_is_safe,
         )
         return {
             "intent": POST_ACTION_CLOSE_INTENT,
@@ -482,6 +522,7 @@ async def _thanks_reply(
         _THANKS_STATIC_MESSAGE,
         state["recent_messages"],
         state["contact_memory_summary"],
+        validator=_thanks_reply_is_safe,
     )
     return {
         "intent": THANKS_INTENT,
