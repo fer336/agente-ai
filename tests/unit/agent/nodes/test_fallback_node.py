@@ -360,3 +360,57 @@ async def test_after_the_welcome_menu_the_welcome_list_is_re_attached_instead_of
 
     assert result["response_list"] is WELCOME_LIST
     assert result["response_buttons"] is None
+
+
+_AFTER_WELCOME = [
+    {"role": "assistant", "content": WELCOME_TEXT},
+    {"role": "user", "content": "Holaa"},
+]
+
+
+@pytest.mark.asyncio
+async def test_after_the_welcome_menu_the_llm_gets_its_own_intent_not_fallback():
+    captured: list[ResponseContext] = []
+    node = create_fallback_node(_capturing_provider(captured))
+
+    await node(make_agent_state(user_message="Holaa", recent_messages=_AFTER_WELCOME))
+
+    assert captured[0].intent == "welcome_menu_reminder"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_text",
+    [
+        "Perdón, no te entendí bien. Para poder continuar, elegí una opción del menú.",
+        "Disculpá, no entendí tu mensaje. Elegí una opción del menú.",
+    ],
+)
+async def test_after_the_welcome_menu_a_did_not_understand_reply_is_replaced_by_the_static_text(
+    model_text,
+):
+    class _ApologisingLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            return model_text
+
+    node = create_fallback_node(_ApologisingLLMProvider())
+
+    result = await node(make_agent_state(user_message="Holaa", recent_messages=_AFTER_WELCOME))
+
+    assert result["response_text"] == (
+        "Para poder continuar, elegí por favor una de las opciones del menú tocando el "
+        "botón de abajo 👇"
+    )
+
+
+@pytest.mark.asyncio
+async def test_after_the_welcome_menu_a_clean_llm_reply_is_kept():
+    class _StubLLMProvider(FakeLLMProvider):
+        async def generate_response(self, context: ResponseContext) -> str:
+            return "Para seguir, elegí una de las opciones del menú 👇"
+
+    node = create_fallback_node(_StubLLMProvider())
+
+    result = await node(make_agent_state(user_message="Holaa", recent_messages=_AFTER_WELCOME))
+
+    assert result["response_text"] == "Para seguir, elegí una de las opciones del menú 👇"

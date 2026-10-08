@@ -6,6 +6,7 @@ from app.agent.handoff_offer import (
     HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
     answer_offers_handoff,
+    normalize_text,
 )
 from app.agent.nodes.llm_response import (
     generate_or_fallback,
@@ -49,6 +50,12 @@ _CONFUSED_PATIENT_BUTTONS = [
     InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
+
+
+def _does_not_apologise_for_not_understanding(text: str) -> bool:
+    """The patient just typed a greeting or a stray word: telling them "no te entendí" is
+    the exact wording this reply exists to avoid, whatever the model was told."""
+    return "entend" not in normalize_text(text)
 
 
 def _welcome_menu_was_just_shown(recent_messages: list[dict[str, str]]) -> bool:
@@ -141,7 +148,9 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             text = await generate_or_fallback(
                 llm_provider,
                 state["conversation_id"],
-                "fallback",
+                # Own intent: under "fallback" the model read the turn as "no te entendí"
+                # and apologised despite the instruction.
+                "welcome_menu_reminder",
                 {
                     "situacion": (
                         "Ya le mostramos el menú de bienvenida al paciente y, en lugar de "
@@ -157,6 +166,7 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
                 _CHOOSE_FROM_MENU_MESSAGE,
                 state["recent_messages"],
                 state["contact_memory_summary"],
+                validator=_does_not_apologise_for_not_understanding,
             )
             return {
                 "response_text": text,
