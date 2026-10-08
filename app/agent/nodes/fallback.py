@@ -6,6 +6,7 @@ from app.agent.handoff_offer import (
     HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
     answer_offers_handoff,
+    normalize_text,
 )
 from app.agent.nodes.llm_response import (
     generate_or_fallback,
@@ -16,9 +17,11 @@ from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
 from app.agent.payment_questions import asks_about_payments
 from app.agent.state import AgentState
+from app.domain.entities.message import ROLE_USER
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 
 #: A confused patient gets exactly two ways forward (user decision, this
 #: session's brief): book directly (`OPERATION_CREATE_PAYLOAD`, the same
@@ -33,6 +36,12 @@ _CONFUSED_PATIENT_MESSAGE = (
     "Noto que las opciones que te dimos no son las que buscás. Tocá 📅 Agendar una cita si "
     "querés sacar un turno, o 💬 Administración si preferís que te ayude alguien del consultorio."
 )
+#: Static wording for a patient who typed instead of tapping the welcome
+#: menu, used only when the LLM provider fails.
+_CHOOSE_FROM_MENU_MESSAGE = (
+    "Para poder continuar, elegí por favor una de las opciones del menú tocando el "
+    "botón de abajo 👇"
+)
 #: A first miss gets a plain "no te entendí"; only a repeat one
 #: offers administración.
 _ESCALATE_AFTER_ATTEMPTS = 2
@@ -41,6 +50,22 @@ _CONFUSED_PATIENT_BUTTONS = [
     InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
+
+
+def _does_not_apologise_for_not_understanding(text: str) -> bool:
+    """The patient just typed a greeting or a stray word: telling them "no te entendí" is
+    the exact wording this reply exists to avoid, whatever the model was told."""
+    return "entend" not in normalize_text(text)
+
+
+def _welcome_menu_was_just_shown(recent_messages: list[dict[str, str]]) -> bool:
+    """True when the last assistant message before the patient's current
+    turn is the canonical welcome menu (no other bot reply since)."""
+    for message in reversed(recent_messages):
+        if message["role"] == ROLE_USER:
+            continue
+        return message["content"].startswith(WELCOME_TEXT)
+    return False
 
 
 def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
@@ -113,6 +138,43 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             }
 
         fallback_count = cast(int, collected_data.get("fallback_count", 0)) + 1
+
+        if _welcome_menu_was_just_shown(state["recent_messages"]):
+            # The patient typed instead of tapping the welcome menu just
+            # offered (typically a bare "Hola"): ask for a menu option
+            # (no greeting — the welcome already greeted), re-attaching that
+            # same menu so there is something to tap — not the 2-button
+            # "no te entendí" safety net.
+            text = await generate_or_fallback(
+                llm_provider,
+                state["conversation_id"],
+                # Own intent: under "fallback" the model read the turn as "no te entendí"
+                # and apologised despite the instruction.
+                "welcome_menu_reminder",
+                {
+                    "situacion": (
+                        "Ya le mostramos el menú de bienvenida al paciente y, en lugar de "
+                        "tocar una opción, escribió un mensaje."
+                    ),
+                    "instruccion": (
+                        "Pedile con calidez que para poder continuar elija una de las "
+                        "opciones del menú. No saludes, no digas que no lo entendiste, no "
+                        "listes las opciones ni repitas sus nombres."
+                    ),
+                    "intentos_seguidos_sin_resolver": fallback_count,
+                },
+                _CHOOSE_FROM_MENU_MESSAGE,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+                validator=_does_not_apologise_for_not_understanding,
+            )
+            return {
+                "response_text": text,
+                "response_buttons": None,
+                "response_list": WELCOME_LIST,
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "fallback_count": fallback_count},
+            }
 
         context: dict[str, object] = {
             "situacion": (
