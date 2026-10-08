@@ -16,6 +16,7 @@ from app.agent.handoff_offer import (
     is_handoff_offer_decline,
     is_main_menu_request,
     normalize_text,
+    offers_administration_handoff,
 )
 from app.agent.nodes.appointment import (
     STAGE_AWAITING_CONFIRMATION,
@@ -460,6 +461,17 @@ def create_resolve_interaction_node(llm_provider: LLMProvider) -> AgentNode:
     return node
 
 
+def _thanks_reply_is_safe(text: str) -> bool:
+    """A thanks reply carries no buttons and sets no offer, so it must never offer (or even
+    name) administration: the patient's next "sí"/"no" would have nothing to answer."""
+    normalized = normalize_text(text)
+    return not (
+        offers_administration_handoff(text)
+        or "administracion" in normalized
+        or re.search(r"\basesor", normalized)
+    )
+
+
 async def _thanks_reply(
     state: AgentState,
     collected_data: dict[str, object],
@@ -490,6 +502,7 @@ async def _thanks_reply(
             state["recent_messages"],
             state["contact_memory_summary"],
             action_executed=True,
+            validator=_thanks_reply_is_safe,
         )
         return {
             "intent": POST_ACTION_CLOSE_INTENT,
@@ -509,6 +522,7 @@ async def _thanks_reply(
         _THANKS_STATIC_MESSAGE,
         state["recent_messages"],
         state["contact_memory_summary"],
+        validator=_thanks_reply_is_safe,
     )
     return {
         "intent": THANKS_INTENT,

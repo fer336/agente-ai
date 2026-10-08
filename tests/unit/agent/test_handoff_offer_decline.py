@@ -2,7 +2,11 @@ import pytest
 from langgraph.graph import END
 
 from app.agent.graph import HANDOFF_NODE, _route_after_resolve_interaction
-from app.agent.handoff_offer import HANDOFF_OFFER_KEY, is_handoff_offer_decline
+from app.agent.handoff_offer import (
+    HANDOFF_OFFER_KEY,
+    is_handoff_offer_decline,
+    offers_administration_handoff,
+)
 from app.agent.nodes.resolve_interaction import (
     HANDOFF_DECLINED_INTENT,
     HANDOFF_DECLINED_STATIC_MESSAGE,
@@ -174,3 +178,63 @@ async def test_the_declined_turn_ends_the_graph_and_never_reaches_the_handoff_ga
     conversation = await conversation_repository.get_by_id(make_conversation(id_="conv-1").id)
     assert conversation is not None
     assert conversation.mode == "agent"
+
+
+_LIVE_OFFER_TEXT = (
+    "Dale, no hay problema. Si querés hablar con administración o coordinar algo nuevo, "
+    "avisame y te paso con ellos así lo vemos bien. ¿Preferís que te pase ahora?"
+)
+
+
+class _OfferingThanksLLM(FakeLLMProvider):
+    """Writes the live reply: a thanks answer that offers administration."""
+
+    async def generate_response(self, context):
+        return _LIVE_OFFER_TEXT
+
+
+class _PlainThanksLLM(FakeLLMProvider):
+    async def generate_response(self, context):
+        return "De nada, un gusto ayudarte!"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collected_data", [{}, {"post_action_context": "create_appointment"}])
+async def test_an_llm_thanks_reply_that_offers_administration_is_replaced_by_the_static_one(
+    collected_data,
+):
+    node = create_resolve_interaction_node(_OfferingThanksLLM())
+
+    result = await node(make_agent_state(user_message="Gracias", collected_data=collected_data))
+
+    assert result["response_text"] != _LIVE_OFFER_TEXT
+    assert "administraci" not in result["response_text"].lower()
+    assert not offers_administration_handoff(result["response_text"])
+    assert result["response_buttons"] is None
+    assert result["requires_handoff"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collected_data", [{}, {"post_action_context": "create_appointment"}])
+async def test_a_normal_llm_thanks_reply_is_passed_through_unchanged(collected_data):
+    node = create_resolve_interaction_node(_PlainThanksLLM())
+
+    result = await node(make_agent_state(user_message="Gracias", collected_data=collected_data))
+
+    assert result["response_text"] == "De nada, un gusto ayudarte!"
+
+
+@pytest.mark.asyncio
+async def test_live_sequence_no_esta_bien_without_a_pending_offer_still_reaches_the_classifier():
+    # The thanks reply no longer offers anything, so no offer is pending; the patient's
+    # "No está bien" is therefore not a decline and goes through the normal path (here
+    # the fake LLM classifies it). Documented behavior, not a classifier fix.
+    node = create_resolve_interaction_node(_OfferingThanksLLM())
+    thanks = await node(make_agent_state(user_message="Gracias", collected_data={}))
+    assert HANDOFF_OFFER_KEY not in thanks["collected_data"]
+
+    result = await node(
+        make_agent_state(user_message="No está bien", collected_data=thanks["collected_data"])
+    )
+
+    assert result["intent"] != HANDOFF_DECLINED_INTENT
