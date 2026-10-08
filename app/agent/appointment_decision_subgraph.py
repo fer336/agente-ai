@@ -171,6 +171,16 @@ _NO_SLOTS_FALLBACK_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 
+#: Fixed reply when the specialty a frequent topic books has no upcoming turnos.
+_NO_PRESELECTED_SLOTS_MESSAGE = (
+    "Por el momento no hay turnos disponibles para esta consulta. "
+    "Para coordinar uno, hablá con administración 👇"
+)
+_NO_PRESELECTED_SLOTS_BUTTONS = [
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
+]
+
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
     "Querés que te comunique con administración?"
@@ -750,7 +760,18 @@ def build_appointment_decision_graph(
             )
             return None
         if not found[0]:
-            return None
+            # The patient asked for this exact service: another specialty's list would be
+            # the wrong way out, so say there are no turnos and send them to administración.
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            return {
+                "response_text": _NO_PRESELECTED_SLOTS_MESSAGE,
+                "response_buttons": _NO_PRESELECTED_SLOTS_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": {},
+                "next_node": "end",
+                "decision_node": "choose_specialty",
+                "exit_reason": "none",
+            }
         return await _offer_any_professional_slots(
             conversation_id,
             chosen.id,
