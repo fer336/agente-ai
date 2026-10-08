@@ -30,6 +30,7 @@ from app.domain.repositories.contact_memory_repository import ContactMemoryRepos
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.message_repository import MessageRepository
+from app.domain.repositories.pending_action_repository import PendingActionRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
@@ -306,6 +307,9 @@ class FollowUpWorkerRepositories:
     contact_memories: ContactMemoryRepository | None = None
     #: Lets the idle cleanup wait for a sent reminder whose appointment has not started.
     appointment_reminders: AppointmentReminderRepository | None = None
+    #: Lets the idle cleanup rotate and expire actions in THIS tick's transaction. A
+    #: separate session would wait on the row locks the tick's own claim still holds.
+    pending_actions: PendingActionRepository | None = None
 
 
 FollowUpWorkerRepositoriesProvider = Callable[

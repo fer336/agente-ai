@@ -1,12 +1,16 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from app.api.dependencies.gateways import get_llm_provider
 from app.api.dependencies.redis import get_shared_redis_client
-from app.api.dependencies.repositories import open_sqlalchemy_workflow_session_repositories
 from app.application.conversations.cleanup_conversation_session import (
     CleanupConversationSessionUseCase,
 )
-from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
+from app.application.conversations.rotate_workflow_session import (
+    RotateWorkflowSessionUseCase,
+    WorkflowSessionRepositories,
+)
 from app.application.conversations.schedule_conversation_reset import (
     ScheduleConversationResetUseCase,
 )
@@ -25,14 +29,29 @@ def build_idle_cleanup_use_case(
     scoped idle cleanup onto one tick's repositories. Returns `None` (the
     worker then keeps its plain rotation) when a dependency is missing.
     """
-    if repositories.contact_memories is None or checkpointer is None:
+    if (
+        repositories.contact_memories is None
+        or repositories.pending_actions is None
+        or checkpointer is None
+    ):
         return None
+    pending_actions = repositories.pending_actions
+
+    @asynccontextmanager
+    async def tick_workflow_session_repositories() -> AsyncIterator[WorkflowSessionRepositories]:
+        # The tick's session already holds the claimed row locked until it commits. A second
+        # session would block on those locks while this tick waits for it: a deadlock that
+        # Postgres cannot detect. The tick owns the commit; nothing is committed here.
+        yield WorkflowSessionRepositories(
+            conversations=repositories.conversations,
+            pending_actions=pending_actions,
+            scheduled_actions=repositories.scheduled_actions,
+        )
+
     return CleanupConversationSessionUseCase(
         conversations=repositories.conversations,
         contacts=repositories.contacts,
-        rotate_workflow_session=RotateWorkflowSessionUseCase(
-            open_sqlalchemy_workflow_session_repositories
-        ),
+        rotate_workflow_session=RotateWorkflowSessionUseCase(tick_workflow_session_repositories),
         session_checkpoints=LangGraphSessionCheckpointRepository(checkpointer),
         memory_service=MemoryService(
             contact_memory_repository=repositories.contact_memories,

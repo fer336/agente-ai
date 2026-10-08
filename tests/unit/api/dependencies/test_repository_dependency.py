@@ -29,6 +29,9 @@ from app.infrastructure.database.repositories.incident_repository import (
     SqlAlchemyIncidentRepository,
 )
 from app.infrastructure.database.repositories.message_repository import SqlAlchemyMessageRepository
+from app.infrastructure.database.repositories.pending_action_repository import (
+    SqlAlchemyPendingActionRepository,
+)
 
 
 @pytest.mark.asyncio
@@ -235,3 +238,24 @@ async def test_follow_up_worker_provider_exposes_the_reminder_repository_for_the
         assert isinstance(
             repositories.appointment_reminders, SqlAlchemyAppointmentReminderRepository
         )
+
+
+@pytest.mark.asyncio
+async def test_follow_up_worker_provider_fails_fast_on_locks_and_exposes_pending_actions(
+    monkeypatch,
+):
+    session = AsyncMock()
+
+    @asynccontextmanager
+    async def session_context():
+        yield session
+
+    monkeypatch.setattr(
+        "app.api.dependencies.repositories._get_session_factory", lambda: session_context
+    )
+
+    async with open_sqlalchemy_follow_up_worker_repositories() as repositories:
+        assert isinstance(repositories.pending_actions, SqlAlchemyPendingActionRepository)
+
+    statements = [str(call.args[0]) for call in session.execute.await_args_list]
+    assert statements == ["SET LOCAL lock_timeout = '10s'"]

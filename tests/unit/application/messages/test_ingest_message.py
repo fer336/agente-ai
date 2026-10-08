@@ -796,6 +796,52 @@ async def test_lazy_timeout_reactivation_rotates_workflow_session_and_marks_fres
 
 
 @pytest.mark.asyncio
+async def test_lazy_timeout_rotation_runs_in_the_ingest_unit_of_work():
+    """The ingest transaction already holds the conversation row (it saved the activity
+    stamp); rotating through a second session would wait on that lock forever."""
+    conversation_repository = make_conversation_repository()
+    scheduled_action_repository = make_scheduled_action_repository()
+    pending_action_repository = make_pending_action_repository()
+    stale_reply = datetime.now(UTC) - timedelta(hours=2)
+    await conversation_repository.save(
+        make_conversation(id_="ycloud-+54922224455", mode="human", last_human_reply_at=stale_reply)
+    )
+    redis_client = InMemoryFakeRedis()
+
+    @asynccontextmanager
+    async def repositories_provider() -> AsyncIterator[MessageRepositories]:
+        yield MessageRepositories(
+            messages=make_message_repository(),
+            contacts=make_contact_repository(),
+            conversations=conversation_repository,
+            media_processing_jobs=make_media_processing_job_repository(),
+            scheduled_actions=scheduled_action_repository,
+            pending_actions=pending_action_repository,
+        )
+
+    def opens_another_session():
+        raise AssertionError("the rotation must reuse the ingest transaction")
+
+    use_case = IngestMessageUseCase(
+        repositories_provider=repositories_provider,
+        debounce_tracker=DebounceTracker(redis_client, _DEBOUNCE_SECONDS),
+        redis_client=redis_client,
+        agent_invoker=make_agent_invoker(),
+        runtime_config_service=make_runtime_config_service(debounce_seconds=_DEBOUNCE_SECONDS),
+        send_reply=make_send_reply_use_case(),
+        workflow_session_repositories_provider=opens_another_session,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+54922224455"))
+
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+54922224455"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
+    assert conversation.workflow_session_generation == 2
+    assert conversation.awaiting_fresh_restart is True
+
+
+@pytest.mark.asyncio
 async def test_agent_mode_proceeds_to_debounce():
     conversation_repository = make_conversation_repository()
     await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
