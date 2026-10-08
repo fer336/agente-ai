@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.agent.nodes.handoff import create_handoff_node
+from app.agent.nodes.handoff import HANDOFF_ACK_MESSAGES, create_handoff_node
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
@@ -32,6 +32,54 @@ async def test_handoff_node_requests_handoff_and_sets_conversation_to_human():
     assert updated is not None
     assert updated.mode == "human"
     assert updated.input_state == "HUMAN"
+
+
+def test_there_are_several_distinct_handoff_acknowledgements():
+    assert len(HANDOFF_ACK_MESSAGES) >= 5
+    assert len(set(HANDOFF_ACK_MESSAGES)) == len(HANDOFF_ACK_MESSAGES)
+
+
+@pytest.mark.parametrize("message", HANDOFF_ACK_MESSAGES)
+def test_every_handoff_acknowledgement_promises_the_same_things(message):
+    lowered = message.lower()
+    assert "asesor" in lowered
+    assert "en breve" in lowered
+    assert "este mismo chat" in lowered
+    # The patient is told the assistant steps aside so the team can take over.
+    assert "paus" in lowered
+    # The patient never sees the internal word, see the first node test.
+    assert "administración" not in lowered
+    assert len(message) <= 400
+
+
+@pytest.mark.asyncio
+async def test_handoff_node_replies_with_the_variant_picked_by_the_chooser():
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(make_conversation(id_="conv-1", mode="agent"))
+    node = create_handoff_node(
+        make_ycloud_handoff_gateway(),
+        conversation_repository,
+        choose_message=lambda options: options[2],
+    )
+
+    result = await node(make_agent_state(conversation_id="conv-1", user_message="Hola"))
+
+    assert result["response_text"] == HANDOFF_ACK_MESSAGES[2]
+    assert result["requires_handoff"] is True
+
+
+@pytest.mark.asyncio
+async def test_handoff_node_does_not_always_reply_the_same_text_by_default():
+    seen: set[str] = set()
+    for index in range(60):
+        conversation_repository = FakeConversationRepository()
+        await conversation_repository.save(make_conversation(id_=f"conv-{index}", mode="agent"))
+        node = create_handoff_node(make_ycloud_handoff_gateway(), conversation_repository)
+        result = await node(make_agent_state(conversation_id=f"conv-{index}", user_message="Hola"))
+        seen.add(result["response_text"])
+
+    assert seen <= set(HANDOFF_ACK_MESSAGES)
+    assert len(seen) > 1
 
 
 @pytest.mark.asyncio
