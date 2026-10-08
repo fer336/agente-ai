@@ -34,11 +34,14 @@ _SPECIALTIES = [
     Specialty(id="eval-spec-2", name="Odontología general"),
     #: The specialty every consulta particular is booked on (clinic-topics-faq).
     Specialty(id="eval-spec-3", name="General"),
+    #: The specialty the alineadores topic books on (clinic-topics-faq).
+    Specialty(id="14", name="Alineadores Invisibles"),
 ]
 _PROFESSIONALS = [
     Professional(id="eval-prof-1", full_name="Dra. Ana Ejemplo", specialty_id="eval-spec-1"),
     Professional(id="eval-prof-2", full_name="Dr. Bruno Muestra", specialty_id="eval-spec-2"),
     Professional(id="eval-prof-3", full_name="Dra. Carla Ejemplo", specialty_id="eval-spec-3"),
+    Professional(id="eval-prof-4", full_name="Dr. Diego Muestra", specialty_id="14"),
 ]
 #: Fictional agreements so "osde 210" resolves in the eval stack (first-visit intake and the
 #: insurance lookup match the obra social name against this list).
@@ -96,6 +99,7 @@ def build_eval_seed(now: datetime) -> EvalSeed:
                 (_PROFESSIONALS[0], 6),
                 (_PROFESSIONALS[1], 5),
                 (_PROFESSIONALS[2], 4),
+                (_PROFESSIONALS[3], 4),
             ],
             start=1,
         )

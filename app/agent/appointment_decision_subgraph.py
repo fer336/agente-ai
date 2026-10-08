@@ -171,6 +171,16 @@ _NO_SLOTS_FALLBACK_BUTTONS = [
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 
+#: Fixed reply when the specialty a frequent topic books has no upcoming turnos.
+_NO_PRESELECTED_SLOTS_MESSAGE = (
+    "Por el momento no hay turnos disponibles para esta consulta. "
+    "Para coordinar uno, hablá con administración 👇"
+)
+_NO_PRESELECTED_SLOTS_BUTTONS = [
+    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="Menú principal"),
+]
+
 _NO_SLOTS_MESSAGE = (
     "No encontramos horarios disponibles en los próximos días. "
     "Querés que te comunique con administración?"
@@ -713,18 +723,23 @@ def build_appointment_decision_graph(
 
     async def _offer_preselected_specialty(
         conversation_id: ConversationId,
-        specialty_name: str,
+        specialty_ref: str,
         collected_data: dict[str, object],
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> dict[str, object] | None:
         """Slots of the specialty a topic books (a consulta particular -> "General"),
-        skipping the specialty list. `None` means "show the normal list": the specialty
-        is not in the catalog, or has no slots (never a dead end)."""
-        wanted = normalize_text(specialty_name)
+        skipping the specialty list. `specialty_ref` is a Dentalink specialty id or its
+        exact name. `None` means "show the normal list": the specialty is not in the
+        catalog, or has no slots (never a dead end)."""
+        wanted = normalize_text(specialty_ref)
         catalog = await _specialty_catalog_for_reroute_safe(list_specialties)
-        # Exact name, not a substring: "Odontología general" must never match "General".
+        # By id first (precise, survives a rename in Dentalink), then by exact name, not a
+        # substring: "Odontología general" must never match "General".
         chosen = next(
+            (s for s in catalog or [] if s.id == specialty_ref.strip()),
+            None,
+        ) or next(
             (s for s in catalog or [] if normalize_text(s.name) == wanted),
             None,
         )
@@ -732,7 +747,7 @@ def build_appointment_decision_graph(
             logger.warning(
                 "preselected specialty %r not found in the Dentalink catalog; "
                 "showing the specialty list",
-                specialty_name,
+                specialty_ref,
             )
             return None
         try:
@@ -740,12 +755,23 @@ def build_appointment_decision_graph(
         except Exception as exc:  # noqa: BLE001 -- external gateway boundary
             logger.warning(
                 "slot search for the preselected specialty %r failed; showing the list",
-                specialty_name,
+                specialty_ref,
                 exc_info=exc,
             )
             return None
         if not found[0]:
-            return None
+            # The patient asked for this exact service: another specialty's list would be
+            # the wrong way out, so say there are no turnos and send them to administración.
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            return {
+                "response_text": _NO_PRESELECTED_SLOTS_MESSAGE,
+                "response_buttons": _NO_PRESELECTED_SLOTS_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": {},
+                "next_node": "end",
+                "decision_node": "choose_specialty",
+                "exit_reason": "none",
+            }
         return await _offer_any_professional_slots(
             conversation_id,
             chosen.id,

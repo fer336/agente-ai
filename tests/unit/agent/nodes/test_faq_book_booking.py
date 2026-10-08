@@ -17,7 +17,7 @@ from app.agent.nodes.appointment import (
 from app.agent.nodes.appointment_selection import STAGE_AWAITING_SLOT_SELECTION
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.date_time_range import DateTimeRange
-from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD
+from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.appointment_node import make_node_and_conversation
@@ -131,30 +131,35 @@ async def test_odontologia_general_is_never_taken_for_general(caplog):
     assert any("General" in record.getMessage() for record in caplog.records)
 
 
+def _button_ids(result) -> list[str]:
+    return [button.id for button in result["response_buttons"]]
+
+
 @pytest.mark.asyncio
-async def test_a_general_specialty_without_slots_falls_back_to_the_specialty_list():
+async def test_a_specialty_without_slots_says_so_and_offers_administracion():
     world = _general_world()
     world["available_slots"] = [_slot("slot-odo", "prof-odo", "odo")]
     graph = await _subgraph(world)
 
     result = await graph.ainvoke(_decision_state())
 
-    data = result["collected_data"]
-    assert data["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert any(row_id.startswith("SPECIALTY:") for row_id in _row_ids(result))
-    assert PRESELECTED_SPECIALTY_KEY not in data
+    assert "no hay turnos" in result["response_text"].lower()
+    assert "administración" in result["response_text"].lower()
+    assert _button_ids(result) == [MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD]
+    assert result.get("response_list") is None
+    assert result["collected_data"] == {}
 
 
 @pytest.mark.asyncio
-async def test_a_general_specialty_without_professionals_falls_back_to_the_list():
+async def test_a_specialty_without_professionals_says_so_and_offers_administracion():
     world = _general_world()
     world["professionals"] = [make_professional(id_="prof-odo", specialty_id="odo")]
     graph = await _subgraph(world)
 
     result = await graph.ainvoke(_decision_state())
 
-    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
-    assert PRESELECTED_SPECIALTY_KEY not in result["collected_data"]
+    assert _button_ids(result) == [MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD]
+    assert result["collected_data"] == {}
 
 
 @pytest.mark.asyncio
@@ -334,3 +339,43 @@ async def test_a_non_booking_operation_drops_the_key():
     )
 
     assert PRESELECTED_SPECIALTY_KEY not in result["collected_data"]
+
+
+def _aligners_world(aligners_name: str):
+    return {
+        "specialties": [
+            make_specialty(id_="gen", name="General"),
+            make_specialty(id_="14", name=aligners_name),
+        ],
+        "professionals": [
+            make_professional(id_="prof-gen", specialty_id="gen"),
+            make_professional(id_="prof-ali", specialty_id="14"),
+        ],
+        "available_slots": [
+            _slot("slot-gen", "prof-gen", "gen"),
+            _slot("slot-ali", "prof-ali", "14", days=2),
+        ],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("aligners_name", ["Alineadores Invisibles", "Alineadores", "Renamed"])
+async def test_a_specialty_id_reference_is_matched_by_id_whatever_the_name(aligners_name):
+    graph = await _subgraph(_aligners_world(aligners_name))
+
+    result = await graph.ainvoke(_decision_state(**{PRESELECTED_SPECIALTY_KEY: "14"}))
+
+    data = result["collected_data"]
+    assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION
+    assert data["chosen_specialty_id"] == "14"
+    assert [slot.id for slot in data["available_slots"]] == ["slot-ali"]
+    assert PRESELECTED_SPECIALTY_KEY not in data
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_specialty_id_falls_back_to_the_specialty_list():
+    graph = await _subgraph(_aligners_world("Alineadores Invisibles"))
+
+    result = await graph.ainvoke(_decision_state(**{PRESELECTED_SPECIALTY_KEY: "99"}))
+
+    assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION

@@ -3,7 +3,12 @@ the fixed Dentalink specialty "General"."""
 
 import pytest
 
-from app.agent.clinic_topics import CLINIC_TOPICS, PRESELECTED_SPECIALTY_KEY, topic_by_id
+from app.agent.clinic_topics import (
+    ALIGNERS_SPECIALTY_ID,
+    CLINIC_TOPICS,
+    PRESELECTED_SPECIALTY_KEY,
+    topic_by_id,
+)
 from app.agent.nodes.faq_topic import create_faq_topic_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.repositories.llm_provider import UnderstandingResult
@@ -30,7 +35,7 @@ def test_the_payload_helper_builds_a_short_prefixed_id():
     assert all(len(faq_book_payload(topic.id)) <= 256 for topic in CLINIC_TOPICS)
 
 
-def test_every_frequent_topic_books_the_general_specialty():
+def test_every_frequent_topic_books_the_general_specialty_except_the_alineadores():
     booking = {topic.id: topic.book_specialty for topic in CLINIC_TOPICS}
 
     assert booking == {
@@ -38,7 +43,7 @@ def test_every_frequent_topic_books_the_general_specialty():
         "consulta_particular": "General",
         "limpieza_particular": "General",
         "brackets_obra_social": "General",
-        "alineadores": "General",
+        "alineadores": ALIGNERS_SPECIALTY_ID,
     }
 
 

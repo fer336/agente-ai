@@ -100,3 +100,18 @@ async def test_seed_has_a_staffed_general_specialty_with_availability():
     assert general.id == "eval-spec-3"
     assert any(p.specialty_id == general.id for p in professionals)
     assert any(slot.specialty_id == general.id for slot in slots)
+
+
+@pytest.mark.asyncio
+async def test_seed_has_a_staffed_alineadores_specialty_with_availability():
+    seed = build_eval_seed(_NOW)
+
+    specialties = {s.name: s for s in await seed.specialties.list_specialties()}
+    professionals = await seed.dentalink.list_professionals()
+    slots = await seed.dentalink.search_availability(
+        None, None, DateTimeRange(_NOW, _NOW + timedelta(days=30))
+    )
+
+    aligners = specialties["Alineadores Invisibles"]
+    assert any(p.specialty_id == aligners.id for p in professionals)
+    assert any(slot.specialty_id == aligners.id for slot in slots)

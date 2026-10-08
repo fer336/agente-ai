@@ -24,6 +24,8 @@ ALIGNER_OPTION_KEY = "aligner_option"
 #: appointment comment (see `booking_comment`). Dropped when the booking ends or the flow
 #: resets.
 BOOKING_TOPIC_KEY = "booking_topic"
+#: Id of the "Alineadores Invisibles" specialty in the clinic's Dentalink account.
+ALIGNERS_SPECIALTY_ID = "14"
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,9 @@ class ClinicTopic:
     #: Broader phrases that only name the topic when no topic matched a regular keyword, so
     #: "brackets sin obra social" stays brackets and "limpieza sin obra social" stays limpieza.
     weak_keywords: tuple[str, ...] = ()
-    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list. The
-    #: clinic books every frequent topic on "General".
+    #: Dentalink specialty a booking of this topic goes to, skipping the specialty list: its
+    #: id or its exact name (the id is matched first). The clinic books every frequent topic
+    #: on "General", except the alineadores, which have their own specialty.
     book_specialty: str | None = None
     #: File under `app/static/public/` sent with the answer (needs a configured image URL).
     image_filename: str | None = None
@@ -177,7 +180,7 @@ CLINIC_TOPICS: tuple[ClinicTopic, ...] = (
             "ortodoncia invisible",
         ),
         text=_ALINEADORES_TEXT,
-        book_specialty="General",
+        book_specialty=ALIGNERS_SPECIALTY_ID,
         comment_label="Alineadores",
         image_filename="alineadores-opciones.jpg",
         options=("1", "2", "3"),
