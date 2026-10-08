@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import Depends
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies.db import (
@@ -159,6 +160,7 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
             conversations=SqlAlchemyConversationRepository(session),
             media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
             scheduled_actions=SqlAlchemyScheduledActionRepository(session),
+            pending_actions=SqlAlchemyPendingActionRepository(session),
         )
         await session.commit()
 
@@ -325,6 +327,9 @@ async def open_sqlalchemy_trace_repositories() -> AsyncIterator[TraceRepositorie
         await session.commit()
 
 
+FOLLOW_UP_LOCK_TIMEOUT = "10s"
+
+
 @asynccontextmanager
 async def open_sqlalchemy_follow_up_worker_repositories() -> AsyncIterator[
     FollowUpWorkerRepositories
@@ -336,6 +341,10 @@ async def open_sqlalchemy_follow_up_worker_repositories() -> AsyncIterator[
     """
     session_factory = _get_session_factory()
     async with session_factory() as session:
+        # The tick keeps its claimed rows locked until it commits. Bounding lock waits (for this
+        # transaction only) turns any lock cycle into an error the loop logs and retries, instead
+        # of a claim that stays locked forever.
+        await session.execute(text(f"SET LOCAL lock_timeout = '{FOLLOW_UP_LOCK_TIMEOUT}'"))
         yield FollowUpWorkerRepositories(
             scheduled_actions=SqlAlchemyScheduledActionRepository(session),
             messages=SqlAlchemyMessageRepository(session),
@@ -343,6 +352,7 @@ async def open_sqlalchemy_follow_up_worker_repositories() -> AsyncIterator[
             contacts=SqlAlchemyContactRepository(session),
             contact_memories=SqlAlchemyContactMemoryRepository(session),
             appointment_reminders=SqlAlchemyAppointmentReminderRepository(session),
+            pending_actions=SqlAlchemyPendingActionRepository(session),
         )
         await session.commit()
 

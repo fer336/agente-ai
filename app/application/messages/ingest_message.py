@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -15,6 +15,7 @@ from app.application.conversations.ensure_conversation import (
 )
 from app.application.conversations.rotate_workflow_session import (
     RotateWorkflowSessionUseCase,
+    WorkflowSessionRepositories,
     WorkflowSessionRepositoriesProvider,
 )
 from app.application.conversations.schedule_conversation_reset import (
@@ -35,6 +36,7 @@ from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.media_processing_job_repository import MediaProcessingJobRepository
 from app.domain.repositories.message_repository import MessageRepository
+from app.domain.repositories.pending_action_repository import PendingActionRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
@@ -76,6 +78,9 @@ class MessageRepositories:
     conversations: ConversationRepository
     media_processing_jobs: MediaProcessingJobRepository
     scheduled_actions: ScheduledActionRepository
+    #: Lets a rotation expire parked actions in THIS unit of work. `None` keeps the rotation
+    #: on `workflow_session_repositories_provider` (a separate session).
+    pending_actions: PendingActionRepository | None = None
 
 
 # A zero-arg async context manager factory yielding a fresh `MessageRepositories`
@@ -373,7 +378,7 @@ class IngestMessageUseCase:
                             "ingest_message.rotation_lock_not_acquired conversation=%s",
                             conversation_key,
                         )
-                    elif await rotate_workflow.execute(
+                    elif await self._rotate_in_unit_of_work(repositories, rotate_workflow).execute(
                         conversation.id,
                         expected_generation=conversation.workflow_session_generation,
                     ):
@@ -418,6 +423,30 @@ class IngestMessageUseCase:
             dto.button_payload,
             str(external_message_id),
         )
+
+    @staticmethod
+    def _rotate_in_unit_of_work(
+        repositories: MessageRepositories, fallback: RotateWorkflowSessionUseCase
+    ) -> RotateWorkflowSessionUseCase:
+        """Rotation that runs inside this unit of work's own transaction.
+
+        By the time it runs, this transaction has already written the conversation row and
+        holds it locked until it commits. A rotation through another session would wait on
+        that lock while this one waits for it: a deadlock Postgres cannot detect.
+        """
+        pending_actions = repositories.pending_actions
+        if pending_actions is None:
+            return fallback
+
+        @asynccontextmanager
+        async def own_repositories() -> AsyncIterator[WorkflowSessionRepositories]:
+            yield WorkflowSessionRepositories(
+                conversations=repositories.conversations,
+                pending_actions=pending_actions,
+                scheduled_actions=repositories.scheduled_actions,
+            )
+
+        return RotateWorkflowSessionUseCase(own_repositories)
 
     def _human_mode_timeout_elapsed(self, conversation: Conversation) -> bool:
         """True when the lazy-timeout threshold has elapsed since the
