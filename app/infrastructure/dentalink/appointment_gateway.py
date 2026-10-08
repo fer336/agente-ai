@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import date, datetime, timedelta, tzinfo
 
@@ -12,6 +13,7 @@ from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.entities.patient import Patient
 from app.domain.entities.professional import Professional
 from app.domain.exceptions.errors import AppointmentNotFoundError
+from app.domain.repositories.gateways import ReminderAppointment
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.infrastructure.dentalink.client import DentalinkClient
 from app.infrastructure.dentalink.exceptions import (
@@ -26,8 +28,11 @@ from app.infrastructure.dentalink.schemas import (
     as_dict,
     as_list,
     professional_from_dentista,
+    reminder_appointment_from_cita,
+    reminder_statuses_from_estados,
     resolve_cancellation_state_id,
     resolve_cancellation_state_ids,
+    resolve_patient_whatsapp_confirmation_state_id,
     slot_from_agenda,
 )
 from app.infrastructure.observability.tool_tracing import traced_call
@@ -106,6 +111,8 @@ _SPECIALTY_AGENDA_FILTER_FIELDS = _AGENDA_FILTER_FIELDS | {"id_especialidad"}
 #: fan-out once caused in production.
 _MAX_SPECIALTY_SEARCH_REQUESTS = 8
 _DENTISTA_FILTER_FIELDS = frozenset({"id_especialidad", "especialidad", "habilitado"})
+_CITA_FILTER_FIELDS = frozenset({"fecha"})
+_MAX_REMINDER_APPOINTMENTS = 500
 
 
 def _is_enabled(raw_dentista: dict[str, object]) -> bool:
@@ -405,6 +412,119 @@ class DentalinkAppointmentGateway:
             request_summary=f"specialty_id={specialty_id}",
             call=_call,
             response_summary=lambda professionals: f"{len(professionals)} professionals",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def list_reminder_appointments_for_date_window(
+        self, start_date: date, end_date: date
+    ) -> list[ReminderAppointment]:
+        """Reads one bounded, inclusive clinic-date window for reminder scheduling.
+
+        Dentalink's list API uses its JSON `q` filter; this endpoint has no
+        cursor convention elsewhere in this client, so the request and its
+        accepted response are both capped rather than silently retrieving an
+        unbounded clinic-wide list.
+        """
+        if end_date < start_date:
+            raise ValueError("reminder appointment window end precedes start")
+
+        async def _call() -> list[ReminderAppointment]:
+            raw_estados = await self._client.get("/v1/citas/estados")
+            statuses = reminder_statuses_from_estados(as_list(raw_estados))
+            params = build_q_param(
+                {"fecha": ("gte", start_date.isoformat())},
+                allowed_fields=_CITA_FILTER_FIELDS,
+                allowed_operators=frozenset({"gte", "lte"}),
+            )
+            # The shared builder validates the field/operator/value. Add
+            # the second validated bound to its serialized single-field
+            # object because its tuple input shape represents one operator
+            # per field.
+            query = json.loads(params["q"])
+            query["fecha"]["lte"] = end_date.isoformat()
+            params["q"] = json.dumps(query, separators=(",", ":"))
+            params["limit"] = str(_MAX_REMINDER_APPOINTMENTS)
+            raw_citas = as_list(await self._client.get("/v1/citas", params=params))
+            if len(raw_citas) >= _MAX_REMINDER_APPOINTMENTS:
+                raise DentalinkInvalidResponseError(
+                    "reminder cita response may be truncated at the bounded limit"
+                )
+            return [
+                reminder_appointment_from_cita(
+                    raw, statuses=statuses, timezone=self._clinic_timezone
+                )
+                for raw in raw_citas
+            ]
+
+        return await traced_call(
+            tool_name="ListReminderAppointmentsTool",
+            provider=_PROVIDER,
+            operation="list_reminder_appointments_for_date_window",
+            request_summary=f"start_date={start_date.isoformat()} end_date={end_date.isoformat()}",
+            call=_call,
+            response_summary=lambda appointments: f"{len(appointments)} appointments",
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def get_reminder_appointment(self, appointment_id: str) -> ReminderAppointment | None:
+        """Reads current reminder state for one appointment just before send."""
+
+        async def _call() -> ReminderAppointment | None:
+            try:
+                raw = await self._client.get(f"/v1/citas/{appointment_id}")
+            except DentalinkAPIError as exc:
+                if exc.status_code == 404:
+                    return None
+                raise
+            statuses = reminder_statuses_from_estados(
+                as_list(await self._client.get("/v1/citas/estados"))
+            )
+            return reminder_appointment_from_cita(
+                as_dict(raw), statuses=statuses, timezone=self._clinic_timezone
+            )
+
+        return await traced_call(
+            tool_name="GetReminderAppointmentTool",
+            provider=_PROVIDER,
+            operation="get_reminder_appointment",
+            request_summary=f"appointment_id={appointment_id}",
+            response_summary=lambda appointment: "found" if appointment else "not_found",
+            call=_call,
+            http_status_of=_http_status_of,
+            error_type_of=_error_type_of,
+        )
+
+    async def mark_appointment_confirmed_via_patient_whatsapp(self, appointment_id: str) -> None:
+        """Writes only the clinic's validated patient-WhatsApp confirmation state.
+
+        Ownership and current-state checks intentionally belong to the T4
+        action use case. This adapter validates that the configured live
+        state remains exactly the safe clinic-owned state before every write.
+        """
+
+        async def _call() -> None:
+            estados = as_list(await self._client.get("/v1/citas/estados"))
+            state_id = resolve_patient_whatsapp_confirmation_state_id(estados)
+            if state_id is None:
+                raise DentalinkInvalidResponseError(
+                    "could not resolve the patient WhatsApp confirmation id_estado from "
+                    "GET /v1/citas/estados"
+                )
+            try:
+                await self._client.put(f"/v1/citas/{appointment_id}", json={"id_estado": state_id})
+            except DentalinkAPIError as exc:
+                if exc.status_code == 404:
+                    raise AppointmentNotFoundError(appointment_id) from exc
+                raise
+
+        await traced_call(
+            tool_name="ConfirmAppointmentViaPatientWhatsAppTool",
+            provider=_PROVIDER,
+            operation="mark_appointment_confirmed_via_patient_whatsapp",
+            request_summary=f"appointment_id={appointment_id}",
+            call=_call,
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
         )

@@ -25,6 +25,7 @@ from app.application.conversations.set_conversation_input_state import (
 from app.application.messages.send_reply import SendReplyUseCase
 from app.domain.entities.message import ROLE_ASSISTANT, Message
 from app.domain.entities.scheduled_action import ScheduledAction
+from app.domain.repositories.appointment_reminder_repository import AppointmentReminderRepository
 from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -303,6 +304,8 @@ class FollowUpWorkerRepositories:
     contacts: ContactRepository
     #: Only needed to build the idle cleanup use case (see `cleanup_factory`).
     contact_memories: ContactMemoryRepository | None = None
+    #: Lets the idle cleanup wait for a sent reminder whose appointment has not started.
+    appointment_reminders: AppointmentReminderRepository | None = None
 
 
 FollowUpWorkerRepositoriesProvider = Callable[

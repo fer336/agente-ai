@@ -11,6 +11,12 @@ class ConformingContactRepository:
     async def save(self, contact):
         return None
 
+    async def mark_review_opt_out(self, phone, opted_out_at):
+        return False
+
+    async def is_review_opted_out(self, phone):
+        return False
+
 
 class PartialContactRepository:
     async def get_by_phone(self, phone):

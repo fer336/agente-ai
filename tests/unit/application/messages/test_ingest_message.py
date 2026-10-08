@@ -17,6 +17,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.application.conversations.ensure_conversation import (
+    new_conversation_workflow_generation_seed,
+)
 from app.application.conversations.rotate_workflow_session import RotateWorkflowSessionUseCase
 from app.application.conversations.schedule_conversation_reset import (
     CONVERSATION_IDLE_RESET_ACTION,
@@ -25,7 +28,6 @@ from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.ingest_message import (
     IngestMessageUseCase,
     MessageRepositories,
-    _new_conversation_workflow_generation_seed,
 )
 from app.domain.entities.contact import Contact
 from app.domain.exceptions.errors import ContactAlreadyExistsError, ConversationAlreadyExistsError
@@ -397,13 +399,13 @@ async def test_new_conversation_welcome_rotates_workflow_session_and_expires_sta
     # passes even with the `is_new_conversation or` rotation trigger
     # disabled outright — the row's own `workflow_session_generation` is
     # already seeded from the epoch second
-    # (`_new_conversation_workflow_generation_seed`), never the domain
+    # (`new_conversation_workflow_generation_seed`), never the domain
     # entity's fixed `1` default. Only moving PAST that seed proves the
     # rotation ran; the exact step is left to the repository (the fake
     # double-counts against `ingest_message.py`'s own `+= 1`, SQLAlchemy
     # does not).
     assert conversation.workflow_session_generation > (
-        _new_conversation_workflow_generation_seed(conversation.created_at)
+        new_conversation_workflow_generation_seed(conversation.created_at)
     )
 
 
@@ -445,13 +447,13 @@ async def test_new_conversation_never_collides_with_a_higher_prior_incarnation_g
     # incarnation could plausibly have used. T8 (R3-new-conversation-
     # rotation-assertion-vacuous): a `> 1_000_000` bound alone is vacuous —
     # it passes purely from the wall-clock seed
-    # (`_new_conversation_workflow_generation_seed`), even with the
+    # (`new_conversation_workflow_generation_seed`), even with the
     # `is_new_conversation or` rotation trigger disabled outright.
     # Moving PAST the seed pins the mechanism instead: seeded from
     # wall-clock time AND actually rotated (see the sibling test above for
     # why the exact step is not asserted).
     assert conversation.workflow_session_generation > (
-        _new_conversation_workflow_generation_seed(conversation.created_at)
+        new_conversation_workflow_generation_seed(conversation.created_at)
     )
     for stale_generation in (1, 2, 5):
         stale = await pending_action_repository.get_by_id(f"stale-pending-gen-{stale_generation}")
@@ -472,6 +474,75 @@ async def test_the_welcome_is_the_whole_reply_for_a_brand_new_conversation():
     await asyncio.sleep(0.05)
 
     assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_first_ever_reminder_button_tap_reaches_the_agent_instead_of_only_the_welcome():
+    # The recipient got a reminder template but its send-time context record
+    # failed, so no conversation exists: the tap must still be processed, and
+    # the welcome menu would only bury it.
+    messaging_gateway = make_ycloud_messaging_gateway()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        agent_invoker=agent_invoker,
+        debounce_seconds=30,
+    )
+
+    await use_case.execute(
+        _make_dto(
+            from_phone="+5491122334455",
+            text="Confirmar turno",
+            button_payload="REMINDER_CONFIRM:apt-1",
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    assert messaging_gateway.sent_lists == []
+    assert len(agent_invoker.calls) == 1
+    assert "REMINDER_CONFIRM:apt-1" in repr(agent_invoker.calls[0])
+
+
+@pytest.mark.asyncio
+async def test_a_first_ever_non_reminder_button_still_gets_only_the_welcome():
+    messaging_gateway = make_ycloud_messaging_gateway()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        agent_invoker=agent_invoker,
+        debounce_seconds=0.01,
+    )
+
+    await use_case.execute(
+        _make_dto(from_phone="+5491122334455", button_payload="CONFIRM_APPOINTMENT")
+    )
+    await asyncio.sleep(0.05)
+
+    assert len(messaging_gateway.sent_lists) == 1
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_free_text_from_a_recipient_with_a_reminder_conversation_goes_to_the_agent():
+    # The reminder worker pre-creates the conversation, so the recipient's
+    # first "hola" is not a first-ever turn: no welcome menu, the agent answers
+    # with the reminder context.
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    messaging_gateway = make_ycloud_messaging_gateway()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        agent_invoker=agent_invoker,
+        debounce_seconds=0.01,
+    )
+
+    await use_case.execute(_make_dto(from_phone="+5491122334455", text="hola"))
+    await asyncio.sleep(0.05)
+
+    assert messaging_gateway.sent_lists == []
+    assert len(agent_invoker.calls) == 1
 
 
 @pytest.mark.asyncio

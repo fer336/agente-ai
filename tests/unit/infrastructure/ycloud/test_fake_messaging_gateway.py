@@ -1,10 +1,30 @@
 import pytest
 
-from app.domain.repositories.gateways import MessagingGateway
+from app.domain.repositories.gateways import (
+    MessagingGateway,
+    TemplateMessage,
+    TemplateQuickReplyButton,
+)
 from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
 from tests.fixtures.gateways import make_ycloud_messaging_gateway
+
+
+@pytest.mark.asyncio
+async def test_send_template_records_recipient_and_structured_template():
+    gateway = make_ycloud_messaging_gateway()
+    template = TemplateMessage(
+        name="recordatorio_turno_confirmar",
+        language="es_AR",
+        body_parameters=("Ana",),
+        quick_reply_buttons=(TemplateQuickReplyButton(index=0, payload="CONFIRM"),),
+    )
+
+    external_id = await gateway.send_template(PhoneNumber("+5491122334455"), template)
+
+    assert gateway.sent_templates == [(PhoneNumber("+5491122334455"), template)]
+    assert external_id == "fake-msg-1"
 
 
 @pytest.mark.asyncio
@@ -28,9 +48,7 @@ async def test_send_buttons_records_recipient_text_and_buttons():
 
     await gateway.send_buttons(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons)
 
-    assert gateway.sent_buttons == [
-        (PhoneNumber("+5491122334455"), "¿Confirmás?", buttons, None)
-    ]
+    assert gateway.sent_buttons == [(PhoneNumber("+5491122334455"), "¿Confirmás?", buttons, None)]
 
 
 @pytest.mark.asyncio

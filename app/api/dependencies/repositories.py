@@ -9,21 +9,32 @@ from app.api.dependencies.db import (
     get_committing_db_session,
     get_db_session,
 )
+from app.api.dependencies.redis import get_shared_redis_client
 from app.application.appointments.propose_appointment import ProposalRepositories
 from app.application.audio.transcribe_audio import TranscriptionRepositories
 from app.application.conversations.rotate_workflow_session import WorkflowSessionRepositories
+from app.application.conversations.start_fresh_session import StartFreshSessionUseCase
+from app.application.memory.memory_service import MemoryService
 from app.application.messages.ingest_message import MessageRepositories
 from app.application.observability.trace_repositories import TraceRepositories
+from app.application.reminders.record_sent import RecordReminderSentUseCase
+from app.config.settings import get_settings
+from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
+from app.domain.repositories.gateways import TemplateMessage
 from app.domain.repositories.incident_repository import IncidentRepository
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.runtime_config_repository import RuntimeConfigRepository
 from app.domain.repositories.sent_message_repository import SentMessageRepository
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.agent.langgraph_agent_invoker import AgentRepositories
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
+)
+from app.infrastructure.database.repositories.appointment_reminder_repository import (
+    SqlAlchemyAppointmentReminderRepository,
 )
 from app.infrastructure.database.repositories.chatwoot_mapping_repository import (
     SqlAlchemyChatwootMappingRepository,
@@ -62,6 +73,7 @@ from app.infrastructure.database.repositories.sent_message_repository import (
 from app.infrastructure.database.repositories.tool_execution_repository import (
     SqlAlchemyToolExecutionRepository,
 )
+from app.workers.appointment_reminder_worker import AppointmentReminderWorkerRepositories
 from app.workers.follow_up_worker import FollowUpWorkerRepositories
 
 
@@ -209,6 +221,56 @@ async def open_sqlalchemy_agent_repositories() -> AsyncIterator[AgentRepositorie
             messages=SqlAlchemyMessageRepository(session),
             contact_memories=SqlAlchemyContactMemoryRepository(session),
             scheduled_actions=SqlAlchemyScheduledActionRepository(session),
+            appointment_reminders=SqlAlchemyAppointmentReminderRepository(session),
+        )
+        await session.commit()
+
+
+async def record_reminder_sent_in_own_session(
+    reminder: AppointmentReminder, phone: PhoneNumber, template: TemplateMessage
+) -> None:
+    """Keep the reply context of a delivered reminder in its own transaction.
+
+    The tick's session carries the delivery state (a `sent` row must never be
+    lost). A repository can roll its session back on a creation race, so this
+    recording uses a separate session and can fail without touching the tick.
+    """
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        await RecordReminderSentUseCase(
+            SqlAlchemyContactRepository(session),
+            SqlAlchemyConversationRepository(session),
+            SqlAlchemyMessageRepository(session),
+        ).execute(reminder, phone, template)
+        await session.commit()
+
+
+@asynccontextmanager
+async def open_sqlalchemy_appointment_reminder_worker_repositories() -> AsyncIterator[
+    AppointmentReminderWorkerRepositories
+]:
+    """Provide one fresh, committing transaction for each reminder poll tick."""
+    # Deferred: `gateways` imports this module at import time (circular otherwise).
+    from app.api.dependencies.gateways import get_llm_provider
+
+    session_factory = _get_session_factory()
+    async with session_factory() as session:
+        contacts = SqlAlchemyContactRepository(session)
+        yield AppointmentReminderWorkerRepositories(
+            reminders=SqlAlchemyAppointmentReminderRepository(session),
+            contacts=contacts,
+            start_fresh_session=StartFreshSessionUseCase(
+                contacts,
+                SqlAlchemyConversationRepository(session),
+                MemoryService(
+                    contact_memory_repository=SqlAlchemyContactMemoryRepository(session),
+                    message_repository=SqlAlchemyMessageRepository(session),
+                    llm_provider=get_llm_provider(),
+                    recent_window_size=get_settings().memory_recent_window_size,
+                    redis_client=get_shared_redis_client(),
+                ),
+            ),
+            record_sent=record_reminder_sent_in_own_session,
         )
         await session.commit()
 
@@ -280,6 +342,7 @@ async def open_sqlalchemy_follow_up_worker_repositories() -> AsyncIterator[
             conversations=SqlAlchemyConversationRepository(session),
             contacts=SqlAlchemyContactRepository(session),
             contact_memories=SqlAlchemyContactMemoryRepository(session),
+            appointment_reminders=SqlAlchemyAppointmentReminderRepository(session),
         )
         await session.commit()
 

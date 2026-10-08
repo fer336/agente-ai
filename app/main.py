@@ -9,8 +9,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies.checkpointer import close_agent_checkpointer, get_agent_checkpointer
-from app.api.dependencies.gateways import get_messaging_gateway, get_mirror_to_chatwoot_use_case
+from app.api.dependencies.gateways import (
+    get_messaging_gateway,
+    get_mirror_to_chatwoot_use_case,
+    get_reminder_appointment_gateway,
+    get_reminder_patient_gateway,
+)
 from app.api.dependencies.repositories import (
+    open_sqlalchemy_appointment_reminder_worker_repositories,
     open_sqlalchemy_follow_up_worker_repositories,
     open_sqlalchemy_sent_message_repository,
 )
@@ -25,7 +31,8 @@ from app.api.routes.health import router as health_router
 from app.api.routes.internal_eval import router as internal_eval_router
 from app.api.routes.webhook import router as webhook_router
 from app.application.messages.send_reply import SendReplyUseCase
-from app.config.settings import get_settings
+from app.config.settings import Settings, get_settings
+from app.workers.appointment_reminder_worker import run_appointment_reminder_loop
 from app.workers.follow_up_worker import run_follow_up_loop
 
 #: The app's own `logger.info`/`logger.warning` calls (webhook handling,
@@ -43,6 +50,27 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+
+_REMINDER_WORKER_INTERVAL_SECONDS = 60
+
+
+def start_appointment_reminder_worker(settings: Settings) -> asyncio.Task[None] | None:
+    """Start the disabled-by-default reminder worker only when safely configured."""
+    if not settings.appointment_reminders_recipient_policy.can_run(
+        enabled=settings.appointment_reminders_enabled
+    ):
+        return None
+    return asyncio.create_task(
+        run_appointment_reminder_loop(
+            open_sqlalchemy_appointment_reminder_worker_repositories,
+            get_reminder_appointment_gateway(),
+            get_reminder_patient_gateway(),
+            get_messaging_gateway(),
+            settings,
+            interval_seconds=_REMINDER_WORKER_INTERVAL_SECONDS,
+        )
+    )
 
 
 @asynccontextmanager
@@ -81,10 +109,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             cleanup_factory=build_idle_cleanup_use_case,
         )
     )
+    reminder_task = start_appointment_reminder_worker(settings)
     yield
-    follow_up_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await follow_up_task
+    tasks = [follow_up_task]
+    if reminder_task is not None:
+        tasks.append(reminder_task)
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     await close_agent_checkpointer()
 
 

@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -20,10 +21,13 @@ from app.application.memory.memory_service import MemoryService
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.observability.trace_repositories import TraceRepositoriesProvider
+from app.application.reminders.actions import HandleReminderActionUseCase
+from app.application.reminders.reply_context import build_reminder_reply_context
 from app.domain.entities.agent_run import COMPLETED, FAILED, HANDOFF, RUNNING, AgentRun
 from app.domain.entities.node_execution import FAILED as NODE_EXECUTION_FAILED
 from app.domain.entities.node_execution import NodeExecution
 from app.domain.repositories.alert_notifier import AlertNotifier
+from app.domain.repositories.appointment_reminder_repository import AppointmentReminderRepository
 from app.domain.repositories.contact_memory_repository import ContactMemoryRepository
 from app.domain.repositories.contact_repository import ContactRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
@@ -32,6 +36,8 @@ from app.domain.repositories.gateways import (
     AppointmentGateway,
     HumanHandoffGateway,
     PatientGateway,
+    ReminderAppointmentGateway,
+    ReminderPatientGateway,
     SpecialtyGateway,
 )
 from app.domain.repositories.incident_gateway import IncidentGateway
@@ -39,7 +45,10 @@ from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_TEXT
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -66,6 +75,8 @@ class AgentRepositories:
     #: message more than an hour later (the unrelated, coarser lazy
     #: rotation in `RotateWorkflowSessionUseCase`).
     scheduled_actions: ScheduledActionRepository
+    #: Optional while test and non-reminder callers transition to this session bundle.
+    appointment_reminders: AppointmentReminderRepository | None = None
 
 
 RepositoriesProvider = Callable[[], AbstractAsyncContextManager[AgentRepositories]]
@@ -156,6 +167,7 @@ class LangGraphAgentInvoker:
         mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
         location_image_url: str = "",
         aligners_image_url: str = "",
+        clinic_timezone: str = "America/Argentina/Buenos_Aires",
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
@@ -186,6 +198,35 @@ class LangGraphAgentInvoker:
         self._mirror_to_chatwoot = mirror_to_chatwoot
         self._location_image_url = location_image_url
         self._aligners_image_url = aligners_image_url
+        self._clinic_timezone = clinic_timezone
+
+    async def _with_reminder_context(
+        self,
+        reminders: AppointmentReminderRepository | None,
+        phone: PhoneNumber,
+        contact_memory_summary: str | None,
+    ) -> str | None:
+        """Adds the pending-reminder note to the memory the LLM nodes already read.
+
+        Best-effort: a failed lookup only loses the extra context, never the turn.
+        """
+        if reminders is None:
+            return contact_memory_summary
+        try:
+            note = await build_reminder_reply_context(
+                reminders, phone, datetime.now(UTC), self._clinic_timezone
+            )
+        except Exception as exc:  # noqa: BLE001 - context is optional
+            logger.warning(
+                "langgraph_agent_invoker.reminder_context_failed error_type=%s",
+                type(exc).__name__,
+            )
+            return contact_memory_summary
+        if note is None:
+            return contact_memory_summary
+        if not contact_memory_summary:
+            return note
+        return f"{contact_memory_summary}\n\n{note}"
 
     async def handle(
         self,
@@ -248,6 +289,22 @@ class LangGraphAgentInvoker:
                 config: RunnableConfig = {
                     "configurable": {"thread_id": f"{conversation_id}:session:{generation}"}
                 }
+                reminder_action_use_case = None
+                contact_repository = None
+                if (
+                    repositories.appointment_reminders is not None
+                    and isinstance(self._appointment_gateway, ReminderAppointmentGateway)
+                    and isinstance(self._patient_gateway, ReminderPatientGateway)
+                ):
+                    reminder_action_use_case = HandleReminderActionUseCase(
+                        repositories.appointment_reminders,
+                        self._appointment_gateway,
+                        self._patient_gateway,
+                        repositories.contacts,
+                        now=lambda: datetime.now(UTC),
+                    )
+                    contact_repository = repositories.contacts
+
                 compiled_graph = compile_graph(
                     self._appointment_gateway,
                     self._agreement_gateway,
@@ -269,6 +326,8 @@ class LangGraphAgentInvoker:
                     mirror_to_chatwoot=self._mirror_to_chatwoot,
                     location_image_url=self._location_image_url,
                     aligners_image_url=self._aligners_image_url,
+                    reminder_action_use_case=reminder_action_use_case,
+                    contact_repository=contact_repository,
                 )
 
                 previous_values: dict[str, Any] = {}
@@ -314,6 +373,11 @@ class LangGraphAgentInvoker:
                             contact_memory_summary,
                         ) = await memory_service.build_agent_context(
                             conversation_id, contact_for_memory.id
+                        )
+                        contact_memory_summary = await self._with_reminder_context(
+                            repositories.appointment_reminders,
+                            contact_for_memory.phone,
+                            contact_memory_summary,
                         )
 
                 fresh_restart = bool(
@@ -417,9 +481,10 @@ class LangGraphAgentInvoker:
                 conversation = await repositories.conversations.get_by_id(conversation_id)
                 if conversation is None:
                     return
-                if conversation.awaiting_fresh_restart and result.get(
-                    "collected_data", {}
-                ).get(FRESH_RESTART_STATE_KEY) is not True:
+                if (
+                    conversation.awaiting_fresh_restart
+                    and result.get("collected_data", {}).get(FRESH_RESTART_STATE_KEY) is not True
+                ):
                     # Consume the flag: the fresh-restart turn ran (or was
                     # otherwise consumed) — the welcome menu must render
                     # exactly once, not on every subsequent turn.

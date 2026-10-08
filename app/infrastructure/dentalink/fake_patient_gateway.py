@@ -1,5 +1,6 @@
 from app.domain.entities.patient import Patient
 from app.domain.exceptions.errors import PatientAlreadyExistsError
+from app.domain.repositories.gateways import ReminderPatient
 from app.domain.value_objects.dni import Dni
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.dentalink.schemas import full_names_match
@@ -10,6 +11,16 @@ class FakePatientGateway:
 
     def __init__(self, patients: list[Patient] | None = None) -> None:
         self._patients = list(patients) if patients else []
+
+    async def get_reminder_patient(self, patient_id: str) -> ReminderPatient | None:
+        for patient in self._patients:
+            if patient.id == patient_id:
+                return ReminderPatient(
+                    patient_id=patient.id,
+                    mobile=patient.phone,
+                    display_name=patient.full_name.strip().split(maxsplit=1)[0],
+                )
+        return None
 
     async def find_patient(self, full_name: str, dni: str) -> Patient | None:
         normalized_dni = dni.strip()

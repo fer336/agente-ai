@@ -9,6 +9,8 @@ from app.api.dependencies.gateways import (
     get_media_gateway,
     get_messaging_gateway,
     get_patient_gateway,
+    get_reminder_appointment_gateway,
+    get_reminder_patient_gateway,
     get_specialty_gateway,
     get_telegram_notifier,
     get_transcription_gateway,
@@ -23,6 +25,8 @@ from app.domain.repositories.gateways import (
     HumanHandoffGateway,
     MessagingGateway,
     PatientGateway,
+    ReminderAppointmentGateway,
+    ReminderPatientGateway,
     SpecialtyGateway,
     TreatmentGateway,
 )
@@ -35,6 +39,7 @@ from app.infrastructure.agent.langgraph_agent_invoker import LangGraphAgentInvok
 from app.infrastructure.dentalink.agreement_gateway import DentalinkAgreementGateway
 from app.infrastructure.dentalink.appointment_gateway import DentalinkAppointmentGateway
 from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGateway
+from app.infrastructure.dentalink.fake_appointment_gateway import FakeReminderAppointmentGateway
 from app.infrastructure.dentalink.fake_dentalink_gateway import FakeDentalinkGateway
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.dentalink.fake_specialty_gateway import FakeSpecialtyGateway
@@ -251,6 +256,39 @@ def test_get_patient_gateway_returns_the_same_cached_instance_across_calls():
     second = get_patient_gateway()
 
     assert first is second
+
+
+def test_get_reminder_gateways_return_protocol_capable_fakes_without_a_token(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
+    )
+
+    appointment = get_reminder_appointment_gateway()
+    patient = get_reminder_patient_gateway()
+
+    assert appointment is get_reminder_appointment_gateway()
+    assert patient is get_reminder_patient_gateway()
+    assert isinstance(appointment, FakeReminderAppointmentGateway)
+    assert isinstance(appointment, ReminderAppointmentGateway)
+    assert isinstance(patient, FakePatientGateway)
+    assert isinstance(patient, ReminderPatientGateway)
+
+
+def test_get_reminder_gateways_return_protocol_capable_real_adapters_with_a_token(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.dependencies.gateways.get_settings",
+        lambda: Settings(_env_file=None, dentalink_access_token="dl-token"),
+    )
+
+    appointment = get_reminder_appointment_gateway()
+    patient = get_reminder_patient_gateway()
+
+    assert id(appointment) == id(get_appointment_gateway())
+    assert id(patient) == id(get_patient_gateway())
+    assert isinstance(appointment, DentalinkAppointmentGateway)
+    assert isinstance(appointment, ReminderAppointmentGateway)
+    assert isinstance(patient, DentalinkPatientGateway)
+    assert isinstance(patient, ReminderPatientGateway)
 
 
 def test_get_patient_gateway_returns_a_real_dentalink_gateway_when_token_is_configured(

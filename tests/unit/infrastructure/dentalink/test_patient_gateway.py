@@ -242,6 +242,28 @@ async def test_create_patient_rejects_an_invalid_dni_before_any_http_call(
     assert captured == []
 
 
+@pytest.mark.asyncio
+async def test_get_reminder_patient_by_id_returns_only_normalized_mobile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json={"id": 28, "nombre": "Maria", "apellidos": "Soto", "celular": "1122334455"},
+    )
+    client, captured = _client_with_responses(monkeypatch, [response])
+    gateway = DentalinkPatientGateway(client)
+
+    patient = await gateway.get_reminder_patient("28")
+
+    assert patient is not None
+    assert patient.patient_id == "28"
+    assert patient.mobile == PhoneNumber("+5491122334455")
+    assert patient.display_name == "Maria"
+    assert captured[0].method == "GET"
+    assert captured[0].url.path == "/api/v1/pacientes/28"
+    assert not hasattr(patient, "full_name")
+
+
 def test_build_q_param_rejects_a_field_outside_the_allow_list():
     with pytest.raises(ValueError, match="not allowed"):
         _build_q_param({"comentario": ("eq", "'; DROP TABLE pacientes; --")})

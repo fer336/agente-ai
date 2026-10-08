@@ -1,4 +1,8 @@
-from sqlalchemy import select
+from datetime import datetime
+from typing import cast
+
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +42,7 @@ class SqlAlchemyContactRepository:
 
         model.phone = str(contact.phone)
         model.patient_id = contact.patient_id
+        model.review_opted_out_at = contact.review_opted_out_at
         try:
             await self._session.flush()
         except IntegrityError as exc:
@@ -50,10 +55,36 @@ class SqlAlchemyContactRepository:
                 raise
             raise ContactAlreadyExistsError(str(contact.phone)) from exc
 
+    async def mark_review_opt_out(self, phone: PhoneNumber, opted_out_at: datetime) -> bool:
+        result = cast(
+            CursorResult[object],
+            await self._session.execute(
+                update(ContactModel)
+                .where(
+                    ContactModel.phone == str(phone),
+                    ContactModel.review_opted_out_at.is_(None),
+                )
+                .values(review_opted_out_at=opted_out_at)
+            ),
+        )
+        if result.rowcount:
+            return True
+        existing_result = await self._session.execute(
+            select(ContactModel.id).where(ContactModel.phone == str(phone))
+        )
+        return existing_result.scalar_one_or_none() is not None
+
+    async def is_review_opted_out(self, phone: PhoneNumber) -> bool:
+        result = await self._session.execute(
+            select(ContactModel.review_opted_out_at).where(ContactModel.phone == str(phone))
+        )
+        return result.scalar_one_or_none() is not None
+
 
 def _to_entity(model: ContactModel) -> Contact:
     return Contact(
         id=model.id,
         phone=PhoneNumber(model.phone),
         patient_id=model.patient_id,
+        review_opted_out_at=model.review_opted_out_at,
     )

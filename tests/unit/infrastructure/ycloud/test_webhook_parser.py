@@ -87,6 +87,43 @@ def test_is_processable_message_skips_number_check_when_not_configured():
     assert is_processable_message(payload, "") is True
 
 
+def test_is_processable_message_accepts_a_ycloud_template_quick_reply_button():
+    payload = YCloudInboundEventPayload.model_validate(
+        {
+            "type": "whatsapp.inbound_message.received",
+            "whatsappInboundMessage": {
+                "id": "wamid.template-button",
+                "from": "+5491122334455",
+                "to": _WHATSAPP_NUMBER,
+                "type": "button",
+                "button": {"payload": "REMINDER:appt-1:CONFIRM", "text": "Confirmar"},
+            },
+        }
+    )
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is True
+    dto = to_inbound_message_dto(payload)
+    assert dto.button_payload == "REMINDER:appt-1:CONFIRM"
+    assert dto.text == "Confirmar"
+
+
+def test_is_processable_message_rejects_a_ycloud_template_button_without_payload():
+    payload = YCloudInboundEventPayload.model_validate(
+        {
+            "type": "whatsapp.inbound_message.received",
+            "whatsappInboundMessage": {
+                "id": "wamid.template-button",
+                "from": "+5491122334455",
+                "to": _WHATSAPP_NUMBER,
+                "type": "button",
+                "button": {"payload": "", "text": "Confirmar"},
+            },
+        }
+    )
+
+    assert is_processable_message(payload, _WHATSAPP_NUMBER) is False
+
+
 def test_is_processable_message_accepts_a_button_reply():
     payload = YCloudInboundEventPayload.model_validate(
         make_ycloud_button_reply_payload(whatsapp_number=_WHATSAPP_NUMBER)
