@@ -858,7 +858,7 @@ async def test_handle_seeds_the_fresh_restart_flag_when_the_conversation_await_o
     assert len(messaging_gateway.sent_lists) == 1
     list_to, list_text, list_message = messaging_gateway.sent_lists[0]
     assert list_to == PhoneNumber("+54922224455")
-    assert list_text.startswith("Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷")
+    assert list_text.startswith("¡Hola! 👋 Bienvenido/a a *Smiling Pilar* 🦷")
     assert [row.id for row in list_message.rows] == [
         "OPERATION_CREATE",
         "OPERATION_RESCHEDULE",
