@@ -1,0 +1,462 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Booking a new appointment",
+    "output": "booking-flow.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/fer336/agente-ai.git",
+      "provider": "github",
+      "revision": "1f6948c00768a88638173e87852069016fe85460"
+    }
+  },
+  "lanes": [
+    {
+      "id": "register",
+      "label": "New patient"
+    },
+    {
+      "id": "identity",
+      "label": "Identify the patient"
+    },
+    {
+      "id": "select",
+      "label": "Choose a slot"
+    },
+    {
+      "id": "book",
+      "label": "Confirm and write"
+    }
+  ],
+  "mainPath": [
+    "menu",
+    "q",
+    "ident",
+    "idc",
+    "lookup",
+    "known"
+  ],
+  "nodes": [
+    {
+      "id": "menu",
+      "lane": "identity",
+      "col": 0,
+      "type": "frontend",
+      "label": "Sacar turno",
+      "sublabel": "operation chosen",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 4784,
+          "end_line": 4790,
+          "label": "create goes to intake"
+        }
+      ]
+    },
+    {
+      "id": "q",
+      "lane": "identity",
+      "col": 1,
+      "type": "frontend",
+      "label": "First visit?",
+      "sublabel": "new or existing",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/first_visit_intake_subgraph.py",
+          "line": 368,
+          "end_line": 382,
+          "label": "question stage"
+        },
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 4871,
+          "end_line": 4876,
+          "label": "intake before specialty"
+        }
+      ]
+    },
+    {
+      "id": "ident",
+      "lane": "identity",
+      "col": 2,
+      "type": "frontend",
+      "label": "Name + DNI",
+      "sublabel": "typed, or WhatsApp Flow",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 1504,
+          "end_line": 1552,
+          "label": "Flow or typed ask"
+        },
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 4496,
+          "end_line": 4548,
+          "label": "validate then confirm"
+        }
+      ]
+    },
+    {
+      "id": "idc",
+      "lane": "identity",
+      "col": 3,
+      "type": "security",
+      "label": "Confirm data",
+      "sublabel": "Confirmar / Modificar",
+      "tag": "before lookup",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 2884,
+          "end_line": 2904,
+          "label": "echo name and DNI"
+        },
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 4550,
+          "end_line": 4578,
+          "label": "confirm or modify"
+        }
+      ]
+    },
+    {
+      "id": "lookup",
+      "lane": "identity",
+      "col": 4,
+      "type": "cloud",
+      "label": "Dentalink lookup",
+      "sublabel": "by name + DNI",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 2842,
+          "end_line": 2882,
+          "label": "lookup and branch"
+        }
+      ]
+    },
+    {
+      "id": "known",
+      "lane": "identity",
+      "col": 5,
+      "type": "backend",
+      "label": "Patient known",
+      "sublabel": "resume booking",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 1961,
+          "end_line": 1999,
+          "label": "continue with patient"
+        }
+      ]
+    },
+    {
+      "id": "intake",
+      "lane": "register",
+      "col": 2,
+      "type": "frontend",
+      "label": "First-visit intake",
+      "sublabel": "collect, review",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/first_visit_intake_subgraph.py",
+          "line": 353,
+          "end_line": 366,
+          "label": "review stage"
+        },
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 4693,
+          "end_line": 4708,
+          "label": "not-found: register"
+        }
+      ]
+    },
+    {
+      "id": "create",
+      "lane": "register",
+      "col": 3,
+      "type": "cloud",
+      "label": "Create patient",
+      "sublabel": "Dentalink + obra social",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 2144,
+          "end_line": 2155,
+          "label": "create_patient"
+        },
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 2258,
+          "end_line": 2283,
+          "label": "resume booking"
+        }
+      ]
+    },
+    {
+      "id": "spec",
+      "lane": "select",
+      "col": 5,
+      "type": "frontend",
+      "label": "Specialty list",
+      "sublabel": "numbered list",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 1783,
+          "end_line": 1821,
+          "label": "offer specialties"
+        },
+        {
+          "path": "app/agent/appointment_decision_subgraph.py",
+          "line": 860,
+          "end_line": 880,
+          "label": "choose_specialty"
+        }
+      ]
+    },
+    {
+      "id": "slots",
+      "lane": "select",
+      "col": 4,
+      "type": "backend",
+      "label": "Next slots",
+      "sublabel": "decision subgraph",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/appointment_decision_subgraph.py",
+          "line": 1028,
+          "end_line": 1045,
+          "label": "search_availability"
+        },
+        {
+          "path": "app/agent/appointment_decision_subgraph.py",
+          "line": 1122,
+          "end_line": 1122,
+          "label": "choose_slot"
+        },
+        {
+          "path": "app/agent/appointment_decision_subgraph.py",
+          "line": 1286,
+          "end_line": 1295,
+          "label": "slot picked"
+        }
+      ]
+    },
+    {
+      "id": "prop",
+      "lane": "book",
+      "col": 4,
+      "type": "database",
+      "label": "Propose",
+      "sublabel": "PendingAction row",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 2452,
+          "end_line": 2516,
+          "label": "propose selected slot"
+        }
+      ]
+    },
+    {
+      "id": "confirm",
+      "lane": "book",
+      "col": 3,
+      "type": "security",
+      "label": "Confirm booking",
+      "sublabel": "Confirmar / Cancelar",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 3272,
+          "end_line": 3286,
+          "label": "confirm pending action"
+        }
+      ]
+    },
+    {
+      "id": "reval",
+      "lane": "book",
+      "col": 2,
+      "type": "backend",
+      "label": "Revalidate slot",
+      "sublabel": "still free?",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 3385,
+          "end_line": 3394,
+          "label": "revalidate and create"
+        }
+      ]
+    },
+    {
+      "id": "book",
+      "lane": "book",
+      "col": 1,
+      "type": "cloud",
+      "label": "Create appointment",
+      "sublabel": "Dentalink",
+      "width": 132,
+      "sources": [
+        {
+          "path": "app/agent/nodes/appointment.py",
+          "line": 3421,
+          "end_line": 3429,
+          "label": "success reply"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-menu-q",
+      "from": "menu",
+      "to": "q",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-q-ident",
+      "from": "q",
+      "to": "ident",
+      "label": "existing",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-q-intake",
+      "from": "q",
+      "to": "intake",
+      "label": "new",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-ident-idc",
+      "from": "ident",
+      "to": "idc",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-idc-lookup",
+      "from": "idc",
+      "to": "lookup",
+      "label": "Confirmar",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-lookup-known",
+      "from": "lookup",
+      "to": "known",
+      "label": "found",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-lookup-intake",
+      "from": "lookup",
+      "to": "intake",
+      "label": "not found: register",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-intake-create",
+      "from": "intake",
+      "to": "create",
+      "label": "review OK"
+    },
+    {
+      "id": "e-create-known",
+      "from": "create",
+      "to": "known",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e-known-spec",
+      "from": "known",
+      "to": "spec",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-spec-slots",
+      "from": "spec",
+      "to": "slots",
+      "label": "specialty",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-slots-prop",
+      "from": "slots",
+      "to": "prop",
+      "label": "slot picked",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-prop-confirm",
+      "from": "prop",
+      "to": "confirm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-confirm-reval",
+      "from": "confirm",
+      "to": "reval",
+      "label": "Confirmar",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-reval-book",
+      "from": "reval",
+      "to": "book",
+      "label": "free",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-reval-slots",
+      "from": "reval",
+      "to": "slots",
+      "label": "taken: new slots",
+      "variant": "dashed",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Confirmation gates",
+      "items": [
+        "Typed name and DNI are echoed with Confirmar / Modificar before any Dentalink lookup",
+        "The proposed slot is a PendingAction: only Confirmar / Cancelar buttons can settle it, free text cannot",
+        "The slot is revalidated against Dentalink right before the write"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Branches",
+      "items": [
+        "A remembered patient skips identification",
+        "Not found offers register, retry, or an advisor; repeated misses hand off to a human",
+        "If the patient is still unknown after picking a slot, identification runs then"
+      ]
+    }
+  ]
+}

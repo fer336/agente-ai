@@ -1,0 +1,147 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Conversation mode: agent and human",
+    "output": "conversation-mode.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/fer336/agente-ai.git",
+      "provider": "github",
+      "revision": "1f6948c00768a88638173e87852069016fe85460"
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Mode"
+    },
+    {
+      "id": "recovery",
+      "label": "Fresh restart"
+    }
+  ],
+  "states": [
+    {
+      "id": "agent",
+      "type": "start",
+      "label": "Agent mode",
+      "sublabel": "bot answers",
+      "lane": "main",
+      "col": 0,
+      "tag": "default",
+      "sources": [
+        {
+          "path": "app/agent/graph.py",
+          "line": 86,
+          "end_line": 99,
+          "label": "mode check routing"
+        }
+      ]
+    },
+    {
+      "id": "human",
+      "type": "waiting",
+      "label": "Human mode",
+      "sublabel": "bot silent, staff replies",
+      "lane": "main",
+      "col": 2,
+      "tag": "paused",
+      "sources": [
+        {
+          "path": "app/application/messages/ingest_message.py",
+          "line": 402,
+          "end_line": 406,
+          "label": "pause gate"
+        },
+        {
+          "path": "app/agent/nodes/check_conversation_mode.py",
+          "line": 27,
+          "end_line": 32,
+          "label": "silent end"
+        }
+      ]
+    },
+    {
+      "id": "fresh",
+      "type": "active",
+      "label": "Fresh restart pending",
+      "sublabel": "welcome menu next turn",
+      "lane": "recovery",
+      "col": 2,
+      "tag": "flag",
+      "sources": [
+        {
+          "path": "app/application/conversations/handle_smb_message_echo.py",
+          "line": 72,
+          "end_line": 86,
+          "label": "/bot stamps flag"
+        },
+        {
+          "path": "app/application/messages/ingest_message.py",
+          "line": 381,
+          "end_line": 396,
+          "label": "timeout stamps flag"
+        },
+        {
+          "path": "app/agent/graph.py",
+          "line": 94,
+          "end_line": 98,
+          "label": "fresh_restart route"
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t-handoff",
+      "from": "agent",
+      "to": "human",
+      "label": "handoff / staff reply",
+      "variant": "security"
+    },
+    {
+      "id": "t-resolve",
+      "from": "human",
+      "to": "agent",
+      "label": "resolved / agente",
+      "variant": "emphasis",
+      "route": "top-channel"
+    },
+    {
+      "id": "t-bot",
+      "from": "human",
+      "to": "fresh",
+      "label": "/bot or 1h",
+      "variant": "dashed"
+    },
+    {
+      "id": "t-welcome",
+      "from": "fresh",
+      "to": "agent",
+      "label": "welcome menu",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Pause behavior",
+      "items": [
+        "In human mode patient messages are stored and mirrored but never forwarded to the agent",
+        "Each staff message in WhatsApp resets the 1 hour clock; a handoff nobody answered waits indefinitely",
+        "Chatwoot resolve or the agente label returns to agent mode without a welcome-menu restart",
+        "handoff node, a Chatwoot staff reply or the administracion label put the conversation in human mode"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Fresh restart",
+      "items": [
+        "/bot and the 1h timeout rotate the workflow session and render the welcome menu on the next turn",
+        "Messages and contact memory are kept"
+      ]
+    }
+  ]
+}

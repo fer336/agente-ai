@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "One patient message turn",
+    "output": "message-turn.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      640
+    ],
+    "column_fit": "spread",
+    "repository": {
+      "url": "https://github.com/fer336/agente-ai.git",
+      "provider": "github",
+      "revision": "1f6948c00768a88638173e87852069016fe85460"
+    }
+  },
+  "participants": [
+    {
+      "id": "ycloud",
+      "type": "cloud",
+      "label": "YCloud",
+      "sublabel": "WhatsApp API",
+      "sources": [
+        {
+          "path": "app/api/routes/webhook.py",
+          "line": 64,
+          "end_line": 76,
+          "label": "inbound webhook"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Webhook route",
+      "sublabel": "FastAPI",
+      "sources": [
+        {
+          "path": "app/api/routes/webhook.py",
+          "line": 116,
+          "end_line": 117,
+          "label": "secret check"
+        },
+        {
+          "path": "app/api/routes/webhook.py",
+          "line": 229,
+          "end_line": 230,
+          "label": "execute and ack"
+        }
+      ]
+    },
+    {
+      "id": "ingest",
+      "type": "backend",
+      "label": "IngestMessage",
+      "sublabel": "use case",
+      "sources": [
+        {
+          "path": "app/application/messages/ingest_message.py",
+          "line": 180,
+          "end_line": 190,
+          "label": "dedupe, conversation"
+        },
+        {
+          "path": "app/application/messages/ingest_message.py",
+          "line": 284,
+          "end_line": 305,
+          "label": "welcome menu"
+        },
+        {
+          "path": "app/application/messages/ingest_message.py",
+          "line": 588,
+          "end_line": 666,
+          "label": "debounce and hand-off"
+        }
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "debounce, lock",
+      "sources": [
+        {
+          "path": "app/infrastructure/redis/debounce.py",
+          "line": 25,
+          "end_line": 46,
+          "label": "touch, is_stale"
+        },
+        {
+          "path": "app/infrastructure/redis/lock.py",
+          "line": 11,
+          "end_line": 11,
+          "label": "redis_lock"
+        }
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "LangGraph invoker",
+      "sublabel": "graph + send reply",
+      "sources": [
+        {
+          "path": "app/infrastructure/agent/langgraph_agent_invoker.py",
+          "line": 231,
+          "end_line": 240,
+          "label": "handle()"
+        },
+        {
+          "path": "app/infrastructure/agent/langgraph_agent_invoker.py",
+          "line": 430,
+          "end_line": 430,
+          "label": "ainvoke"
+        },
+        {
+          "path": "app/infrastructure/agent/langgraph_agent_invoker.py",
+          "line": 508,
+          "end_line": 515,
+          "label": "send reply"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LLM provider",
+      "sublabel": "OpenAI-compatible",
+      "sources": [
+        {
+          "path": "app/api/dependencies/gateways.py",
+          "line": 348,
+          "end_line": 358,
+          "label": "provider switch"
+        }
+      ]
+    },
+    {
+      "id": "chatwoot",
+      "type": "cloud",
+      "label": "Chatwoot",
+      "sublabel": "staff inbox mirror",
+      "sources": [
+        {
+          "path": "app/application/messages/ingest_message.py",
+          "line": 329,
+          "end_line": 338,
+          "label": "mirror inbound"
+        },
+        {
+          "path": "app/application/messages/send_reply.py",
+          "line": 103,
+          "end_line": 110,
+          "label": "mirror outgoing"
+        }
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "id": "inbound",
+      "from": "ycloud",
+      "to": "api",
+      "y": 165,
+      "label": "POST /webhooks/ycloud/{secret}",
+      "variant": "emphasis"
+    },
+    {
+      "id": "execute",
+      "from": "api",
+      "to": "ingest",
+      "y": 195,
+      "label": "execute(dto)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "welcome",
+      "from": "ingest",
+      "to": "ycloud",
+      "y": 225,
+      "label": "welcome menu (new conversation only)",
+      "variant": "dashed"
+    },
+    {
+      "id": "mirror-in",
+      "from": "ingest",
+      "to": "chatwoot",
+      "y": 255,
+      "label": "mirror inbound text",
+      "variant": "dashed"
+    },
+    {
+      "id": "touch",
+      "from": "ingest",
+      "to": "redis",
+      "y": 285,
+      "label": "touch debounce token",
+      "variant": "default"
+    },
+    {
+      "id": "scheduled",
+      "from": "ingest",
+      "to": "api",
+      "y": 315,
+      "label": "returns, turn scheduled",
+      "variant": "return"
+    },
+    {
+      "id": "ack",
+      "from": "api",
+      "to": "ycloud",
+      "y": 342,
+      "label": "accepted",
+      "variant": "return"
+    },
+    {
+      "id": "window",
+      "from": "ingest",
+      "to": "redis",
+      "y": 375,
+      "label": "wait window, is_stale, lock",
+      "variant": "default"
+    },
+    {
+      "id": "handle",
+      "from": "ingest",
+      "to": "agent",
+      "y": 405,
+      "label": "handle(messages, payload)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "classify",
+      "from": "agent",
+      "to": "llm",
+      "y": 435,
+      "label": "classify intent, word reply",
+      "variant": "default"
+    },
+    {
+      "id": "send",
+      "from": "agent",
+      "to": "ycloud",
+      "y": 470,
+      "label": "send reply",
+      "variant": "emphasis"
+    },
+    {
+      "id": "mirror-out",
+      "from": "agent",
+      "to": "chatwoot",
+      "y": 500,
+      "label": "mirror outgoing",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Sync vs deferred",
+      "items": [
+        "Dedupe, persistence and the human-mode gate run inside the webhook request",
+        "Debounce wait, lock and the agent run happen in a background task"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Gates",
+      "items": [
+        "Button taps skip the debounce wait",
+        "A conversation in human mode is persisted but never reaches the agent"
+      ]
+    }
+  ]
+}
