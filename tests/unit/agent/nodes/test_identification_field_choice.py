@@ -314,3 +314,23 @@ async def test_an_invalid_dni_still_asks_only_for_the_dni_and_keeps_the_name():
     assert data["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert data["identification_full_name"] == "Juan Perez"
     assert not data.get("identification_dni")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "piece"),
+    [
+        (IDENTIFICATION_FIX_NAME_PAYLOAD, "nombre completo"),
+        (IDENTIFICATION_FIX_DNI_PAYLOAD, "DNI"),
+    ],
+)
+async def test_the_request_after_a_button_tap_does_not_thank_the_patient(payload, piece):
+    # "Gracias! Ahora decime..." answers something the patient typed; here they tapped a button.
+    node, _, _ = await make_node_and_conversation(patient_gateway=_juan())
+    chooser = await _chooser(node)
+
+    result = await _tap(node, payload, chooser["collected_data"])
+
+    text = result["response_text"]
+    assert not text.startswith("Gracias")
+    assert piece in text

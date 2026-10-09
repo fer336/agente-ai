@@ -442,6 +442,12 @@ def _ask_name_only_message(example_name: str) -> str:
     return f"Gracias! Ahora decime tu *nombre completo*, por ejemplo: {example_name}."
 
 
+#: Requests after the patient TAPPED "Nombre" / "DNI" to correct it (no "Gracias!": nothing
+#: was typed to thank for).
+_FIX_NAME_MESSAGE = "Dale, escribime tu *nombre completo*, por ejemplo: {example_name}."
+_FIX_DNI_MESSAGE = "Dale, escribime tu *DNI* (7 u 8 dígitos), por ejemplo: {example_dni}."
+
+
 #: Shown at the start of the next step when Dentalink says the patient already has the
 #: agreement we tried to link: not an error, they just carry on with their booking.
 _AGREEMENT_ALREADY_LINKED_NOTICE = (
@@ -2975,9 +2981,9 @@ def create_appointment_node(
                 example_name=example_name, example_dni=example_dni
             )
         elif name:
-            text = _ask_name_only_message(example_name)
+            text = _FIX_NAME_MESSAGE.format(example_name=example_name)
         else:
-            text = _ask_dni_only_message(example_dni)
+            text = _FIX_DNI_MESSAGE.format(example_dni=example_dni)
         dropped = {
             key
             for key, wanted in (("identification_full_name", name), ("identification_dni", dni))
