@@ -47,10 +47,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "No ejecuta antes de confirmar — turn 3"
+- description: "No ejecuta antes de confirmar — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-appointments-02"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "No ejecuta antes de confirmar — turn 3"
+  vars:
+    conversation_id: "eval-appointments-02"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -134,10 +150,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "No inventa disponibilidad — turn 3"
+- description: "No inventa disponibilidad — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-appointments-03"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "No inventa disponibilidad — turn 3"
+  vars:
+    conversation_id: "eval-appointments-03"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -222,10 +254,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Paciente no encontrado — turn 3"
+- description: "Paciente no encontrado — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-appointments-05"
     message: "Soy Juan Pérez, DNI 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: true
+
+- description: "Paciente no encontrado — turn 3"
+  vars:
+    conversation_id: "eval-appointments-05"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -259,10 +307,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Reprogramar sin confirmación previa — turn 2"
+- description: "Reprogramar sin confirmación previa — turn 2 (confirmación de datos)"
   vars:
     conversation_id: "eval-appointments-07"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Reprogramar sin confirmación previa — turn 2"
+  vars:
+    conversation_id: "eval-appointments-07"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -325,10 +389,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Cancelar sin confirmación previa — turn 2"
+- description: "Cancelar sin confirmación previa — turn 2 (confirmación de datos)"
   vars:
     conversation_id: "eval-appointments-08"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Cancelar sin confirmación previa — turn 2"
+  vars:
+    conversation_id: "eval-appointments-08"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds

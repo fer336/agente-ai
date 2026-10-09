@@ -26,7 +26,7 @@ from app.domain.value_objects.menu_payloads import (
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
-from tests.fixtures.appointment_node import make_node_and_conversation
+from tests.fixtures.appointment_node import identify_and_confirm, make_node_and_conversation
 
 _UNKNOWN = "Rosa Gomez, 30999888"
 _NOT_FOUND_REPLY = "No encontré ningún paciente con esos datos. ¿Qué querés hacer?"
@@ -61,13 +61,7 @@ async def _not_found_after_existing_patient_answer(node, conversation_id="conv-1
             collected_data=question["collected_data"],
         )
     )
-    return await node(
-        make_agent_state(
-            conversation_id=conversation_id,
-            user_message=_UNKNOWN,
-            collected_data=ask["collected_data"],
-        )
-    )
+    return await identify_and_confirm(node, _UNKNOWN, ask["collected_data"], conversation_id)
 
 
 @pytest.mark.asyncio
@@ -108,11 +102,8 @@ async def test_the_unknown_patient_is_never_treated_as_identified():
 async def test_the_same_choice_is_offered_from_a_direct_identification_stage(operation):
     node, _, _ = await make_node_and_conversation(patients=[])
 
-    result = await node(
-        make_agent_state(
-            user_message=_UNKNOWN,
-            collected_data={"stage": STAGE_AWAITING_IDENTIFICATION, "operation": operation},
-        )
+    result = await identify_and_confirm(
+        node, _UNKNOWN, {"stage": STAGE_AWAITING_IDENTIFICATION, "operation": operation}
     )
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
@@ -188,11 +179,7 @@ async def test_trying_other_data_asks_for_name_and_dni_again_and_finds_the_corre
     assert "ask_identification" in retry["response_text"]
     assert retry["response_buttons"] is None
 
-    found = await node(
-        make_agent_state(
-            user_message="Juan Perez, 30123456", collected_data=retry["collected_data"]
-        )
-    )
+    found = await identify_and_confirm(node, "Juan Perez, 30123456", retry["collected_data"])
 
     assert found["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert found["collected_data"]["patient"]["dni"] == "30123456"
@@ -248,9 +235,7 @@ async def test_the_third_not_found_after_two_retries_hands_off_instead_of_offeri
     result = await _not_found_after_existing_patient_answer(node)
     for _ in range(2):
         retry = await _tap(node, result, PATIENT_NOT_FOUND_RETRY_PAYLOAD)
-        result = await node(
-            make_agent_state(user_message=_UNKNOWN, collected_data=retry["collected_data"])
-        )
+        result = await identify_and_confirm(node, _UNKNOWN, retry["collected_data"])
         if result.get("intent") == "handoff":
             break
 
@@ -263,9 +248,7 @@ async def test_the_first_not_found_after_one_retry_still_offers_the_choice():
     result = await _not_found_after_existing_patient_answer(node)
     retry = await _tap(node, result, PATIENT_NOT_FOUND_RETRY_PAYLOAD)
 
-    again = await node(
-        make_agent_state(user_message=_UNKNOWN, collected_data=retry["collected_data"])
-    )
+    again = await identify_and_confirm(node, _UNKNOWN, retry["collected_data"])
 
     assert again.get("intent") != "handoff"
     assert len(again["response_buttons"]) == 3

@@ -20,7 +20,7 @@ from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
-from tests.fixtures.appointment_node import make_node_and_conversation
+from tests.fixtures.appointment_node import confirm_identification, make_node_and_conversation
 from tests.fixtures.gateways import (
     make_conversation_repository,
     make_dentalink_gateway,
@@ -214,12 +214,13 @@ async def test_after_the_intake_the_patient_lands_on_the_general_slots():
         )
     )
 
-    result = await node(
+    shown = await node(
         make_agent_state(
             button_payload=FIRST_VISIT_CANCEL_PAYLOAD,
             collected_data=question["collected_data"],
         )
     )
+    result = await confirm_identification(node, shown)
 
     data = result["collected_data"]
     assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION

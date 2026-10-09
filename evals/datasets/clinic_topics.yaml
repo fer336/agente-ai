@@ -543,10 +543,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Consulta particular: muestra los horarios de General sin pasar por la lista de especialidades — turn 4"
+- description: "Consulta particular: muestra los horarios de General sin pasar por la lista de especialidades — turn 4 (confirmación de datos)"
   vars:
     conversation_id: "eval-topics-book-01"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Consulta particular: muestra los horarios de General sin pasar por la lista de especialidades — turn 4"
+  vars:
+    conversation_id: "eval-topics-book-01"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -622,10 +638,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Alineadores: muestra los horarios de Alineadores sin la lista de especialidades — turn 4"
+- description: "Alineadores: muestra los horarios de Alineadores sin la lista de especialidades — turn 4 (confirmación de datos)"
   vars:
     conversation_id: "eval-topics-aligners-01"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Alineadores: muestra los horarios de Alineadores sin la lista de especialidades — turn 4"
+  vars:
+    conversation_id: "eval-topics-aligners-01"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds

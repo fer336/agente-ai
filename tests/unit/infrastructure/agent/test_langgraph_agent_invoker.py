@@ -31,6 +31,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.date_time_range import DateTimeRange
 from app.domain.value_objects.menu_payloads import (
     CHOOSE_PROFESSIONAL_PAYLOAD,
+    IDENTIFICATION_CONFIRM_PAYLOAD,
     LOCATION_DETAIL_PAYLOAD,
 )
 from app.domain.value_objects.phone_number import PhoneNumber
@@ -540,6 +541,9 @@ async def test_handle_carries_collected_data_across_turns_via_the_checkpointer()
     )
     # Already a patient: verified by name + DNI before any specialty is shown.
     await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2c-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -612,6 +616,9 @@ async def test_handle_carries_pending_selected_slot_and_pending_action_across_tu
     )
     # Already a patient: verified by name + DNI before any specialty is shown.
     await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2c-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -693,6 +700,9 @@ async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_
     )
     # Already a patient: verified by name + DNI before any specialty is shown.
     await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2c-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     # Turn 3b: the browse-choice screen shown after picking a specialty —
     # tap "Elegir profesional" to reach the professional list.
@@ -700,6 +710,9 @@ async def test_handle_closes_warmly_when_the_patient_thanks_the_bot_right_after_
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
     await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-6-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-7"], "", "CONFIRM_APPOINTMENT")
 
     await invoker.handle(ConversationId("conv-1"), ["msg-8"], "Gracias", None)
@@ -1157,6 +1170,7 @@ async def test_a_verified_patient_is_remembered_across_a_main_menu_reset_until_t
     await invoker.handle(conversation_id, ["m1"], "", OPERATION_CREATE_PAYLOAD)
     await invoker.handle(conversation_id, ["m2"], "", FIRST_VISIT_CANCEL_PAYLOAD)
     await invoker.handle(conversation_id, ["m3"], "Juan Perez, 30123456", None)
+    await invoker.handle(conversation_id, ["m3-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD)
     await invoker.handle(conversation_id, ["m4"], "", MENU_MAIN_PAYLOAD)
     messaging_gateway.sent_buttons.clear()
     lists_before = len(messaging_gateway.sent_lists)
@@ -1251,6 +1265,7 @@ async def test_the_main_menu_restarts_the_flow_keeping_the_patient_however_it_is
     await invoker.handle(conversation_id, ["m1"], "", OPERATION_CREATE_PAYLOAD)
     await invoker.handle(conversation_id, ["m2"], "", FIRST_VISIT_CANCEL_PAYLOAD)
     await invoker.handle(conversation_id, ["m3"], "Juan Perez, 30123456", None)
+    await invoker.handle(conversation_id, ["m3-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD)
     lists_before = len(messaging_gateway.sent_lists)
 
     if via == "button":
@@ -1291,6 +1306,7 @@ async def _book_a_verified_patient_then_return_the_invoker():
         ("", OPERATION_CREATE_PAYLOAD),
         ("", FIRST_VISIT_CANCEL_PAYLOAD),
         ("Juan Perez, 30123456", None),
+        ("", IDENTIFICATION_CONFIRM_PAYLOAD),
         ("1", None),
         ("", CHOOSE_PROFESSIONAL_PAYLOAD),
         ("1", None),
@@ -1411,11 +1427,17 @@ async def test_a_location_question_after_a_finished_booking_sends_the_clinic_ima
     )
     await invoker.handle(ConversationId("conv-1"), ["msg-2b"], "", FIRST_VISIT_CANCEL_PAYLOAD)
     await invoker.handle(ConversationId("conv-1"), ["msg-2c"], "Juan Perez, 30123456", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-2c-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-3"], "1", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-3b"], "", CHOOSE_PROFESSIONAL_PAYLOAD)
     await invoker.handle(ConversationId("conv-1"), ["msg-4"], "1", None)
     await invoker.handle(ConversationId("conv-1"), ["msg-5"], "", f"SELECT_SLOT:{slot.id}")
     await invoker.handle(ConversationId("conv-1"), ["msg-6"], "Juan Perez, 30123456", None)
+    await invoker.handle(
+        ConversationId("conv-1"), ["msg-6-confirm"], "", IDENTIFICATION_CONFIRM_PAYLOAD
+    )
     await invoker.handle(ConversationId("conv-1"), ["msg-7"], "", "CONFIRM_APPOINTMENT")
     messaging_gateway.sent_buttons.clear()
 

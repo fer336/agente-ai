@@ -75,6 +75,11 @@ CHOOSE_PROFESSIONAL_PAYLOAD = "CHOOSE_PROFESSIONAL"
 PATIENT_NOT_FOUND_REGISTER_PAYLOAD = "PATIENT_NOT_FOUND_REGISTER"
 PATIENT_NOT_FOUND_RETRY_PAYLOAD = "PATIENT_NOT_FOUND_RETRY"
 
+#: The typed name and DNI are echoed back before any Dentalink lookup: confirm to look the
+#: patient up, or modify to type the data again.
+IDENTIFICATION_CONFIRM_PAYLOAD = "IDENTIFICATION_CONFIRM"
+IDENTIFICATION_MODIFY_PAYLOAD = "IDENTIFICATION_MODIFY"
+
 #: "Consultas frecuentes" (clinic FAQ topics). `MENU_FAQ_PAYLOAD` opens the sub-list of
 #: topics; each topic row carries `FAQ_TOPIC_PAYLOAD_PREFIX` + the topic id defined in
 #: `app.agent.clinic_topics`, which round-trips through WhatsApp's `list_reply.id`.

@@ -192,10 +192,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Tercero: el propio paciente sigue funcionando — turn 2"
+- description: "Tercero: el propio paciente sigue funcionando — turn 2 (confirmación de datos)"
   vars:
     conversation_id: "eval-audit-third-party-03"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Tercero: el propio paciente sigue funcionando — turn 2"
+  vars:
+    conversation_id: "eval-audit-third-party-03"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -255,10 +271,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Paciente no encontrado: probar otro dato — turn 3"
+- description: "Paciente no encontrado: probar otro dato — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audit-not-found-01"
     message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: probar otro dato — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasButtons
@@ -292,10 +324,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Paciente no encontrado: probar otro dato — turn 5"
+- description: "Paciente no encontrado: probar otro dato — turn 5 (confirmación de datos)"
   vars:
     conversation_id: "eval-audit-not-found-01"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: probar otro dato — turn 5"
+  vars:
+    conversation_id: "eval-audit-not-found-01"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -332,10 +380,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Paciente no encontrado: registrarme — turn 3"
+- description: "Paciente no encontrado: registrarme — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audit-not-found-02"
     message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: registrarme — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-02"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -389,10 +453,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Paciente no encontrado: asesor — turn 3"
+- description: "Paciente no encontrado: asesor — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audit-not-found-03"
     message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: asesor — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-03"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -442,10 +522,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Paciente no encontrado: redacción — turn 3"
+- description: "Paciente no encontrado: redacción — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audit-not-found-04"
     message: "Juan Pérez, 30111222"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Paciente no encontrado: redacción — turn 3"
+  vars:
+    conversation_id: "eval-audit-not-found-04"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:noLeadingGreeting

@@ -38,6 +38,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_CONFIRMATION,
     STAGE_AWAITING_FIRST_VISIT_INTAKE,
     STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
     STAGE_AWAITING_NEW_PATIENT_DETAILS,
     STAGE_AWAITING_NO_AVAILABILITY_CHOICE,
     STAGE_AWAITING_NO_SLOTS_CHOICE,
@@ -77,6 +78,10 @@ from app.infrastructure.dentalink.fake_agreement_gateway import FakeAgreementGat
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import (
+    confirm_identification,
+    identify_and_confirm,
+)
 from tests.fixtures.appointment_node import (
     future_slot as _future_slot,
 )
@@ -192,7 +197,7 @@ async def _confirm_first_visit(node, question, conversation_id="conv-1"):
 async def _answer_as_existing_patient(
     node, question, identification="Juan Perez, 30123456", conversation_id="conv-1"
 ):
-    """Cancel the first-visit question, then identify (name + DNI)."""
+    """Cancel the first-visit question, then identify (name + DNI) and confirm the data."""
     ask = await node(
         make_agent_state(
             conversation_id=conversation_id,
@@ -200,13 +205,7 @@ async def _answer_as_existing_patient(
             collected_data=question["collected_data"],
         )
     )
-    return await node(
-        make_agent_state(
-            conversation_id=conversation_id,
-            user_message=identification,
-            collected_data=ask["collected_data"],
-        )
-    )
+    return await identify_and_confirm(node, identification, ask["collected_data"], conversation_id)
 
 
 @pytest.mark.asyncio
@@ -355,13 +354,15 @@ async def test_cancelling_with_name_and_dni_already_known_verifies_without_askin
     assert question["response_buttons"] is not None
     llm.intents.clear()
 
-    result = await node(
+    shown = await node(
         make_agent_state(
             conversation_id="conv-1",
             button_payload=FIRST_VISIT_CANCEL_PAYLOAD,
             collected_data=question["collected_data"],
         )
     )
+    assert shown["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION_CONFIRMATION
+    result = await confirm_identification(node, shown)
 
     assert "ask_identification" not in llm.intents
     assert result["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
@@ -425,12 +426,8 @@ async def test_an_existing_patient_reply_with_name_and_dni_is_verified_without_a
     question = await _start_create(node)
     llm.intents.clear()
 
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="ya soy paciente, Ana Pérez 30123457",
-            collected_data=question["collected_data"],
-        )
+    result = await identify_and_confirm(
+        node, "ya soy paciente, Ana Pérez 30123457", question["collected_data"]
     )
 
     assert "ask_identification" not in llm.intents
@@ -522,15 +519,10 @@ async def test_asking_to_book_after_a_reschedule_without_appointments_reuses_nam
     # the identification the patient had just given.
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(llm_provider=llm)
-    no_appointments = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="Juan Perez, 30123456",
-            collected_data={
-                "stage": STAGE_AWAITING_IDENTIFICATION,
-                "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            },
-        )
+    no_appointments = await identify_and_confirm(
+        node,
+        "Juan Perez, 30123456",
+        {"stage": STAGE_AWAITING_IDENTIFICATION, "operation": RESCHEDULE_APPOINTMENT_ACTION},
     )
     llm.intents.clear()
 
@@ -1829,7 +1821,8 @@ async def test_identification_after_slot_selection_proposes_the_chosen_slot():
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
@@ -2003,7 +1996,8 @@ async def test_an_unknown_patient_is_offered_registration_whatever_they_came_to_
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     # Not found -> a plain "no patient found" with register / retry / advisor
     # buttons; insurance and email are only asked inside the registration intake.
@@ -2058,7 +2052,8 @@ async def test_a_registered_dni_with_a_different_name_is_told_they_already_figur
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     # Continues to specialties (no slot picked yet) instead of proposing
     # a new registration; `create_patient` is forbidden by the gateway.
@@ -2084,7 +2079,8 @@ async def test_a_registered_dni_with_a_picked_slot_continues_to_confirm_that_slo
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["patient"]["id"] == "pat-existing"
@@ -2105,7 +2101,8 @@ async def test_a_registered_dni_in_a_non_create_operation_lists_their_appointmen
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     # Registered, so no registration questions: the existing patient goes
     # straight to the appointments lookup (none seeded here).
@@ -2285,7 +2282,8 @@ async def test_identification_stage_proposes_the_already_chosen_slot():
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
@@ -2703,7 +2701,8 @@ async def test_identification_stage_combines_a_bare_dni_correction_with_the_reme
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["patient"] == _PATIENT_PRIMITIVES
@@ -2776,7 +2775,8 @@ async def test_cancelling_an_unknown_patient_also_offers_registration():
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
 
@@ -2795,7 +2795,8 @@ async def test_identification_stage_offers_alternatives_when_the_patient_is_not_
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE
     assert result["collected_data"]["identification_full_name"] == "Maria Soto"
@@ -3757,7 +3758,8 @@ async def test_confirmation_stage_names_the_professional_when_available():
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert "Dra. Laura Pérez" in result["response_text"]
 
@@ -3778,7 +3780,8 @@ async def test_identification_stage_offers_appointments_for_cancel():
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_APPOINTMENT_SELECTION
     assert result["collected_data"]["patient_appointments"] == [appointment]
@@ -3806,7 +3809,8 @@ async def test_identification_stage_offers_appointments_for_reschedule_with_dist
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert "[fake-response for intent=choose_appointment_to_reschedule]" in result["response_text"]
 
@@ -3823,7 +3827,8 @@ async def test_identification_stage_reports_no_appointments_for_cancel():
         },
     )
 
-    result = await node(state)
+    shown = await node(state)
+    result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
     assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES}
     assert result["response_text"] == "[fake-response for intent=no_appointments]"
@@ -3836,15 +3841,10 @@ async def test_identification_stage_reports_no_appointments_for_cancel():
 async def test_no_appointments_keeps_identity_and_clears_the_stale_operation_stage():
     node, _, _ = await _make_node_and_conversation()
 
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="Juan Perez, 30123456",
-            collected_data={
-                "stage": STAGE_AWAITING_IDENTIFICATION,
-                "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            },
-        )
+    result = await identify_and_confirm(
+        node,
+        "Juan Perez, 30123456",
+        {"stage": STAGE_AWAITING_IDENTIFICATION, "operation": RESCHEDULE_APPOINTMENT_ACTION},
     )
 
     kept = result["collected_data"]
@@ -4991,13 +4991,7 @@ async def test_the_picked_slot_and_create_operation_survive_identification():
     assert ask["collected_data"]["operation"] == CREATE_APPOINTMENT_ACTION
     assert ask["collected_data"]["pending_selected_slot"] == slot
 
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="Juan Perez 30123456",
-            collected_data=ask["collected_data"],
-        )
-    )
+    result = await identify_and_confirm(node, "Juan Perez 30123456", ask["collected_data"])
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["collected_data"]["pending_selected_slot"] == slot
@@ -5013,17 +5007,15 @@ async def test_identification_with_a_picked_slot_never_takes_the_no_appointments
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(available_slots=[slot], llm_provider=llm)
 
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="Juan Perez 30123456",
-            collected_data={
-                "stage": STAGE_AWAITING_IDENTIFICATION,
-                "pending_selected_slot": slot,
-                "chosen_specialty_id": "cleaning",
-                "professional_names": {"prof-1": "Dra. Laura Pérez"},
-            },
-        )
+    result = await identify_and_confirm(
+        node,
+        "Juan Perez 30123456",
+        {
+            "stage": STAGE_AWAITING_IDENTIFICATION,
+            "pending_selected_slot": slot,
+            "chosen_specialty_id": "cleaning",
+            "professional_names": {"prof-1": "Dra. Laura Pérez"},
+        },
     )
 
     assert "no_appointments" not in llm.intents
@@ -5249,15 +5241,10 @@ async def test_no_appointments_reply_offers_administration_with_buttons():
 
     node, _, _ = await _make_node_and_conversation(llm_provider=_OfferingLLM())
 
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="Juan Perez, 30123456",
-            collected_data={
-                "stage": STAGE_AWAITING_IDENTIFICATION,
-                "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            },
-        )
+    result = await identify_and_confirm(
+        node,
+        "Juan Perez, 30123456",
+        {"stage": STAGE_AWAITING_IDENTIFICATION, "operation": RESCHEDULE_APPOINTMENT_ACTION},
     )
 
     assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS

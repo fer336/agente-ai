@@ -143,6 +143,8 @@ from app.domain.value_objects.interactive_button import InteractiveButton
 from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
     FAQ_OPTION_PAYLOAD_PREFIX,
+    IDENTIFICATION_CONFIRM_PAYLOAD,
+    IDENTIFICATION_MODIFY_PAYLOAD,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
     LIST_PREV_PAYLOAD,
@@ -214,6 +216,9 @@ STAGE_AWAITING_SPECIALTY_SELECTION = "awaiting_specialty_selection"
 STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE = "awaiting_specialty_browse_choice"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
+#: The typed name and DNI are on screen with Confirmar / Modificar; no Dentalink lookup has
+#: run yet. Confirmar runs the lookup, Modificar goes back to `STAGE_AWAITING_IDENTIFICATION`.
+STAGE_AWAITING_IDENTIFICATION_CONFIRMATION = "awaiting_identification_confirmation"
 #: LEGACY: only old checkpoints can still be in this stage. Identification that finds no
 #: match now goes to `STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE`; its handler and wording
 #: constants below are kept solely so those in-flight conversations finish.
@@ -267,6 +272,7 @@ _NAVIGABLE_STAGES = frozenset(
         STAGE_AWAITING_PROFESSIONAL_SELECTION,
         STAGE_AWAITING_SLOT_SELECTION,
         STAGE_AWAITING_IDENTIFICATION,
+        STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
         STAGE_AWAITING_NEW_PATIENT_DETAILS,
         STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
         STAGE_AWAITING_NO_SLOTS_CHOICE,
@@ -461,6 +467,27 @@ _PATIENT_NOT_FOUND_MESSAGE = (
 _PATIENT_NOT_FOUND_CHOICE_REMINDER = (
     "Elegí una opción tocando un botón: registrarte, probar otro dato o hablar con administración."
 )
+#: Fixed wording (never LLM-written): it echoes the patient's own data back for review.
+_IDENTIFICATION_CONFIRMATION_MESSAGE = (
+    "Antes de buscarte en el sistema, confirmame que estos datos estén bien:\n\n"
+    "*Nombre:* {full_name}\n"
+    "*DNI:* {dni}\n\n"
+    "Si está todo bien tocá *Confirmar*; si algo no coincide, tocá *Modificar*."
+)
+_IDENTIFICATION_CONFIRMATION_REMINDER = (
+    "Para seguir, tocá un botón: *Confirmar* si tus datos están bien o *Modificar* para "
+    "escribirlos de nuevo.\n\n"
+    "*Nombre:* {full_name}\n"
+    "*DNI:* {dni}"
+)
+_IDENTIFICATION_MODIFY_MESSAGE = (
+    "Dale, escribime de nuevo tu nombre completo y tu DNI, por ejemplo: {example_name}, "
+    "{example_dni}."
+)
+_IDENTIFICATION_CONFIRMATION_BUTTONS = [
+    InteractiveButton(id=IDENTIFICATION_CONFIRM_PAYLOAD, title="✅ Confirmar"),
+    InteractiveButton(id=IDENTIFICATION_MODIFY_PAYLOAD, title="✏️ Modificar"),
+]
 _PATIENT_NOT_FOUND_BUTTONS = [
     InteractiveButton(id=PATIENT_NOT_FOUND_REGISTER_PAYLOAD, title="🆕 Registrarme"),
     InteractiveButton(id=PATIENT_NOT_FOUND_RETRY_PAYLOAD, title="🔁 Probar otro dato"),
@@ -2812,6 +2839,70 @@ def create_appointment_node(
             },
         }
 
+    async def _look_up_confirmed_patient(
+        state: AgentState,
+        collected_data: dict[str, object],
+        full_name: str,
+        dni: str,
+    ) -> dict[str, object]:
+        """Runs the Dentalink lookup for a name and DNI the patient confirmed."""
+        conversation_id = ConversationId(state["conversation_id"])
+        identified_patient = await identify_patient.execute(full_name, dni)
+        if identified_patient is None:
+            # The DNI may still be on file under a different name
+            # spelling: that is a registered patient, not a new one.
+            # Never offer to register a duplicate.
+            registered_by_dni = await patient_gateway.find_patient_by_dni(dni)
+            if registered_by_dni is not None:
+                return await _continue_as_registered_patient(
+                    conversation_id,
+                    registered_by_dni,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            # Dentalink has no record for this name + DNI. Say so plainly and let the
+            # patient choose (register, retry, advisor) — whatever they came to do,
+            # since someone Dentalink has never seen has nothing to reschedule or
+            # cancel either. Never treated as identified, never asked for insurance
+            # or email here: that only happens inside the registration intake.
+            return await _offer_patient_not_found_choice(
+                state, collected_data, full_name.strip(), dni
+            )
+        patient_primitives = _patient_to_primitives(identified_patient)
+        if _is_create_flow(collected_data):
+            return await _continue_booking_with_patient(state, collected_data, patient_primitives)
+        return await _offer_appointments(
+            conversation_id,
+            patient_primitives,
+            identified_patient.id,
+            collected_data,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+
+    async def _show_identification_confirmation(
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        full_name: str,
+        dni: str,
+    ) -> dict[str, object]:
+        """Echoes the typed name and DNI with Confirmar / Modificar, before any lookup."""
+        await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        return {
+            "response_text": _IDENTIFICATION_CONFIRMATION_MESSAGE.format(
+                full_name=full_name, dni=dni
+            ),
+            "response_buttons": _IDENTIFICATION_CONFIRMATION_BUTTONS,
+            "requires_handoff": False,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+                "identification_full_name": full_name,
+                "identification_dni": dni,
+            },
+        }
+
     async def _begin_reminder_reschedule(
         conversation_id: ConversationId,
         appointment_id: str,
@@ -4445,41 +4536,68 @@ def create_appointment_node(
                         "identification_dni": None,
                     },
                 }
-            identified_patient = await identify_patient.execute(full_name, validated_dni.value)
-            if identified_patient is None:
-                # The DNI may still be on file under a different name
-                # spelling: that is a registered patient, not a new one.
-                # Never offer to register a duplicate.
-                registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
-                if registered_by_dni is not None:
-                    return await _continue_as_registered_patient(
-                        conversation_id,
-                        registered_by_dni,
-                        collected_data,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
-                    )
-                # Dentalink has no record for this name + DNI. Say so plainly and let the
-                # patient choose (register, retry, advisor) — whatever they came to do,
-                # since someone Dentalink has never seen has nothing to reschedule or
-                # cancel either. Never treated as identified, never asked for insurance
-                # or email here: that only happens inside the registration intake.
-                return await _offer_patient_not_found_choice(
+            if collected_data.get("patient") is not None:
+                # Re-entry for a patient who was already looked up and identified earlier in
+                # this conversation (e.g. booking right after an empty reschedule): their
+                # data was confirmed back then, so it is not asked again.
+                return await _look_up_confirmed_patient(
                     state, collected_data, full_name.strip(), validated_dni.value
                 )
-            patient_primitives = _patient_to_primitives(identified_patient)
-            if _is_create_flow(collected_data):
-                return await _continue_booking_with_patient(
-                    state, collected_data, patient_primitives
-                )
-            return await _offer_appointments(
-                conversation_id,
-                patient_primitives,
-                identified_patient.id,
-                collected_data,
-                state["recent_messages"],
-                state["contact_memory_summary"],
+            return await _show_identification_confirmation(
+                conversation_id, collected_data, full_name.strip(), validated_dni.value
             )
+
+        if stage == STAGE_AWAITING_IDENTIFICATION_CONFIRMATION:
+            confirmed_name = cast(str | None, collected_data.get("identification_full_name"))
+            confirmed_dni = cast(str | None, collected_data.get("identification_dni"))
+            payload = state["button_payload"]
+            if confirmed_name is None or confirmed_dni is None:
+                # Incomplete checkpoint: nothing to confirm, ask for the data again.
+                payload = IDENTIFICATION_MODIFY_PAYLOAD
+            if payload == IDENTIFICATION_CONFIRM_PAYLOAD and confirmed_name and confirmed_dni:
+                return await _look_up_confirmed_patient(
+                    state, collected_data, confirmed_name, confirmed_dni
+                )
+            if payload == IDENTIFICATION_MODIFY_PAYLOAD:
+                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+                example_name, example_dni = pick_example_identity()
+                return {
+                    "response_text": _IDENTIFICATION_MODIFY_MESSAGE.format(
+                        example_name=example_name, example_dni=example_dni
+                    ),
+                    "response_buttons": None,
+                    "requires_handoff": False,
+                    "collected_data": {
+                        **{
+                            key: value
+                            for key, value in collected_data.items()
+                            if key not in {"identification_full_name", "identification_dni"}
+                        },
+                        "stage": STAGE_AWAITING_IDENTIFICATION,
+                    },
+                }
+            if payload is None:
+                # Typed name + DNI is a correction: replace the pieces and ask again.
+                typed_name, typed_dni = await _extract_identification_pieces(
+                    llm_provider, state["user_message"]
+                )
+                if typed_name is not None and len(typed_name.split()) >= 2 and typed_dni:
+                    try:
+                        valid_dni = Dni(typed_dni).value
+                    except ValueError:
+                        valid_dni = None
+                    if valid_dni is not None:
+                        return await _show_identification_confirmation(
+                            conversation_id, collected_data, typed_name.strip(), valid_dni
+                        )
+            return {
+                "response_text": _IDENTIFICATION_CONFIRMATION_REMINDER.format(
+                    full_name=confirmed_name, dni=confirmed_dni
+                ),
+                "response_buttons": _IDENTIFICATION_CONFIRMATION_BUTTONS,
+                "requires_handoff": False,
+                "collected_data": collected_data,
+            }
 
         if stage == STAGE_AWAITING_NEW_PATIENT_DETAILS:
             # LEGACY: only reachable from checkpoints saved before the not-found choice.
