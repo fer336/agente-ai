@@ -697,15 +697,21 @@ async def _extract_identification_pieces(
     """Splits free text into whichever (full_name, dni) pieces it actually
     contains — either can be missing, since the patient may answer across
     two messages instead of PRD.md §32's suggested one-shot format
-    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI; whatever
+    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI (the last
+    one, preferring 7-8 digits, when there are several); whatever
     surrounds it is checked against `_extract_full_name` before being
     accepted as the name (rather than accepted unconditionally) — with no
     digit run at all, the whole message is checked the same way.
     """
-    match = _DNI_PATTERN.search(text)
-    if match is not None:
-        dni = match.group(1)
-        remainder = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
+    matches = list(_DNI_PATTERN.finditer(text))
+    if matches:
+        # The LAST number wins: a patient who typed a wrong DNI and then sent the right one
+        # (often grouped into one turn) means the later one. A 7-8 digit run is preferred so a
+        # trailing phone number is not mistaken for it; without one, the last longer/shorter
+        # run still goes on to the DNI validation.
+        dni_like = [m for m in matches if 7 <= len(m.group(1)) <= 8]
+        dni = (dni_like or matches)[-1].group(1)
+        remainder = re.sub(r"\s+", " ", _DNI_PATTERN.sub(" ", text)).strip(" ,.-")
         full_name = await _extract_full_name(llm_provider, remainder) if remainder else None
         return full_name, dni
     stripped = text.strip()
