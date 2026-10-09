@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Clinic AI Agent: system architecture",
+    "output": "system-architecture.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/fer336/agente-ai.git",
+      "provider": "github",
+      "revision": "1f6948c00768a88638173e87852069016fe85460"
+    }
+  },
+  "components": [
+    { "id": "patient", "type": "external", "label": "Patient", "sublabel": "WhatsApp", "pos": [40, 210], "size": [120, 60],
+      "sources": [{ "path": "app/api/routes/webhook.py", "line": 90, "end_line": 90, "label": "WhatsApp to YCloud to us" }] },
+    { "id": "ycloud", "type": "cloud", "label": "YCloud", "sublabel": "YCLOUD_API_KEY", "tag": "real or fake", "pos": [230, 210], "size": [150, 64],
+      "sources": [
+        { "path": "app/api/dependencies/gateways.py", "line": 245, "end_line": 255, "label": "messaging gateway switch" },
+        { "path": "app/api/routes/webhook.py", "line": 64, "end_line": 76, "label": "inbound webhook" }
+      ] },
+    { "id": "api", "type": "backend", "label": "FastAPI app", "sublabel": "webhooks, /admin, /health", "pos": [450, 210], "size": [150, 64],
+      "sources": [
+        { "path": "app/main.py", "line": 130, "end_line": 145, "label": "app and routers" },
+        { "path": "app/api/routes/webhook.py", "line": 116, "end_line": 117, "label": "path secret check" }
+      ] },
+    { "id": "ingest", "type": "backend", "label": "IngestMessage", "sublabel": "dedupe, debounce, lock", "pos": [670, 210], "size": [150, 64],
+      "sources": [
+        { "path": "app/application/messages/ingest_message.py", "line": 180, "end_line": 189, "label": "dedupe and conversation" },
+        { "path": "app/application/messages/ingest_message.py", "line": 588, "end_line": 606, "label": "debounce and lock" },
+        { "path": "app/application/messages/ingest_message.py", "line": 664, "end_line": 666, "label": "agent hand-off" }
+      ] },
+    { "id": "agent", "type": "backend", "label": "LangGraph agent", "sublabel": "invoker, graph, send reply", "pos": [900, 210], "size": [170, 64],
+      "sources": [
+        { "path": "app/infrastructure/agent/langgraph_agent_invoker.py", "line": 231, "end_line": 240, "label": "handle()" },
+        { "path": "app/agent/graph.py", "line": 386, "end_line": 441, "label": "graph edges" },
+        { "path": "app/api/dependencies/gateways.py", "line": 489, "end_line": 540, "label": "real invoker wired" }
+      ] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "debounce, locks", "pos": [670, 40], "size": [150, 64],
+      "sources": [
+        { "path": "app/infrastructure/redis/debounce.py", "line": 8, "end_line": 48, "label": "DebounceTracker" },
+        { "path": "app/infrastructure/redis/lock.py", "line": 11, "end_line": 11, "label": "redis_lock" }
+      ] },
+    { "id": "llm", "type": "cloud", "label": "LLM provider", "sublabel": "LLM_API_URL", "tag": "real or fake", "pos": [900, 40], "size": [170, 64],
+      "sources": [{ "path": "app/api/dependencies/gateways.py", "line": 348, "end_line": 358, "label": "OpenAI-compatible switch" }] },
+    { "id": "dentalink", "type": "cloud", "label": "Dentalink", "sublabel": "DENTALINK_ACCESS_TOKEN", "tag": "real or fake", "pos": [1150, 210], "size": [190, 64],
+      "sources": [{ "path": "app/api/dependencies/gateways.py", "line": 86, "end_line": 99, "label": "appointment gateway switch" }] },
+    { "id": "pg", "type": "database", "label": "PostgreSQL", "sublabel": "data, runs, checkpoints", "pos": [900, 380], "size": [170, 64],
+      "sources": [
+        { "path": "app/infrastructure/database/session.py", "line": 9, "end_line": 19, "label": "async engine" },
+        { "path": "app/agent/graph.py", "line": 511, "end_line": 584, "label": "checkpointer pool" }
+      ] },
+    { "id": "telegram", "type": "cloud", "label": "Telegram", "sublabel": "TELEGRAM_BOT_TOKEN", "tag": "real or fake", "pos": [1150, 380], "size": [190, 64],
+      "sources": [{ "path": "app/api/dependencies/gateways.py", "line": 455, "end_line": 467, "label": "alert notifier switch" }] },
+    { "id": "chatwoot", "type": "cloud", "label": "Chatwoot", "sublabel": "CHATWOOT_API_ACCESS_TOKEN", "tag": "staff inbox", "pos": [420, 380], "size": [210, 64],
+      "sources": [
+        { "path": "app/api/dependencies/gateways.py", "line": 304, "end_line": 315, "label": "gateway switch" },
+        { "path": "app/api/routes/chatwoot_webhook.py", "line": 49, "end_line": 58, "label": "staff webhook" },
+        { "path": "app/application/messages/send_reply.py", "line": 103, "end_line": 110, "label": "outgoing mirror" }
+      ] }
+  ],
+  "connections": [
+    { "id": "patient-to-ycloud", "from": "patient", "to": "ycloud", "variant": "emphasis" },
+    { "id": "ycloud-webhook", "from": "ycloud", "to": "api", "label": "webhook", "variant": "emphasis" },
+    { "id": "api-to-ingest", "from": "api", "to": "ingest", "label": "execute", "variant": "emphasis" },
+    { "id": "ingest-to-agent", "from": "ingest", "to": "agent", "label": "handle()", "variant": "emphasis" },
+    { "id": "ingest-to-redis", "from": "ingest", "to": "redis", "label": "debounce, lock", "fromSide": "top", "toSide": "bottom" },
+    { "id": "agent-to-llm", "from": "agent", "to": "llm", "label": "intent, wording", "fromSide": "top", "toSide": "bottom" },
+    { "id": "agent-to-dentalink", "from": "agent", "to": "dentalink", "label": "slots, patients" },
+    { "id": "agent-to-pg", "from": "agent", "to": "pg", "label": "checkpoints, runs", "fromSide": "bottom", "toSide": "top" },
+    { "id": "agent-to-telegram", "from": "agent", "to": "telegram", "label": "error alerts", "variant": "dashed", "fromSide": "right", "toSide": "top" },
+    { "id": "agent-reply", "from": "agent", "to": "ycloud", "label": "reply (send message)", "variant": "emphasis", "fromSide": "top", "toSide": "top" },
+    { "id": "ingest-to-chatwoot", "from": "ingest", "to": "chatwoot", "label": "mirror", "variant": "dashed", "fromSide": "bottom", "toSide": "right" },
+    { "id": "chatwoot-to-api", "from": "chatwoot", "to": "api", "label": "staff reply webhook", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Real or fake", "items": [
+      "Each adapter is real only when its setting is non-empty; otherwise an in-memory fake is injected",
+      "Switches: YCLOUD_API_KEY, DENTALINK_ACCESS_TOKEN, LLM_API_URL, CHATWOOT_API_ACCESS_TOKEN, TELEGRAM_BOT_TOKEN"
+    ] },
+    { "dot": "rose", "title": "Fake or not wired", "items": [
+      "YCloud media gateway, media downloader and the Linear incident gateway are always fakes",
+      "Groq transcription is wired in DI, but its audio worker is not scheduled: audio is not processed end to end"
+    ] },
+    { "dot": "cyan", "title": "Runtime", "items": [
+      "One process: the follow-up worker always runs, the reminder worker only when enabled",
+      "PostgreSQL and Redis are always real"
+    ] }
+  ]
+}
