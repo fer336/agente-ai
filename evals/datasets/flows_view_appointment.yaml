@@ -24,6 +24,22 @@
     message: "Lucía Prueba, 39000111"
   assert:
     - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Ver mi cita: resumen con acciones — turn 3"
+  vars:
+    conversation_id: "flows-view-appointment"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
+  assert:
+    - type: javascript
       value: file://assertions/custom.js:hasBulletLines
       config:
         min: 1
@@ -37,7 +53,7 @@
   metadata:
     requires_real_llm: true
 
-- description: "Ver mi cita: resumen con acciones — turn 3"
+- description: "Ver mi cita: resumen con acciones — turn 4"
   vars:
     conversation_id: "flows-view-appointment"
     message: "Menú principal"

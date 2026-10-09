@@ -234,6 +234,22 @@
     message: "Lucía Prueba, 39000111"
   assert:
     - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Turno de una especialidad: solo horarios, nunca profesionales — turn 4"
+  vars:
+    conversation_id: "flows-specialty-slots-only"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
+  assert:
+    - type: javascript
       value: file://assertions/custom.js:replyKindIs
       config:
         kind: "list"

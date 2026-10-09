@@ -25,7 +25,7 @@ from app.domain.value_objects.menu_payloads import (
 )
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
-from tests.fixtures.appointment_node import make_node_and_conversation
+from tests.fixtures.appointment_node import confirm_identification, make_node_and_conversation
 from tests.unit.agent.nodes.test_faq_book_booking import _PATIENT, _general_world
 
 _IMAGE_URL = "https://agent.example.com/public/alineadores-opciones.jpg"
@@ -198,11 +198,12 @@ async def test_after_the_intake_the_option_is_still_remembered_on_the_general_sl
         )
     )
 
-    result = await node(
+    shown = await node(
         make_agent_state(
             button_payload=FIRST_VISIT_CANCEL_PAYLOAD, collected_data=question["collected_data"]
         )
     )
+    result = await confirm_identification(node, shown)
 
     data = result["collected_data"]
     assert data["stage"] == STAGE_AWAITING_SLOT_SELECTION

@@ -5,7 +5,9 @@ from datetime import UTC, datetime, timedelta
 from app.agent.nodes.appointment import create_appointment_node
 from app.domain.entities.appointment_slot import AppointmentSlot
 from app.domain.value_objects.date_time_range import DateTimeRange
+from app.domain.value_objects.menu_payloads import IDENTIFICATION_CONFIRM_PAYLOAD
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
+from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.fake_redis import InMemoryFakeRedis
 from tests.fixtures.gateways import (
     make_agreement_gateway,
@@ -84,3 +86,28 @@ async def make_node_and_conversation(
         registration_flow_id=registration_flow_id,
     )
     return node, conversation_repository, appointment_gateway
+
+
+async def confirm_identification(node, shown, conversation_id="conv-1", **state):
+    """Taps "Confirmar" on the name + DNI confirmation `shown` by the node."""
+    return await node(
+        make_agent_state(
+            conversation_id=conversation_id,
+            button_payload=IDENTIFICATION_CONFIRM_PAYLOAD,
+            collected_data=shown["collected_data"],
+            **state,
+        )
+    )
+
+
+async def identify_and_confirm(node, text, collected_data, conversation_id="conv-1", **state):
+    """Types the name + DNI and confirms the echoed data: the lookup result comes back."""
+    shown = await node(
+        make_agent_state(
+            conversation_id=conversation_id,
+            user_message=text,
+            collected_data=collected_data,
+            **state,
+        )
+    )
+    return await confirm_identification(node, shown, conversation_id, **state)

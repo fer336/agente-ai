@@ -92,10 +92,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Ubicación tras un turno: muestra los horarios de General — turn 4"
+- description: "Ubicación tras un turno: muestra los horarios de General — turn 4 (confirmación de datos)"
   vars:
     conversation_id: "eval-location-03"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Ubicación tras un turno: muestra los horarios de General — turn 4"
+  vars:
+    conversation_id: "eval-location-03"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds

@@ -5,6 +5,7 @@ import pytest
 from app.agent.nodes.appointment import (
     STAGE_AWAITING_FIRST_VISIT_INTAKE,
     STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
     STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
 )
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
@@ -26,7 +27,12 @@ _INTAKE = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("answer", ["OSDE 210", "osde", "210", "Swiss Medical", "Galeno."])
 @pytest.mark.parametrize(
-    "stage", [STAGE_AWAITING_FIRST_VISIT_INTAKE, STAGE_AWAITING_IDENTIFICATION]
+    "stage",
+    [
+        STAGE_AWAITING_FIRST_VISIT_INTAKE,
+        STAGE_AWAITING_IDENTIFICATION,
+        STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+    ],
 )
 async def test_a_data_answer_is_never_routed_to_an_information_node(answer, stage):
     node = create_resolve_interaction_node(FakeLLMProvider())
@@ -231,6 +237,7 @@ def test_the_stage_sets_use_the_stage_constants():
         {
             STAGE_AWAITING_FIRST_VISIT_INTAKE,
             STAGE_AWAITING_IDENTIFICATION,
+            STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
             STAGE_AWAITING_NEW_PATIENT_DETAILS,
         }
     )

@@ -68,10 +68,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Audio durante selección interactiva no reemplaza el botón — turn 3"
+- description: "Audio durante selección interactiva no reemplaza el botón — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audio-02"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Audio durante selección interactiva no reemplaza el botón — turn 3"
+  vars:
+    conversation_id: "eval-audio-02"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -146,10 +162,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Audio durante confirmación sensible no confirma la acción — turn 3"
+- description: "Audio durante confirmación sensible no confirma la acción — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audio-03"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Audio durante confirmación sensible no confirma la acción — turn 3"
+  vars:
+    conversation_id: "eval-audio-03"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -235,10 +267,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Transcripción ambigua pide aclaración — turn 3"
+- description: "Transcripción ambigua pide aclaración — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audio-04"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Transcripción ambigua pide aclaración — turn 3"
+  vars:
+    conversation_id: "eval-audio-04"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -310,10 +358,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Transcripción que intenta fabricar un payload interactivo — turn 3"
+- description: "Transcripción que intenta fabricar un payload interactivo — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audio-05"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Transcripción que intenta fabricar un payload interactivo — turn 3"
+  vars:
+    conversation_id: "eval-audio-05"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds
@@ -414,10 +478,26 @@
   metadata:
     requires_real_llm: false
 
-- description: "Audio con propuesta vigente — turn 3"
+- description: "Audio con propuesta vigente — turn 3 (confirmación de datos)"
   vars:
     conversation_id: "eval-audio-07"
     message: "Lucía Prueba, 39000111"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_CONFIRM", "IDENTIFICATION_MODIFY"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:noListRows
+  metadata:
+    requires_real_llm: false
+
+- description: "Audio con propuesta vigente — turn 3"
+  vars:
+    conversation_id: "eval-audio-07"
+    message: "✅ Confirmar"
+    button_payload: "IDENTIFICATION_CONFIRM"
   assert:
     - type: javascript
       value: file://assertions/custom.js:hasOptionIds

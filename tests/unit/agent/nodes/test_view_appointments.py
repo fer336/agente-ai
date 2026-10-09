@@ -25,6 +25,7 @@ from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD
 from app.domain.value_objects.welcome_menu import WELCOME_TEXT
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
+from tests.fixtures.appointment_node import confirm_identification, identify_and_confirm
 from tests.fixtures.seed_objects import make_patient, make_professional, make_specialty
 from tests.unit.agent.nodes.test_appointment_node import (
     _PATIENT_PRIMITIVES,
@@ -57,9 +58,15 @@ def _view_state(**overrides):
     )
 
 
+async def _identify(node, **overrides):
+    """Types the name + DNI and confirms the echoed data."""
+    shown = await node(_view_state(**overrides))
+    return await confirm_identification(node, shown)
+
+
 async def _summary_for(node, gateway, *slots):
     appointments = await _book(gateway, *slots)
-    result = await node(_view_state())
+    result = await _identify(node)
     return appointments, result
 
 
@@ -217,7 +224,7 @@ async def test_a_remembered_patient_skips_identification_and_gets_the_summary():
 async def test_viewing_with_no_appointments_keeps_the_no_appointments_reply():
     node, _, _ = await _make_node_and_conversation()
 
-    result = await node(_view_state())
+    result = await _identify(node)
 
     assert result["response_text"] == "[fake-response for intent=no_appointments]"
     assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES}
@@ -361,15 +368,10 @@ async def test_the_reschedule_entry_point_keeps_the_selection_step_with_new_fram
     )
     (appointment,) = await _book(gateway, slot)
 
-    result = await node(
-        make_agent_state(
-            conversation_id="conv-1",
-            user_message="Juan Perez, 30123456",
-            collected_data={
-                "stage": STAGE_AWAITING_IDENTIFICATION,
-                "operation": RESCHEDULE_APPOINTMENT_ACTION,
-            },
-        )
+    result = await identify_and_confirm(
+        node,
+        "Juan Perez, 30123456",
+        {"stage": STAGE_AWAITING_IDENTIFICATION, "operation": RESCHEDULE_APPOINTMENT_ACTION},
     )
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_APPOINTMENT_SELECTION
