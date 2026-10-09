@@ -316,9 +316,15 @@
     button_payload: "PATIENT_NOT_FOUND_RETRY"
   assert:
     - type: javascript
-      value: file://assertions/custom.js:replyKindIs
+      value: file://assertions/custom.js:hasButtons
       config:
-        kind: "text"
+        titles: ["✏️ Nombre", "✏️ DNI"]
+        exact: true
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["IDENTIFICATION_FIX_NAME", "IDENTIFICATION_FIX_DNI"]
+        exact: true
     - type: javascript
       value: file://assertions/custom.js:noListRows
   metadata:

@@ -6,6 +6,7 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_FIRST_VISIT_INTAKE,
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+    STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
     STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
 )
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
@@ -32,6 +33,7 @@ _INTAKE = {
         STAGE_AWAITING_FIRST_VISIT_INTAKE,
         STAGE_AWAITING_IDENTIFICATION,
         STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+        STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
     ],
 )
 async def test_a_data_answer_is_never_routed_to_an_information_node(answer, stage):
@@ -107,7 +109,7 @@ async def test_osde_210_during_the_intake_fills_obra_social_and_plan():
 
 
 @pytest.mark.asyncio
-async def test_trying_other_data_clears_both_name_and_dni():
+async def test_trying_other_data_keeps_both_pieces_and_asks_which_to_fix():
     appointment, _, _ = await make_node_and_conversation()
 
     result = await appointment(
@@ -122,9 +124,9 @@ async def test_trying_other_data_clears_both_name_and_dni():
     )
 
     data = result["collected_data"]
-    assert data["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert not data.get("identification_full_name")
-    assert not data.get("identification_dni")
+    assert data["stage"] == STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE
+    assert data["identification_full_name"] == "Rosa Gomez"
+    assert data["identification_dni"] == "30999888"
 
 
 class _HandoffLLM(FakeLLMProvider):
@@ -238,6 +240,7 @@ def test_the_stage_sets_use_the_stage_constants():
             STAGE_AWAITING_FIRST_VISIT_INTAKE,
             STAGE_AWAITING_IDENTIFICATION,
             STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+            STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
             STAGE_AWAITING_NEW_PATIENT_DETAILS,
         }
     )
