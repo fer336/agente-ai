@@ -30,7 +30,7 @@ commits; Conventional Commits. Real Meta calls and sends to +542254423359 need t
 
 - [x] T1 Flow JSON builder + tests (a237cdc; RED import error, GREEN 13 passed in test_flows.py)
 - [x] T2 Draft-then-publish creation + tests (a237cdc; `create_flow` already defaulted to publish=False and put the response body in YCloudAPIError; added 2 pinning tests, no RED possible, no code change)
-- [~] T3 Setting + wiring + env template (a237cdc: setting, env template, graph.py/compile_graph kwarg done; PENDING: `LangGraphAgentInvoker` constructor + `gateways.py` pass-through, invoker file was outside the writer's allowed surface)
+- [x] T3 Setting + wiring + env template (setting, env template, graph kwarg in a237cdc; invoker + gateways pass-through by the parent; 3464 passed, ruff and mypy clean)
 - [x] T4 Reply consumption branch + tests (a237cdc; 8 new tests in tests/unit/agent/nodes/test_patient_intake_flow.py, RED TypeError then GREEN; tests/unit/agent 1608 passed; no new stage added)
 - [x] T5 Admin route + tests (a237cdc; tests/unit/api/routes/test_admin.py 29 passed; full tests/unit 3464 passed)
 - [ ] T6 Live: create draft in Meta, validate, publish, send to the test number

@@ -164,6 +164,7 @@ class LangGraphAgentInvoker:
         checkpointer_provider: CheckpointerProvider | None = None,
         verification_flow_id: str = "",
         registration_flow_id: str = "",
+        patient_intake_flow_id: str = "",
         mirror_to_chatwoot: MirrorMessageToChatwootUseCase | None = None,
         location_image_url: str = "",
         aligners_image_url: str = "",
@@ -195,6 +196,7 @@ class LangGraphAgentInvoker:
         self._checkpointer_provider = checkpointer_provider
         self._verification_flow_id = verification_flow_id
         self._registration_flow_id = registration_flow_id
+        self._patient_intake_flow_id = patient_intake_flow_id
         self._mirror_to_chatwoot = mirror_to_chatwoot
         self._location_image_url = location_image_url
         self._aligners_image_url = aligners_image_url
@@ -323,6 +325,7 @@ class LangGraphAgentInvoker:
                     checkpointer=checkpointer,
                     verification_flow_id=self._verification_flow_id,
                     registration_flow_id=self._registration_flow_id,
+                    patient_intake_flow_id=self._patient_intake_flow_id,
                     mirror_to_chatwoot=self._mirror_to_chatwoot,
                     location_image_url=self._location_image_url,
                     aligners_image_url=self._aligners_image_url,
