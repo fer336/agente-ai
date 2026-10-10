@@ -168,6 +168,7 @@ def test_old_slot_selection_checkpoint_resumes_without_new_persisted_state():
         "awaiting_no_slots_choice",
         "awaiting_identification",
         "awaiting_identification_confirmation",
+        "awaiting_identification_field_choice",
         "awaiting_confirmation",
         None,
     ],

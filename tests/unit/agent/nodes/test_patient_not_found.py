@@ -13,6 +13,8 @@ from app.agent.nodes.appointment import (
     OPERATION_CREATE_PAYLOAD,
     STAGE_AWAITING_FIRST_VISIT_INTAKE,
     STAGE_AWAITING_IDENTIFICATION,
+    STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+    STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
     STAGE_AWAITING_OPERATION_SELECTION,
     STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
     STAGE_AWAITING_SPECIALTY_SELECTION,
@@ -20,6 +22,9 @@ from app.agent.nodes.appointment import (
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.repositories.llm_provider import ResponseContext
 from app.domain.value_objects.menu_payloads import (
+    IDENTIFICATION_FIX_DNI_PAYLOAD,
+    IDENTIFICATION_FIX_NAME_PAYLOAD,
+    IDENTIFICATION_MODIFY_PAYLOAD,
     MENU_ADMIN_PAYLOAD,
     PATIENT_NOT_FOUND_REGISTER_PAYLOAD,
     PATIENT_NOT_FOUND_RETRY_PAYLOAD,
@@ -169,17 +174,27 @@ async def test_registering_starts_the_five_field_intake_with_name_and_dni_prefil
 
 
 @pytest.mark.asyncio
-async def test_trying_other_data_asks_for_name_and_dni_again_and_finds_the_corrected_patient():
+async def test_trying_other_data_asks_which_piece_to_fix_and_finds_the_corrected_patient():
     node, _, _ = await make_node_and_conversation()
     not_found = await _not_found_after_existing_patient_answer(node)
 
     retry = await _tap(node, not_found, PATIENT_NOT_FOUND_RETRY_PAYLOAD)
 
-    assert retry["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert "ask_identification" in retry["response_text"]
-    assert retry["response_buttons"] is None
+    assert retry["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE
+    assert retry["collected_data"]["identification_full_name"] == "Rosa Gomez"
+    assert retry["collected_data"]["identification_dni"] == "30999888"
+    assert len(retry["response_buttons"]) == 2
 
-    found = await identify_and_confirm(node, "Juan Perez, 30123456", retry["collected_data"])
+    fix_name = await _tap(node, retry, IDENTIFICATION_FIX_NAME_PAYLOAD)
+    shown = await node(
+        make_agent_state(user_message="Juan Perez", collected_data=fix_name["collected_data"])
+    )
+    assert shown["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION_CONFIRMATION
+    assert shown["collected_data"]["identification_dni"] == "30999888"
+
+    chooser = await _tap(node, shown, IDENTIFICATION_MODIFY_PAYLOAD)
+    fix_dni = await _tap(node, chooser, IDENTIFICATION_FIX_DNI_PAYLOAD)
+    found = await identify_and_confirm(node, "30123456", fix_dni["collected_data"])
 
     assert found["collected_data"]["stage"] == STAGE_AWAITING_SPECIALTY_SELECTION
     assert found["collected_data"]["patient"]["dni"] == "30123456"

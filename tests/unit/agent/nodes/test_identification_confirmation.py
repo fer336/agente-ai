@@ -6,11 +6,13 @@ from app.agent.nodes.appointment import (
     CREATE_APPOINTMENT_ACTION,
     STAGE_AWAITING_IDENTIFICATION,
     STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+    STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
     STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
     STAGE_AWAITING_SPECIALTY_SELECTION,
 )
 from app.domain.value_objects.menu_payloads import (
     IDENTIFICATION_CONFIRM_PAYLOAD,
+    IDENTIFICATION_FIX_DNI_PAYLOAD,
     IDENTIFICATION_MODIFY_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
 )
@@ -97,7 +99,7 @@ async def test_confirming_an_unknown_patient_offers_the_existing_not_found_choic
 
 
 @pytest.mark.asyncio
-async def test_modify_clears_the_pieces_and_asks_to_resend_the_data():
+async def test_modify_asks_which_piece_to_fix_and_keeps_both():
     gateway = _juan()
     node, _, _ = await make_node_and_conversation(patient_gateway=gateway)
     shown = await _type(node, "Juan Perez, 30123456", _IDENTIFYING)
@@ -105,22 +107,23 @@ async def test_modify_clears_the_pieces_and_asks_to_resend_the_data():
     result = await _tap(node, IDENTIFICATION_MODIFY_PAYLOAD, shown["collected_data"])
 
     data = result["collected_data"]
-    assert data["stage"] == STAGE_AWAITING_IDENTIFICATION
-    assert not data.get("identification_full_name")
-    assert not data.get("identification_dni")
+    assert data["stage"] == STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE
+    assert data["identification_full_name"] == "Juan Perez"
+    assert data["identification_dni"] == "30123456"
     assert data["operation"] == CREATE_APPOINTMENT_ACTION
-    assert result.get("response_buttons") is None
+    assert len(result["response_buttons"]) == 2
     assert gateway.lookups == []
 
 
 @pytest.mark.asyncio
-async def test_modify_then_retype_shows_the_confirmation_again_until_confirmed():
+async def test_modify_then_fix_the_dni_shows_the_confirmation_again_until_confirmed():
     gateway = _juan()
     node, _, _ = await make_node_and_conversation(patient_gateway=gateway)
     shown = await _type(node, "Juan Perez, 30999999", _IDENTIFYING)
-    asked = await _tap(node, IDENTIFICATION_MODIFY_PAYLOAD, shown["collected_data"])
+    chooser = await _tap(node, IDENTIFICATION_MODIFY_PAYLOAD, shown["collected_data"])
+    asked = await _tap(node, IDENTIFICATION_FIX_DNI_PAYLOAD, chooser["collected_data"])
 
-    again = await _type(node, "Juan Perez, 30123456", asked["collected_data"])
+    again = await _type(node, "30123456", asked["collected_data"])
 
     assert again["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION_CONFIRMATION
     assert "30123456" in again["response_text"]

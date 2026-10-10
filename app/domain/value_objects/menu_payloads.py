@@ -79,6 +79,10 @@ PATIENT_NOT_FOUND_RETRY_PAYLOAD = "PATIENT_NOT_FOUND_RETRY"
 #: patient up, or modify to type the data again.
 IDENTIFICATION_CONFIRM_PAYLOAD = "IDENTIFICATION_CONFIRM"
 IDENTIFICATION_MODIFY_PAYLOAD = "IDENTIFICATION_MODIFY"
+#: After Modificar (or "Probar otro dato") the patient picks which piece is wrong, so only that
+#: one is asked for again.
+IDENTIFICATION_FIX_NAME_PAYLOAD = "IDENTIFICATION_FIX_NAME"
+IDENTIFICATION_FIX_DNI_PAYLOAD = "IDENTIFICATION_FIX_DNI"
 
 #: "Consultas frecuentes" (clinic FAQ topics). `MENU_FAQ_PAYLOAD` opens the sub-list of
 #: topics; each topic row carries `FAQ_TOPIC_PAYLOAD_PREFIX` + the topic id defined in
