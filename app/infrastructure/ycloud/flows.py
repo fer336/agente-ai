@@ -11,6 +11,7 @@ _FLOW_JSON_VERSION = "6.2"
 #: open it directly.
 VERIFICATION_FLOW_SCREEN_ID = "VERIFICACION"
 REGISTRATION_FLOW_SCREEN_ID = "REGISTRO"
+PATIENT_INTAKE_FLOW_SCREEN_ID = "DATOS_PACIENTE"
 
 #: Max embedded-image size YCloud/Meta documents for a Flow screen.
 _MAX_IMAGE_BASE64_BYTES = 300_000
@@ -130,6 +131,91 @@ def build_registration_flow_json(header_image_base64: str | None = None) -> str:
                     "type": "Footer",
                     "label": "Enviar",
                     "on-click-action": {"name": "complete_action"},
+                },
+            ],
+        },
+    }
+    return json.dumps({"version": _FLOW_JSON_VERSION, "screens": [screen]})
+
+
+def build_patient_intake_flow_json(header_image_base64: str | None = None) -> str:
+    """One Flow for both returning and new patients.
+
+    A single terminal screen asks "are you a patient?" first. Name and DNI
+    are always shown; Mail and Obra Social appear (Flow JSON `If`) only for
+    "no" — new patients, who need full registration. The completion payload
+    carries every field; `email`/`obra_social` simply come back empty when
+    the `If` branch was never rendered. The backend branches on
+    `es_paciente` (see the appointment node).
+    """
+    new_patient_fields: list[dict[str, object]] = [
+        {
+            "type": "TextInput",
+            "name": "email",
+            "label": "Mail",
+            "input-type": "email",
+            "required": True,
+        },
+        {
+            "type": "TextInput",
+            "name": "obra_social",
+            "label": "Obra Social / Cobertura",
+            "input-type": "text",
+            "required": False,
+        },
+    ]
+    screen = {
+        "id": PATIENT_INTAKE_FLOW_SCREEN_ID,
+        "title": "Tus datos",
+        "terminal": True,
+        "layout": {
+            "type": "Form",
+            "children": [
+                *_image_component(header_image_base64),
+                {"type": "TextHeading", "text": "Tus datos"},
+                {
+                    "type": "RadioButtonsGroup",
+                    "name": "es_paciente",
+                    "label": "¿Sos paciente del consultorio?",
+                    "required": True,
+                    "data-source": [
+                        {"id": "si", "title": "Sí, ya soy paciente"},
+                        {"id": "no", "title": "No, es mi primera vez"},
+                    ],
+                },
+                {
+                    "type": "TextInput",
+                    "name": "full_name",
+                    "label": "Nombre completo",
+                    "input-type": "text",
+                    "required": True,
+                },
+                {
+                    "type": "TextInput",
+                    "name": "dni",
+                    "label": "DNI",
+                    "input-type": "number",
+                    "required": True,
+                    "helper-text": "Solo números, de 7 u 8 dígitos, sin puntos",
+                },
+                {
+                    "type": "If",
+                    "condition": "${form.es_paciente} == 'no'",
+                    "then": new_patient_fields,
+                },
+                {
+                    "type": "Footer",
+                    "label": "Enviar",
+                    "on-click-action": {
+                        "name": "complete",
+                        "payload": {
+                            "es_paciente": "${form.es_paciente}",
+                            "full_name": "${form.full_name}",
+                            "dni": "${form.dni}",
+                            "email": "${form.email}",
+                            "obra_social": "${form.obra_social}",
+                        },
+                    },
                 },
             ],
         },

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -403,7 +404,7 @@ def _stub_ycloud_client() -> _StubYCloudClient:
 
 
 @pytest.mark.asyncio
-async def test_admin_technical_creates_and_publishes_both_flows(
+async def test_admin_technical_creates_and_publishes_all_flows(
     _stub_ycloud_client: _StubYCloudClient,
 ):
     cookies = _session_cookies(ADMIN_TECHNICAL)
@@ -416,9 +417,18 @@ async def test_admin_technical_creates_and_publishes_both_flows(
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"verification_flow_id": "flow-1", "registration_flow_id": "flow-2"}
-    assert len(_stub_ycloud_client.create_flow_calls) == 2
-    assert all(call["publish"] is True for call in _stub_ycloud_client.create_flow_calls)
+    # The intake Flow is created first so a Meta rejection of it never leaves
+    # duplicate legacy Flows behind.
+    assert body == {
+        "patient_intake_flow_id": "flow-1",
+        "verification_flow_id": "flow-2",
+        "registration_flow_id": "flow-3",
+    }
+    calls = _stub_ycloud_client.create_flow_calls
+    assert len(calls) == 3
+    assert all(call["publish"] is True for call in calls)
+    intake_json = json.loads(str(calls[0]["flow_json"]))
+    assert intake_json["screens"][0]["id"] == "DATOS_PACIENTE"
 
 
 @pytest.mark.asyncio

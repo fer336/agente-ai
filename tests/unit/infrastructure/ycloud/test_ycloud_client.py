@@ -76,17 +76,13 @@ async def test_send_template_posts_body_parameters_and_quick_reply_payloads(
                     "type": "button",
                     "sub_type": "quick_reply",
                     "index": "0",
-                    "parameters": [
-                        {"type": "payload", "payload": "REMINDER:appt-1:CONFIRM"}
-                    ],
+                    "parameters": [{"type": "payload", "payload": "REMINDER:appt-1:CONFIRM"}],
                 },
                 {
                     "type": "button",
                     "sub_type": "quick_reply",
                     "index": "1",
-                    "parameters": [
-                        {"type": "payload", "payload": "REMINDER:appt-1:CANCEL"}
-                    ],
+                    "parameters": [{"type": "payload", "payload": "REMINDER:appt-1:CANCEL"}],
                 },
             ],
         },
@@ -658,6 +654,48 @@ async def test_create_flow_raises_ycloud_api_error_on_non_2xx_response(
         await client.create_flow(name="Bad", categories=["SIGN_UP"], flow_json="{}")
 
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_flow_defaults_to_an_unpublished_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch, json_response={"id": "flow-draft"})
+    client = YCloudClient(
+        base_url="https://api.ycloud.com",
+        api_key="yc-key-abc",
+        whatsapp_number="+5491100000001",
+        waba_id="waba-1",
+    )
+
+    await client.create_flow(name="Datos", categories=["SIGN_UP"], flow_json="{}")
+
+    assert json.loads(captured[0].content)["publish"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_flow_error_message_carries_the_validation_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = '{"error": {"message": "Invalid Flow JSON", "validation_errors": ["bad If"]}}'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text=body)
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+    client = YCloudClient(
+        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
+    )
+
+    with pytest.raises(YCloudAPIError, match="bad If"):
+        await client.create_flow(name="Bad", categories=["SIGN_UP"], flow_json="{}")
 
 
 @pytest.mark.asyncio

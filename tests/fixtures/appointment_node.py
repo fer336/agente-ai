@@ -52,6 +52,7 @@ async def make_node_and_conversation(
     agreement_gateway=None,
     verification_flow_id="",
     registration_flow_id="",
+    patient_intake_flow_id="",
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     await conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
@@ -84,6 +85,7 @@ async def make_node_and_conversation(
         agreement_gateway=agreement_gateway or make_agreement_gateway(agreements=agreements),
         verification_flow_id=verification_flow_id,
         registration_flow_id=registration_flow_id,
+        patient_intake_flow_id=patient_intake_flow_id,
     )
     return node, conversation_repository, appointment_gateway
 

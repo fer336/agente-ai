@@ -24,6 +24,7 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
 from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.flows import (
+    build_patient_intake_flow_json,
     build_registration_flow_json,
     build_verification_flow_json,
 )
@@ -358,6 +359,7 @@ async def get_config(
 
 
 class FlowCreationResponse(BaseModel):
+    patient_intake_flow_id: str
     verification_flow_id: str
     registration_flow_id: str
 
@@ -369,17 +371,27 @@ async def create_patient_flows(
     ycloud_client: YCloudClient = Depends(get_ycloud_client),
 ) -> FlowCreationResponse:
     """One-time setup action (no PRD.md section — this session's own
-    brief): creates and publishes both patient-identification WhatsApp
-    Flows against the real YCloud/Meta account.
+    brief): creates and publishes the patient-identification WhatsApp
+    Flows against the real YCloud/Meta account: the single intake Flow
+    (patients and new patients) plus the legacy verification/registration
+    pair it replaces.
 
-    Run this ONCE per environment, then copy the two returned ids into
-    `YCLOUD_VERIFICATION_FLOW_ID`/`YCLOUD_REGISTRATION_FLOW_ID` — nothing
+    Run this ONCE per environment, then copy the returned ids into
+    `YCLOUD_PATIENT_INTAKE_FLOW_ID` (or, for the legacy pair,
+    `YCLOUD_VERIFICATION_FLOW_ID`/`YCLOUD_REGISTRATION_FLOW_ID`) — nothing
     persists this response, and re-running creates duplicate Flows rather
     than updating the existing ones (Meta has no update-in-place for an
     already-published Flow; editing forks a new draft instead).
     `ADMIN_TECHNICAL`-only and CSRF-checked, same posture as this panel's
     other mutating routes.
     """
+    # Intake first: if Meta rejects its JSON, no duplicate legacy Flows exist yet.
+    patient_intake_flow_id = await ycloud_client.create_flow(
+        name="Datos de paciente",
+        categories=["SIGN_UP"],
+        flow_json=build_patient_intake_flow_json(),
+        publish=True,
+    )
     verification_flow_id = await ycloud_client.create_flow(
         name="Verificación de paciente",
         categories=["SIGN_UP"],
@@ -393,6 +405,7 @@ async def create_patient_flows(
         publish=True,
     )
     return FlowCreationResponse(
+        patient_intake_flow_id=patient_intake_flow_id,
         verification_flow_id=verification_flow_id,
         registration_flow_id=registration_flow_id,
     )
