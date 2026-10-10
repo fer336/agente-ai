@@ -169,53 +169,59 @@ def build_patient_intake_flow_json(header_image_base64: str | None = None) -> st
         "title": "Tus datos",
         "terminal": True,
         "layout": {
-            "type": "Form",
+            "type": "SingleColumnLayout",
             "children": [
-                *_image_component(header_image_base64),
-                {"type": "TextHeading", "text": "Tus datos"},
                 {
-                    "type": "RadioButtonsGroup",
-                    "name": "es_paciente",
-                    "label": "¿Sos paciente del consultorio?",
-                    "required": True,
-                    "data-source": [
-                        {"id": "si", "title": "Sí, ya soy paciente"},
-                        {"id": "no", "title": "No, es mi primera vez"},
-                    ],
-                },
-                {
-                    "type": "TextInput",
-                    "name": "full_name",
-                    "label": "Nombre completo",
-                    "input-type": "text",
-                    "required": True,
-                },
-                {
-                    "type": "TextInput",
-                    "name": "dni",
-                    "label": "DNI",
-                    "input-type": "number",
-                    "required": True,
-                    "helper-text": "Solo números, de 7 u 8 dígitos, sin puntos",
-                },
-                {
-                    "type": "If",
-                    "condition": "${form.es_paciente} == 'no'",
-                    "then": new_patient_fields,
-                },
-                {
-                    "type": "Footer",
-                    "label": "Enviar",
-                    "on-click-action": {
-                        "name": "complete",
-                        "payload": {
-                            "es_paciente": "${form.es_paciente}",
-                            "full_name": "${form.full_name}",
-                            "dni": "${form.dni}",
-                            "email": "${form.email}",
-                            "obra_social": "${form.obra_social}",
+                    "type": "Form",
+                    "name": "form",
+                    "children": [
+                        *_image_component(header_image_base64),
+                        {"type": "TextHeading", "text": "Tus datos"},
+                        {
+                            "type": "RadioButtonsGroup",
+                            "name": "es_paciente",
+                            "label": "¿Sos paciente del consultorio?",
+                            "required": True,
+                            "data-source": [
+                                {"id": "si", "title": "Sí, ya soy paciente"},
+                                {"id": "no", "title": "No, es mi primera vez"},
+                            ],
                         },
-                    },
+                        {
+                            "type": "TextInput",
+                            "name": "full_name",
+                            "label": "Nombre completo",
+                            "input-type": "text",
+                            "required": True,
+                        },
+                        {
+                            "type": "TextInput",
+                            "name": "dni",
+                            "label": "DNI",
+                            "input-type": "number",
+                            "required": True,
+                            "helper-text": "Solo números, de 7 u 8 dígitos, sin puntos",
+                        },
+                        {
+                            "type": "If",
+                            "condition": "${form.es_paciente} == 'no'",
+                            "then": new_patient_fields,
+                        },
+                        {
+                            "type": "Footer",
+                            "label": "Enviar",
+                            "on-click-action": {
+                                "name": "complete",
+                                "payload": {
+                                    "es_paciente": "${form.es_paciente}",
+                                    "full_name": "${form.full_name}",
+                                    "dni": "${form.dni}",
+                                    "email": "${form.email}",
+                                    "obra_social": "${form.obra_social}",
+                                },
+                            },
+                        },
+                    ],
                 },
             ],
         },

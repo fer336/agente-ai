@@ -76,6 +76,15 @@ def _named(children: list[dict], name: str) -> dict:
     return next(child for child in children if child.get("name") == name)
 
 
+def _form_children(screen: dict) -> list[dict]:
+    layout = screen["layout"]
+    assert layout["type"] == "SingleColumnLayout"
+    (form,) = layout["children"]
+    assert form["type"] == "Form"
+    assert form["name"] == "form"
+    return form["children"]
+
+
 def test_intake_flow_is_a_single_terminal_screen():
     screen = _intake_screen()
 
@@ -84,7 +93,7 @@ def test_intake_flow_is_a_single_terminal_screen():
 
 
 def test_intake_flow_starts_with_the_required_patient_radio_group():
-    children = _intake_screen()["layout"]["children"]
+    children = _form_children(_intake_screen())
 
     radio = _named(children, "es_paciente")
     assert radio["type"] == "RadioButtonsGroup"
@@ -94,7 +103,7 @@ def test_intake_flow_starts_with_the_required_patient_radio_group():
 
 
 def test_intake_flow_always_shows_name_and_dni_with_digits_helper():
-    children = _intake_screen()["layout"]["children"]
+    children = _form_children(_intake_screen())
 
     assert _named(children, "full_name")["input-type"] == "text"
     dni = _named(children, "dni")
@@ -104,7 +113,7 @@ def test_intake_flow_always_shows_name_and_dni_with_digits_helper():
 
 
 def test_intake_flow_shows_email_and_obra_social_only_for_non_patients():
-    children = _intake_screen()["layout"]["children"]
+    children = _form_children(_intake_screen())
 
     conditional = next(child for child in children if child["type"] == "If")
     assert conditional["condition"] == "${form.es_paciente} == 'no'"
@@ -118,7 +127,7 @@ def test_intake_flow_shows_email_and_obra_social_only_for_non_patients():
 
 
 def test_intake_flow_footer_completes_with_every_field_in_the_payload():
-    children = _intake_screen()["layout"]["children"]
+    children = _form_children(_intake_screen())
 
     footer = children[-1]
     assert footer["type"] == "Footer"
@@ -141,7 +150,7 @@ def test_intake_flow_never_asks_for_phone():
 
 
 def test_intake_flow_with_image_puts_it_first_and_rejects_oversized():
-    first = _intake_screen("data:image/png;base64,AAA")["layout"]["children"][0]
+    first = _form_children(_intake_screen("data:image/png;base64,AAA"))[0]
     assert first["type"] == "Image"
 
     with pytest.raises(ValueError, match="exceeds"):
