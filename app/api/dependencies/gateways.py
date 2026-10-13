@@ -314,6 +314,7 @@ def get_mirror_to_chatwoot_use_case() -> MirrorMessageToChatwootUseCase:
     return MirrorMessageToChatwootUseCase(
         chatwoot_gateway=get_chatwoot_gateway(),
         mapping_repositories_provider=open_sqlalchemy_chatwoot_mapping_repository,
+        redis_client=get_shared_redis_client(),
     )
 
 
