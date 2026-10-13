@@ -624,3 +624,63 @@ async def test_smb_echo_with_an_invalid_patient_phone_is_acked_and_not_mirrored(
 
     assert response.status_code == 200
     assert fakes.chatwoot_gateway.sent_outgoing == []
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_adm_command_pauses_the_bot_and_labels_administracion(
+    _tag_webhook_fakes,
+):
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550123"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="agent", input_state="FREE_INPUT")
+    )
+
+    await _post_webhook(make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="/adm"))
+
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId(f"ycloud-{patient_phone}")
+    )
+    assert conversation is not None
+    assert conversation.mode == "human"
+    assert conversation.last_human_reply_at is not None
+    assert list(fakes.chatwoot_gateway.labels_by_conversation.values()) == ["administracion"]
+    assert fakes.chatwoot_gateway.sent_outgoing == []
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_bot_command_reactivates_and_labels_agente(_tag_webhook_fakes):
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550123"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="agent", input_state="FREE_INPUT")
+    )
+    await _post_webhook(make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="/adm"))
+    assert list(fakes.chatwoot_gateway.labels_by_conversation.values()) == ["administracion"]
+
+    await _post_webhook(make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="/bot"))
+
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId(f"ycloud-{patient_phone}")
+    )
+    assert conversation is not None
+    assert conversation.mode == "agent"
+    assert list(fakes.chatwoot_gateway.labels_by_conversation.values()) == ["agente"]
+    assert fakes.chatwoot_gateway.sent_outgoing == []
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_plain_reply_labels_administracion_while_the_bot_is_paused(
+    _tag_webhook_fakes,
+):
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550123"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="agent", input_state="FREE_INPUT")
+    )
+
+    await _post_webhook(
+        make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="Hola, te escribo yo")
+    )
+
+    assert list(fakes.chatwoot_gateway.labels_by_conversation.values()) == ["administracion"]

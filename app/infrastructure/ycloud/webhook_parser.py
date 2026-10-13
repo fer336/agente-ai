@@ -47,6 +47,7 @@ _SMB_MESSAGE_ECHO_EVENT_TYPE = "whatsapp.smb.message.echoes"
 #: whether YCloud's echo event distinguishes human-app-sent from
 #: bot-sent messages (it does not appear to — see this PR's report).
 _BOT_REACTIVATION_COMMAND = "/bot"
+_ADMIN_TAKEOVER_COMMAND = "/adm"
 _SMB_ECHO_TEXT_MESSAGE_TYPE = "text"
 
 _MESSAGE_UPDATED_EVENT_TYPE = "whatsapp.message.updated"
@@ -257,6 +258,20 @@ def extract_bot_reactivation_command(payload: YCloudSmbMessageEchoEventPayload) 
     if message.text.body.strip().casefold() != _BOT_REACTIVATION_COMMAND:
         return None
     return extract_smb_echo_patient_phone(payload)
+
+
+def extract_staff_command(payload: YCloudSmbMessageEchoEventPayload) -> str | None:
+    """Returns `"bot"` or `"adm"` when this staff-typed text echo is exactly `/bot` or
+    `/adm` (trimmed, case-insensitive), else `None`."""
+    message = payload.whatsappMessage
+    if message.type != _SMB_ECHO_TEXT_MESSAGE_TYPE or message.text is None:
+        return None
+    body = message.text.body.strip().casefold()
+    if body == _BOT_REACTIVATION_COMMAND:
+        return "bot"
+    if body == _ADMIN_TAKEOVER_COMMAND:
+        return "adm"
+    return None
 
 
 def is_message_status_event(event_type: str) -> bool:

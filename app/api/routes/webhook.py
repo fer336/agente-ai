@@ -32,10 +32,10 @@ from app.infrastructure.ycloud.schemas import (
     YCloudSmbMessageEchoEventPayload,
 )
 from app.infrastructure.ycloud.webhook_parser import (
-    extract_bot_reactivation_command,
     extract_delivery_failure,
     extract_smb_echo_patient_phone,
     extract_smb_echo_text,
+    extract_staff_command,
     is_message_status_event,
     is_processable_message,
     is_smb_message_echo_event,
@@ -131,7 +131,8 @@ async def receive_ycloud_webhook(
         if patient_phone is None:
             return WebhookAckResponse(status="ignored")
 
-        is_reactivation_command = extract_bot_reactivation_command(echo_payload) is not None
+        staff_command = extract_staff_command(echo_payload)
+        is_reactivation_command = staff_command == "bot"
         handle_echo = HandleSmbMessageEchoUseCase(conversation_repository)
         try:
             await handle_echo.execute(
@@ -142,36 +143,54 @@ async def receive_ycloud_webhook(
             # — a lookup/save failure here must never turn into a 500 that
             # YCloud retries.
             logger.warning(
-                "webhook.smb_echo_handling_failed patient_phone=%s is_reactivation_command=%s",
+                "webhook.smb_echo_handling_failed patient_phone=%s staff_command=%s",
                 patient_phone,
-                is_reactivation_command,
+                staff_command,
                 exc_info=True,
             )
         else:
             logger.info(
-                "webhook.smb_echo_handled patient_phone=%s is_reactivation_command=%s",
+                "webhook.smb_echo_handled patient_phone=%s staff_command=%s",
                 patient_phone,
-                is_reactivation_command,
+                staff_command,
             )
+        # Chatwoot follows the bot mode: it runs after the 200 ack so a slow Chatwoot never
+        # delays YCloud, the mirror swallows its own failures, and a phone the value objects
+        # reject is skipped, not a 500. The background tasks run in order, so the staff
+        # message is mirrored (creating the conversation) before the label changes.
         echo_text = extract_smb_echo_text(echo_payload)
-        if echo_text is not None and not is_reactivation_command:
-            # Messages staff send from the phone or WhatsApp Web never pass through the
-            # bot, so Chatwoot only sees them if we mirror the echo. It runs after the
-            # 200 ack so a slow Chatwoot never delays YCloud; the mirror swallows its own
-            # failures, and a phone the value objects reject is skipped, not a 500.
+        if staff_command is not None or echo_text is not None:
             try:
                 echo_conversation_id = ConversationId(f"ycloud-{patient_phone}")
                 echo_phone = PhoneNumber(patient_phone)
             except ValueError:
                 logger.warning("webhook.smb_echo_mirror_skipped_invalid_phone")
             else:
-                background_tasks.add_task(
-                    mirror_to_chatwoot.mirror_outgoing,
-                    echo_conversation_id,
-                    echo_phone,
-                    patient_phone,
-                    echo_text,
-                )
+                if staff_command == "bot":
+                    background_tasks.add_task(
+                        mirror_to_chatwoot.activate_agente,
+                        echo_conversation_id,
+                        echo_phone,
+                        patient_phone,
+                    )
+                else:
+                    if staff_command is None and echo_text is not None:
+                        # Messages staff send from the phone or WhatsApp Web never pass
+                        # through the bot, so Chatwoot only sees them if we mirror the echo.
+                        background_tasks.add_task(
+                            mirror_to_chatwoot.mirror_outgoing,
+                            echo_conversation_id,
+                            echo_phone,
+                            patient_phone,
+                            echo_text,
+                        )
+                    # Any staff message (or `/adm`) pauses the bot, so the label says so too.
+                    background_tasks.add_task(
+                        mirror_to_chatwoot.escalate_to_administracion,
+                        echo_conversation_id,
+                        echo_phone,
+                        patient_phone,
+                    )
         return WebhookAckResponse(status="accepted")
 
     if is_message_status_event(event_type):
