@@ -143,3 +143,38 @@ def test_extract_control_label_change_ignores_updates_without_label_changes():
     )
 
     assert extract_control_label_change(payload) is None
+
+
+def _cached_labels_payload(current: str) -> ChatwootConversationUpdatedEventPayload:
+    # Chatwoot can report label changes through the `cached_label_list` column:
+    # a comma-separated string, not a list.
+    return ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {"updated_at": {"previous_value": "a", "current_value": "b"}},
+                {"cached_label_list": {"previous_value": "agente", "current_value": current}},
+            ],
+        }
+    )
+
+
+def test_cached_label_list_with_administracion_pauses_the_bot():
+    # Live case: conversation_updated arrived after setting "administracion" and the
+    # bot kept answering, because only `label_list` was recognised.
+    assert extract_control_label_change(_cached_labels_payload("vip,administracion")) == (
+        "99",
+        "human",
+    )
+
+
+def test_cached_label_list_with_agente_reactivates_the_bot():
+    assert extract_control_label_change(_cached_labels_payload("agente")) == ("99", "agent")
+
+
+def test_cached_label_list_tolerates_spaces_after_commas():
+    assert extract_control_label_change(_cached_labels_payload("vip, administracion")) == (
+        "99",
+        "human",
+    )

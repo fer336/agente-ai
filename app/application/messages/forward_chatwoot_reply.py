@@ -23,15 +23,17 @@ class ForwardChatwootReplyUseCase:
         self._messaging_gateway = messaging_gateway
         self._mapping_repository = mapping_repository
 
-    async def execute(self, chatwoot_conversation_id: str, text: str) -> None:
+    async def execute(self, chatwoot_conversation_id: str, text: str) -> bool:
+        """Returns whether the reply was actually sent to WhatsApp."""
         mapping = await self._mapping_repository.get_by_chatwoot_conversation_id(
             chatwoot_conversation_id
         )
         if mapping is None:
-            return
+            return False
 
         # `conversation_id` IS `ycloud-{phone}` by construction — see
         # `IngestMessageUseCase._resolve_or_create_conversation`'s own
         # docstring for this deliberate, documented encoding convention.
         phone = mapping.conversation_id.removeprefix("ycloud-")
         await self._messaging_gateway.send_text_message(PhoneNumber(phone), text)
+        return True

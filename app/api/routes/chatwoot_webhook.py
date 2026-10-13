@@ -116,7 +116,7 @@ async def receive_chatwoot_webhook(
             # operator forgot to apply `administracion` first.
             await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
             outgoing_content = f"> Asesor\n{content}" if is_administracion else content
-            await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
+            forwarded = await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
         except Exception:
             # Best-effort, same ack-and-drop stance as every branch in
             # `app.api.routes.webhook` — a lookup/send failure here must
@@ -127,16 +127,38 @@ async def receive_chatwoot_webhook(
                 exc_info=True,
             )
         else:
-            logger.info(
-                "chatwoot_webhook.reply_forwarded chatwoot_conversation_id=%s",
-                chatwoot_conversation_id,
-            )
+            if forwarded:
+                logger.info(
+                    "chatwoot_webhook.reply_forwarded chatwoot_conversation_id=%s",
+                    chatwoot_conversation_id,
+                )
+            else:
+                # No mapping for this Chatwoot conversation (for example one created
+                # before the mappings were cleared): nothing reached the patient.
+                logger.warning(
+                    "chatwoot_webhook.reply_not_forwarded_no_mapping chatwoot_conversation_id=%s",
+                    chatwoot_conversation_id,
+                )
         return ChatwootWebhookAckResponse(status="accepted")
 
     if is_conversation_updated_event(event):
         updated_payload = ChatwootConversationUpdatedEventPayload.model_validate(payload)
         control_change = extract_control_label_change(updated_payload)
         if control_change is None:
+            # Keys only, never values: enough to spot a label change in a shape we do
+            # not parse yet, without logging patient data.
+            raw_changes = payload.get("changed_attributes")
+            changed_keys = sorted(
+                {
+                    str(key)
+                    for entry in (raw_changes if isinstance(raw_changes, list) else [])
+                    if isinstance(entry, dict)
+                    for key in entry
+                }
+            )
+            logger.info(
+                "chatwoot_webhook.conversation_updated_ignored changed_keys=%s", changed_keys
+            )
             return ChatwootWebhookAckResponse(status="ignored")
 
         chatwoot_conversation_id, mode = control_change
@@ -153,16 +175,14 @@ async def receive_chatwoot_webhook(
                 await reactivate_bot.execute(chatwoot_conversation_id)
         except Exception:
             logger.warning(
-                "chatwoot_webhook.control_label_sync_failed "
-                "chatwoot_conversation_id=%s mode=%s",
+                "chatwoot_webhook.control_label_sync_failed chatwoot_conversation_id=%s mode=%s",
                 chatwoot_conversation_id,
                 mode,
                 exc_info=True,
             )
         else:
             logger.info(
-                "chatwoot_webhook.control_label_synced "
-                "chatwoot_conversation_id=%s mode=%s",
+                "chatwoot_webhook.control_label_synced chatwoot_conversation_id=%s mode=%s",
                 chatwoot_conversation_id,
                 mode,
             )

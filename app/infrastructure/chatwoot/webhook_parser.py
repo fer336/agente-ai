@@ -1,4 +1,5 @@
 from app.infrastructure.chatwoot.schemas import (
+    ChatwootConversationChangedAttribute,
     ChatwootConversationStatusChangedEventPayload,
     ChatwootConversationUpdatedEventPayload,
     ChatwootMessageCreatedEventPayload,
@@ -52,6 +53,17 @@ def extract_staff_reply(payload: ChatwootMessageCreatedEventPayload) -> tuple[st
     return str(payload.conversation.id), payload.content
 
 
+def _current_labels(changed_attribute: ChatwootConversationChangedAttribute) -> set[str] | None:
+    """The labels after the change, from `label_list` (a list) or `cached_label_list`
+    (a comma-separated string); `None` when this entry is not a label change."""
+    if changed_attribute.label_list is not None:
+        return {label.strip() for label in changed_attribute.label_list.current_value}
+    if changed_attribute.cached_label_list is not None:
+        raw = changed_attribute.cached_label_list.current_value or ""
+        return {label.strip() for label in raw.split(",") if label.strip()}
+    return None
+
+
 def extract_control_label_change(
     payload: ChatwootConversationUpdatedEventPayload,
 ) -> tuple[str, str] | None:
@@ -64,9 +76,9 @@ def extract_control_label_change(
     if not payload.id:
         return None
     for changed_attribute in payload.changed_attributes:
-        if changed_attribute.label_list is None:
+        labels = _current_labels(changed_attribute)
+        if labels is None:
             continue
-        labels = set(changed_attribute.label_list.current_value)
         if _ADMINISTRACION_LABEL in labels:
             return str(payload.id), "human"
         if _AGENT_LABEL in labels:
