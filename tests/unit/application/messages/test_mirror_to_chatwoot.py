@@ -305,3 +305,35 @@ async def test_concurrent_mirror_calls_for_one_conversation_create_a_single_chat
     assert mapping is not None
     assert [conv for conv, _ in gateway.sent_incoming] == [mapping.chatwoot_conversation_id]
     assert [conv for conv, _ in gateway.sent_outgoing] == [mapping.chatwoot_conversation_id]
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_renames_a_phone_named_contact_with_the_profile_name():
+    use_case, gateway, _ = _make_use_case()
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Otra vez")
+
+    assert gateway.contact_names == {"1": "Alejandro Marinkovic"}
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_renames_an_existing_contact_that_was_named_by_phone():
+    use_case, gateway, _ = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    assert gateway.contact_names == {"1": str(_PHONE)}
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+
+    assert gateway.contact_names == {"1": "Alejandro Marinkovic"}
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_keeps_a_name_staff_set_by_hand():
+    use_case, gateway, _ = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    gateway.contact_names["1"] = "Ale (VIP)"
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+
+    assert gateway.contact_names == {"1": "Ale (VIP)"}

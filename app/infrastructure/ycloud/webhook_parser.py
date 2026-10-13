@@ -1,3 +1,5 @@
+import dataclasses
+
 from app.application.messages.delivery_failure_dto import DeliveryFailureDTO
 from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
@@ -88,6 +90,14 @@ def is_processable_message(payload: YCloudInboundEventPayload, whatsapp_number: 
 
 
 def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessageDTO:
+    """Builds the vendor-neutral DTO and attaches the sender's WhatsApp profile name."""
+    dto = _build_inbound_message_dto(payload)
+    profile = payload.whatsappInboundMessage.customerProfile
+    profile_name = profile.name.strip() if profile is not None else ""
+    return dataclasses.replace(dto, profile_name=profile_name or None)
+
+
+def _build_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessageDTO:
     """Builds the vendor-neutral DTO for an already-filtered message.
 
     Callers must only invoke this after confirming
