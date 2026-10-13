@@ -2,13 +2,24 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
+from redis.asyncio import Redis
+
 from app.domain.entities.chatwoot_conversation_mapping import ChatwootConversationMapping
 from app.domain.repositories.chatwoot_gateway import ChatwootGateway
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.redis.lock import redis_lock
 
 logger = logging.getLogger(__name__)
+
+#: How long a mirror call waits for the same conversation's mapping lock before it skips.
+_MAPPING_LOCK_WAIT_SECONDS = 5.0
+
+
+class ChatwootMappingLockMissedError(Exception):
+    """Another mirror call held the mapping lock past the wait; this call skips."""
+
 
 #: Same shape as `SendReplyUseCase`'s own `SentMessageRepositoriesProvider`
 #: — an async-context-manager factory, so a fresh session is opened per
@@ -40,9 +51,11 @@ class MirrorMessageToChatwootUseCase:
         self,
         chatwoot_gateway: ChatwootGateway,
         mapping_repositories_provider: ChatwootMappingRepositoriesProvider,
+        redis_client: Redis | None = None,
     ) -> None:
         self._chatwoot_gateway = chatwoot_gateway
         self._mapping_repositories_provider = mapping_repositories_provider
+        self._redis_client = redis_client
 
     async def mirror_incoming(
         self, conversation_id: ConversationId, phone: PhoneNumber, name: str, text: str
@@ -115,14 +128,33 @@ class MirrorMessageToChatwootUseCase:
     async def _resolve_conversation(
         self, conversation_id: ConversationId, phone: PhoneNumber, name: str
     ) -> str:
+        """Returns the Chatwoot conversation for this patient, creating it once.
+
+        The per-conversation lock makes concurrent mirror tasks (inbound and outbound
+        for the same message) take turns: the second one re-reads the mapping the
+        first one saved instead of creating another Chatwoot conversation. A lock
+        miss skips the mirror rather than risking a duplicate.
+        """
+        if self._redis_client is None:
+            return await self._find_or_create_mapping(conversation_id, phone, name)
+        async with redis_lock(
+            self._redis_client,
+            f"lock:chatwoot-mapping:{conversation_id}",
+            blocking_timeout=_MAPPING_LOCK_WAIT_SECONDS,
+        ) as acquired:
+            if not acquired:
+                raise ChatwootMappingLockMissedError(str(conversation_id))
+            return await self._find_or_create_mapping(conversation_id, phone, name)
+
+    async def _find_or_create_mapping(
+        self, conversation_id: ConversationId, phone: PhoneNumber, name: str
+    ) -> str:
         async with self._mapping_repositories_provider() as mapping_repository:
             existing = await mapping_repository.get_by_conversation_id(str(conversation_id))
             if existing is not None:
                 return existing.chatwoot_conversation_id
 
-            contact_id, source_id = await self._chatwoot_gateway.find_or_create_contact(
-                phone, name
-            )
+            contact_id, source_id = await self._chatwoot_gateway.find_or_create_contact(phone, name)
             chatwoot_conversation_id = await self._chatwoot_gateway.create_conversation(
                 source_id, contact_id
             )
