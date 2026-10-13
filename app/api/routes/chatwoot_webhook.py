@@ -20,6 +20,7 @@ from app.domain.repositories.chatwoot_gateway import ChatwootGateway
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import MessagingGateway
+from app.infrastructure.chatwoot.mapping_fallback import ChatwootContactMappingFallback
 from app.infrastructure.chatwoot.schemas import (
     ChatwootConversationStatusChangedEventPayload,
     ChatwootConversationUpdatedEventPayload,
@@ -29,12 +30,16 @@ from app.infrastructure.chatwoot.webhook_parser import (
     extract_control_label_change,
     extract_resolved_conversation_id,
     extract_staff_reply,
+    is_conversation_resolved_event,
     is_conversation_status_changed_event,
     is_conversation_updated_event,
     is_message_created_event,
 )
 
 logger = logging.getLogger(__name__)
+
+#: Internal bot mode -> the Chatwoot control label it mirrors (for readable logs).
+_CONTROL_LABEL_BY_MODE = {"human": "administracion", "agent": "agente"}
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -52,7 +57,7 @@ class ChatwootWebhookAckResponse(BaseModel):
         "Receive a Chatwoot account-level webhook event: `message_created` "
         "(staff reply pauses the bot and is forwarded to WhatsApp), "
         "`conversation_updated` (manual control-label change), or "
-        "`conversation_status_changed` (staff resolves the conversation, "
+        "`conversation_status_changed`/`conversation_resolved` (staff resolves the conversation, "
         "flips mode back to the bot)"
     ),
     response_model=ChatwootWebhookAckResponse,
@@ -66,7 +71,7 @@ async def receive_chatwoot_webhook(
     conversation_repository: ConversationRepository = Depends(
         get_committing_conversation_repository
     ),
-    mapping_repository: ChatwootMappingRepository = Depends(get_chatwoot_mapping_repository),
+    stored_mapping_repository: ChatwootMappingRepository = Depends(get_chatwoot_mapping_repository),
 ) -> ChatwootWebhookAckResponse:
     """Chatwoot is the "camino de vuelta" counterparty for the mirror this
     session built (WhatsApp -> Chatwoot is PR1; this route is the return
@@ -91,6 +96,10 @@ async def receive_chatwoot_webhook(
     if not hmac.compare_digest(secret, settings.chatwoot_webhook_secret):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invalid webhook secret")
 
+    # Conversations without a stored mapping (created before the table was
+    # cleared) are resolved through the Chatwoot contact instead of ignored.
+    mapping_repository = ChatwootContactMappingFallback(stored_mapping_repository, chatwoot_gateway)
+
     event = str(payload.get("event", ""))
     logger.info("chatwoot_webhook.received event=%s", event)
 
@@ -106,17 +115,13 @@ async def receive_chatwoot_webhook(
         )
         forward_reply = ForwardChatwootReplyUseCase(messaging_gateway, mapping_repository)
         try:
-            # Read the control label before the safety-net handoff below. A
-            # reply written without `administracion` still pauses the bot, but
-            # must not be presented to the patient as an administrator reply.
-            is_administracion = await chatwoot_gateway.has_administracion_label(
-                chatwoot_conversation_id
-            )
-            # Safety net: a genuine staff reply takes control even when the
-            # operator forgot to apply `administracion` first.
+            # A genuine staff reply takes control even when the operator forgot to
+            # apply `administracion` first: the label flips to `administracion`, so
+            # the reply already goes out as administración.
             await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
-            outgoing_content = f"> Asesor\n{content}" if is_administracion else content
-            await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
+            forwarded = await forward_reply.execute(
+                chatwoot_conversation_id, f"> Asesor\n{content}"
+            )
         except Exception:
             # Best-effort, same ack-and-drop stance as every branch in
             # `app.api.routes.webhook` — a lookup/send failure here must
@@ -127,16 +132,38 @@ async def receive_chatwoot_webhook(
                 exc_info=True,
             )
         else:
-            logger.info(
-                "chatwoot_webhook.reply_forwarded chatwoot_conversation_id=%s",
-                chatwoot_conversation_id,
-            )
+            if forwarded:
+                logger.info(
+                    "chatwoot_webhook.reply_forwarded chatwoot_conversation_id=%s",
+                    chatwoot_conversation_id,
+                )
+            else:
+                # No mapping for this Chatwoot conversation (for example one created
+                # before the mappings were cleared): nothing reached the patient.
+                logger.warning(
+                    "chatwoot_webhook.reply_not_forwarded_no_mapping chatwoot_conversation_id=%s",
+                    chatwoot_conversation_id,
+                )
         return ChatwootWebhookAckResponse(status="accepted")
 
     if is_conversation_updated_event(event):
         updated_payload = ChatwootConversationUpdatedEventPayload.model_validate(payload)
         control_change = extract_control_label_change(updated_payload)
         if control_change is None:
+            # Keys only, never values: enough to spot a label change in a shape we do
+            # not parse yet, without logging patient data.
+            raw_changes = payload.get("changed_attributes")
+            changed_keys = sorted(
+                {
+                    str(key)
+                    for entry in (raw_changes if isinstance(raw_changes, list) else [])
+                    if isinstance(entry, dict)
+                    for key in entry
+                }
+            )
+            logger.info(
+                "chatwoot_webhook.conversation_updated_ignored changed_keys=%s", changed_keys
+            )
             return ChatwootWebhookAckResponse(status="ignored")
 
         chatwoot_conversation_id, mode = control_change
@@ -145,7 +172,8 @@ async def receive_chatwoot_webhook(
                 pause_bot = PauseBotFromChatwootUseCase(
                     chatwoot_gateway, conversation_repository, mapping_repository
                 )
-                await pause_bot.execute(chatwoot_conversation_id)
+                # Also drops a leftover `agente` label, so one click is enough.
+                await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
             else:
                 reactivate_bot = ReactivateBotFromChatwootUseCase(
                     chatwoot_gateway, conversation_repository, mapping_repository
@@ -153,22 +181,20 @@ async def receive_chatwoot_webhook(
                 await reactivate_bot.execute(chatwoot_conversation_id)
         except Exception:
             logger.warning(
-                "chatwoot_webhook.control_label_sync_failed "
-                "chatwoot_conversation_id=%s mode=%s",
+                "chatwoot_webhook.control_label_sync_failed chatwoot_conversation_id=%s label=%s",
                 chatwoot_conversation_id,
-                mode,
+                _CONTROL_LABEL_BY_MODE[mode],
                 exc_info=True,
             )
         else:
             logger.info(
-                "chatwoot_webhook.control_label_synced "
-                "chatwoot_conversation_id=%s mode=%s",
+                "chatwoot_webhook.control_label_synced chatwoot_conversation_id=%s label=%s",
                 chatwoot_conversation_id,
-                mode,
+                _CONTROL_LABEL_BY_MODE[mode],
             )
         return ChatwootWebhookAckResponse(status="accepted")
 
-    if is_conversation_status_changed_event(event):
+    if is_conversation_status_changed_event(event) or is_conversation_resolved_event(event):
         status_payload = ChatwootConversationStatusChangedEventPayload.model_validate(payload)
         resolved_conversation_id = extract_resolved_conversation_id(status_payload)
         if resolved_conversation_id is None:

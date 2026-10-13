@@ -123,6 +123,14 @@ class ChatwootClient:
             {"content": content, "message_type": message_type},
         )
 
+    async def get_conversation(self, conversation_id: str) -> dict[str, object]:
+        """`GET /conversations/{id}` — the conversation resource, whose
+        `meta.sender` carries the contact (`id`, `phone_number`). Same
+        `api_access_token` auth as `get_conversation_labels`."""
+        return await self._request(
+            "GET", f"/conversations/{conversation_id}", self._api_access_token
+        )
+
     async def get_conversation_labels(self, conversation_id: str) -> list[str]:
         """`GET /conversations/{id}/labels` — confirmed against Chatwoot's
         published OpenAPI spec (`conversation_labels` schema, application

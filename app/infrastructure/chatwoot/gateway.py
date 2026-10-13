@@ -68,6 +68,20 @@ class ChatwootConversationGateway:
     async def post_outgoing_message(self, chatwoot_conversation_id: str, text: str) -> None:
         await self._client.create_message(chatwoot_conversation_id, text, "outgoing")
 
+    async def find_conversation_contact(
+        self, chatwoot_conversation_id: str
+    ) -> tuple[str, str] | None:
+        conversation = await self._client.get_conversation(chatwoot_conversation_id)
+        meta = conversation.get("meta")
+        sender = meta.get("sender") if isinstance(meta, dict) else None
+        if not isinstance(sender, dict):
+            return None
+        contact_id = sender.get("id")
+        phone = sender.get("phone_number")
+        if contact_id in (None, "") or not isinstance(phone, str) or not phone:
+            return None
+        return str(contact_id), phone
+
     async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:
         return _ADMINISTRACION_LABEL in await self._client.get_conversation_labels(
             chatwoot_conversation_id

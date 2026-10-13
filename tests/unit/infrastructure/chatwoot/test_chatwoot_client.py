@@ -145,3 +145,19 @@ async def test_update_contact_name_sends_a_put_with_the_new_name(
     assert captured[0].method == "PUT"
     assert captured[0].url == f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/contacts/7"
     assert json.loads(captured[0].content) == {"name": "Alejandro Marinkovic"}
+
+async def test_get_conversation_sends_a_get_and_returns_the_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"id": 43, "meta": {"sender": {"id": 7, "phone_number": "+5491122334455"}}}
+    captured = _capture_requests(monkeypatch, json_response=body)
+    client = _make_client()
+
+    conversation = await client.get_conversation("43")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.method == "GET"
+    assert request.url == f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/conversations/43"
+    assert request.headers["api_access_token"] == _API_ACCESS_TOKEN
+    assert conversation == body

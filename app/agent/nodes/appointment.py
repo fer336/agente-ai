@@ -144,6 +144,8 @@ from app.domain.value_objects.menu_payloads import (
     FAQ_BOOK_PAYLOAD_PREFIX,
     FAQ_OPTION_PAYLOAD_PREFIX,
     IDENTIFICATION_CONFIRM_PAYLOAD,
+    IDENTIFICATION_FIX_DNI_PAYLOAD,
+    IDENTIFICATION_FIX_NAME_PAYLOAD,
     IDENTIFICATION_MODIFY_PAYLOAD,
     LIST_BACK_PAYLOAD,
     LIST_MORE_PAYLOAD,
@@ -217,8 +219,11 @@ STAGE_AWAITING_SPECIALTY_BROWSE_CHOICE = "awaiting_specialty_browse_choice"
 STAGE_AWAITING_PROFESSIONAL_SELECTION = "awaiting_professional_selection"
 STAGE_AWAITING_IDENTIFICATION = "awaiting_identification"
 #: The typed name and DNI are on screen with Confirmar / Modificar; no Dentalink lookup has
-#: run yet. Confirmar runs the lookup, Modificar goes back to `STAGE_AWAITING_IDENTIFICATION`.
+#: run yet. Confirmar runs the lookup, Modificar opens `STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE`.
 STAGE_AWAITING_IDENTIFICATION_CONFIRMATION = "awaiting_identification_confirmation"
+#: The patient says a piece is wrong (Modificar, or "Probar otro dato" after a not-found): they
+#: pick Nombre or DNI. Both pieces are kept; only the chosen one is dropped and asked for again.
+STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE = "awaiting_identification_field_choice"
 #: LEGACY: only old checkpoints can still be in this stage. Identification that finds no
 #: match now goes to `STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE`; its handler and wording
 #: constants below are kept solely so those in-flight conversations finish.
@@ -273,6 +278,7 @@ _NAVIGABLE_STAGES = frozenset(
         STAGE_AWAITING_SLOT_SELECTION,
         STAGE_AWAITING_IDENTIFICATION,
         STAGE_AWAITING_IDENTIFICATION_CONFIRMATION,
+        STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
         STAGE_AWAITING_NEW_PATIENT_DETAILS,
         STAGE_AWAITING_PATIENT_NOT_FOUND_CHOICE,
         STAGE_AWAITING_NO_SLOTS_CHOICE,
@@ -436,6 +442,12 @@ def _ask_name_only_message(example_name: str) -> str:
     return f"Gracias! Ahora decime tu *nombre completo*, por ejemplo: {example_name}."
 
 
+#: Requests after the patient TAPPED "Nombre" / "DNI" to correct it (no "Gracias!": nothing
+#: was typed to thank for).
+_FIX_NAME_MESSAGE = "Dale, escribime tu *nombre completo*, por ejemplo: {example_name}."
+_FIX_DNI_MESSAGE = "Dale, escribime tu *DNI* (7 u 8 dígitos), por ejemplo: {example_dni}."
+
+
 #: Shown at the start of the next step when Dentalink says the patient already has the
 #: agreement we tried to link: not an error, they just carry on with their booking.
 _AGREEMENT_ALREADY_LINKED_NOTICE = (
@@ -487,6 +499,20 @@ _IDENTIFICATION_MODIFY_MESSAGE = (
 _IDENTIFICATION_CONFIRMATION_BUTTONS = [
     InteractiveButton(id=IDENTIFICATION_CONFIRM_PAYLOAD, title="✅ Confirmar"),
     InteractiveButton(id=IDENTIFICATION_MODIFY_PAYLOAD, title="✏️ Modificar"),
+]
+#: Fixed wording (never LLM-written): which of the two pieces is wrong. Only that one is asked
+#: for again; the other stays as the patient typed it.
+_IDENTIFICATION_FIELD_CHOICE_MESSAGE = (
+    "Dale, vamos a corregirlo. ¿Qué dato querés cambiar?\n\n*Nombre:* {full_name}\n*DNI:* {dni}"
+)
+_IDENTIFICATION_FIELD_CHOICE_REMINDER = (
+    "Para seguir, tocá un botón: *Nombre* o *DNI*, según cuál quieras corregir.\n\n"
+    "*Nombre:* {full_name}\n"
+    "*DNI:* {dni}"
+)
+_IDENTIFICATION_FIELD_CHOICE_BUTTONS = [
+    InteractiveButton(id=IDENTIFICATION_FIX_NAME_PAYLOAD, title="✏️ Nombre"),
+    InteractiveButton(id=IDENTIFICATION_FIX_DNI_PAYLOAD, title="✏️ DNI"),
 ]
 _PATIENT_NOT_FOUND_BUTTONS = [
     InteractiveButton(id=PATIENT_NOT_FOUND_REGISTER_PAYLOAD, title="🆕 Registrarme"),
@@ -697,15 +723,21 @@ async def _extract_identification_pieces(
     """Splits free text into whichever (full_name, dni) pieces it actually
     contains — either can be missing, since the patient may answer across
     two messages instead of PRD.md §32's suggested one-shot format
-    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI; whatever
+    ("Rosa Gómez, 30123456"). A 6+ digit run anywhere is the DNI (the last
+    one, preferring 7-8 digits, when there are several); whatever
     surrounds it is checked against `_extract_full_name` before being
     accepted as the name (rather than accepted unconditionally) — with no
     digit run at all, the whole message is checked the same way.
     """
-    match = _DNI_PATTERN.search(text)
-    if match is not None:
-        dni = match.group(1)
-        remainder = re.sub(r"\s+", " ", text[: match.start()] + text[match.end() :]).strip(" ,.-")
+    matches = list(_DNI_PATTERN.finditer(text))
+    if matches:
+        # The LAST number wins: a patient who typed a wrong DNI and then sent the right one
+        # (often grouped into one turn) means the later one. A 7-8 digit run is preferred so a
+        # trailing phone number is not mistaken for it; without one, the last longer/shorter
+        # run still goes on to the DNI validation.
+        dni_like = [m for m in matches if 7 <= len(m.group(1)) <= 8]
+        dni = (dni_like or matches)[-1].group(1)
+        remainder = re.sub(r"\s+", " ", _DNI_PATTERN.sub(" ", text)).strip(" ,.-")
         full_name = await _extract_full_name(llm_provider, remainder) if remainder else None
         return full_name, dni
     stripped = text.strip()
@@ -2903,6 +2935,70 @@ def create_appointment_node(
             },
         }
 
+    async def _show_identification_field_choice(
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        full_name: str,
+        dni: str,
+        *,
+        reminder: bool = False,
+    ) -> dict[str, object]:
+        """Asks which piece is wrong (Nombre / DNI); both stay in `collected_data`."""
+        await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
+        template = (
+            _IDENTIFICATION_FIELD_CHOICE_REMINDER
+            if reminder
+            else _IDENTIFICATION_FIELD_CHOICE_MESSAGE
+        )
+        return {
+            "response_text": template.format(full_name=full_name, dni=dni),
+            "response_buttons": _IDENTIFICATION_FIELD_CHOICE_BUTTONS,
+            "requires_handoff": False,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE,
+                "identification_full_name": full_name,
+                "identification_dni": dni,
+            },
+        }
+
+    async def _ask_for_identification_piece(
+        conversation_id: ConversationId,
+        collected_data: dict[str, object],
+        *,
+        name: bool,
+        dni: bool,
+    ) -> dict[str, object]:
+        """Drops only the requested piece(s) and asks for just those; the rest is kept.
+
+        The next typed answer goes through the `STAGE_AWAITING_IDENTIFICATION` branches that
+        already take one piece, keep the other, and end in the confirmation again.
+        """
+        await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+        example_name, example_dni = pick_example_identity()
+        if name and dni:
+            text = _IDENTIFICATION_MODIFY_MESSAGE.format(
+                example_name=example_name, example_dni=example_dni
+            )
+        elif name:
+            text = _FIX_NAME_MESSAGE.format(example_name=example_name)
+        else:
+            text = _FIX_DNI_MESSAGE.format(example_dni=example_dni)
+        dropped = {
+            key
+            for key, wanted in (("identification_full_name", name), ("identification_dni", dni))
+            if wanted
+        }
+        return {
+            "response_text": text,
+            "response_buttons": None,
+            "requires_handoff": False,
+            "collected_data": {
+                **{key: value for key, value in collected_data.items() if key not in dropped},
+                "stage": STAGE_AWAITING_IDENTIFICATION,
+            },
+        }
+
     async def _begin_reminder_reschedule(
         conversation_id: ConversationId,
         appointment_id: str,
@@ -4551,31 +4647,22 @@ def create_appointment_node(
             confirmed_name = cast(str | None, collected_data.get("identification_full_name"))
             confirmed_dni = cast(str | None, collected_data.get("identification_dni"))
             payload = state["button_payload"]
-            if confirmed_name is None or confirmed_dni is None:
-                # Incomplete checkpoint: nothing to confirm, ask for the data again.
-                payload = IDENTIFICATION_MODIFY_PAYLOAD
+            if not confirmed_name or not confirmed_dni:
+                # Incomplete checkpoint: nothing to confirm, ask only for what is missing.
+                return await _ask_for_identification_piece(
+                    conversation_id,
+                    collected_data,
+                    name=not confirmed_name,
+                    dni=not confirmed_dni,
+                )
             if payload == IDENTIFICATION_CONFIRM_PAYLOAD and confirmed_name and confirmed_dni:
                 return await _look_up_confirmed_patient(
                     state, collected_data, confirmed_name, confirmed_dni
                 )
-            if payload == IDENTIFICATION_MODIFY_PAYLOAD:
-                await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-                example_name, example_dni = pick_example_identity()
-                return {
-                    "response_text": _IDENTIFICATION_MODIFY_MESSAGE.format(
-                        example_name=example_name, example_dni=example_dni
-                    ),
-                    "response_buttons": None,
-                    "requires_handoff": False,
-                    "collected_data": {
-                        **{
-                            key: value
-                            for key, value in collected_data.items()
-                            if key not in {"identification_full_name", "identification_dni"}
-                        },
-                        "stage": STAGE_AWAITING_IDENTIFICATION,
-                    },
-                }
+            if payload == IDENTIFICATION_MODIFY_PAYLOAD and confirmed_name and confirmed_dni:
+                return await _show_identification_field_choice(
+                    conversation_id, collected_data, confirmed_name, confirmed_dni
+                )
             if payload is None:
                 # Typed name + DNI is a correction: replace the pieces and ask again.
                 typed_name, typed_dni = await _extract_identification_pieces(
@@ -4598,6 +4685,50 @@ def create_appointment_node(
                 "requires_handoff": False,
                 "collected_data": collected_data,
             }
+
+        if stage == STAGE_AWAITING_IDENTIFICATION_FIELD_CHOICE:
+            kept_name = cast(str | None, collected_data.get("identification_full_name"))
+            kept_dni = cast(str | None, collected_data.get("identification_dni"))
+            if not kept_name or not kept_dni:
+                # Incomplete checkpoint: nothing to choose from, ask only for what is missing.
+                return await _ask_for_identification_piece(
+                    conversation_id, collected_data, name=not kept_name, dni=not kept_dni
+                )
+            payload = state["button_payload"]
+            if payload == IDENTIFICATION_FIX_NAME_PAYLOAD:
+                return await _ask_for_identification_piece(
+                    conversation_id, collected_data, name=True, dni=False
+                )
+            if payload == IDENTIFICATION_FIX_DNI_PAYLOAD:
+                return await _ask_for_identification_piece(
+                    conversation_id, collected_data, name=False, dni=True
+                )
+            if payload is None:
+                # Typed data is a correction: a valid piece replaces the one it matches and
+                # the other stays; anything unusable (or a malformed DNI) repeats the buttons.
+                typed_name, typed_dni = await _extract_identification_pieces(
+                    llm_provider, state["user_message"]
+                )
+                new_name = (
+                    typed_name.strip() if typed_name and len(typed_name.split()) >= 2 else None
+                )
+                new_dni: str | None = None
+                dni_malformed = False
+                if typed_dni:
+                    try:
+                        new_dni = Dni(typed_dni).value
+                    except ValueError:
+                        dni_malformed = True
+                if (new_name or new_dni) and not dni_malformed:
+                    return await _show_identification_confirmation(
+                        conversation_id,
+                        collected_data,
+                        new_name or kept_name,
+                        new_dni or kept_dni,
+                    )
+            return await _show_identification_field_choice(
+                conversation_id, collected_data, kept_name, kept_dni, reminder=True
+            )
 
         if stage == STAGE_AWAITING_NEW_PATIENT_DETAILS:
             # LEGACY: only reachable from checkpoints saved before the not-found choice.
@@ -4707,17 +4838,23 @@ def create_appointment_node(
                     {**collected_data, "first_visit_intake": {"stage": "question"}},
                 )
             if payload == PATIENT_NOT_FOUND_RETRY_PAYLOAD:
-                # The identity must come from what the patient types now.
+                # Only the piece that was wrong is typed again: ask which one, keeping both.
+                retried = {
+                    **collected_data,
+                    "not_found_retries": cast(int, collected_data.get("not_found_retries", 0)) + 1,
+                }
+                tried_name = cast(str | None, collected_data.get("identification_full_name"))
+                tried_dni = cast(str | None, collected_data.get("identification_dni"))
+                if tried_name and tried_dni:
+                    return await _show_identification_field_choice(
+                        conversation_id, retried, tried_name, tried_dni
+                    )
                 return await _begin_identification(
                     conversation_id,
                     {
                         key: value
-                        for key, value in collected_data.items()
+                        for key, value in retried.items()
                         if key not in {"identification_full_name", "identification_dni"}
-                    }
-                    | {
-                        "not_found_retries": cast(int, collected_data.get("not_found_retries", 0))
-                        + 1
                     },
                     state["recent_messages"],
                     state["contact_memory_summary"],

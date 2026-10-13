@@ -46,6 +46,15 @@ class ChatwootGateway(Protocol):
         agent's identity."""
         ...
 
+    async def find_conversation_contact(
+        self, chatwoot_conversation_id: str
+    ) -> tuple[str, str] | None:
+        """Returns `(chatwoot_contact_id, phone_e164)` of the contact that
+        owns this Chatwoot conversation, or `None` when Chatwoot does not
+        expose both (used to serve conversations that have no stored
+        mapping)."""
+        ...
+
     async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:
         """Returns whether this conversation is currently assigned to
         `administracion`, without changing its labels."""
