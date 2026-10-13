@@ -28,6 +28,12 @@ def _is_already_linked(error: DentalinkAPIError, agreement_id: str) -> bool:
     return named is None or named.group(1) == str(agreement_id)
 
 
+def _is_enabled(raw: dict[str, object]) -> bool:
+    """`habilitado: 0` marks a disabled convenio. A record without the field is kept,
+    matching the older response shape."""
+    return raw.get("habilitado", 1) not in (0, "0", False)
+
+
 class DentalinkAgreementGateway:
     """`DentalinkClient`-based real implementation of the `AgreementGateway` port.
 
@@ -40,8 +46,11 @@ class DentalinkAgreementGateway:
         self._client = client
 
     async def list_agreements(self) -> list[Agreement]:
+        """Only the convenios the clinic has enabled. Dentalink rejects linking a disabled
+        one ("Convenio ID 8 se encuentra inactivo"), and a disabled duplicate (two
+        PARTICULAR entries) must never win a name match or appear in a list."""
         raw_convenios = await self._client.get("/v1/convenios")
-        return [agreement_from_convenio(raw) for raw in as_list(raw_convenios)]
+        return [agreement_from_convenio(raw) for raw in as_list(raw_convenios) if _is_enabled(raw)]
 
     async def find_agreement_by_name(self, name: str) -> Agreement | None:
         # PRD.md §18's flow is client-side matching against the full
