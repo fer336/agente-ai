@@ -19,6 +19,9 @@ class FakeChatwootGateway:
         self.sent_incoming: list[tuple[str, str]] = []
         self.sent_outgoing: list[tuple[str, str]] = []
         self.labels_by_conversation: dict[str, str] = {}
+        #: `chatwoot_conversation_id -> (contact_id, phone_e164)`, what
+        #: `find_conversation_contact` answers with (default: unknown).
+        self.contacts_by_conversation: dict[str, tuple[str, str]] = {}
 
     async def find_or_create_contact(self, phone: PhoneNumber, name: str) -> tuple[str, str]:
         if self._fail:
@@ -44,6 +47,13 @@ class FakeChatwootGateway:
         if self._fail:
             raise RuntimeError("FakeChatwootGateway configured to fail")
         self.sent_outgoing.append((chatwoot_conversation_id, text))
+
+    async def find_conversation_contact(
+        self, chatwoot_conversation_id: str
+    ) -> tuple[str, str] | None:
+        if self._fail:
+            raise RuntimeError("FakeChatwootGateway configured to fail")
+        return self.contacts_by_conversation.get(chatwoot_conversation_id)
 
     async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:
         if self._fail:

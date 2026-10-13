@@ -44,7 +44,18 @@ class PauseBotFromChatwootUseCase:
             return
 
         conversation_id = ConversationId(mapping.conversation_id)
-        await self._set_conversation_mode.execute(conversation_id, mode="human")
+        try:
+            await self._set_conversation_mode.execute(conversation_id, mode="human")
+        except ValueError:
+            # The patient has no local conversation (for example after the history was
+            # cleared): nothing to pause, and the caller must still forward the reply.
+            logger.warning(
+                "pause_bot_from_chatwoot.conversation_missing "
+                "chatwoot_conversation_id=%s conversation_id=%s",
+                chatwoot_conversation_id,
+                conversation_id,
+            )
+            return
         await self._set_conversation_input_state.execute(conversation_id, HUMAN)
 
         if not synchronize_label:
@@ -53,8 +64,7 @@ class PauseBotFromChatwootUseCase:
             await self._chatwoot_gateway.assign_administracion(chatwoot_conversation_id)
         except Exception:  # noqa: BLE001 - control state is already durable
             logger.warning(
-                "pause_bot_from_chatwoot.label_sync_failed "
-                "chatwoot_conversation_id=%s",
+                "pause_bot_from_chatwoot.label_sync_failed chatwoot_conversation_id=%s",
                 chatwoot_conversation_id,
                 exc_info=True,
             )
