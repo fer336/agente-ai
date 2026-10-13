@@ -27,11 +27,12 @@ class HandleSmbMessageEchoUseCase:
     A staff message (anything but `/bot`) to a conversation still in
     `mode="agent"` pauses the bot: `mode` flips to `"human"`, `input_state` to
     `HUMAN`, and `last_human_reply_at` is stamped, so the lazy timeout or `/bot`
-    hands it back. Otherwise:
+    hands it back, and nothing else happens on that call.
 
-    Two independent effects fire on every call, not mutually exclusive
-    branches (confirmed with the user: "se reinicia cada vez que el
-    humano manda un mensaje"):
+    Otherwise (the conversation is already human, or the message is `/bot`),
+    two independent effects can fire, not mutually exclusive branches
+    (confirmed with the user: "se reinicia cada vez que el humano manda un
+    mensaje"):
 
     1. If the conversation is currently `mode="human"`, `last_human_reply_at`
        is stamped with `now()` — resetting the lazy-timeout clock

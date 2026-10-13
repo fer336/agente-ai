@@ -610,3 +610,17 @@ async def test_smb_echo_bot_command_is_not_mirrored_to_chatwoot(
     await _post_webhook(make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="/bot"))
 
     assert fakes.chatwoot_gateway.sent_outgoing == []
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_with_an_invalid_patient_phone_is_acked_and_not_mirrored(
+    _tag_webhook_fakes,
+):
+    fakes = _tag_webhook_fakes
+
+    response = await _post_webhook(
+        make_ycloud_smb_echo_payload(patient_phone="+12ab", text_body="Hola desde la clínica")
+    )
+
+    assert response.status_code == 200
+    assert fakes.chatwoot_gateway.sent_outgoing == []

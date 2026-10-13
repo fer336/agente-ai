@@ -2,7 +2,7 @@ import hmac
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.dependencies.errors import (
@@ -76,6 +76,7 @@ class WebhookAckResponse(BaseModel):
 async def receive_ycloud_webhook(
     secret: str,
     payload: dict[str, object],
+    background_tasks: BackgroundTasks,
     settings: Settings = Depends(get_settings),
     use_case: IngestMessageUseCase = Depends(get_ingest_message_use_case),
     messaging_gateway: MessagingGateway = Depends(get_messaging_gateway),
@@ -155,14 +156,22 @@ async def receive_ycloud_webhook(
         echo_text = extract_smb_echo_text(echo_payload)
         if echo_text is not None and not is_reactivation_command:
             # Messages staff send from the phone or WhatsApp Web never pass through the
-            # bot, so Chatwoot only sees them if we mirror the echo. Best-effort: the
-            # mirror swallows its own failures.
-            await mirror_to_chatwoot.mirror_outgoing(
-                ConversationId(f"ycloud-{patient_phone}"),
-                PhoneNumber(patient_phone),
-                patient_phone,
-                echo_text,
-            )
+            # bot, so Chatwoot only sees them if we mirror the echo. It runs after the
+            # 200 ack so a slow Chatwoot never delays YCloud; the mirror swallows its own
+            # failures, and a phone the value objects reject is skipped, not a 500.
+            try:
+                echo_conversation_id = ConversationId(f"ycloud-{patient_phone}")
+                echo_phone = PhoneNumber(patient_phone)
+            except ValueError:
+                logger.warning("webhook.smb_echo_mirror_skipped_invalid_phone")
+            else:
+                background_tasks.add_task(
+                    mirror_to_chatwoot.mirror_outgoing,
+                    echo_conversation_id,
+                    echo_phone,
+                    patient_phone,
+                    echo_text,
+                )
         return WebhookAckResponse(status="accepted")
 
     if is_message_status_event(event_type):
