@@ -51,6 +51,14 @@ class ChatwootConversationGateway:
         contact_inboxes = cast("list[dict[str, object]]", contact["contact_inboxes"])
         return str(contact["id"]), str(contact_inboxes[0]["source_id"])
 
+    async def rename_contact_if_unnamed(
+        self, contact_id: str, phone: PhoneNumber, name: str
+    ) -> None:
+        current = await self._client.get_contact_name(contact_id)
+        if current.strip() not in ("", str(phone)):
+            return
+        await self._client.update_contact_name(contact_id, name)
+
     async def create_conversation(self, source_id: str, contact_id: str) -> str:
         return await self._client.create_conversation(source_id, contact_id)
 

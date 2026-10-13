@@ -205,9 +205,7 @@ async def test_a_failing_initial_label_does_not_block_the_mirrored_message():
         async def assign_bot(self, chatwoot_conversation_id: str) -> None:
             raise RuntimeError("label endpoint down")
 
-    use_case, gateway, mapping_repository = _make_use_case(
-        chatwoot_gateway=_LabelFailingGateway()
-    )
+    use_case, gateway, mapping_repository = _make_use_case(chatwoot_gateway=_LabelFailingGateway())
 
     await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
 
@@ -244,3 +242,35 @@ async def test_activate_agente_never_raises_when_the_gateway_fails():
     use_case, _, _ = _make_use_case(chatwoot_gateway=FakeChatwootGateway(fail=True))
 
     await use_case.activate_agente(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_renames_a_phone_named_contact_with_the_profile_name():
+    use_case, gateway, _ = _make_use_case()
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Otra vez")
+
+    assert gateway.contact_names == {"1": "Alejandro Marinkovic"}
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_renames_an_existing_contact_that_was_named_by_phone():
+    use_case, gateway, _ = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    assert gateway.contact_names == {"1": str(_PHONE)}
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+
+    assert gateway.contact_names == {"1": "Alejandro Marinkovic"}
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_keeps_a_name_staff_set_by_hand():
+    use_case, gateway, _ = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    gateway.contact_names["1"] = "Ale (VIP)"
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+
+    assert gateway.contact_names == {"1": "Ale (VIP)"}
