@@ -38,9 +38,7 @@ async def test_derives_to_admin_for_coverage_amount_questions():
     gateway = make_agreement_gateway(agreements=[make_agreement(name="OSDE")])
     node = create_agreement_node(gateway, FakeLLMProvider())
 
-    result = await node(
-        make_agent_state(user_message="¿Cuánto me cubre OSDE en una corona?")
-    )
+    result = await node(make_agent_state(user_message="¿Cuánto me cubre OSDE en una corona?"))
 
     assert result["response_text"] == (
         "Esta consulta necesita ser revisada por administración.\n"
@@ -53,9 +51,7 @@ async def test_never_invents_a_match_for_an_unconfigured_agreement_percentage_qu
     gateway = make_agreement_gateway(agreements=[make_agreement(name="OSDE")])
     node = create_agreement_node(gateway, FakeLLMProvider())
 
-    result = await node(
-        make_agent_state(user_message="¿Qué porcentaje cubre Swiss Medical?")
-    )
+    result = await node(make_agent_state(user_message="¿Qué porcentaje cubre Swiss Medical?"))
 
     assert result["response_text"] == "[fake-response for intent=agreement_not_found]"
 
@@ -197,3 +193,42 @@ async def test_coverage_questions_about_special_insurances_still_derive_to_admin
         "Esta consulta necesita ser revisada por administración.\n"
         "Querés que te comunique con ellos?"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_general_question_lists_the_configured_agreements_from_dentalink():
+    gateway = make_agreement_gateway(
+        agreements=[make_agreement(name="OSDE"), make_agreement(name="MEDIFE")]
+    )
+    node = create_agreement_node(gateway, FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="¿Qué obras sociales trabajan?"))
+
+    assert result["response_text"] == (
+        "Trabajamos con estas obras sociales y prepagas: MEDIFE, OSDE. "
+        "Si tu obra social no está en la lista, podés atenderte como particular."
+    )
+    assert result["requires_handoff"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_general_list_leaves_out_the_particular_entry():
+    # PARTICULAR is Dentalink's "no insurance" convenio, not an obra social.
+    gateway = make_agreement_gateway(
+        agreements=[make_agreement(name="PARTICULAR"), make_agreement(name="OSDE")]
+    )
+    node = create_agreement_node(gateway, FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="¿Cuáles son los convenios?"))
+
+    assert "PARTICULAR" not in result["response_text"]
+    assert "OSDE" in result["response_text"]
+
+
+def test_the_not_found_fallback_lists_the_configured_agreements():
+    from app.agent.nodes.agreement import not_found_message
+
+    text = not_found_message(["MEDIFE", "OSDE"])
+
+    assert "MEDIFE, OSDE" in text
+    assert "nombre exacto" not in text
