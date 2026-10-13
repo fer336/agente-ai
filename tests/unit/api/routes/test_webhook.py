@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -8,13 +9,14 @@ from app.api.dependencies.errors import (
     get_committing_error_service,
     get_committing_sent_message_repository,
 )
-from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.gateways import get_messaging_gateway, get_mirror_to_chatwoot_use_case
 from app.api.dependencies.repositories import (
     get_committing_conversation_repository,
     get_conversation_repository,
 )
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL
 from app.domain.entities.sent_message import SentMessage
@@ -22,6 +24,10 @@ from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.auth.session_tokens import create_session_token
+from app.infrastructure.chatwoot.fake_gateway import FakeChatwootGateway
+from app.infrastructure.database.fake_chatwoot_mapping_repository import (
+    FakeChatwootMappingRepository,
+)
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
@@ -287,6 +293,7 @@ async def test_valid_message_whitespace_only_external_id_acked_not_500():
 class _TagWebhookFakes:
     messaging_gateway: FakeYCloudMessagingGateway
     conversation_repository: FakeConversationRepository
+    chatwoot_gateway: FakeChatwootGateway
 
 
 @pytest.fixture
@@ -298,14 +305,30 @@ def _tag_webhook_fakes():
     # outlive the request); override BOTH so tests keep using this fake for
     # either wiring.
     app.dependency_overrides[get_conversation_repository] = lambda: conversation_repository
-    app.dependency_overrides[get_committing_conversation_repository] = (
-        lambda: conversation_repository
+    app.dependency_overrides[get_committing_conversation_repository] = lambda: (
+        conversation_repository
+    )
+
+    # Echo handling mirrors staff texts to Chatwoot: keep it on an in-memory gateway so
+    # these tests never reach a real Chatwoot, whatever the local settings say.
+    chatwoot_gateway = FakeChatwootGateway()
+    mapping_repository = FakeChatwootMappingRepository()
+
+    @asynccontextmanager
+    async def mapping_provider():
+        yield mapping_repository
+
+    app.dependency_overrides[get_mirror_to_chatwoot_use_case] = lambda: (
+        MirrorMessageToChatwootUseCase(chatwoot_gateway, mapping_provider)
     )
 
     yield _TagWebhookFakes(
-        messaging_gateway=messaging_gateway, conversation_repository=conversation_repository
+        messaging_gateway=messaging_gateway,
+        conversation_repository=conversation_repository,
+        chatwoot_gateway=chatwoot_gateway,
     )
 
+    del app.dependency_overrides[get_mirror_to_chatwoot_use_case]
     del app.dependency_overrides[get_messaging_gateway]
     del app.dependency_overrides[get_conversation_repository]
     del app.dependency_overrides[get_committing_conversation_repository]
@@ -476,8 +499,8 @@ def _delivery_status_fakes():
     sent_message_repository = FakeSentMessageRepository()
     error_service = make_error_service(error_repository=error_repository)
     app.dependency_overrides[get_committing_error_service] = lambda: error_service
-    app.dependency_overrides[get_committing_sent_message_repository] = (
-        lambda: sent_message_repository
+    app.dependency_overrides[get_committing_sent_message_repository] = lambda: (
+        sent_message_repository
     )
 
     yield _DeliveryStatusFakes(
@@ -544,3 +567,46 @@ async def test_a_delivered_status_update_is_ignored(_delivery_status_fakes):
     assert response.status_code == 200
     assert response.json() == {"status": "ignored"}
     assert await fakes.error_repository.list_recent() == []
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_text_is_mirrored_to_chatwoot_and_pauses_the_bot(
+    _tag_webhook_fakes,
+):
+    # Live case: messages staff sent from the phone or WhatsApp Web never reached Chatwoot.
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550123"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="agent", input_state="FREE_INPUT")
+    )
+
+    response = await _post_webhook(
+        make_ycloud_smb_echo_payload(
+            patient_phone=patient_phone, text_body="Hola, te escribe la clínica"
+        )
+    )
+
+    assert response.status_code == 200
+    assert [text for _, text in fakes.chatwoot_gateway.sent_outgoing] == [
+        "Hola, te escribe la clínica"
+    ]
+    conversation = await fakes.conversation_repository.get_by_id(
+        ConversationId(f"ycloud-{patient_phone}")
+    )
+    assert conversation is not None
+    assert conversation.mode == "human"
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_bot_command_is_not_mirrored_to_chatwoot(
+    _tag_webhook_fakes,
+):
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550123"
+    await fakes.conversation_repository.save(
+        make_conversation(id_=f"ycloud-{patient_phone}", mode="human", input_state="HUMAN")
+    )
+
+    await _post_webhook(make_ycloud_smb_echo_payload(patient_phone=patient_phone, text_body="/bot"))
+
+    assert fakes.chatwoot_gateway.sent_outgoing == []

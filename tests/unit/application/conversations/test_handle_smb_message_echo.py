@@ -28,9 +28,7 @@ async def test_reactivation_command_flips_mode_and_resets_input_state():
 @pytest.mark.asyncio
 async def test_any_human_reply_resets_last_human_reply_at_while_in_human_mode():
     conversation_repository = FakeConversationRepository()
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+549****4455", mode="human")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+549****4455", mode="human"))
     use_case = HandleSmbMessageEchoUseCase(conversation_repository)
 
     before = datetime.now(UTC)
@@ -49,9 +47,7 @@ async def test_reactivation_command_also_resets_last_human_reply_at_when_still_h
     # Both effects fire from the same event — the "/bot" command and the
     # timer reset are independent, not mutually exclusive branches.
     conversation_repository = FakeConversationRepository()
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+549****4455", mode="human")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+549****4455", mode="human"))
     use_case = HandleSmbMessageEchoUseCase(conversation_repository)
 
     await use_case.execute("+549****4455", is_reactivation_command=True)
@@ -123,9 +119,7 @@ async def test_reactivation_command_without_rotation_does_not_mark_fresh_restart
 @pytest.mark.asyncio
 async def test_plain_human_reply_does_not_rotate_or_mark_fresh_restart():
     conversation_repository = FakeConversationRepository()
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+549****4455", mode="human")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+549****4455", mode="human"))
     use_case = HandleSmbMessageEchoUseCase(conversation_repository)
 
     await use_case.execute("+549****4455", is_reactivation_command=False)
@@ -138,10 +132,12 @@ async def test_plain_human_reply_does_not_rotate_or_mark_fresh_restart():
 
 
 @pytest.mark.asyncio
-async def test_plain_reply_does_not_touch_last_human_reply_at_when_already_agent_mode():
+async def test_a_staff_reply_from_the_phone_pauses_the_bot():
+    # Staff typing from the WhatsApp Business app or WhatsApp Web takes the chat over:
+    # the bot must stop answering, the same way a handoff does.
     conversation_repository = FakeConversationRepository()
     await conversation_repository.save(
-        make_conversation(id_="ycloud-+549****4455", mode="agent")
+        make_conversation(id_="ycloud-+549****4455", mode="agent", input_state="FREE_INPUT")
     )
     use_case = HandleSmbMessageEchoUseCase(conversation_repository)
 
@@ -149,7 +145,24 @@ async def test_plain_reply_does_not_touch_last_human_reply_at_when_already_agent
 
     conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+549****4455"))
     assert conversation is not None
-    assert conversation.last_human_reply_at is None
+    assert conversation.mode == "human"
+    assert conversation.input_state == "HUMAN"
+    assert conversation.last_human_reply_at is not None
+
+
+@pytest.mark.asyncio
+async def test_the_bot_command_never_pauses_a_conversation_already_with_the_bot():
+    conversation_repository = FakeConversationRepository()
+    await conversation_repository.save(
+        make_conversation(id_="ycloud-+549****4455", mode="agent", input_state="FREE_INPUT")
+    )
+    use_case = HandleSmbMessageEchoUseCase(conversation_repository)
+
+    await use_case.execute("+549****4455", is_reactivation_command=True)
+
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+549****4455"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
 
 
 @pytest.mark.asyncio

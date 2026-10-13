@@ -9,18 +9,23 @@ from app.api.dependencies.errors import (
     get_committing_error_service,
     get_committing_sent_message_repository,
 )
-from app.api.dependencies.gateways import get_messaging_gateway
+from app.api.dependencies.gateways import (
+    get_messaging_gateway,
+    get_mirror_to_chatwoot_use_case,
+)
 from app.api.dependencies.repositories import get_committing_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.application.conversations.handle_smb_message_echo import HandleSmbMessageEchoUseCase
 from app.application.errors.error_service import ErrorService
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.messages.ingest_message import IngestMessageUseCase
+from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.config.settings import Settings, get_settings
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.repositories.sent_message_repository import SentMessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.ycloud.schemas import (
     YCloudInboundEventPayload,
     YCloudMessageUpdatedEventPayload,
@@ -30,6 +35,7 @@ from app.infrastructure.ycloud.webhook_parser import (
     extract_bot_reactivation_command,
     extract_delivery_failure,
     extract_smb_echo_patient_phone,
+    extract_smb_echo_text,
     is_message_status_event,
     is_processable_message,
     is_smb_message_echo_event,
@@ -73,6 +79,7 @@ async def receive_ycloud_webhook(
     settings: Settings = Depends(get_settings),
     use_case: IngestMessageUseCase = Depends(get_ingest_message_use_case),
     messaging_gateway: MessagingGateway = Depends(get_messaging_gateway),
+    mirror_to_chatwoot: MirrorMessageToChatwootUseCase = Depends(get_mirror_to_chatwoot_use_case),
     conversation_repository: ConversationRepository = Depends(
         get_committing_conversation_repository
     ),
@@ -144,6 +151,17 @@ async def receive_ycloud_webhook(
                 "webhook.smb_echo_handled patient_phone=%s is_reactivation_command=%s",
                 patient_phone,
                 is_reactivation_command,
+            )
+        echo_text = extract_smb_echo_text(echo_payload)
+        if echo_text is not None and not is_reactivation_command:
+            # Messages staff send from the phone or WhatsApp Web never pass through the
+            # bot, so Chatwoot only sees them if we mirror the echo. Best-effort: the
+            # mirror swallows its own failures.
+            await mirror_to_chatwoot.mirror_outgoing(
+                ConversationId(f"ycloud-{patient_phone}"),
+                PhoneNumber(patient_phone),
+                patient_phone,
+                echo_text,
             )
         return WebhookAckResponse(status="accepted")
 

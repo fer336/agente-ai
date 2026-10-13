@@ -235,6 +235,16 @@ def extract_smb_echo_patient_phone(payload: YCloudSmbMessageEchoEventPayload) ->
     return message.to if message.to.startswith("+") else f"+{message.to}"
 
 
+def extract_smb_echo_text(payload: YCloudSmbMessageEchoEventPayload) -> str | None:
+    """Returns the body of a staff-typed text echo (WhatsApp Business app or WhatsApp
+    Web), else `None` for other message types or an empty body."""
+    message = payload.whatsappMessage
+    if message.type != _SMB_ECHO_TEXT_MESSAGE_TYPE or message.text is None:
+        return None
+    body = message.text.body.strip()
+    return body or None
+
+
 def extract_bot_reactivation_command(payload: YCloudSmbMessageEchoEventPayload) -> str | None:
     """Returns the patient's phone from `whatsappMessage.to` when this echo
     is a staff-typed `/bot` text message (trimmed, case-insensitive exact
