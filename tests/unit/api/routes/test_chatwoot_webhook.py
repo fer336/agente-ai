@@ -392,3 +392,59 @@ async def test_conversation_resolved_event_flips_mode_back_to_agent(_fakes):
     assert conversation is not None
     assert conversation.mode == "agent"
     assert chatwoot_gateway.labels_by_conversation == {"99": "agente"}
+
+
+def _staff_message(content: str) -> dict[str, object]:
+    return {
+        "event": "message_created",
+        "message_type": "outgoing",
+        "content": content,
+        "conversation": {"id": 99},
+        "sender": {"id": 5, "type": "user"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_adm_command_pauses_the_bot_labels_administracion_and_is_not_forwarded(_fakes):
+    messaging_gateway, chatwoot_gateway, conversation_repository = _fakes
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    conversation.mode = "agent"
+    conversation.input_state = "FREE_INPUT"
+    await conversation_repository.save(conversation)
+
+    response = await _post_webhook(_staff_message(" /ADM "))
+
+    assert response.json() == {"status": "accepted"}
+    updated = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert updated is not None
+    assert updated.mode == "human"
+    assert updated.last_human_reply_at is not None
+    assert chatwoot_gateway.labels_by_conversation == {"99": "administracion"}
+    assert messaging_gateway.sent_messages == []
+
+
+@pytest.mark.asyncio
+async def test_bot_command_reactivates_the_bot_labels_agente_and_is_not_forwarded(_fakes):
+    messaging_gateway, chatwoot_gateway, conversation_repository = _fakes
+
+    response = await _post_webhook(_staff_message("/bot"))
+
+    assert response.json() == {"status": "accepted"}
+    updated = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert updated is not None
+    assert updated.mode == "agent"
+    assert updated.input_state == "FREE_INPUT"
+    assert chatwoot_gateway.labels_by_conversation == {"99": "agente"}
+    assert messaging_gateway.sent_messages == []
+
+
+@pytest.mark.asyncio
+async def test_a_staff_reply_from_chatwoot_starts_the_human_reply_timer(_fakes):
+    _, _, conversation_repository = _fakes
+
+    await _post_webhook(_staff_message("Te atiendo personalmente"))
+
+    updated = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert updated is not None
+    assert updated.last_human_reply_at is not None

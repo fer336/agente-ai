@@ -34,6 +34,7 @@ from app.infrastructure.chatwoot.webhook_parser import (
     is_conversation_status_changed_event,
     is_conversation_updated_event,
     is_message_created_event,
+    parse_staff_command,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,32 @@ async def receive_chatwoot_webhook(
             chatwoot_gateway, conversation_repository, mapping_repository
         )
         forward_reply = ForwardChatwootReplyUseCase(messaging_gateway, mapping_repository)
+        staff_command = parse_staff_command(content)
+        if staff_command is not None:
+            # `/bot` and `/adm` are control commands: they change the mode and the label
+            # and are never forwarded to the patient.
+            try:
+                if staff_command == "adm":
+                    await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
+                else:
+                    await ReactivateBotFromChatwootUseCase(
+                        chatwoot_gateway, conversation_repository, mapping_repository
+                    ).execute(chatwoot_conversation_id)
+            except Exception:
+                logger.warning(
+                    "chatwoot_webhook.staff_command_failed chatwoot_conversation_id=%s command=%s",
+                    chatwoot_conversation_id,
+                    staff_command,
+                    exc_info=True,
+                )
+            else:
+                logger.info(
+                    "chatwoot_webhook.staff_command_applied "
+                    "chatwoot_conversation_id=%s command=%s",
+                    chatwoot_conversation_id,
+                    staff_command,
+                )
+            return ChatwootWebhookAckResponse(status="accepted")
         try:
             # A genuine staff reply takes control even when the operator forgot to
             # apply `administracion` first: the label flips to `administracion`, so

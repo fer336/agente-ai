@@ -12,6 +12,7 @@ from app.infrastructure.ycloud.webhook_parser import (
     extract_bot_reactivation_command,
     extract_delivery_failure,
     extract_smb_echo_patient_phone,
+    extract_staff_command,
     extract_tag_mode_change,
     is_message_status_event,
     is_processable_message,
@@ -543,3 +544,23 @@ def test_to_inbound_message_dto_profile_name_is_none_without_a_customer_profile(
     )
 
     assert to_inbound_message_dto(payload).profile_name is None
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("/bot", "bot"),
+        ("  /BOT ", "bot"),
+        ("/adm", "adm"),
+        (" /Adm\n", "adm"),
+        ("/bot por favor", None),
+        ("hola", None),
+        ("", None),
+    ],
+)
+def test_extract_staff_command_matches_only_the_exact_commands(body, expected):
+    payload = YCloudSmbMessageEchoEventPayload.model_validate(
+        make_ycloud_smb_echo_payload(patient_phone="+5491122334455", text_body=body)
+    )
+
+    assert extract_staff_command(payload) == expected
