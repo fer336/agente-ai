@@ -1,3 +1,9 @@
+from app.agent.agreement_listing import (
+    LIST_QUESTION,
+    configured_names,
+    list_message,
+    not_found_message,
+)
 from app.agent.clinic_topics import (
     match_special_insurance,
     special_insurance_message,
@@ -25,17 +31,7 @@ _SPECIAL_INSURANCE_TEMPERATURE = 0.9
 #: the LLM like every other message in this codebase (user's own call,
 #: after this conflict was flagged).
 _DERIVE_TO_ADMIN_MESSAGE = (
-    "Esta consulta necesita ser revisada por administración.\n"
-    "Querés que te comunique con ellos?"
-)
-
-#: `_NOT_FOUND_MESSAGE`/the confirmed-match reply below are NOT PRD-mandated
-#: wording (only `_DERIVE_TO_ADMIN_MESSAGE` above is) — these are the
-#: `generate_or_fallback` static fallback for when the LLM call itself
-#: fails.
-_NOT_FOUND_MESSAGE = (
-    "No encontramos esa obra social o prepaga en nuestros convenios "
-    "disponibles. Podés confirmarme el nombre exacto?"
+    "Esta consulta necesita ser revisada por administración.\nQuerés que te comunique con ellos?"
 )
 
 
@@ -101,6 +97,13 @@ def create_agreement_node(
             return {"response_text": text, "requires_handoff": False}
 
         agreements = await list_agreements.execute()
+        names = configured_names(agreements)
+
+        if LIST_QUESTION.search(lowered):
+            if not names:
+                return {"response_text": _DERIVE_TO_ADMIN_MESSAGE, "requires_handoff": False}
+            return {"response_text": list_message(names), "requires_handoff": False}
+
         matched = next((a for a in agreements if a.name.casefold() in lowered), None)
 
         if matched is None:
@@ -113,9 +116,13 @@ def create_agreement_node(
                         "El paciente preguntó por una obra social o prepaga que no está "
                         "en nuestros convenios disponibles."
                     ),
-                    "instruccion": "Pedile que confirme el nombre exacto.",
+                    "convenios_disponibles": names,
+                    "instruccion": (
+                        "Decile que esa obra social no la tenemos en convenio y listá "
+                        "solo estos convenios disponibles, sin inventar otros."
+                    ),
                 },
-                _NOT_FOUND_MESSAGE,
+                not_found_message(names),
                 state["recent_messages"],
                 state["contact_memory_summary"],
             )
@@ -133,8 +140,7 @@ def create_agreement_node(
             "agreement_found",
             {
                 "situacion": (
-                    "El paciente preguntó por una obra social o prepaga que sí está "
-                    "en convenio."
+                    "El paciente preguntó por una obra social o prepaga que sí está en convenio."
                 ),
                 "convenio": matched.name,
                 "instruccion": "Confirmá que sí trabajan con ese convenio, mencionando su nombre.",

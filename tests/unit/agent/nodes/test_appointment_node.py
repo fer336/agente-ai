@@ -161,6 +161,8 @@ class _IntakeLLM(FakeLLMProvider):
             fields.update(obra_social="Unknown Health", plan="42")
         elif "OSDE 210" in text:
             fields.update(obra_social="OSDE", plan="210")
+        elif "obras sociales trabajan" in text.casefold():
+            fields.update(obra_social="Que obras sociales trabajan?", plan="210")
         elif text == "OSDE":
             fields.update(obra_social="OSDE")
         elif text == "210":
@@ -796,7 +798,8 @@ async def test_unmatched_first_visit_insurer_does_not_create_patient_or_advance(
     intake = result["collected_data"]["first_visit_intake"]
     assert intake["stage"] == "collect"
     assert intake["editing_field"] == "obra_social"
-    assert "No encontramos esa obra social" in result["response_text"]
+    assert "no la tenemos en convenio" in result["response_text"]
+    assert "Unknown" not in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -5562,3 +5565,53 @@ async def test_a_reminder_reschedule_for_an_appointment_the_patient_does_not_own
     assert result["response_text"] == "Este recordatorio ya no está disponible."
     assert result["collected_data"] == {}
     assert result.get("response_list") is None
+
+
+@pytest.mark.asyncio
+async def test_a_general_insurance_question_during_intake_lists_the_convenios():
+    # Live case: "Que obras sociales trabajan?" was stored as the obra social name
+    # and answered from model memory. It must list the real convenios instead.
+    patient_gateway = make_patient_gateway(patients=[])
+    agreement_gateway = make_agreement_gateway(
+        agreements=[
+            make_agreement(id_="osde", name="OSDE"),
+            make_agreement(id_="medife", name="MEDIFE"),
+        ]
+    )
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=agreement_gateway,
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+    result = await _confirm_first_visit(
+        node, await _start_create(node, _CONTACT_CONVERSATION_ID), _CONTACT_CONVERSATION_ID
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            user_message=(
+                "Es mi primera vez. Ana Pérez, DNI 30123457, ana@example.com, "
+                "Que obras sociales trabajan?"
+            ),
+            collected_data=result["collected_data"],
+        )
+    )
+
+    assert result["collected_data"]["first_visit_intake"]["stage"] == "review"
+
+    result = await node(
+        make_agent_state(
+            conversation_id=_CONTACT_CONVERSATION_ID,
+            button_payload=FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
+            collected_data=result["collected_data"],
+        )
+    )
+
+    assert await patient_gateway.find_patient("Ana Pérez", "30123457") is None
+    assert "MEDIFE, OSDE" in result["response_text"]
+    intake = result["collected_data"]["first_visit_intake"]
+    assert intake["stage"] == "collect"
+    assert intake["editing_field"] == "obra_social"
