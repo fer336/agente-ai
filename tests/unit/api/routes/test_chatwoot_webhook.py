@@ -294,3 +294,41 @@ async def test_an_unrecognised_conversation_update_logs_its_changed_attribute_ke
     assert (
         "chatwoot_webhook.conversation_updated_ignored changed_keys=['assignee_id']" in caplog.text
     )
+
+
+@pytest.mark.asyncio
+async def test_staff_reply_in_an_unmapped_conversation_is_forwarded_via_the_chatwoot_contact(
+    _fakes,
+):
+    messaging_gateway, chatwoot_gateway, conversation_repository = _fakes
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491199887766", mode="agent"))
+    chatwoot_gateway.contacts_by_conversation["43"] = ("8", "+5491199887766")
+
+    response = await _post_webhook(
+        {
+            "event": "message_created",
+            "message_type": "outgoing",
+            "content": "Hola desde un chat viejo",
+            "conversation": {"id": 43},
+            "sender": {"id": 5, "type": "user"},
+        }
+    )
+
+    assert response.status_code == 200
+    assert (PhoneNumber("+5491199887766"), "Hola desde un chat viejo") in (
+        messaging_gateway.sent_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversation_resolved_event_flips_mode_back_to_agent(_fakes):
+    _, chatwoot_gateway, conversation_repository = _fakes
+
+    response = await _post_webhook({"event": "conversation_resolved", "id": 99})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    assert conversation.mode == "agent"
+    assert chatwoot_gateway.labels_by_conversation == {"99": "agente"}

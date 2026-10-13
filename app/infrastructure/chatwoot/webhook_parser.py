@@ -8,6 +8,7 @@ from app.infrastructure.chatwoot.schemas import (
 _MESSAGE_CREATED_EVENT = "message_created"
 _CONVERSATION_STATUS_CHANGED_EVENT = "conversation_status_changed"
 _CONVERSATION_UPDATED_EVENT = "conversation_updated"
+_CONVERSATION_RESOLVED_EVENT = "conversation_resolved"
 _OUTGOING_MESSAGE_TYPE = "outgoing"
 #: Confirmed live (see `app.infrastructure.chatwoot.schemas`'s own
 #: docstring): a human agent's own personal token is what attributes a
@@ -29,6 +30,10 @@ def is_message_created_event(event: str) -> bool:
 
 def is_conversation_status_changed_event(event: str) -> bool:
     return event == _CONVERSATION_STATUS_CHANGED_EVENT
+
+
+def is_conversation_resolved_event(event: str) -> bool:
+    return event == _CONVERSATION_RESOLVED_EVENT
 
 
 def is_conversation_updated_event(event: str) -> bool:
@@ -91,8 +96,10 @@ def extract_resolved_conversation_id(
     payload: ChatwootConversationStatusChangedEventPayload,
 ) -> str | None:
     """Returns the Chatwoot conversation id for a `status="resolved"`
-    event, else `None` (`open`/`pending`/`snoozed` need no reaction here)."""
-    if payload.status != _RESOLVED_STATUS:
+    event, else `None` (`open`/`pending`/`snoozed` need no reaction here).
+    A `conversation_resolved` event (Agent Bot delivery) is resolved by its
+    name alone, even when `status` is missing."""
+    if payload.status != _RESOLVED_STATUS and payload.event != _CONVERSATION_RESOLVED_EVENT:
         return None
     if not payload.id:
         return None

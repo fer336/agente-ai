@@ -7,6 +7,7 @@ from app.infrastructure.chatwoot.webhook_parser import (
     extract_control_label_change,
     extract_resolved_conversation_id,
     extract_staff_reply,
+    is_conversation_resolved_event,
     is_conversation_status_changed_event,
     is_conversation_updated_event,
     is_message_created_event,
@@ -178,3 +179,16 @@ def test_cached_label_list_tolerates_spaces_after_commas():
         "99",
         "human",
     )
+
+
+def test_is_conversation_resolved_event():
+    assert is_conversation_resolved_event("conversation_resolved") is True
+    assert is_conversation_resolved_event("conversation_status_changed") is False
+
+
+def test_extract_resolved_conversation_id_treats_the_resolved_event_as_resolved_without_status():
+    payload = ChatwootConversationStatusChangedEventPayload.model_validate(
+        {"event": "conversation_resolved", "id": 43}
+    )
+
+    assert extract_resolved_conversation_id(payload) == "43"

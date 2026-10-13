@@ -20,6 +20,7 @@ from app.domain.repositories.chatwoot_gateway import ChatwootGateway
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import MessagingGateway
+from app.infrastructure.chatwoot.mapping_fallback import ChatwootContactMappingFallback
 from app.infrastructure.chatwoot.schemas import (
     ChatwootConversationStatusChangedEventPayload,
     ChatwootConversationUpdatedEventPayload,
@@ -29,6 +30,7 @@ from app.infrastructure.chatwoot.webhook_parser import (
     extract_control_label_change,
     extract_resolved_conversation_id,
     extract_staff_reply,
+    is_conversation_resolved_event,
     is_conversation_status_changed_event,
     is_conversation_updated_event,
     is_message_created_event,
@@ -52,7 +54,7 @@ class ChatwootWebhookAckResponse(BaseModel):
         "Receive a Chatwoot account-level webhook event: `message_created` "
         "(staff reply pauses the bot and is forwarded to WhatsApp), "
         "`conversation_updated` (manual control-label change), or "
-        "`conversation_status_changed` (staff resolves the conversation, "
+        "`conversation_status_changed`/`conversation_resolved` (staff resolves the conversation, "
         "flips mode back to the bot)"
     ),
     response_model=ChatwootWebhookAckResponse,
@@ -66,7 +68,7 @@ async def receive_chatwoot_webhook(
     conversation_repository: ConversationRepository = Depends(
         get_committing_conversation_repository
     ),
-    mapping_repository: ChatwootMappingRepository = Depends(get_chatwoot_mapping_repository),
+    stored_mapping_repository: ChatwootMappingRepository = Depends(get_chatwoot_mapping_repository),
 ) -> ChatwootWebhookAckResponse:
     """Chatwoot is the "camino de vuelta" counterparty for the mirror this
     session built (WhatsApp -> Chatwoot is PR1; this route is the return
@@ -90,6 +92,10 @@ async def receive_chatwoot_webhook(
     """
     if not hmac.compare_digest(secret, settings.chatwoot_webhook_secret):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invalid webhook secret")
+
+    # Conversations without a stored mapping (created before the table was
+    # cleared) are resolved through the Chatwoot contact instead of ignored.
+    mapping_repository = ChatwootContactMappingFallback(stored_mapping_repository, chatwoot_gateway)
 
     event = str(payload.get("event", ""))
     logger.info("chatwoot_webhook.received event=%s", event)
@@ -188,7 +194,7 @@ async def receive_chatwoot_webhook(
             )
         return ChatwootWebhookAckResponse(status="accepted")
 
-    if is_conversation_status_changed_event(event):
+    if is_conversation_status_changed_event(event) or is_conversation_resolved_event(event):
         status_payload = ChatwootConversationStatusChangedEventPayload.model_validate(payload)
         resolved_conversation_id = extract_resolved_conversation_id(status_payload)
         if resolved_conversation_id is None:
