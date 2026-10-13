@@ -16,7 +16,14 @@ def create_engine(database_url: str) -> AsyncEngine:
     that happens to reuse it, crashing that request instead of transparently
     reconnecting.
     """
-    return create_async_engine(database_url, echo=False, pool_pre_ping=True)
+    return create_async_engine(
+        database_url,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+    )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

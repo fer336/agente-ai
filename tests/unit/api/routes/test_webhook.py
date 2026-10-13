@@ -312,29 +312,10 @@ def _tag_webhook_fakes():
 
 
 @pytest.mark.asyncio
-async def test_tag_humano_removed_resumes_the_bot(_tag_webhook_fakes):
-    fakes = _tag_webhook_fakes
-    fakes.messaging_gateway.contact_phones["ycloud-contact-1"] = PhoneNumber("+5491122334455")
-    await fakes.conversation_repository.save(make_conversation(mode="human", input_state="HUMAN"))
-
-    response = await _post_webhook(
-        make_ycloud_tag_change_payload(
-            contact_id="ycloud-contact-1", tag_value="Human", action="REMOVED"
-        )
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "accepted"}
-    conversation = await fakes.conversation_repository.get_by_id(
-        ConversationId("ycloud-+5491122334455")
-    )
-    assert conversation is not None
-    assert conversation.mode == "agent"
-    assert conversation.input_state == "FREE_INPUT"
-
-
-@pytest.mark.asyncio
-async def test_tag_humano_added_pauses_the_bot(_tag_webhook_fakes):
+async def test_ycloud_tag_change_is_ignored_and_never_changes_the_conversation_mode(
+    _tag_webhook_fakes,
+):
+    # Chatwoot is the only source of handoff labels now; YCloud contact tags are omitted.
     fakes = _tag_webhook_fakes
     fakes.messaging_gateway.contact_phones["ycloud-contact-1"] = PhoneNumber("+5491122334455")
     await fakes.conversation_repository.save(make_conversation(mode="agent"))
@@ -346,13 +327,12 @@ async def test_tag_humano_added_pauses_the_bot(_tag_webhook_fakes):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "accepted"}
+    assert response.json() == {"status": "ignored"}
     conversation = await fakes.conversation_repository.get_by_id(
         ConversationId("ycloud-+5491122334455")
     )
     assert conversation is not None
-    assert conversation.mode == "human"
-    assert conversation.input_state == "HUMAN"
+    assert conversation.mode == "agent"
 
 
 @pytest.mark.asyncio
@@ -370,7 +350,7 @@ async def test_tag_change_for_unresolvable_contact_acked_not_500(_tag_webhook_fa
     response = await _post_webhook(make_ycloud_tag_change_payload())
 
     assert response.status_code == 200
-    assert response.json() == {"status": "accepted"}
+    assert response.json() == {"status": "ignored"}
 
 
 @pytest.mark.asyncio

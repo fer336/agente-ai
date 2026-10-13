@@ -1,4 +1,5 @@
 from app.infrastructure.chatwoot.schemas import (
+    ChatwootConversationChangedAttribute,
     ChatwootConversationStatusChangedEventPayload,
     ChatwootConversationUpdatedEventPayload,
     ChatwootMessageCreatedEventPayload,
@@ -7,6 +8,7 @@ from app.infrastructure.chatwoot.schemas import (
 _MESSAGE_CREATED_EVENT = "message_created"
 _CONVERSATION_STATUS_CHANGED_EVENT = "conversation_status_changed"
 _CONVERSATION_UPDATED_EVENT = "conversation_updated"
+_CONVERSATION_RESOLVED_EVENT = "conversation_resolved"
 _OUTGOING_MESSAGE_TYPE = "outgoing"
 #: Confirmed live (see `app.infrastructure.chatwoot.schemas`'s own
 #: docstring): a human agent's own personal token is what attributes a
@@ -28,6 +30,10 @@ def is_message_created_event(event: str) -> bool:
 
 def is_conversation_status_changed_event(event: str) -> bool:
     return event == _CONVERSATION_STATUS_CHANGED_EVENT
+
+
+def is_conversation_resolved_event(event: str) -> bool:
+    return event == _CONVERSATION_RESOLVED_EVENT
 
 
 def is_conversation_updated_event(event: str) -> bool:
@@ -52,24 +58,56 @@ def extract_staff_reply(payload: ChatwootMessageCreatedEventPayload) -> tuple[st
     return str(payload.conversation.id), payload.content
 
 
+def _split_labels(raw: str | None) -> set[str]:
+    return {label.strip() for label in (raw or "").split(",") if label.strip()}
+
+
+def _label_sets(
+    changed_attribute: ChatwootConversationChangedAttribute,
+) -> tuple[set[str], set[str]] | None:
+    """`(previous, current)` labels from `label_list` (a list) or `cached_label_list`
+    (a comma-separated string); `None` when this entry is not a label change."""
+    if changed_attribute.label_list is not None:
+        change = changed_attribute.label_list
+        return (
+            {label.strip() for label in change.previous_value},
+            {label.strip() for label in change.current_value},
+        )
+    if changed_attribute.cached_label_list is not None:
+        cached = changed_attribute.cached_label_list
+        return _split_labels(cached.previous_value), _split_labels(cached.current_value)
+    return None
+
+
 def extract_control_label_change(
     payload: ChatwootConversationUpdatedEventPayload,
 ) -> tuple[str, str] | None:
     """Returns `(conversation_id, mode)` for a control-label update.
 
-    `administracion` wins if both control labels are present, failing safe to
-    human control. Duplicate webhook deliveries are harmless because setting
-    either local mode is idempotent.
+    When both control labels are present, the one staff just ADDED wins, so
+    adding `agente` while `administracion` is still on hands control back to the
+    bot in one click. If the added one cannot be told apart (both new, or no
+    previous value), `administracion` wins, failing safe to human control.
+    Duplicate webhook deliveries are harmless because setting either local mode
+    is idempotent.
     """
     if not payload.id:
         return None
     for changed_attribute in payload.changed_attributes:
-        if changed_attribute.label_list is None:
+        label_sets = _label_sets(changed_attribute)
+        if label_sets is None:
             continue
-        labels = set(changed_attribute.label_list.current_value)
-        if _ADMINISTRACION_LABEL in labels:
+        previous, current = label_sets
+        has_administracion = _ADMINISTRACION_LABEL in current
+        has_agent = _AGENT_LABEL in current
+        if has_administracion and has_agent:
+            added = current - previous
+            if _AGENT_LABEL in added and _ADMINISTRACION_LABEL not in added:
+                return str(payload.id), "agent"
             return str(payload.id), "human"
-        if _AGENT_LABEL in labels:
+        if has_administracion:
+            return str(payload.id), "human"
+        if has_agent:
             return str(payload.id), "agent"
         return None
     return None
@@ -79,8 +117,10 @@ def extract_resolved_conversation_id(
     payload: ChatwootConversationStatusChangedEventPayload,
 ) -> str | None:
     """Returns the Chatwoot conversation id for a `status="resolved"`
-    event, else `None` (`open`/`pending`/`snoozed` need no reaction here)."""
-    if payload.status != _RESOLVED_STATUS:
+    event, else `None` (`open`/`pending`/`snoozed` need no reaction here).
+    A `conversation_resolved` event (Agent Bot delivery) is resolved by its
+    name alone, even when `status` is missing."""
+    if payload.status != _RESOLVED_STATUS and payload.event != _CONVERSATION_RESOLVED_EVENT:
         return None
     if not payload.id:
         return None

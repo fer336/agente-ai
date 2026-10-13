@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -205,9 +206,7 @@ async def test_a_failing_initial_label_does_not_block_the_mirrored_message():
         async def assign_bot(self, chatwoot_conversation_id: str) -> None:
             raise RuntimeError("label endpoint down")
 
-    use_case, gateway, mapping_repository = _make_use_case(
-        chatwoot_gateway=_LabelFailingGateway()
-    )
+    use_case, gateway, mapping_repository = _make_use_case(chatwoot_gateway=_LabelFailingGateway())
 
     await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
 
@@ -244,3 +243,97 @@ async def test_activate_agente_never_raises_when_the_gateway_fails():
     use_case, _, _ = _make_use_case(chatwoot_gateway=FakeChatwootGateway(fail=True))
 
     await use_case.activate_agente(_CONVERSATION_ID, _PHONE, str(_PHONE))
+
+
+class _FakeRedisLock:
+    def __init__(self, lock: asyncio.Lock) -> None:
+        self._lock = lock
+
+    async def acquire(self) -> bool:
+        await self._lock.acquire()
+        return True
+
+    async def release(self) -> None:
+        self._lock.release()
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def lock(self, name: str, timeout: float | None = None, blocking_timeout: float | None = None):
+        return _FakeRedisLock(self._locks.setdefault(name, asyncio.Lock()))
+
+
+class _SlowGateway(FakeChatwootGateway):
+    """Yields inside the lookup, so two mirror calls genuinely overlap."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.conversations_created = 0
+
+    async def find_or_create_contact(self, phone, name):
+        await asyncio.sleep(0.01)
+        return await super().find_or_create_contact(phone, name)
+
+    async def create_conversation(self, source_id, contact_id):
+        self.conversations_created += 1
+        return await super().create_conversation(source_id, contact_id)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_mirror_calls_for_one_conversation_create_a_single_chatwoot_conversation():
+    # Regression: an inbound and an outbound mirror task fired together both saw "no
+    # mapping", each created its own Chatwoot conversation, and the second insert hit
+    # chatwoot_conversation_mappings_pkey. The lock makes the second call reuse the first.
+    gateway = _SlowGateway()
+    mapping_repository = FakeChatwootMappingRepository()
+
+    @asynccontextmanager
+    async def provider() -> AsyncIterator[ChatwootMappingRepository]:
+        yield mapping_repository
+
+    use_case = MirrorMessageToChatwootUseCase(gateway, provider, redis_client=_FakeRedis())
+
+    await asyncio.gather(
+        use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola"),
+        use_case.mirror_outgoing(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola, ¿en qué te ayudo?"),
+    )
+
+    assert gateway.conversations_created == 1
+    mapping = await mapping_repository.get_by_conversation_id(str(_CONVERSATION_ID))
+    assert mapping is not None
+    assert [conv for conv, _ in gateway.sent_incoming] == [mapping.chatwoot_conversation_id]
+    assert [conv for conv, _ in gateway.sent_outgoing] == [mapping.chatwoot_conversation_id]
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_renames_a_phone_named_contact_with_the_profile_name():
+    use_case, gateway, _ = _make_use_case()
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Otra vez")
+
+    assert gateway.contact_names == {"1": "Alejandro Marinkovic"}
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_renames_an_existing_contact_that_was_named_by_phone():
+    use_case, gateway, _ = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    assert gateway.contact_names == {"1": str(_PHONE)}
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+
+    assert gateway.contact_names == {"1": "Alejandro Marinkovic"}
+
+
+@pytest.mark.asyncio
+async def test_mirror_incoming_keeps_a_name_staff_set_by_hand():
+    use_case, gateway, _ = _make_use_case()
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, str(_PHONE), "Hola")
+    gateway.contact_names["1"] = "Ale (VIP)"
+
+    await use_case.mirror_incoming(_CONVERSATION_ID, _PHONE, "Alejandro Marinkovic", "Hola")
+
+    assert gateway.contact_names == {"1": "Ale (VIP)"}

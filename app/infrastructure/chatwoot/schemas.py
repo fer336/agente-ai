@@ -50,8 +50,16 @@ class ChatwootLabelListChange(BaseModel):
     current_value: list[str] = Field(default_factory=list)
 
 
+class ChatwootCachedLabelListChange(BaseModel):
+    """`cached_label_list` is Chatwoot's comma-separated label column."""
+
+    previous_value: str | None = None
+    current_value: str | None = None
+
+
 class ChatwootConversationChangedAttribute(BaseModel):
     label_list: ChatwootLabelListChange | None = None
+    cached_label_list: ChatwootCachedLabelListChange | None = None
 
 
 class ChatwootConversationUpdatedEventPayload(BaseModel):
@@ -64,6 +72,4 @@ class ChatwootConversationUpdatedEventPayload(BaseModel):
 
     event: str = ""
     id: int = 0
-    changed_attributes: list[ChatwootConversationChangedAttribute] = Field(
-        default_factory=list
-    )
+    changed_attributes: list[ChatwootConversationChangedAttribute] = Field(default_factory=list)

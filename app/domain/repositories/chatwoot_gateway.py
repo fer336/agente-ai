@@ -20,6 +20,14 @@ class ChatwootGateway(Protocol):
         other way once the contact already exists."""
         ...
 
+    async def rename_contact_if_unnamed(
+        self, contact_id: str, phone: PhoneNumber, name: str
+    ) -> None:
+        """Gives the contact the patient's WhatsApp profile `name`, but only while
+        its current name is empty or still the phone number — a name set by staff
+        is never overwritten."""
+        ...
+
     async def create_conversation(self, source_id: str, contact_id: str) -> str:
         """Returns a NEW Chatwoot conversation id — no idempotent
         find-or-create exists in Chatwoot's own API, callers must not call
@@ -36,6 +44,15 @@ class ChatwootGateway(Protocol):
         """Mirrors the bot's own reply into Chatwoot, attributed to the
         Agent Bot (`sender.type == "agent_bot"`) — never to a human
         agent's identity."""
+        ...
+
+    async def find_conversation_contact(
+        self, chatwoot_conversation_id: str
+    ) -> tuple[str, str] | None:
+        """Returns `(chatwoot_contact_id, phone_e164)` of the contact that
+        owns this Chatwoot conversation, or `None` when Chatwoot does not
+        expose both (used to serve conversations that have no stored
+        mapping)."""
         ...
 
     async def has_administracion_label(self, chatwoot_conversation_id: str) -> bool:

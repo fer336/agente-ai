@@ -62,7 +62,6 @@ from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
-from app.infrastructure.ycloud.handoff_gateway import YCloudHandoffGateway
 from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
@@ -260,22 +259,13 @@ def _get_fake_ycloud_handoff_gateway() -> FakeYCloudHandoffGateway:
     return FakeYCloudHandoffGateway()
 
 
-@lru_cache
-def _get_real_ycloud_handoff_gateway() -> YCloudHandoffGateway:
-    return YCloudHandoffGateway(get_ycloud_client())
-
-
 def get_human_handoff_gateway() -> HumanHandoffGateway:
     """FastAPI dependency providing the `HumanHandoffGateway` port.
 
-    Returns the real, `httpx`-based `YCloudHandoffGateway` whenever
-    `settings.ycloud_api_key` is configured, else the in-memory
-    `FakeYCloudHandoffGateway` — same conditional pattern as
-    `get_messaging_gateway` below. Callers only depend on the
-    `HumanHandoffGateway` Protocol.
+    Always the in-memory `FakeYCloudHandoffGateway`: the handoff is recorded durably
+    on the conversation (`mode="human"`), and labels for the human team live in
+    Chatwoot, not in YCloud contact tags.
     """
-    if get_settings().ycloud_api_key:
-        return _get_real_ycloud_handoff_gateway()
     return _get_fake_ycloud_handoff_gateway()
 
 
@@ -324,6 +314,7 @@ def get_mirror_to_chatwoot_use_case() -> MirrorMessageToChatwootUseCase:
     return MirrorMessageToChatwootUseCase(
         chatwoot_gateway=get_chatwoot_gateway(),
         mapping_repositories_provider=open_sqlalchemy_chatwoot_mapping_repository,
+        redis_client=get_shared_redis_client(),
     )
 
 

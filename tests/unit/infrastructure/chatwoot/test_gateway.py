@@ -17,7 +17,12 @@ class _StubChatwootClient:
         create_contact_raises: ChatwootAPIError | None = None,
         existing_contact: dict[str, object] | None = None,
         labels_by_conversation: dict[str, list[str]] | None = None,
+        conversations: dict[str, dict[str, object]] | None = None,
+        contact_name: str = "",
     ) -> None:
+        self._conversations = conversations or {}
+        self._contact_name = contact_name
+        self.name_updates: list[tuple[str, str]] = []
         self._create_contact_raises = create_contact_raises
         self._existing_contact = existing_contact
         self._labels_by_conversation = labels_by_conversation or {}
@@ -39,6 +44,12 @@ class _StubChatwootClient:
         self.find_contact_calls.append(identifier)
         return self._existing_contact
 
+    async def get_contact_name(self, contact_id: str) -> str:
+        return self._contact_name
+
+    async def update_contact_name(self, contact_id: str, name: str) -> None:
+        self.name_updates.append((contact_id, name))
+
     async def create_conversation(self, source_id: str, contact_id: str) -> str:
         return "chatwoot-conv-1"
 
@@ -51,6 +62,9 @@ class _StubChatwootClient:
 
     async def set_conversation_labels(self, conversation_id: str, labels: list[str]) -> None:
         self.labels_set.append((conversation_id, labels))
+
+    async def get_conversation(self, conversation_id: str) -> dict[str, object]:
+        return self._conversations[conversation_id]
 
 
 @pytest.mark.asyncio
@@ -201,3 +215,54 @@ async def test_assign_bot_removes_duplicate_labels_while_switching_control():
     await gateway.assign_bot("chatwoot-conv-1")
 
     assert client.labels_set == [("chatwoot-conv-1", ["vip", "agente"])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_name", ["", "+5491122334455"])
+async def test_rename_contact_if_unnamed_renames_a_contact_still_named_by_its_phone(
+    current_name: str,
+):
+    client = _StubChatwootClient(contact_name=current_name)
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.rename_contact_if_unnamed("99", _PHONE, "Alejandro Marinkovic")
+
+    assert client.name_updates == [("99", "Alejandro Marinkovic")]
+
+
+@pytest.mark.asyncio
+async def test_rename_contact_if_unnamed_never_overwrites_a_name_set_by_staff():
+    client = _StubChatwootClient(contact_name="Ale (paciente VIP)")
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.rename_contact_if_unnamed("99", _PHONE, "Alejandro Marinkovic")
+
+    assert client.name_updates == []
+
+async def test_find_conversation_contact_reads_the_sender_from_meta():
+    client = _StubChatwootClient(
+        conversations={
+            "43": {"id": 43, "meta": {"sender": {"id": 7, "phone_number": "+5491122334455"}}}
+        }
+    )
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    assert await gateway.find_conversation_contact("43") == ("7", "+5491122334455")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "conversation",
+    [
+        {"id": 43},
+        {"id": 43, "meta": {}},
+        {"id": 43, "meta": {"sender": {"id": 7}}},
+        {"id": 43, "meta": {"sender": {"id": 7, "phone_number": ""}}},
+        {"id": 43, "meta": {"sender": {"phone_number": "+5491122334455"}}},
+    ],
+)
+async def test_find_conversation_contact_returns_none_when_sender_data_is_missing(conversation):
+    client = _StubChatwootClient(conversations={"43": conversation})
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    assert await gateway.find_conversation_contact("43") is None

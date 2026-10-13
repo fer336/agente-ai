@@ -13,9 +13,6 @@ from app.api.dependencies.gateways import get_messaging_gateway
 from app.api.dependencies.repositories import get_committing_conversation_repository
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.application.conversations.handle_smb_message_echo import HandleSmbMessageEchoUseCase
-from app.application.conversations.sync_conversation_mode_from_tag import (
-    SyncConversationModeFromTagUseCase,
-)
 from app.application.errors.error_service import ErrorService
 from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.messages.ingest_message import IngestMessageUseCase
@@ -25,7 +22,6 @@ from app.domain.repositories.gateways import MessagingGateway
 from app.domain.repositories.sent_message_repository import SentMessageRepository
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.ycloud.schemas import (
-    YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
     YCloudMessageUpdatedEventPayload,
     YCloudSmbMessageEchoEventPayload,
@@ -34,11 +30,9 @@ from app.infrastructure.ycloud.webhook_parser import (
     extract_bot_reactivation_command,
     extract_delivery_failure,
     extract_smb_echo_patient_phone,
-    extract_tag_mode_change,
     is_message_status_event,
     is_processable_message,
     is_smb_message_echo_event,
-    is_tag_mode_change_event,
     to_inbound_message_dto,
 )
 
@@ -122,33 +116,6 @@ async def receive_ycloud_webhook(
     # from that alone. Remove once the tag-driven toggle is confirmed
     # working end-to-end against a live YCloud account.
     logger.info("webhook.received event_type=%s", event_type)
-
-    if is_tag_mode_change_event(event_type):
-        tag_payload = YCloudContactAttributesChangedEventPayload.model_validate(payload)
-        change = extract_tag_mode_change(tag_payload)
-        if change is None:
-            logger.info("webhook.tag_change_not_matched raw_payload=%s", payload)
-            return WebhookAckResponse(status="ignored")
-
-        ycloud_contact_id, mode = change
-        sync_mode = SyncConversationModeFromTagUseCase(messaging_gateway, conversation_repository)
-        try:
-            await sync_mode.execute(ycloud_contact_id, mode)
-        except Exception:
-            # Best-effort: a YCloud contact-lookup failure must never turn
-            # into a 500 that YCloud retries — same ack-and-drop stance as
-            # the message-parsing branch below.
-            logger.warning(
-                "webhook.tag_mode_sync_failed ycloud_contact_id=%s mode=%s",
-                ycloud_contact_id,
-                mode,
-                exc_info=True,
-            )
-        else:
-            logger.info(
-                "webhook.tag_mode_synced ycloud_contact_id=%s mode=%s", ycloud_contact_id, mode
-            )
-        return WebhookAckResponse(status="accepted")
 
     if is_smb_message_echo_event(event_type):
         echo_payload = YCloudSmbMessageEchoEventPayload.model_validate(payload)

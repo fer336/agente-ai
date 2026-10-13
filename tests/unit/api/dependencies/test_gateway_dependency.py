@@ -57,7 +57,6 @@ from app.infrastructure.transcription.groq_transcription_gateway import GroqTran
 from app.infrastructure.ycloud.fake_handoff_gateway import FakeYCloudHandoffGateway
 from app.infrastructure.ycloud.fake_media_gateway import FakeYCloudMediaGateway
 from app.infrastructure.ycloud.fake_messaging_gateway import FakeYCloudMessagingGateway
-from app.infrastructure.ycloud.handoff_gateway import YCloudHandoffGateway
 from app.infrastructure.ycloud.messaging_gateway import YCloudMessagingGateway
 
 
@@ -227,18 +226,16 @@ def test_get_human_handoff_gateway_returns_the_same_cached_instance_across_calls
     assert first is second
 
 
-def test_get_human_handoff_gateway_returns_a_real_ycloud_gateway_when_api_key_is_configured(
-    monkeypatch,
-):
+def test_get_human_handoff_gateway_stays_a_fake_even_when_ycloud_is_configured(monkeypatch):
+    # YCloud contact tags are not used for handoffs any more (Chatwoot owns the labels).
     monkeypatch.setattr(
         "app.api.dependencies.gateways.get_settings",
-        lambda: Settings(_env_file=None, ycloud_api_key="yc-key"),
+        lambda: Settings(_env_file=None, ycloud_api_key="test-key"),
     )
 
     gateway = get_human_handoff_gateway()
 
-    assert isinstance(gateway, YCloudHandoffGateway)
-
+    assert isinstance(gateway, FakeYCloudHandoffGateway)
 
 def test_get_patient_gateway_returns_a_fake_patient_gateway_by_default(monkeypatch):
     monkeypatch.setattr(

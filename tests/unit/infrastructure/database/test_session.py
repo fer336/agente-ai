@@ -37,3 +37,14 @@ def test_create_session_factory_returns_sessionmaker_bound_to_the_engine():
     session = factory()
     assert isinstance(session, AsyncSession)
     assert session.bind is engine
+
+
+def test_create_engine_sizes_the_pool_for_concurrent_webhook_and_background_work():
+    # Regression: the default pool (5 + 10 overflow) ran out under a burst of
+    # inbound messages from two numbers plus background mirror tasks, and the
+    # next request waited 30s and failed with QueuePool TimeoutError.
+    engine = create_engine("postgresql+asyncpg://user:pass@localhost:5432/db")
+
+    assert engine.pool.size() == 10
+    assert engine.pool._max_overflow == 20
+    assert engine.pool._timeout == 30

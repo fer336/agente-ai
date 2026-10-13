@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -50,9 +52,7 @@ def _make_client() -> ChatwootClient:
 async def test_get_conversation_labels_sends_a_get_with_the_api_access_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = _capture_requests(
-        monkeypatch, json_response={"payload": ["vip", "administracion"]}
-    )
+    captured = _capture_requests(monkeypatch, json_response={"payload": ["vip", "administracion"]})
     client = _make_client()
 
     labels = await client.get_conversation_labels("chatwoot-conv-1")
@@ -61,8 +61,7 @@ async def test_get_conversation_labels_sends_a_get_with_the_api_access_token(
     request = captured[0]
     assert request.method == "GET"
     assert request.url == (
-        f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}"
-        "/conversations/chatwoot-conv-1/labels"
+        f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/conversations/chatwoot-conv-1/labels"
     )
     assert request.headers["api_access_token"] == _API_ACCESS_TOKEN
     assert labels == ["vip", "administracion"]
@@ -116,7 +115,49 @@ async def test_set_conversation_labels_sends_a_post_with_the_api_access_token(
     request = captured[0]
     assert request.method == "POST"
     assert request.url == (
-        f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}"
-        "/conversations/chatwoot-conv-1/labels"
+        f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/conversations/chatwoot-conv-1/labels"
     )
     assert request.headers["api_access_token"] == _API_ACCESS_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_get_contact_name_reads_the_name_from_the_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch, {"payload": {"id": 7, "name": "+5491122334455"}})
+
+    name = await _make_client().get_contact_name("7")
+
+    assert name == "+5491122334455"
+    assert captured[0].method == "GET"
+    assert captured[0].url == f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/contacts/7"
+    assert captured[0].headers["api_access_token"] == _API_ACCESS_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_update_contact_name_sends_a_put_with_the_new_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch)
+
+    await _make_client().update_contact_name("7", "Alejandro Marinkovic")
+
+    assert captured[0].method == "PUT"
+    assert captured[0].url == f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/contacts/7"
+    assert json.loads(captured[0].content) == {"name": "Alejandro Marinkovic"}
+
+async def test_get_conversation_sends_a_get_and_returns_the_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"id": 43, "meta": {"sender": {"id": 7, "phone_number": "+5491122334455"}}}
+    captured = _capture_requests(monkeypatch, json_response=body)
+    client = _make_client()
+
+    conversation = await client.get_conversation("43")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.method == "GET"
+    assert request.url == f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/conversations/43"
+    assert request.headers["api_access_token"] == _API_ACCESS_TOKEN
+    assert conversation == body

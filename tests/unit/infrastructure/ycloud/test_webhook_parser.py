@@ -510,3 +510,36 @@ def test_extract_delivery_failure_returns_a_dto_for_a_failed_status():
     assert failure.error_code == "100"
     assert failure.error_message == "Parameter Invalid"
     assert "Parameter Invalid" in failure.technical_detail
+
+
+def test_to_inbound_message_dto_carries_the_whatsapp_profile_name():
+    payload = YCloudInboundEventPayload.model_validate(
+        {
+            "type": "whatsapp.inbound_message.received",
+            "whatsappInboundMessage": {
+                "id": "wamid.1",
+                "from": "+5491151234567",
+                "type": "text",
+                "text": {"body": "Hola"},
+                "customerProfile": {"name": "Alejandro Marinkovic"},
+            },
+        }
+    )
+
+    assert to_inbound_message_dto(payload).profile_name == "Alejandro Marinkovic"
+
+
+def test_to_inbound_message_dto_profile_name_is_none_without_a_customer_profile():
+    payload = YCloudInboundEventPayload.model_validate(
+        {
+            "type": "whatsapp.inbound_message.received",
+            "whatsappInboundMessage": {
+                "id": "wamid.1",
+                "from": "+5491151234567",
+                "type": "text",
+                "text": {"body": "Hola"},
+            },
+        }
+    )
+
+    assert to_inbound_message_dto(payload).profile_name is None

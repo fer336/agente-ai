@@ -25,6 +25,9 @@ class InboundMessageDTO:
     filled in later, once `TranscribeAudioUseCase` produces a transcript —
     and instead carries the vendor's opaque `media_id`/`media_mime_type`
     (+ optional `media_sha256`) needed to resolve and download the file.
+
+    `profile_name` is the sender's WhatsApp profile name when the vendor
+    reports one, used to name the contact in Chatwoot; `None` otherwise.
     """
 
     external_message_id: str
@@ -35,3 +38,4 @@ class InboundMessageDTO:
     media_id: str | None = None
     media_mime_type: str | None = None
     media_sha256: str | None = None
+    profile_name: str | None = None
