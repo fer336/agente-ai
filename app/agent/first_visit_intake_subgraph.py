@@ -137,9 +137,23 @@ def _merge_extracted(details: dict[str, str], extracted: dict[str, str]) -> None
             details[field] = value
 
 
+#: Dentalink's "no insurance" convenio. A particular patient has no plan to give.
+_PARTICULAR_OBRA_SOCIAL = "particular"
+
+
+def requires_plan(details: dict[str, str]) -> bool:
+    """A plan only exists for an actual obra social or prepaga, never for "Particular"."""
+    return details.get("obra_social", "").strip().casefold() != _PARTICULAR_OBRA_SOCIAL
+
+
 def missing_intake_fields(details: dict[str, str]) -> list[str]:
-    """Fields with no value yet, in the fixed intake order."""
-    return [field for field in INTAKE_FIELDS if not details.get(field, "").strip()]
+    """Fields with no value yet, in the fixed intake order. The plan is skipped for a
+    particular patient."""
+    return [
+        field
+        for field in INTAKE_FIELDS
+        if not details.get(field, "").strip() and (field != "plan" or requires_plan(details))
+    ]
 
 
 def _ask(
@@ -206,22 +220,24 @@ def _review_turn(details: dict[str, str]) -> dict[str, object]:
         "editing_field": None,
         "details": details,
         "ask_fields": None,
-        "response_text": _review(details),
+        "response_text": review_text(details),
         "response_buttons": _buttons(*_REVIEW_BUTTONS),
         "next_action": "none",
         "ready_to_persist": False,
     }
 
 
-def _review(details: dict[str, str]) -> str:
-    return (
+def review_text(details: dict[str, str]) -> str:
+    text = (
         "Por favor, confirmá tus datos:\n\n"
         f"Nombre y apellido: {details['full_name']}\n"
         f"DNI: {details['dni']}\n"
         f"Correo electrónico: {details['email']}\n"
-        f"Obra social: {details['obra_social']}\n"
-        f"Plan: {details['plan']}"
+        f"Obra social: {details['obra_social']}"
     )
+    if requires_plan(details):
+        text += f"\nPlan: {details['plan']}"
+    return text
 
 
 def existing_dni_confirmation_turn(
@@ -322,9 +338,7 @@ def build_first_visit_intake_graph() -> Any:
                     "ready_to_persist": False,
                 }
             if on_file.get("full_name") and on_file.get("dni"):
-                return existing_dni_confirmation_turn(
-                    details, on_file["full_name"], on_file["dni"]
-                )
+                return existing_dni_confirmation_turn(details, on_file["full_name"], on_file["dni"])
             return _review_turn(details)
 
         if stage == "choose_field":

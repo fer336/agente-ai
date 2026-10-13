@@ -2304,7 +2304,8 @@ def create_appointment_node(
                                         "first_visit_completed": True,
                                         "first_visit_details": details,
                                         "insurance_provider": agreement.name,
-                                        "insurance_plan": details["plan"],
+                                        # A particular patient has no plan.
+                                        "insurance_plan": details.get("plan", ""),
                                         "patient": _patient_to_primitives(new_patient),
                                     },
                                 },
