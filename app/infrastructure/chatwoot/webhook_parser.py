@@ -58,14 +58,24 @@ def extract_staff_reply(payload: ChatwootMessageCreatedEventPayload) -> tuple[st
     return str(payload.conversation.id), payload.content
 
 
-def _current_labels(changed_attribute: ChatwootConversationChangedAttribute) -> set[str] | None:
-    """The labels after the change, from `label_list` (a list) or `cached_label_list`
+def _split_labels(raw: str | None) -> set[str]:
+    return {label.strip() for label in (raw or "").split(",") if label.strip()}
+
+
+def _label_sets(
+    changed_attribute: ChatwootConversationChangedAttribute,
+) -> tuple[set[str], set[str]] | None:
+    """`(previous, current)` labels from `label_list` (a list) or `cached_label_list`
     (a comma-separated string); `None` when this entry is not a label change."""
     if changed_attribute.label_list is not None:
-        return {label.strip() for label in changed_attribute.label_list.current_value}
+        change = changed_attribute.label_list
+        return (
+            {label.strip() for label in change.previous_value},
+            {label.strip() for label in change.current_value},
+        )
     if changed_attribute.cached_label_list is not None:
-        raw = changed_attribute.cached_label_list.current_value or ""
-        return {label.strip() for label in raw.split(",") if label.strip()}
+        cached = changed_attribute.cached_label_list
+        return _split_labels(cached.previous_value), _split_labels(cached.current_value)
     return None
 
 
@@ -74,19 +84,30 @@ def extract_control_label_change(
 ) -> tuple[str, str] | None:
     """Returns `(conversation_id, mode)` for a control-label update.
 
-    `administracion` wins if both control labels are present, failing safe to
-    human control. Duplicate webhook deliveries are harmless because setting
-    either local mode is idempotent.
+    When both control labels are present, the one staff just ADDED wins, so
+    adding `agente` while `administracion` is still on hands control back to the
+    bot in one click. If the added one cannot be told apart (both new, or no
+    previous value), `administracion` wins, failing safe to human control.
+    Duplicate webhook deliveries are harmless because setting either local mode
+    is idempotent.
     """
     if not payload.id:
         return None
     for changed_attribute in payload.changed_attributes:
-        labels = _current_labels(changed_attribute)
-        if labels is None:
+        label_sets = _label_sets(changed_attribute)
+        if label_sets is None:
             continue
-        if _ADMINISTRACION_LABEL in labels:
+        previous, current = label_sets
+        has_administracion = _ADMINISTRACION_LABEL in current
+        has_agent = _AGENT_LABEL in current
+        if has_administracion and has_agent:
+            added = current - previous
+            if _AGENT_LABEL in added and _ADMINISTRACION_LABEL not in added:
+                return str(payload.id), "agent"
             return str(payload.id), "human"
-        if _AGENT_LABEL in labels:
+        if has_administracion:
+            return str(payload.id), "human"
+        if has_agent:
             return str(payload.id), "agent"
         return None
     return None

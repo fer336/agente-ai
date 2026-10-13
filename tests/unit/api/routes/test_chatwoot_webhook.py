@@ -87,7 +87,7 @@ async def test_staff_reply_is_forwarded_to_whatsapp(_fakes):
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert messaging_gateway.sent_messages == [
-        (PhoneNumber("+5491122334455"), "Hola, te confirmo el turno")
+        (PhoneNumber("+5491122334455"), "> Asesor\nHola, te confirmo el turno")
     ]
 
 
@@ -138,10 +138,9 @@ async def test_staff_reply_pauses_the_bot_before_forwarding_and_syncs_the_label(
     assert updated.mode == "human"
     assert updated.input_state == "HUMAN"
     assert chatwoot_gateway.labels_by_conversation == {"99": "administracion"}
-    # This reply did not carry `administracion` before the safety handoff;
-    # it pauses the bot but must retain its original patient-facing content.
+    # The reply flips the label to `administracion`, so it already speaks as administración.
     assert messaging_gateway.sent_messages == [
-        (PhoneNumber("+5491122334455"), "Te atiendo personalmente")
+        (PhoneNumber("+5491122334455"), "> Asesor\nTe atiendo personalmente")
     ]
 
 
@@ -256,6 +255,67 @@ async def test_agente_label_reactivates_the_bot(_fakes):
 
 
 @pytest.mark.asyncio
+async def test_adding_agente_while_administracion_is_on_reactivates_and_leaves_only_agente(_fakes):
+    _, chatwoot_gateway, conversation_repository = _fakes
+
+    response = await _post_webhook(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "label_list": {
+                        "previous_value": ["administracion"],
+                        "current_value": ["administracion", "agente"],
+                    }
+                }
+            ],
+        }
+    )
+
+    assert response.status_code == 200
+    updated = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert updated is not None
+    assert updated.mode == "agent"
+    assert updated.input_state == "FREE_INPUT"
+    assert chatwoot_gateway.labels_by_conversation == {"99": "agente"}
+
+
+@pytest.mark.asyncio
+async def test_adding_administracion_while_agente_is_on_pauses_and_leaves_only_administracion(
+    _fakes,
+):
+    _, chatwoot_gateway, conversation_repository = _fakes
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert conversation is not None
+    conversation.mode = "agent"
+    conversation.input_state = "FREE_INPUT"
+    await conversation_repository.save(conversation)
+
+    response = await _post_webhook(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "label_list": {
+                        "previous_value": ["agente"],
+                        "current_value": ["agente", "administracion"],
+                    }
+                }
+            ],
+        }
+    )
+
+    assert response.status_code == 200
+    updated = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    assert updated is not None
+    assert updated.mode == "human"
+    assert updated.input_state == "HUMAN"
+    assert chatwoot_gateway.labels_by_conversation == {"99": "administracion"}
+
+
+@pytest.mark.asyncio
 async def test_unrelated_conversation_update_is_ignored(_fakes):
     response = await _post_webhook(
         {
@@ -315,7 +375,7 @@ async def test_staff_reply_in_an_unmapped_conversation_is_forwarded_via_the_chat
     )
 
     assert response.status_code == 200
-    assert (PhoneNumber("+5491199887766"), "Hola desde un chat viejo") in (
+    assert (PhoneNumber("+5491199887766"), "> Asesor\nHola desde un chat viejo") in (
         messaging_gateway.sent_messages
     )
 

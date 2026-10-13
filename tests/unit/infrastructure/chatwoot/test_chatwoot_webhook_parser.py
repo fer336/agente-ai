@@ -130,6 +130,51 @@ def test_extract_control_label_change_gives_administracion_precedence():
     )
 
 
+def _transition_payload(
+    previous: list[str], current: list[str]
+) -> ChatwootConversationUpdatedEventPayload:
+    return ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {"label_list": {"previous_value": previous, "current_value": current}}
+            ],
+        }
+    )
+
+
+def test_adding_agente_while_administracion_is_on_hands_control_to_the_bot():
+    payload = _transition_payload(["administracion"], ["administracion", "agente"])
+
+    assert extract_control_label_change(payload) == ("99", "agent")
+
+
+def test_adding_administracion_while_agente_is_on_hands_control_to_staff():
+    payload = _transition_payload(["agente"], ["agente", "administracion"])
+
+    assert extract_control_label_change(payload) == ("99", "human")
+
+
+def test_cached_label_list_added_agente_wins_over_the_previous_administracion():
+    payload = ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "cached_label_list": {
+                        "previous_value": "administracion",
+                        "current_value": "administracion,agente",
+                    }
+                }
+            ],
+        }
+    )
+
+    assert extract_control_label_change(payload) == ("99", "agent")
+
+
 def test_extract_control_label_change_ignores_unrelated_labels():
     assert extract_control_label_change(_updated_payload(["vip"])) is None
 

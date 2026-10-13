@@ -38,6 +38,9 @@ from app.infrastructure.chatwoot.webhook_parser import (
 
 logger = logging.getLogger(__name__)
 
+#: Internal bot mode -> the Chatwoot control label it mirrors (for readable logs).
+_CONTROL_LABEL_BY_MODE = {"human": "administracion", "agent": "agente"}
+
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
@@ -112,17 +115,13 @@ async def receive_chatwoot_webhook(
         )
         forward_reply = ForwardChatwootReplyUseCase(messaging_gateway, mapping_repository)
         try:
-            # Read the control label before the safety-net handoff below. A
-            # reply written without `administracion` still pauses the bot, but
-            # must not be presented to the patient as an administrator reply.
-            is_administracion = await chatwoot_gateway.has_administracion_label(
-                chatwoot_conversation_id
-            )
-            # Safety net: a genuine staff reply takes control even when the
-            # operator forgot to apply `administracion` first.
+            # A genuine staff reply takes control even when the operator forgot to
+            # apply `administracion` first: the label flips to `administracion`, so
+            # the reply already goes out as administración.
             await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
-            outgoing_content = f"> Asesor\n{content}" if is_administracion else content
-            forwarded = await forward_reply.execute(chatwoot_conversation_id, outgoing_content)
+            forwarded = await forward_reply.execute(
+                chatwoot_conversation_id, f"> Asesor\n{content}"
+            )
         except Exception:
             # Best-effort, same ack-and-drop stance as every branch in
             # `app.api.routes.webhook` — a lookup/send failure here must
@@ -173,7 +172,8 @@ async def receive_chatwoot_webhook(
                 pause_bot = PauseBotFromChatwootUseCase(
                     chatwoot_gateway, conversation_repository, mapping_repository
                 )
-                await pause_bot.execute(chatwoot_conversation_id)
+                # Also drops a leftover `agente` label, so one click is enough.
+                await pause_bot.execute(chatwoot_conversation_id, synchronize_label=True)
             else:
                 reactivate_bot = ReactivateBotFromChatwootUseCase(
                     chatwoot_gateway, conversation_repository, mapping_repository
@@ -181,16 +181,16 @@ async def receive_chatwoot_webhook(
                 await reactivate_bot.execute(chatwoot_conversation_id)
         except Exception:
             logger.warning(
-                "chatwoot_webhook.control_label_sync_failed chatwoot_conversation_id=%s mode=%s",
+                "chatwoot_webhook.control_label_sync_failed chatwoot_conversation_id=%s label=%s",
                 chatwoot_conversation_id,
-                mode,
+                _CONTROL_LABEL_BY_MODE[mode],
                 exc_info=True,
             )
         else:
             logger.info(
-                "chatwoot_webhook.control_label_synced chatwoot_conversation_id=%s mode=%s",
+                "chatwoot_webhook.control_label_synced chatwoot_conversation_id=%s label=%s",
                 chatwoot_conversation_id,
-                mode,
+                _CONTROL_LABEL_BY_MODE[mode],
             )
         return ChatwootWebhookAckResponse(status="accepted")
 
