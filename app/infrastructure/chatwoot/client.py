@@ -81,6 +81,19 @@ class ChatwootClient:
         payload = data.get("payload")
         return dict(payload["contact"]) if isinstance(payload, dict) else data
 
+    async def get_contact_name(self, contact_id: str) -> str:
+        """`GET /contacts/{id}` — the contact's current display name."""
+        data = await self._request("GET", f"/contacts/{contact_id}", self._api_access_token)
+        payload = data.get("payload")
+        name = payload.get("name") if isinstance(payload, dict) else None
+        return name if isinstance(name, str) else ""
+
+    async def update_contact_name(self, contact_id: str, name: str) -> None:
+        """`PUT /contacts/{id}` — changes only the display name."""
+        await self._request(
+            "PUT", f"/contacts/{contact_id}", self._api_access_token, {"name": name}
+        )
+
     async def create_conversation(self, source_id: str, contact_id: str) -> str:
         """`POST /conversations` — no idempotent "find or create" exists in
         Chatwoot's API; the caller must track the returned id itself."""
@@ -108,6 +121,14 @@ class ChatwootClient:
             f"/conversations/{conversation_id}/messages",
             token,
             {"content": content, "message_type": message_type},
+        )
+
+    async def get_conversation(self, conversation_id: str) -> dict[str, object]:
+        """`GET /conversations/{id}` — the conversation resource, whose
+        `meta.sender` carries the contact (`id`, `phone_number`). Same
+        `api_access_token` auth as `get_conversation_labels`."""
+        return await self._request(
+            "GET", f"/conversations/{conversation_id}", self._api_access_token
         )
 
     async def get_conversation_labels(self, conversation_id: str) -> list[str]:

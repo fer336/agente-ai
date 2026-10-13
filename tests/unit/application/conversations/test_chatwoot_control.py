@@ -82,12 +82,34 @@ async def test_mode_flip_persists_when_label_sync_fails():
             chatwoot_conversation_id="99",
         )
     )
-    use_case = PauseBotFromChatwootUseCase(
-        FakeChatwootGateway(fail=True), conversations, mappings
-    )
+    use_case = PauseBotFromChatwootUseCase(FakeChatwootGateway(fail=True), conversations, mappings)
 
     await use_case.execute("99", synchronize_label=True)
 
     conversation = await conversations.get_by_id(ConversationId("ycloud-+5491122334455"))
     assert conversation is not None
     assert conversation.mode == "human"
+
+
+@pytest.mark.asyncio
+async def test_a_mapped_conversation_missing_locally_does_not_raise():
+    # After the conversation history is cleared, a staff reply must still reach the
+    # patient: the route forwards right after this pause, so it must not raise.
+    mapping_repository = FakeChatwootMappingRepository()
+    await mapping_repository.save(
+        ChatwootConversationMapping(
+            conversation_id="ycloud-+5491122334455",
+            chatwoot_contact_id="1",
+            chatwoot_conversation_id="43",
+        )
+    )
+    use_case = PauseBotFromChatwootUseCase(
+        FakeChatwootGateway(), FakeConversationRepository(), mapping_repository
+    )
+
+    await use_case.execute("43", synchronize_label=True)
+
+    assert (
+        await FakeConversationRepository().get_by_id(ConversationId("ycloud-+5491122334455"))
+        is None
+    )

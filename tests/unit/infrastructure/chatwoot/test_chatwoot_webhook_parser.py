@@ -7,6 +7,7 @@ from app.infrastructure.chatwoot.webhook_parser import (
     extract_control_label_change,
     extract_resolved_conversation_id,
     extract_staff_reply,
+    is_conversation_resolved_event,
     is_conversation_status_changed_event,
     is_conversation_updated_event,
     is_message_created_event,
@@ -129,6 +130,51 @@ def test_extract_control_label_change_gives_administracion_precedence():
     )
 
 
+def _transition_payload(
+    previous: list[str], current: list[str]
+) -> ChatwootConversationUpdatedEventPayload:
+    return ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {"label_list": {"previous_value": previous, "current_value": current}}
+            ],
+        }
+    )
+
+
+def test_adding_agente_while_administracion_is_on_hands_control_to_the_bot():
+    payload = _transition_payload(["administracion"], ["administracion", "agente"])
+
+    assert extract_control_label_change(payload) == ("99", "agent")
+
+
+def test_adding_administracion_while_agente_is_on_hands_control_to_staff():
+    payload = _transition_payload(["agente"], ["agente", "administracion"])
+
+    assert extract_control_label_change(payload) == ("99", "human")
+
+
+def test_cached_label_list_added_agente_wins_over_the_previous_administracion():
+    payload = ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {
+                    "cached_label_list": {
+                        "previous_value": "administracion",
+                        "current_value": "administracion,agente",
+                    }
+                }
+            ],
+        }
+    )
+
+    assert extract_control_label_change(payload) == ("99", "agent")
+
+
 def test_extract_control_label_change_ignores_unrelated_labels():
     assert extract_control_label_change(_updated_payload(["vip"])) is None
 
@@ -143,3 +189,51 @@ def test_extract_control_label_change_ignores_updates_without_label_changes():
     )
 
     assert extract_control_label_change(payload) is None
+
+
+def _cached_labels_payload(current: str) -> ChatwootConversationUpdatedEventPayload:
+    # Chatwoot can report label changes through the `cached_label_list` column:
+    # a comma-separated string, not a list.
+    return ChatwootConversationUpdatedEventPayload.model_validate(
+        {
+            "event": "conversation_updated",
+            "id": 99,
+            "changed_attributes": [
+                {"updated_at": {"previous_value": "a", "current_value": "b"}},
+                {"cached_label_list": {"previous_value": "agente", "current_value": current}},
+            ],
+        }
+    )
+
+
+def test_cached_label_list_with_administracion_pauses_the_bot():
+    # Live case: conversation_updated arrived after setting "administracion" and the
+    # bot kept answering, because only `label_list` was recognised.
+    assert extract_control_label_change(_cached_labels_payload("vip,administracion")) == (
+        "99",
+        "human",
+    )
+
+
+def test_cached_label_list_with_agente_reactivates_the_bot():
+    assert extract_control_label_change(_cached_labels_payload("agente")) == ("99", "agent")
+
+
+def test_cached_label_list_tolerates_spaces_after_commas():
+    assert extract_control_label_change(_cached_labels_payload("vip, administracion")) == (
+        "99",
+        "human",
+    )
+
+
+def test_is_conversation_resolved_event():
+    assert is_conversation_resolved_event("conversation_resolved") is True
+    assert is_conversation_resolved_event("conversation_status_changed") is False
+
+
+def test_extract_resolved_conversation_id_treats_the_resolved_event_as_resolved_without_status():
+    payload = ChatwootConversationStatusChangedEventPayload.model_validate(
+        {"event": "conversation_resolved", "id": 43}
+    )
+
+    assert extract_resolved_conversation_id(payload) == "43"
