@@ -18,8 +18,11 @@ class _StubChatwootClient:
         existing_contact: dict[str, object] | None = None,
         labels_by_conversation: dict[str, list[str]] | None = None,
         conversations: dict[str, dict[str, object]] | None = None,
+        contact_name: str = "",
     ) -> None:
         self._conversations = conversations or {}
+        self._contact_name = contact_name
+        self.name_updates: list[tuple[str, str]] = []
         self._create_contact_raises = create_contact_raises
         self._existing_contact = existing_contact
         self._labels_by_conversation = labels_by_conversation or {}
@@ -40,6 +43,12 @@ class _StubChatwootClient:
     async def find_contact_by_identifier(self, identifier: str) -> dict[str, object] | None:
         self.find_contact_calls.append(identifier)
         return self._existing_contact
+
+    async def get_contact_name(self, contact_id: str) -> str:
+        return self._contact_name
+
+    async def update_contact_name(self, contact_id: str, name: str) -> None:
+        self.name_updates.append((contact_id, name))
 
     async def create_conversation(self, source_id: str, contact_id: str) -> str:
         return "chatwoot-conv-1"
@@ -209,6 +218,27 @@ async def test_assign_bot_removes_duplicate_labels_while_switching_control():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("current_name", ["", "+5491122334455"])
+async def test_rename_contact_if_unnamed_renames_a_contact_still_named_by_its_phone(
+    current_name: str,
+):
+    client = _StubChatwootClient(contact_name=current_name)
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.rename_contact_if_unnamed("99", _PHONE, "Alejandro Marinkovic")
+
+    assert client.name_updates == [("99", "Alejandro Marinkovic")]
+
+
+@pytest.mark.asyncio
+async def test_rename_contact_if_unnamed_never_overwrites_a_name_set_by_staff():
+    client = _StubChatwootClient(contact_name="Ale (paciente VIP)")
+    gateway = ChatwootConversationGateway(client)  # type: ignore[arg-type]
+
+    await gateway.rename_contact_if_unnamed("99", _PHONE, "Alejandro Marinkovic")
+
+    assert client.name_updates == []
+
 async def test_find_conversation_contact_reads_the_sender_from_meta():
     client = _StubChatwootClient(
         conversations={

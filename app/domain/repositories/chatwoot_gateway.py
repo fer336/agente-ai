@@ -20,6 +20,14 @@ class ChatwootGateway(Protocol):
         other way once the contact already exists."""
         ...
 
+    async def rename_contact_if_unnamed(
+        self, contact_id: str, phone: PhoneNumber, name: str
+    ) -> None:
+        """Gives the contact the patient's WhatsApp profile `name`, but only while
+        its current name is empty or still the phone number — a name set by staff
+        is never overwritten."""
+        ...
+
     async def create_conversation(self, source_id: str, contact_id: str) -> str:
         """Returns a NEW Chatwoot conversation id — no idempotent
         find-or-create exists in Chatwoot's own API, callers must not call

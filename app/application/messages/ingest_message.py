@@ -333,7 +333,10 @@ class IngestMessageUseCase:
                 # for why this never blocks/breaks the real reply.
                 asyncio.create_task(
                     self._mirror_to_chatwoot.mirror_incoming(
-                        conversation.id, dto.from_phone, str(dto.from_phone), dto.text
+                        conversation.id,
+                        dto.from_phone,
+                        dto.profile_name or str(dto.from_phone),
+                        dto.text,
                     )
                 )
 

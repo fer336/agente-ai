@@ -82,6 +82,12 @@ class YCloudAudioMessage(BaseModel):
     sha256: str | None = None
 
 
+class YCloudCustomerProfile(BaseModel):
+    """WhatsApp profile of the sender (`customerProfile`), only its display name."""
+
+    name: str = ""
+
+
 class YCloudInboundMessage(BaseModel):
     id: str = ""
     from_: str = Field(default="", alias="from")
@@ -91,6 +97,7 @@ class YCloudInboundMessage(BaseModel):
     interactive: YCloudInteractive | None = None
     button: YCloudTemplateButton | None = None
     audio: YCloudAudioMessage | None = None
+    customerProfile: YCloudCustomerProfile | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 

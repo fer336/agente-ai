@@ -48,15 +48,25 @@ class MirrorMessageToChatwootUseCase:
         self, conversation_id: ConversationId, phone: PhoneNumber, name: str, text: str
     ) -> None:
         try:
-            chatwoot_conversation_id = await self._resolve_conversation(
+            chatwoot_conversation_id, contact_id = await self._resolve_mapping(
                 conversation_id, phone, name
             )
             await self._chatwoot_gateway.post_incoming_message(chatwoot_conversation_id, text)
+            if name != str(phone):
+                await self._rename_contact(contact_id, phone, name)
         except Exception:  # noqa: BLE001 - mirror is best-effort, must never raise
             logger.warning(
                 "mirror_to_chatwoot.mirror_incoming_failed conversation_id=%s",
                 conversation_id,
                 exc_info=True,
+            )
+
+    async def _rename_contact(self, contact_id: str, phone: PhoneNumber, name: str) -> None:
+        try:
+            await self._chatwoot_gateway.rename_contact_if_unnamed(contact_id, phone, name)
+        except Exception:  # noqa: BLE001 - cosmetic, the message is already mirrored
+            logger.warning(
+                "mirror_to_chatwoot.rename_contact_failed contact_id=%s", contact_id, exc_info=True
             )
 
     async def mirror_outgoing(
@@ -115,14 +125,19 @@ class MirrorMessageToChatwootUseCase:
     async def _resolve_conversation(
         self, conversation_id: ConversationId, phone: PhoneNumber, name: str
     ) -> str:
+        chatwoot_conversation_id, _ = await self._resolve_mapping(conversation_id, phone, name)
+        return chatwoot_conversation_id
+
+    async def _resolve_mapping(
+        self, conversation_id: ConversationId, phone: PhoneNumber, name: str
+    ) -> tuple[str, str]:
+        """`(chatwoot_conversation_id, chatwoot_contact_id)`, creating both on first use."""
         async with self._mapping_repositories_provider() as mapping_repository:
             existing = await mapping_repository.get_by_conversation_id(str(conversation_id))
             if existing is not None:
-                return existing.chatwoot_conversation_id
+                return existing.chatwoot_conversation_id, existing.chatwoot_contact_id
 
-            contact_id, source_id = await self._chatwoot_gateway.find_or_create_contact(
-                phone, name
-            )
+            contact_id, source_id = await self._chatwoot_gateway.find_or_create_contact(phone, name)
             chatwoot_conversation_id = await self._chatwoot_gateway.create_conversation(
                 source_id, contact_id
             )
@@ -145,4 +160,4 @@ class MirrorMessageToChatwootUseCase:
                     conversation_id,
                     exc_info=True,
                 )
-            return chatwoot_conversation_id
+            return chatwoot_conversation_id, contact_id
