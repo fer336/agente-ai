@@ -109,12 +109,13 @@ async def _post(
     path: str,
     cookies: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
+    json: dict[str, object] | None = None,
 ):
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport, base_url="http://test", cookies=cookies or {}
     ) as client:
-        return await client.post(path, headers=headers or {})
+        return await client.post(path, headers=headers or {}, json=json)
 
 
 # --- §75.3: authentication is required on every /admin route ------------
@@ -391,6 +392,7 @@ class _StubYCloudClient:
     def __init__(self) -> None:
         self.create_flow_calls: list[dict[str, object]] = []
         self.preview_requests: list[str] = []
+        self.send_flow_calls: list[dict[str, object]] = []
 
     async def create_flow(
         self, name: str, categories: list[str], flow_json: str, publish: bool = False
@@ -399,6 +401,10 @@ class _StubYCloudClient:
             {"name": name, "categories": categories, "flow_json": flow_json, "publish": publish}
         )
         return f"flow-{len(self.create_flow_calls)}"
+
+    async def send_flow(self, to: str, body_text: str, **kwargs: object) -> str:
+        self.send_flow_calls.append({"to": to, "body_text": body_text, **kwargs})
+        return "wamid-test-1"
 
     async def get_flow_preview_url(self, flow_id: str) -> str:
         self.preview_requests.append(flow_id)
@@ -553,6 +559,89 @@ async def test_intake_draft_reports_a_ycloud_rejection_instead_of_a_bare_500(
 
     assert response.status_code == 502
     assert "Flow name is not unique" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_send_delivers_the_draft_flow_to_the_given_phone(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post(
+        "/admin/api/flows/intake-draft/send",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+        json={"flow_id": "flow-9", "to": "+5492254423359"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message_id": "wamid-test-1"}
+    (call,) = _stub_ycloud_client.send_flow_calls
+    assert call["to"] == "+5492254423359"
+    assert call["flow_id"] == "flow-9"
+    assert call["flow_screen_id"] == "DATOS_PACIENTE"
+    assert call["mode"] == "draft"
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_send_rejects_a_phone_that_is_not_e164(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post(
+        "/admin/api/flows/intake-draft/send",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+        json={"flow_id": "flow-9", "to": "2254423359"},
+    )
+
+    assert response.status_code == 422
+    assert _stub_ycloud_client.send_flow_calls == []
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_send_is_rejected_without_a_csrf_header_or_for_read_only(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    technical = _session_cookies(ADMIN_TECHNICAL)
+    no_csrf = await _post(
+        "/admin/api/flows/intake-draft/send",
+        cookies=technical,
+        json={"flow_id": "flow-9", "to": "+5492254423359"},
+    )
+    read_only = _session_cookies(READ_ONLY)
+    forbidden = await _post(
+        "/admin/api/flows/intake-draft/send",
+        cookies=read_only,
+        headers={"x-csrf-token": read_only["admin_csrf"]},
+        json={"flow_id": "flow-9", "to": "+5492254423359"},
+    )
+
+    assert no_csrf.status_code == 403
+    assert forbidden.status_code == 403
+    assert _stub_ycloud_client.send_flow_calls == []
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_send_reports_a_ycloud_rejection_as_a_502(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    async def _reject(*_args: object, **_kwargs: object) -> str:
+        raise YCloudAPIError("YCloud API returned 400: outside the 24h window", status_code=400)
+
+    _stub_ycloud_client.send_flow = _reject  # type: ignore[method-assign,assignment]
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post(
+        "/admin/api/flows/intake-draft/send",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+        json={"flow_id": "flow-9", "to": "+5492254423359"},
+    )
+
+    assert response.status_code == 502
+    assert "24h window" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
