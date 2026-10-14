@@ -504,29 +504,6 @@ async def test_send_list_omits_section_title_when_not_given(
 
 
 @pytest.mark.asyncio
-async def test_send_flow_in_draft_mode_adds_the_mode_parameter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _capture_requests(monkeypatch)
-    client = YCloudClient(
-        base_url="https://api.ycloud.com", api_key="yc-key-abc", whatsapp_number="+5491100000001"
-    )
-
-    await client.send_flow(
-        "+5491122334455",
-        "Probando",
-        flow_id="flow-1",
-        flow_screen_id="DATOS_PACIENTE",
-        flow_cta="Completar",
-        flow_token="draft-test",
-        mode="draft",
-    )
-
-    parameters = json.loads(captured[0].content)["interactive"]["action"]["parameters"]
-    assert parameters["mode"] == "draft"
-
-
-@pytest.mark.asyncio
 async def test_send_flow_posts_the_flow_interactive_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
