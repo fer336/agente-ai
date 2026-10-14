@@ -757,6 +757,11 @@ async def _extract_identification_pieces(
     return await _extract_full_name(llm_provider, stripped), None
 
 
+#: Name of the clinic's private-pay convenio in Dentalink, and (lower-cased)
+#: the id of the intake Flow dropdown's "Particular" option.
+_PARTICULAR_AGREEMENT_NAME = "Particular"
+
+
 def _match_intake_agreement(obra_social: str, agreements: list[Agreement]) -> Agreement | None:
     """Match the patient's obra social against the insurer names on file.
 
@@ -1739,6 +1744,12 @@ def create_appointment_node(
         raw_dni = str(flow_fields.get("dni") or "").strip()
         email = str(flow_fields.get("email") or "").strip() or None
         obra_social_name = str(flow_fields.get("obra_social") or "").strip()
+        plan = str(flow_fields.get("plan") or "").strip()
+        if obra_social_name.casefold() == _PARTICULAR_AGREEMENT_NAME.casefold():
+            # The intake Flow's dropdown sends the stable id "particular": it
+            # is the clinic's own "Particular" convenio, which never has a plan.
+            obra_social_name = _PARTICULAR_AGREEMENT_NAME
+            plan = ""
         try:
             validated_dni = Dni(raw_dni)
         except ValueError:
@@ -1791,6 +1802,11 @@ def create_appointment_node(
                 # Agreement notices already say "Ya figurás en nuestro sistema",
                 # so they replace the static notice instead of repeating it.
                 registration_notice = agreement_notice or registration_notice
+                # The plan is a local-only detail (Dentalink links the insurer
+                # only), kept alongside the insurer for the rest of the booking.
+                collected_data = {**collected_data, "insurance_provider": agreement.name}
+                if plan:
+                    collected_data["insurance_plan"] = plan
         patient_primitives = _patient_to_primitives(new_patient)
         if _is_create_flow(collected_data):
             registration_next = await _continue_booking_with_patient(

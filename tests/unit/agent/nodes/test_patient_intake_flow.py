@@ -15,11 +15,13 @@ from app.agent.nodes.appointment import (
     STAGE_AWAITING_VERIFICATION_CONFIRMATION,
     STAGE_AWAITING_VERIFICATION_FLOW,
 )
+from app.domain.entities.agreement import Agreement
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.infrastructure.ycloud.flows import PATIENT_INTAKE_FLOW_SCREEN_ID
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.appointment_node import future_slot
 from tests.fixtures.appointment_node import make_node_and_conversation as _make_node
+from tests.fixtures.gateways import make_agreement_gateway
 from tests.fixtures.seed_objects import make_patient
 
 
@@ -195,3 +197,91 @@ async def test_yes_reply_in_the_registration_stage_is_treated_as_a_verification(
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_VERIFICATION_CONFIRMATION
+
+
+_PARTICULAR = Agreement(id="agr-part", name="Particular")
+_OSDE = Agreement(id="agr-osde", name="OSDE")
+
+
+async def _register_through_the_intake_flow(*, agreement_gateway, **flow_fields: str):
+    slot = future_slot()
+    node, _, _ = await _make_node(
+        available_slots=[slot],
+        patients=[],
+        conversation_id="ycloud-+5491122334455",
+        patient_intake_flow_id="flow-intake",
+        agreement_gateway=agreement_gateway,
+    )
+    state = make_agent_state(
+        conversation_id="ycloud-+5491122334455",
+        button_payload=_payload(
+            es_paciente="no",
+            full_name="Rosa Gomez",
+            dni="30123456",
+            email="rosa@example.com",
+            **flow_fields,
+        ),
+        collected_data={
+            "stage": STAGE_AWAITING_VERIFICATION_FLOW,
+            "operation": CREATE_APPOINTMENT_ACTION,
+            "pending_selected_slot": slot,
+        },
+    )
+    return await node(state)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("option_id", ["particular", "Particular", " PARTICULAR "])
+async def test_particular_option_links_the_particular_agreement_and_never_stores_a_plan(
+    option_id,
+):
+    gateway = make_agreement_gateway(agreements=[_PARTICULAR, _OSDE])
+
+    result = await _register_through_the_intake_flow(
+        agreement_gateway=gateway,
+        obra_social=option_id,
+        plan="Plan fantasma",
+    )
+
+    patient_id = result["collected_data"]["patient"]["id"]
+    assert await gateway.get_patient_agreements(patient_id) == [_PARTICULAR]
+    assert "insurance_plan" not in result["collected_data"]
+    assert result["collected_data"]["insurance_provider"] == "Particular"
+
+
+@pytest.mark.asyncio
+async def test_chosen_obra_social_is_linked_and_its_plan_is_kept_locally():
+    gateway = make_agreement_gateway(agreements=[_PARTICULAR, _OSDE])
+
+    result = await _register_through_the_intake_flow(
+        agreement_gateway=gateway, obra_social="OSDE", plan="210"
+    )
+
+    patient_id = result["collected_data"]["patient"]["id"]
+    assert await gateway.get_patient_agreements(patient_id) == [_OSDE]
+    assert result["collected_data"]["insurance_provider"] == "OSDE"
+    assert result["collected_data"]["insurance_plan"] == "210"
+
+
+@pytest.mark.asyncio
+async def test_chosen_obra_social_without_a_plan_stores_no_plan():
+    gateway = make_agreement_gateway(agreements=[_PARTICULAR, _OSDE])
+
+    result = await _register_through_the_intake_flow(
+        agreement_gateway=gateway, obra_social="OSDE", plan="  "
+    )
+
+    assert "insurance_plan" not in result["collected_data"]
+    assert result["collected_data"]["insurance_provider"] == "OSDE"
+
+
+@pytest.mark.asyncio
+async def test_unknown_obra_social_stores_neither_provider_nor_plan():
+    gateway = make_agreement_gateway(agreements=[_PARTICULAR])
+
+    result = await _register_through_the_intake_flow(
+        agreement_gateway=gateway, obra_social="Inexistente", plan="X"
+    )
+
+    assert "insurance_provider" not in result["collected_data"]
+    assert "insurance_plan" not in result["collected_data"]
