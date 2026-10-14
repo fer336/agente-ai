@@ -484,10 +484,13 @@ async def send_intake_flow_draft(
     _csrf: SessionPayload = Depends(require_csrf),
     ycloud_client: YCloudClient = Depends(get_ycloud_client),
 ) -> IntakeDraftSendResponse:
-    """Sends the UNPUBLISHED intake Flow to one phone so it can be reviewed on a real
-    device (Meta `mode="draft"`; the phone must have written to the clinic number within
-    the last 24 hours). Same posture as the other Flow routes. Do not press "Enviar" in
-    the test form: the reply reaches the agent like a real patient's.
+    """Sends the intake Flow to one phone so it can be reviewed on a real device.
+
+    The Flow must be PUBLISHED: YCloud's Flow message schema has no draft mode, so Meta
+    rejects a draft with `[131009] flow_id is invalid`. The phone must have written to
+    the clinic number within the last 24 hours. Same posture as the other Flow routes.
+    Do not press "Enviar" in the test form: the reply reaches the agent like a real
+    patient's.
     """
     try:
         message_id = await ycloud_client.send_flow(
@@ -497,7 +500,6 @@ async def send_intake_flow_draft(
             flow_screen_id=PATIENT_INTAKE_FLOW_SCREEN_ID,
             flow_cta="Ver formulario",
             flow_token=f"draft-test:{body.flow_id}",
-            mode="draft",
         )
     except YCloudAPIError as error:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error

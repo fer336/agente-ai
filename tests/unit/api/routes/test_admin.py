@@ -580,7 +580,8 @@ async def test_intake_draft_send_delivers_the_draft_flow_to_the_given_phone(
     assert call["to"] == "+5492254423359"
     assert call["flow_id"] == "flow-9"
     assert call["flow_screen_id"] == "DATOS_PACIENTE"
-    assert call["mode"] == "draft"
+    # YCloud's Flow message schema has no `mode`: it must never be sent.
+    assert "mode" not in call
 
 
 @pytest.mark.asyncio
