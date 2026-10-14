@@ -11,15 +11,17 @@ from app.api.dependencies.admin import (
     get_run_query_service,
 )
 from app.api.dependencies.auth import require_csrf, require_role
-from app.api.dependencies.gateways import get_ycloud_client
+from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
+from app.application.agreements.list_agreements import ListAgreementsUseCase
 from app.application.conversations.reset_conversation import ResetConversationUseCase
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL, ROLES
 from app.domain.entities.agent_run import AgentRun
 from app.domain.entities.error_record import ErrorRecord
+from app.domain.repositories.gateways import AgreementGateway
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
 from app.infrastructure.ycloud.client import YCloudClient
@@ -27,6 +29,7 @@ from app.infrastructure.ycloud.flows import (
     build_patient_intake_flow_json,
     build_registration_flow_json,
     build_verification_flow_json,
+    load_flow_header_image_base64,
 )
 
 #: `/admin/api` (not bare `/admin`) — the PRD.md §44 routes
@@ -369,6 +372,7 @@ async def create_patient_flows(
     _role: SessionPayload = Depends(require_role(ADMIN_TECHNICAL)),
     _csrf: SessionPayload = Depends(require_csrf),
     ycloud_client: YCloudClient = Depends(get_ycloud_client),
+    agreement_gateway: AgreementGateway = Depends(get_agreement_gateway),
 ) -> FlowCreationResponse:
     """One-time setup action (no PRD.md section — this session's own
     brief): creates and publishes the patient-identification WhatsApp
@@ -389,7 +393,7 @@ async def create_patient_flows(
     patient_intake_flow_id = await ycloud_client.create_flow(
         name="Datos de paciente",
         categories=["SIGN_UP"],
-        flow_json=build_patient_intake_flow_json(),
+        flow_json=await _intake_flow_json(agreement_gateway),
         publish=True,
     )
     verification_flow_id = await ycloud_client.create_flow(
@@ -409,3 +413,41 @@ async def create_patient_flows(
         verification_flow_id=verification_flow_id,
         registration_flow_id=registration_flow_id,
     )
+
+
+async def _intake_flow_json(agreement_gateway: AgreementGateway) -> str:
+    """The intake Flow with the clinic's live convenios in its dropdown and the
+    logo as header. A Dentalink failure propagates: shipping a Flow whose
+    dropdown silently lacks every convenio would be worse than no Flow."""
+    agreements = await ListAgreementsUseCase(agreement_gateway).execute()
+    return build_patient_intake_flow_json(
+        header_image_base64=load_flow_header_image_base64(),
+        agreement_names=[agreement.name for agreement in agreements],
+    )
+
+
+class IntakeDraftResponse(BaseModel):
+    flow_id: str
+    preview_url: str
+
+
+@router.post("/flows/intake-draft", response_model=IntakeDraftResponse)
+async def create_intake_flow_draft(
+    _role: SessionPayload = Depends(require_role(ADMIN_TECHNICAL)),
+    _csrf: SessionPayload = Depends(require_csrf),
+    ycloud_client: YCloudClient = Depends(get_ycloud_client),
+    agreement_gateway: AgreementGateway = Depends(get_agreement_gateway),
+) -> IntakeDraftResponse:
+    """Creates ONLY the intake Flow as an unpublished draft (live convenios in
+    the dropdown, clinic logo as header) and returns its preview URL, so the
+    clinic can review it before anything is published or sent. Same posture
+    as `/flows/create`: `ADMIN_TECHNICAL`-only and CSRF-checked.
+    """
+    flow_id = await ycloud_client.create_flow(
+        name="Datos de paciente",
+        categories=["SIGN_UP"],
+        flow_json=await _intake_flow_json(agreement_gateway),
+        publish=False,
+    )
+    preview_url = await ycloud_client.get_flow_preview_url(flow_id)
+    return IntakeDraftResponse(flow_id=flow_id, preview_url=preview_url)

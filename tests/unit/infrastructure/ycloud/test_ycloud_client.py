@@ -742,3 +742,81 @@ async def test_send_typing_indicator_raises_ycloud_api_error_on_non_2xx_response
         await client.send_typing_indicator("wamid.stale")
 
     assert exc_info.value.status_code == 404
+
+
+def _flow_client() -> YCloudClient:
+    return YCloudClient(
+        base_url="https://api.ycloud.com",
+        api_key="yc-key-abc",
+        whatsapp_number="+5491100000001",
+        waba_id="waba-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_flow_preview_url_gets_the_preview_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(
+        monkeypatch, json_response={"previewUrl": "https://business.facebook.com/wa/flows/p/1"}
+    )
+
+    url = await _flow_client().get_flow_preview_url("flow-99")
+
+    assert url == "https://business.facebook.com/wa/flows/p/1"
+    request = captured[0]
+    assert request.url == "https://api.ycloud.com/v2/whatsapp/flows/flow-99/preview"
+    assert request.method == "GET"
+    assert request.headers["x-api-key"] == "yc-key-abc"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response_body",
+    [
+        {"preview_url": "https://example.com/p"},
+        {"url": "https://example.com/p"},
+        {"preview": {"url": "https://example.com/p"}},
+        {"preview": {"previewUrl": "https://example.com/p"}},
+        {"data": {"preview_url": "https://example.com/p"}},
+    ],
+)
+async def test_get_flow_preview_url_accepts_the_plausible_response_shapes(
+    monkeypatch: pytest.MonkeyPatch, response_body: dict
+) -> None:
+    _capture_requests(monkeypatch, json_response=response_body)
+
+    assert await _flow_client().get_flow_preview_url("flow-99") == "https://example.com/p"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_body", [{}, {"id": "flow-99"}, {"previewUrl": ""}, {"url": 3}])
+async def test_get_flow_preview_url_raises_when_the_url_is_missing(
+    monkeypatch: pytest.MonkeyPatch, response_body: dict
+) -> None:
+    _capture_requests(monkeypatch, json_response=response_body)
+
+    with pytest.raises(YCloudAPIError, match="preview"):
+        await _flow_client().get_flow_preview_url("flow-99")
+
+
+@pytest.mark.asyncio
+async def test_get_flow_preview_url_raises_ycloud_api_error_on_non_2xx_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="flow not found")
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def patched_async_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", patched_async_client)
+
+    with pytest.raises(YCloudAPIError, match="404") as exc_info:
+        await _flow_client().get_flow_preview_url("flow-99")
+
+    assert exc_info.value.status_code == 404
