@@ -36,7 +36,7 @@ commits; Conventional Commits. Real Meta calls and sends to +542254423359 need t
 - [~] T6 Live: draft `4672565303067581` created in Meta and validated (validationErrors empty). Publish refused by Meta: 400 "Blocked by Integrity" (code 139000, subcode 4233020). Not sent. First draft `1004024948763559` was invalid (layout must be SingleColumnLayout > Form); it remains as a draft in the account.
 - [x] T7 Flow JSON: obra social Dropdown (agreement names + `particular`, deduped, 30-char titles, 200 cap), optional `plan` in a nested `If` (`${form.obra_social} != '' && ${form.obra_social} != 'particular'`), `plan` in the completion payload, logo loader + alt-text "Smiling Dental Studio" (68a8970; RED ImportError, GREEN 22 passed in test_flows.py)
 - [x] T8 Backend consumption: `particular` option id (case-insensitive) links the "Particular" convenio and never keeps a plan; other insurers keep `insurance_provider`/`insurance_plan` in `collected_data` (local only) (8a39f8a; 5 RED, then 14 passed; tests/unit/agent 1651 passed)
-- [x] T9 `YCloudClient.get_flow_preview_url` (defensive response parsing, `YCloudAPIError` when the URL is missing) (see commit below; RED 11 failed, GREEN 38 passed)
+- [x] T9 `YCloudClient.get_flow_preview_url` (defensive response parsing, `YCloudAPIError` when the URL is missing) (1922294; RED 11 failed, GREEN 38 passed)
 - [x] T10 `POST /admin/api/flows/intake-draft` (draft, `publish=False`, live convenios, logo, returns `{flow_id, preview_url}`); `/flows/create` also passes the convenios and logo to the intake builder (RED 4 failed, GREEN 32 passed)
 
 Decisions T7-T10: Meta allows nested `If` up to 3 levels from Flow JSON 4.0 (docs: developers.facebook.com

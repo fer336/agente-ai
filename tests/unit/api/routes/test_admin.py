@@ -16,13 +16,13 @@ from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
 from app.config.settings import Settings, get_settings
-from app.domain.entities.agreement import Agreement
 from app.domain.entities.admin_user import ADMIN_CLINIC, ADMIN_TECHNICAL, READ_ONLY
+from app.domain.entities.agreement import Agreement
 from app.infrastructure.auth.session_tokens import create_session_token
 from app.main import app
 from tests.fixtures.gateways import (
-    make_agreement_gateway,
     make_agent_run_repository,
+    make_agreement_gateway,
     make_conversation_repository,
     make_error_repository,
     make_message_repository,
