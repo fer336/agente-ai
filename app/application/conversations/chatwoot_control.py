@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 
 from app.application.conversations.set_conversation_input_state import (
     HUMAN,
@@ -29,6 +30,7 @@ class PauseBotFromChatwootUseCase:
     ) -> None:
         self._chatwoot_gateway = chatwoot_gateway
         self._mapping_repository = mapping_repository
+        self._conversation_repository = conversation_repository
         self._set_conversation_mode = SetConversationModeUseCase(conversation_repository)
         self._set_conversation_input_state = SetConversationInputStateUseCase(
             conversation_repository
@@ -57,6 +59,12 @@ class PauseBotFromChatwootUseCase:
             )
             return
         await self._set_conversation_input_state.execute(conversation_id, HUMAN)
+        # Starts the human-reply timer (same clock the phone path stamps), so the bot comes
+        # back after the quiet period even when staff answered from Chatwoot.
+        paused = await self._conversation_repository.get_by_id(conversation_id)
+        if paused is not None:
+            paused.last_human_reply_at = datetime.now(UTC)
+            await self._conversation_repository.save(paused)
 
         if not synchronize_label:
             return

@@ -24,6 +24,17 @@ _ADMINISTRACION_LABEL = "administracion"
 _AGENT_LABEL = "agente"
 
 
+def parse_staff_command(content: str) -> str | None:
+    """`"bot"` or `"adm"` when a staff message is exactly `/bot` or `/adm` (trimmed,
+    case-insensitive), else `None`."""
+    command = content.strip().casefold()
+    if command == "/bot":
+        return "bot"
+    if command == "/adm":
+        return "adm"
+    return None
+
+
 def is_message_created_event(event: str) -> bool:
     return event == _MESSAGE_CREATED_EVENT
 

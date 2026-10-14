@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from app.application.conversations.set_conversation_input_state import (
     FREE_INPUT,
+    HUMAN,
     SetConversationInputStateUseCase,
 )
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
@@ -23,9 +24,15 @@ class HandleSmbMessageEchoUseCase:
     (`sourceType="SMB"`), making the tag toggle unreliable for this
     project's actual production setup.
 
-    Two independent effects fire on every call, not mutually exclusive
-    branches (confirmed with the user: "se reinicia cada vez que el
-    humano manda un mensaje"):
+    A staff message (anything but `/bot`) to a conversation still in
+    `mode="agent"` pauses the bot: `mode` flips to `"human"`, `input_state` to
+    `HUMAN`, and `last_human_reply_at` is stamped, so the lazy timeout or `/bot`
+    hands it back, and nothing else happens on that call.
+
+    Otherwise (the conversation is already human, or the message is `/bot`),
+    two independent effects can fire, not mutually exclusive branches
+    (confirmed with the user: "se reinicia cada vez que el humano manda un
+    mensaje"):
 
     1. If the conversation is currently `mode="human"`, `last_human_reply_at`
        is stamped with `now()` — resetting the lazy-timeout clock
@@ -64,6 +71,17 @@ class HandleSmbMessageEchoUseCase:
         conversation_id = ConversationId(f"ycloud-{patient_phone}")
         conversation = await self._conversation_repository.get_by_id(conversation_id)
         if conversation is None:
+            return
+
+        if conversation.mode == "agent" and not is_reactivation_command:
+            # Staff wrote from the WhatsApp Business app or WhatsApp Web: they took the
+            # chat over, so the bot stops answering (same state as a handoff). `/bot` or
+            # the lazy timeout hands it back.
+            await self._set_conversation_mode.execute(conversation_id, "human")
+            await self._set_conversation_input_state.execute(conversation_id, HUMAN)
+            paused = await self._conversation_repository.get_by_id(conversation_id)
+            if paused is not None:
+                await self._touch_last_human_reply(paused)
             return
 
         if conversation.mode == "human":

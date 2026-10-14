@@ -7,6 +7,12 @@ from typing import cast
 
 from redis.asyncio import Redis
 
+from app.agent.agreement_listing import (
+    LIST_QUESTION,
+    configured_names,
+    list_message,
+    not_found_message,
+)
 from app.agent.appointment_decision_subgraph import (
     SPECIALTY_SLOTS_REQUEST_KEY,
     AppointmentDecisionState,
@@ -2158,16 +2164,21 @@ def create_appointment_node(
             else:
                 agreement = _match_intake_agreement(details["obra_social"], agreements)
                 if agreement is None:
+                    names = configured_names(agreements)
+                    # A general "which ones do you work with" question is not an obra
+                    # social name: list the live convenios instead of asking to retype.
+                    not_found_text = (
+                        list_message(names)
+                        if LIST_QUESTION.search(details["obra_social"].casefold()) and names
+                        else not_found_message(names)
+                    )
                     result = {
                         **result,
                         "stage": "collect",
                         "editing_field": "obra_social",
                         "next_action": "none",
                         "ready_to_persist": False,
-                        "response_text": (
-                            "No encontramos esa obra social. Escribila nuevamente, por "
-                            "ejemplo: OSDE."
-                        ),
+                        "response_text": not_found_text,
                         "response_buttons": None,
                     }
                 else:
