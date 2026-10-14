@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     #: the identification flow hasn't been provisioned yet.
     ycloud_verification_flow_id: str = ""
     ycloud_registration_flow_id: str = ""
+    #: Single Flow serving both returning and new patients (id from the same
+    #: endpoint). When set it replaces the two Flows above; `""` keeps them.
+    ycloud_patient_intake_flow_id: str = ""
 
     #: Chatwoot mirror (this session's own brief, no PRD.md section number):
     #: staff reads/replies to patients from Chatwoot's own inbox instead of

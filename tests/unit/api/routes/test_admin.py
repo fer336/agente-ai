@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -10,16 +11,18 @@ from app.api.dependencies.admin import (
     get_error_query_service,
     get_run_query_service,
 )
-from app.api.dependencies.gateways import get_ycloud_client
+from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.run_queries import RunQueryService
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_CLINIC, ADMIN_TECHNICAL, READ_ONLY
+from app.domain.entities.agreement import Agreement
 from app.infrastructure.auth.session_tokens import create_session_token
 from app.main import app
 from tests.fixtures.gateways import (
     make_agent_run_repository,
+    make_agreement_gateway,
     make_conversation_repository,
     make_error_repository,
     make_message_repository,
@@ -384,6 +387,7 @@ async def test_resolve_returns_404_for_a_missing_error():
 class _StubYCloudClient:
     def __init__(self) -> None:
         self.create_flow_calls: list[dict[str, object]] = []
+        self.preview_requests: list[str] = []
 
     async def create_flow(
         self, name: str, categories: list[str], flow_json: str, publish: bool = False
@@ -392,6 +396,10 @@ class _StubYCloudClient:
             {"name": name, "categories": categories, "flow_json": flow_json, "publish": publish}
         )
         return f"flow-{len(self.create_flow_calls)}"
+
+    async def get_flow_preview_url(self, flow_id: str) -> str:
+        self.preview_requests.append(flow_id)
+        return f"https://preview.example/{flow_id}"
 
 
 @pytest.fixture
@@ -402,8 +410,26 @@ def _stub_ycloud_client() -> _StubYCloudClient:
     del app.dependency_overrides[get_ycloud_client]
 
 
+@pytest.fixture(autouse=True)
+def _stub_agreements():
+    """Never reach the real Dentalink from the flow routes."""
+    gateway = make_agreement_gateway(
+        agreements=[Agreement(id="1", name="OSDE"), Agreement(id="2", name="Galeno")]
+    )
+    app.dependency_overrides[get_agreement_gateway] = lambda: gateway
+    yield gateway
+    app.dependency_overrides.pop(get_agreement_gateway, None)
+
+
+def _intake_dropdown_ids(flow_json: str) -> list[str]:
+    form = json.loads(flow_json)["screens"][0]["layout"]["children"][0]
+    new_patient_if = next(c for c in form["children"] if c["type"] == "If")
+    dropdown = next(c for c in new_patient_if["then"] if c.get("name") == "obra_social")
+    return [option["id"] for option in dropdown["data-source"]]
+
+
 @pytest.mark.asyncio
-async def test_admin_technical_creates_and_publishes_both_flows(
+async def test_admin_technical_creates_and_publishes_all_flows(
     _stub_ycloud_client: _StubYCloudClient,
 ):
     cookies = _session_cookies(ADMIN_TECHNICAL)
@@ -416,9 +442,22 @@ async def test_admin_technical_creates_and_publishes_both_flows(
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"verification_flow_id": "flow-1", "registration_flow_id": "flow-2"}
-    assert len(_stub_ycloud_client.create_flow_calls) == 2
-    assert all(call["publish"] is True for call in _stub_ycloud_client.create_flow_calls)
+    # The intake Flow is created first so a Meta rejection of it never leaves
+    # duplicate legacy Flows behind.
+    assert body == {
+        "patient_intake_flow_id": "flow-1",
+        "verification_flow_id": "flow-2",
+        "registration_flow_id": "flow-3",
+    }
+    calls = _stub_ycloud_client.create_flow_calls
+    assert len(calls) == 3
+    assert all(call["publish"] is True for call in calls)
+    intake_json = json.loads(str(calls[0]["flow_json"]))
+    assert intake_json["screens"][0]["id"] == "DATOS_PACIENTE"
+    assert _intake_dropdown_ids(str(calls[0]["flow_json"])) == ["particular", "OSDE", "Galeno"]
+    # The logo is embedded as the form's first child.
+    form = intake_json["screens"][0]["layout"]["children"][0]
+    assert form["children"][0]["type"] == "Image"
 
 
 @pytest.mark.asyncio
@@ -439,6 +478,60 @@ async def test_read_only_cannot_create_flows(_stub_ycloud_client: _StubYCloudCli
 
     response = await _post(
         "/admin/api/flows/create",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+    )
+
+    assert response.status_code == 403
+    assert _stub_ycloud_client.create_flow_calls == []
+
+
+# --- POST /admin/flows/intake-draft ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_creates_only_an_unpublished_intake_flow_and_returns_its_preview(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post(
+        "/admin/api/flows/intake-draft",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "flow_id": "flow-1",
+        "preview_url": "https://preview.example/flow-1",
+    }
+    (call,) = _stub_ycloud_client.create_flow_calls
+    assert call["publish"] is False
+    assert _intake_dropdown_ids(str(call["flow_json"])) == ["particular", "OSDE", "Galeno"]
+    form = json.loads(str(call["flow_json"]))["screens"][0]["layout"]["children"][0]
+    assert form["children"][0]["type"] == "Image"
+    assert _stub_ycloud_client.preview_requests == ["flow-1"]
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_is_rejected_without_a_csrf_header(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post("/admin/api/flows/intake-draft", cookies=cookies)
+
+    assert response.status_code == 403
+    assert _stub_ycloud_client.create_flow_calls == []
+
+
+@pytest.mark.asyncio
+async def test_read_only_cannot_create_an_intake_draft(_stub_ycloud_client: _StubYCloudClient):
+    cookies = _session_cookies(READ_ONLY)
+
+    response = await _post(
+        "/admin/api/flows/intake-draft",
         cookies=cookies,
         headers={"x-csrf-token": cookies["admin_csrf"]},
     )

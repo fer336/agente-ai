@@ -229,6 +229,30 @@ class YCloudClient:
             data = response.json()
             return str(data["id"])
 
+    async def get_flow_preview_url(self, flow_id: str) -> str:
+        """`GET /v2/whatsapp/flows/{id}/preview` — the URL where a (draft)
+        Flow can be previewed without publishing or sending it. The response
+        shape is UNVERIFIED (YCloud's docs page for it is not machine
+        readable), so the URL is looked up under every plausible key, at the
+        top level or nested one level (`preview`/`data`), and a response
+        without one raises `YCloudAPIError` instead of returning garbage.
+        """
+        url = f"{self._base_url}/v2/whatsapp/flows/{flow_id}/preview"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers={"X-API-Key": self._api_key})
+            if response.is_error:
+                raise YCloudAPIError(
+                    f"YCloud API returned {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+            preview_url = _find_preview_url(response.json())
+        if preview_url is None:
+            raise YCloudAPIError(
+                f"YCloud flow preview response for {flow_id} carried no preview URL",
+                status_code=None,
+            )
+        return preview_url
+
     async def send_typing_indicator(self, wamid: str) -> None:
         """`POST /v2/whatsapp/inboundMessages/{wamid}/typingIndicator` —
         marks the given inbound message as read and shows "typing..." to
@@ -337,3 +361,24 @@ class YCloudClient:
                 )
             data = response.json()
             return str(data["id"])
+
+
+_PREVIEW_URL_KEYS = ("previewUrl", "preview_url", "url")
+
+
+def _find_preview_url(body: object) -> str | None:
+    """First non-empty string under a plausible preview-URL key, looking at the
+    top level first and then one level into `preview`/`data`."""
+    if not isinstance(body, dict):
+        return None
+    for key in _PREVIEW_URL_KEYS:
+        value = body.get(key)
+        if isinstance(value, str) and value:
+            return value
+    for nested_key in ("preview", "data"):
+        nested = body.get(nested_key)
+        if isinstance(nested, dict):
+            found = _find_preview_url(nested)
+            if found is not None:
+                return found
+    return None

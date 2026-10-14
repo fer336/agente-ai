@@ -174,6 +174,7 @@ from app.domain.value_objects.phone_number import PhoneNumber
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.llm.exceptions import LLMProviderError
 from app.infrastructure.ycloud.flows import (
+    PATIENT_INTAKE_FLOW_SCREEN_ID,
     REGISTRATION_FLOW_SCREEN_ID,
     VERIFICATION_FLOW_SCREEN_ID,
 )
@@ -549,6 +550,10 @@ _SEND_REGISTRATION_FLOW_MESSAGE = (
     "No te encontramos registrado todavía. Te mando un formulario para completar tus "
     "datos — tocá el botón de abajo."
 )
+_SEND_INTAKE_FLOW_MESSAGE = (
+    "Te mando un formulario cortito para identificarte — tocá el botón de abajo y "
+    "completá tus datos."
+)
 _FLOW_REMINDER_MESSAGE = (
     "Por favor, completá el formulario que te mandé arriba — todavía no puedo tomar "
     "estos datos por texto."
@@ -750,6 +755,11 @@ async def _extract_identification_pieces(
     if not stripped:
         return None, None
     return await _extract_full_name(llm_provider, stripped), None
+
+
+#: Name of the clinic's private-pay convenio in Dentalink, and (lower-cased)
+#: the id of the intake Flow dropdown's "Particular" option.
+_PARTICULAR_AGREEMENT_NAME = "Particular"
 
 
 def _match_intake_agreement(obra_social: str, agreements: list[Agreement]) -> Agreement | None:
@@ -1414,6 +1424,7 @@ def create_appointment_node(
     agreement_gateway: AgreementGateway,
     verification_flow_id: str = "",
     registration_flow_id: str = "",
+    patient_intake_flow_id: str = "",
 ) -> AgentNode:
     """Full turno management stage machine — create, reschedule, cancel
     (PRD.md §9-16, §32, §72).
@@ -1552,6 +1563,37 @@ def create_appointment_node(
         cancel) all start here now, so the Flow rollout is a single
         on/off switch rather than three places to keep in sync.
         """
+        if patient_intake_flow_id:
+            # One Flow serves both returning and new patients; the reply's
+            # `es_paciente` answer decides which path handles it.
+            await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
+            intake_intro = await generate_or_fallback(
+                llm_provider,
+                str(conversation_id),
+                "send_patient_intake_flow",
+                {
+                    "situacion": (
+                        "Hay que identificar al paciente antes de seguir — le vamos a "
+                        "mandar un formulario corto donde indica si ya es paciente y "
+                        "completa sus datos."
+                    ),
+                },
+                _SEND_INTAKE_FLOW_MESSAGE,
+                recent_messages,
+                contact_memory,
+            )
+            return {
+                "response_text": intake_intro,
+                "response_buttons": None,
+                "response_flow": FlowRequest(
+                    flow_id=patient_intake_flow_id,
+                    flow_screen_id=PATIENT_INTAKE_FLOW_SCREEN_ID,
+                    flow_cta="Completar datos",
+                    flow_token=str(conversation_id),
+                ),
+                "requires_handoff": False,
+                "collected_data": {**collected_data, "stage": STAGE_AWAITING_VERIFICATION_FLOW},
+            }
         if verification_flow_id:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
             intro = await generate_or_fallback(
@@ -1620,14 +1662,168 @@ def create_appointment_node(
             "response_text": intro,
             "response_buttons": None,
             "response_flow": FlowRequest(
-                flow_id=registration_flow_id,
-                flow_screen_id=REGISTRATION_FLOW_SCREEN_ID,
+                flow_id=patient_intake_flow_id or registration_flow_id,
+                flow_screen_id=(
+                    PATIENT_INTAKE_FLOW_SCREEN_ID
+                    if patient_intake_flow_id
+                    else REGISTRATION_FLOW_SCREEN_ID
+                ),
                 flow_cta="Completar",
                 flow_token=str(conversation_id),
             ),
             "requires_handoff": False,
             "collected_data": {**collected_data, "stage": STAGE_AWAITING_REGISTRATION_FLOW},
         }
+
+    async def _verify_from_flow_fields(
+        state: AgentState,
+        collected_data: dict[str, object],
+        flow_fields: dict[str, object],
+    ) -> dict[str, object]:
+        """Name + DNI from a completed verification (or intake "yes") Flow."""
+        conversation_id = ConversationId(state["conversation_id"])
+        full_name = str(flow_fields.get("full_name") or "").strip()
+        raw_dni = str(flow_fields.get("dni") or "").strip()
+        try:
+            validated_dni = Dni(raw_dni)
+        except ValueError:
+            # The Flow's own required/number-only fields should have
+            # caught this, but if they somehow didn't, re-sending the
+            # same Flow is safer than getting stuck on bad data.
+            return await _begin_identification(
+                conversation_id,
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+        identified_patient = await identify_patient.execute(full_name, validated_dni.value)
+        if identified_patient is None:
+            registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
+            if registered_by_dni is not None:
+                return await _continue_as_registered_patient(
+                    conversation_id,
+                    registered_by_dni,
+                    collected_data,
+                    state["recent_messages"],
+                    state["contact_memory_summary"],
+                )
+            return await _begin_registration(
+                conversation_id,
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+        await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
+        verification_text = await _verification_confirmation_message(
+            llm_provider,
+            conversation_id,
+            identified_patient,
+            state["recent_messages"],
+            state["contact_memory_summary"],
+        )
+        return {
+            "response_text": verification_text,
+            "response_buttons": _CONFIRM_BUTTONS,
+            "requires_handoff": False,
+            "collected_data": {
+                **collected_data,
+                "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
+                "patient": _patient_to_primitives(identified_patient),
+                "verified_patient_id": identified_patient.id,
+            },
+        }
+
+    async def _register_from_flow_fields(
+        state: AgentState,
+        collected_data: dict[str, object],
+        flow_fields: dict[str, object],
+    ) -> dict[str, object]:
+        """Creates the patient from a completed registration (or intake "no") Flow."""
+        conversation_id = ConversationId(state["conversation_id"])
+        full_name = str(flow_fields.get("full_name") or "").strip()
+        raw_dni = str(flow_fields.get("dni") or "").strip()
+        email = str(flow_fields.get("email") or "").strip() or None
+        obra_social_name = str(flow_fields.get("obra_social") or "").strip()
+        plan = str(flow_fields.get("plan") or "").strip()
+        if obra_social_name.casefold() == _PARTICULAR_AGREEMENT_NAME.casefold():
+            # The intake Flow's dropdown sends the stable id "particular": it
+            # is the clinic's own "Particular" convenio, which never has a plan.
+            obra_social_name = _PARTICULAR_AGREEMENT_NAME
+            plan = ""
+        try:
+            validated_dni = Dni(raw_dni)
+        except ValueError:
+            return await _begin_registration(
+                conversation_id,
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+        contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
+        registration_notice: str | None = None
+        registration_recovered = False
+        # A DNI already on file is a registered patient: never create a
+        # duplicate, keep the record and carry on (its agreement is handled
+        # below without ever overwriting an existing one).
+        on_file = await patient_gateway.find_patient_by_dni(validated_dni.value)
+        if on_file is None:
+            try:
+                new_patient = await patient_gateway.create_patient(
+                    full_name, validated_dni.value, contact_phone, email=email
+                )
+            except PatientAlreadyExistsError:
+                # Race: someone registered this exact DNI between the
+                # pre-check above and this submission — recover the record
+                # by DNI instead of failing or restarting registration.
+                raced = await patient_gateway.find_patient_by_dni(validated_dni.value)
+                if raced is None:
+                    return await _begin_registration(
+                        conversation_id,
+                        collected_data,
+                        state["recent_messages"],
+                        state["contact_memory_summary"],
+                    )
+                new_patient = raced
+                registration_recovered = True
+        else:
+            new_patient = on_file
+            registration_recovered = True
+        if registration_recovered:
+            registration_notice = _already_registered_notice(new_patient)
+        if obra_social_name:
+            agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
+            if agreement is not None:
+                agreement_notice = await _attach_agreement(
+                    agreement_gateway,
+                    new_patient,
+                    agreement,
+                    recovered=registration_recovered,
+                )
+                # Agreement notices already say "Ya figurás en nuestro sistema",
+                # so they replace the static notice instead of repeating it.
+                registration_notice = agreement_notice or registration_notice
+                # The plan is a local-only detail (Dentalink links the insurer
+                # only), kept alongside the insurer for the rest of the booking.
+                collected_data = {**collected_data, "insurance_provider": agreement.name}
+                if plan:
+                    collected_data["insurance_plan"] = plan
+        patient_primitives = _patient_to_primitives(new_patient)
+        if _is_create_flow(collected_data):
+            registration_next = await _continue_booking_with_patient(
+                state, collected_data, patient_primitives
+            )
+        else:
+            registration_next = await _offer_appointments(
+                conversation_id,
+                patient_primitives,
+                new_patient.id,
+                collected_data,
+                state["recent_messages"],
+                state["contact_memory_summary"],
+            )
+        if registration_notice is not None:
+            return _with_notice(registration_next, registration_notice)
+        return registration_next
 
     async def _identify_for_operation(
         state: AgentState, collected_data: dict[str, object]
@@ -4218,56 +4414,12 @@ def create_appointment_node(
                     "response_buttons": None,
                     "requires_handoff": False,
                 }
-            full_name = str(flow_fields.get("full_name") or "").strip()
-            raw_dni = str(flow_fields.get("dni") or "").strip()
-            try:
-                validated_dni = Dni(raw_dni)
-            except ValueError:
-                # The Flow's own required/number-only fields should have
-                # caught this, but if they somehow didn't, re-sending the
-                # same Flow is safer than getting stuck on bad data.
-                return await _begin_identification(
-                    conversation_id,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-            identified_patient = await identify_patient.execute(full_name, validated_dni.value)
-            if identified_patient is None:
-                registered_by_dni = await patient_gateway.find_patient_by_dni(validated_dni.value)
-                if registered_by_dni is not None:
-                    return await _continue_as_registered_patient(
-                        conversation_id,
-                        registered_by_dni,
-                        collected_data,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
-                    )
-                return await _begin_registration(
-                    conversation_id,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-            await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-            verification_text = await _verification_confirmation_message(
-                llm_provider,
-                conversation_id,
-                identified_patient,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
-            return {
-                "response_text": verification_text,
-                "response_buttons": _CONFIRM_BUTTONS,
-                "requires_handoff": False,
-                "collected_data": {
-                    **collected_data,
-                    "stage": STAGE_AWAITING_VERIFICATION_CONFIRMATION,
-                    "patient": _patient_to_primitives(identified_patient),
-                    "verified_patient_id": identified_patient.id,
-                },
-            }
+            if (
+                patient_intake_flow_id
+                and str(flow_fields.get("es_paciente") or "").strip().lower() == "no"
+            ):
+                return await _register_from_flow_fields(state, collected_data, flow_fields)
+            return await _verify_from_flow_fields(state, collected_data, flow_fields)
 
         if stage == STAGE_AWAITING_VERIFICATION_CONFIRMATION:
             button_payload = state["button_payload"]
@@ -4345,79 +4497,11 @@ def create_appointment_node(
                     "response_buttons": None,
                     "requires_handoff": False,
                 }
-            full_name = str(flow_fields.get("full_name") or "").strip()
-            raw_dni = str(flow_fields.get("dni") or "").strip()
-            email = str(flow_fields.get("email") or "").strip() or None
-            obra_social_name = str(flow_fields.get("obra_social") or "").strip()
-            try:
-                validated_dni = Dni(raw_dni)
-            except ValueError:
-                return await _begin_registration(
-                    conversation_id,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-            contact_phone = PhoneNumber(str(conversation_id).removeprefix("ycloud-"))
-            registration_notice: str | None = None
-            registration_recovered = False
-            # A DNI already on file is a registered patient: never create a
-            # duplicate, keep the record and carry on (its agreement is handled
-            # below without ever overwriting an existing one).
-            on_file = await patient_gateway.find_patient_by_dni(validated_dni.value)
-            if on_file is None:
-                try:
-                    new_patient = await patient_gateway.create_patient(
-                        full_name, validated_dni.value, contact_phone, email=email
-                    )
-                except PatientAlreadyExistsError:
-                    # Race: someone registered this exact DNI between the
-                    # pre-check above and this submission — recover the record
-                    # by DNI instead of failing or restarting registration.
-                    raced = await patient_gateway.find_patient_by_dni(validated_dni.value)
-                    if raced is None:
-                        return await _begin_registration(
-                            conversation_id,
-                            collected_data,
-                            state["recent_messages"],
-                            state["contact_memory_summary"],
-                        )
-                    new_patient = raced
-                    registration_recovered = True
-            else:
-                new_patient = on_file
-                registration_recovered = True
-            if registration_recovered:
-                registration_notice = _already_registered_notice(new_patient)
-            if obra_social_name:
-                agreement = await agreement_gateway.find_agreement_by_name(obra_social_name)
-                if agreement is not None:
-                    agreement_notice = await _attach_agreement(
-                        agreement_gateway,
-                        new_patient,
-                        agreement,
-                        recovered=registration_recovered,
-                    )
-                    # Agreement notices already say "Ya figurás en nuestro sistema",
-                    # so they replace the static notice instead of repeating it.
-                    registration_notice = agreement_notice or registration_notice
-            patient_primitives = _patient_to_primitives(new_patient)
-            if _is_create_flow(collected_data):
-                registration_next = await _continue_booking_with_patient(
-                    state, collected_data, patient_primitives
-                )
-            else:
-                registration_next = await _offer_appointments(
-                    conversation_id,
-                    patient_primitives,
-                    new_patient.id,
-                    collected_data,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
-            if registration_notice is not None:
-                return _with_notice(registration_next, registration_notice)
-            return registration_next
+            if str(flow_fields.get("es_paciente") or "").strip().lower() == "si":
+                # The single intake Flow is re-sent from this stage when a
+                # registration retry is needed; its "yes" answer is a verification.
+                return await _verify_from_flow_fields(state, collected_data, flow_fields)
+            return await _register_from_flow_fields(state, collected_data, flow_fields)
 
         if stage == STAGE_AWAITING_IDENTIFICATION:
             # CREATE cannot identify/confirm a booking if the slot dependency
