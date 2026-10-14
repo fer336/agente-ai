@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.api.dependencies.admin import (
     get_committing_error_query_service,
@@ -23,10 +23,12 @@ from app.domain.entities.agent_run import AgentRun
 from app.domain.entities.error_record import ErrorRecord
 from app.domain.repositories.gateways import AgreementGateway
 from app.domain.value_objects.conversation_id import ConversationId
+from app.domain.value_objects.phone_number import PhoneNumber
 from app.infrastructure.auth.session_tokens import SessionPayload
 from app.infrastructure.ycloud.client import YCloudClient
 from app.infrastructure.ycloud.exceptions import YCloudAPIError
 from app.infrastructure.ycloud.flows import (
+    PATIENT_INTAKE_FLOW_SCREEN_ID,
     build_patient_intake_flow_json,
     build_registration_flow_json,
     build_verification_flow_json,
@@ -459,3 +461,44 @@ async def create_intake_flow_draft(
         # Surface Meta's own message (technical admins only) instead of a bare 500.
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
     return IntakeDraftResponse(flow_id=flow_id, preview_url=preview_url)
+
+
+class IntakeDraftSendRequest(BaseModel):
+    flow_id: str
+    to: str
+
+    @field_validator("to")
+    @classmethod
+    def _to_must_be_e164(cls, value: str) -> str:
+        return str(PhoneNumber(value))
+
+
+class IntakeDraftSendResponse(BaseModel):
+    message_id: str
+
+
+@router.post("/flows/intake-draft/send", response_model=IntakeDraftSendResponse)
+async def send_intake_flow_draft(
+    body: IntakeDraftSendRequest,
+    _role: SessionPayload = Depends(require_role(ADMIN_TECHNICAL)),
+    _csrf: SessionPayload = Depends(require_csrf),
+    ycloud_client: YCloudClient = Depends(get_ycloud_client),
+) -> IntakeDraftSendResponse:
+    """Sends the UNPUBLISHED intake Flow to one phone so it can be reviewed on a real
+    device (Meta `mode="draft"`; the phone must have written to the clinic number within
+    the last 24 hours). Same posture as the other Flow routes. Do not press "Enviar" in
+    the test form: the reply reaches the agent like a real patient's.
+    """
+    try:
+        message_id = await ycloud_client.send_flow(
+            body.to,
+            "Probando el formulario de datos del paciente (borrador).",
+            flow_id=body.flow_id,
+            flow_screen_id=PATIENT_INTAKE_FLOW_SCREEN_ID,
+            flow_cta="Ver formulario",
+            flow_token=f"draft-test:{body.flow_id}",
+            mode="draft",
+        )
+    except YCloudAPIError as error:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+    return IntakeDraftSendResponse(message_id=message_id)

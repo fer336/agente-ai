@@ -168,6 +168,7 @@ class YCloudClient:
         flow_screen_id: str,
         flow_cta: str,
         flow_token: str,
+        mode: str | None = None,
     ) -> str:
         """Sends a WhatsApp Flow message — opens the given Flow's terminal
         screen directly (this codebase's Flows are all single-screen: see
@@ -177,6 +178,18 @@ class YCloudClient:
         codebase uses the `ConversationId` itself). UNVERIFIED against a
         live YCloud account — see this module's own docstring.
         """
+        parameters: dict[str, object] = {
+            "flow_message_version": "3",
+            "flow_token": flow_token,
+            "flow_id": flow_id,
+            "flow_cta": flow_cta,
+            "flow_action": "navigate",
+            "flow_action_payload": {"screen": flow_screen_id},
+        }
+        if mode is not None:
+            # Meta: `mode="draft"` sends the unpublished draft (testing only). Whether
+            # YCloud forwards the field is UNVERIFIED against a live account.
+            parameters["mode"] = mode
         return await self._post_message(
             {
                 "from": self._whatsapp_number,
@@ -185,17 +198,7 @@ class YCloudClient:
                 "interactive": {
                     "type": "flow",
                     "body": {"text": body_text},
-                    "action": {
-                        "name": "flow",
-                        "parameters": {
-                            "flow_message_version": "3",
-                            "flow_token": flow_token,
-                            "flow_id": flow_id,
-                            "flow_cta": flow_cta,
-                            "flow_action": "navigate",
-                            "flow_action_payload": {"screen": flow_screen_id},
-                        },
-                    },
+                    "action": {"name": "flow", "parameters": parameters},
                 },
             }
         )
