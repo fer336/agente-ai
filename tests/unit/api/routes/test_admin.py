@@ -1,4 +1,6 @@
+import asyncio
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -19,6 +21,7 @@ from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_CLINIC, ADMIN_TECHNICAL, READ_ONLY
 from app.domain.entities.agreement import Agreement
 from app.infrastructure.auth.session_tokens import create_session_token
+from app.infrastructure.ycloud.exceptions import YCloudAPIError
 from app.main import app
 from tests.fixtures.gateways import (
     make_agent_run_repository,
@@ -512,6 +515,44 @@ async def test_intake_draft_creates_only_an_unpublished_intake_flow_and_returns_
     form = json.loads(str(call["flow_json"]))["screens"][0]["layout"]["children"][0]
     assert form["children"][0]["type"] == "Image"
     assert _stub_ycloud_client.preview_requests == ["flow-1"]
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_uses_a_unique_flow_name_every_time(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    # Meta rejects a Flow whose name already exists in the WhatsApp Business account,
+    # so a second draft (or one next to an old published Flow) must not reuse a name.
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+    headers = {"x-csrf-token": cookies["admin_csrf"]}
+
+    await _post("/admin/api/flows/intake-draft", cookies=cookies, headers=headers)
+    await asyncio.sleep(1.1)
+    await _post("/admin/api/flows/intake-draft", cookies=cookies, headers=headers)
+
+    names = [str(call["name"]) for call in _stub_ycloud_client.create_flow_calls]
+    assert all(re.fullmatch(r"Datos de paciente \d{8}-\d{6}", name) for name in names)
+    assert len(set(names)) == 2
+
+
+@pytest.mark.asyncio
+async def test_intake_draft_reports_a_ycloud_rejection_instead_of_a_bare_500(
+    _stub_ycloud_client: _StubYCloudClient,
+):
+    async def _reject(*_args: object, **_kwargs: object) -> str:
+        raise YCloudAPIError("YCloud API returned 400: Flow name is not unique", status_code=400)
+
+    _stub_ycloud_client.create_flow = _reject  # type: ignore[method-assign]
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _post(
+        "/admin/api/flows/intake-draft",
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+    )
+
+    assert response.status_code == 502
+    assert "Flow name is not unique" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

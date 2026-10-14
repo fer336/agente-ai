@@ -25,6 +25,7 @@ from app.domain.repositories.gateways import AgreementGateway
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.auth.session_tokens import SessionPayload
 from app.infrastructure.ycloud.client import YCloudClient
+from app.infrastructure.ycloud.exceptions import YCloudAPIError
 from app.infrastructure.ycloud.flows import (
     build_patient_intake_flow_json,
     build_registration_flow_json,
@@ -443,11 +444,18 @@ async def create_intake_flow_draft(
     clinic can review it before anything is published or sent. Same posture
     as `/flows/create`: `ADMIN_TECHNICAL`-only and CSRF-checked.
     """
-    flow_id = await ycloud_client.create_flow(
-        name="Datos de paciente",
-        categories=["SIGN_UP"],
-        flow_json=await _intake_flow_json(agreement_gateway),
-        publish=False,
-    )
-    preview_url = await ycloud_client.get_flow_preview_url(flow_id)
+    # Meta requires a Flow name that is unique within the WhatsApp Business account, so
+    # every draft carries a timestamp instead of colliding with an earlier Flow.
+    name = f"Datos de paciente {datetime.now(UTC):%Y%m%d-%H%M%S}"
+    try:
+        flow_id = await ycloud_client.create_flow(
+            name=name,
+            categories=["SIGN_UP"],
+            flow_json=await _intake_flow_json(agreement_gateway),
+            publish=False,
+        )
+        preview_url = await ycloud_client.get_flow_preview_url(flow_id)
+    except YCloudAPIError as error:
+        # Surface Meta's own message (technical admins only) instead of a bare 500.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
     return IntakeDraftResponse(flow_id=flow_id, preview_url=preview_url)
