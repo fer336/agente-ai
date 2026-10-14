@@ -157,3 +157,40 @@ async def test_link_patient_agreement_raises_on_any_other_failure(status_code, b
 
 def test_dentalink_agreement_gateway_satisfies_agreement_gateway_protocol():
     assert isinstance(DentalinkAgreementGateway(_StubDentalinkClient({})), AgreementGateway)
+
+
+@pytest.mark.asyncio
+async def test_list_agreements_leaves_out_disabled_convenios():
+    client = _StubDentalinkClient(
+        {
+            "/v1/convenios": [
+                {"id": 7, "nombre": "ADEMYS", "habilitado": 0},
+                {"id": 6, "nombre": "OSDE", "habilitado": 1},
+            ]
+        }
+    )
+    gateway = DentalinkAgreementGateway(client)
+
+    agreements = await gateway.list_agreements()
+
+    assert [(a.id, a.name) for a in agreements] == [("6", "OSDE")]
+
+
+@pytest.mark.asyncio
+async def test_particular_resolves_to_the_enabled_convenio_when_a_disabled_one_comes_first():
+    # Live case: Dentalink has PARTICULAR id 8 (disabled) listed before id 2 (enabled);
+    # linking id 8 failed with "Convenio ID 8 se encuentra inactivo".
+    client = _StubDentalinkClient(
+        {
+            "/v1/convenios": [
+                {"id": 8, "nombre": "PARTICULAR", "habilitado": 0},
+                {"id": 2, "nombre": "PARTICULAR", "habilitado": 1},
+            ]
+        }
+    )
+    gateway = DentalinkAgreementGateway(client)
+
+    agreement = await gateway.find_agreement_by_name("Particular")
+
+    assert agreement is not None
+    assert agreement.id == "2"

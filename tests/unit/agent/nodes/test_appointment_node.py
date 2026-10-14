@@ -159,6 +159,8 @@ class _IntakeLLM(FakeLLMProvider):
         text = message.strip()
         if "Unknown Health 42" in text:
             fields.update(obra_social="Unknown Health", plan="42")
+        elif text.rstrip().endswith("Particular"):
+            fields.update(obra_social="Particular")
         elif "OSDE 210" in text:
             fields.update(obra_social="OSDE", plan="210")
         elif "obras sociales trabajan" in text.casefold():
@@ -5565,6 +5567,29 @@ async def test_a_reminder_reschedule_for_an_appointment_the_patient_does_not_own
     assert result["response_text"] == "Este recordatorio ya no está disponible."
     assert result["collected_data"] == {}
     assert result.get("response_list") is None
+
+
+@pytest.mark.asyncio
+async def test_a_particular_first_visit_is_registered_without_a_plan():
+    # Live case: "Particular" was given and the bot still asked for the plan.
+    particular = make_agreement(id_="particular", name="PARTICULAR")
+    patient_gateway = make_patient_gateway(patients=[])
+    agreement_gateway = make_agreement_gateway(agreements=[particular])
+    node, _, _ = await _make_node_and_conversation(
+        patients=[],
+        patient_gateway=patient_gateway,
+        agreement_gateway=agreement_gateway,
+        conversation_id=_CONTACT_CONVERSATION_ID,
+        llm_provider=_IntakeLLM(),
+    )
+
+    result = await _complete_new_patient_intake(node, coverage="Particular")
+
+    patient = await patient_gateway.find_patient("Ana Pérez", "30123457")
+    assert patient is not None
+    assert await agreement_gateway.get_patient_agreements(patient.id) == [particular]
+    assert result["collected_data"]["insurance_provider"] == "PARTICULAR"
+    assert result["collected_data"]["insurance_plan"] == ""
 
 
 @pytest.mark.asyncio
