@@ -19,6 +19,7 @@ from app.domain.value_objects.menu_payloads import (
     PATIENT_NOT_FOUND_RETRY_PAYLOAD,
 )
 from app.infrastructure.dentalink.fake_patient_gateway import FakePatientGateway
+from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.appointment_node import make_node_and_conversation
 from tests.fixtures.seed_objects import make_patient
@@ -336,3 +337,35 @@ async def test_the_request_after_a_button_tap_does_not_thank_the_patient(payload
     text = result["response_text"]
     assert not text.startswith("Gracias")
     assert piece in text
+
+
+class _ImprovisingLLM(FakeLLMProvider):
+    """A model that ignores every instruction and answers off-script."""
+
+    async def generate_response(self, context):
+        return "Con gusto te ayudo. Querés que agendemos un turno o te paso con administración?"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed", "must_ask_for"),
+    [
+        ("hola", ("nombre", "dni")),
+        ("cassera, 30123456", ("apellido",)),
+        ("30123456", ("nombre",)),
+        ("Juan Perez", ("dni",)),
+        ("Juan Perez, 1234567890", ("dni",)),
+    ],
+)
+async def test_every_identification_ask_stays_on_script_when_the_model_improvises(
+    typed, must_ask_for
+):
+    node, _, _ = await make_node_and_conversation(
+        patient_gateway=_juan(), llm_provider=_ImprovisingLLM()
+    )
+
+    result = await _type(node, typed, _IDENTIFYING)
+
+    text = result["response_text"].casefold()
+    assert "administración" not in text
+    assert any(term in text for term in must_ask_for)

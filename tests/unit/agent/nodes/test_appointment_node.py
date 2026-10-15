@@ -2167,6 +2167,40 @@ async def test_new_patient_details_stage_asks_for_whichever_piece_is_missing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed", "already_known", "must_ask_for"),
+    [
+        ("", {}, ("obra social",)),
+        ("rosa@gmail.com", {}, ("obra social",)),
+        ("OSDE", {}, ("mail", "correo")),
+    ],
+)
+async def test_new_patient_details_asks_stay_on_script_when_the_model_improvises(
+    typed, already_known, must_ask_for
+):
+    node, _, _ = await _make_node_and_conversation(
+        patients=[], conversation_id="ycloud-+5491122334455", llm_provider=_ImprovisingLLM()
+    )
+
+    result = await node(
+        make_agent_state(
+            conversation_id="ycloud-+5491122334455",
+            user_message=typed,
+            collected_data={
+                "stage": STAGE_AWAITING_NEW_PATIENT_DETAILS,
+                "new_patient_full_name": "Fernando Ariel",
+                "new_patient_dni": "35946257",
+                **already_known,
+            },
+        )
+    )
+
+    text = result["response_text"].casefold()
+    assert "administración" not in text
+    assert any(term in text for term in must_ask_for)
+
+
+@pytest.mark.asyncio
 async def test_new_patient_details_stage_proposes_creation_once_both_fields_arrive():
     repositories_provider = make_proposal_repositories_provider()
     node, _, _ = await _make_node_and_conversation(
