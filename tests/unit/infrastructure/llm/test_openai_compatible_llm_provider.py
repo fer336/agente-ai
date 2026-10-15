@@ -824,3 +824,37 @@ async def test_only_understand_uses_the_schema() -> None:
     await provider.classify_intent("quiero un turno", context={})
 
     assert client.formats == [None]
+
+
+_SCHEMA_SHAPED_EMPTY = (
+    '{"intent": "appointment", "confidence": 1.0, "answer": null, "specialty_mention": null,'
+    ' "professional_mention": null, "operation_mention": null, "navigation_target": null,'
+    ' "handoff_offer": false, "faq_topic_id": null}'
+)
+_SCHEMA_SHAPED_FILLED = (
+    '{"intent": "question", "confidence": 0.8, "answer": "Atendemos de 9 a 18",'
+    ' "specialty_mention": null, "professional_mention": null, "operation_mention": "create",'
+    ' "navigation_target": "slot", "handoff_offer": true, "faq_topic_id": null}'
+)
+
+
+@pytest.mark.asyncio
+async def test_understand_reads_a_reply_shaped_exactly_like_the_strict_schema() -> None:
+    """The schema forces every key, with an explicit null where there is no value."""
+    empty = await _make_provider(_StubClient(_SCHEMA_SHAPED_EMPTY)).understand("hola", context={})
+    filled = await _make_provider(_StubClient(_SCHEMA_SHAPED_FILLED)).understand(
+        "¿atienden hoy?", context={}
+    )
+
+    assert (empty.intent, empty.answer, empty.operation_mention, empty.handoff_offer) == (
+        "appointment",
+        None,
+        None,
+        False,
+    )
+    assert (filled.intent, filled.answer, filled.operation_mention) == (
+        "question",
+        "Atendemos de 9 a 18",
+        "create",
+    )
+    assert (filled.navigation_target, filled.handoff_offer) == ("slot", True)
