@@ -608,7 +608,14 @@ _CONFIRMATION_REMINDER = (
     "Por favor, confirmá o cancelá tocando uno de los botones — todavía no puedo "
     "tomar la confirmación por texto."
 )
-_PROPOSAL_REJECTED_MESSAGE = "Listo, descartamos esa propuesta. Necesitás algo más?"
+#: Sent when the patient taps Cancelar on a confirmation. It says nothing was changed
+#: because the same button also discards the proposal to cancel or reschedule an existing
+#: turno, where "Veo que cancelaste" alone could read as the turno being cancelled.
+_PROPOSAL_REJECTED_MESSAGE = (
+    "Veo que cancelaste. No se hizo ningún cambio en tus turnos. Si necesitás algo en "
+    "particular, podés hablar con administración tocando el botón de abajo, o ir al "
+    "menú principal."
+)
 _SLOT_TAKEN_MESSAGE = (
     "Ese horario acaba de ocuparse mientras confirmábamos. No se realizó ningún cambio. "
     "Te muestro nuevas opciones disponibles:"
@@ -3188,18 +3195,9 @@ def create_appointment_node(
                             "identification_dni": None,
                         },
                     }
-                proposal_rejected_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "proposal_rejected",
-                    {"situacion": "El paciente decidió no confirmar la propuesta anterior."},
-                    _PROPOSAL_REJECTED_MESSAGE,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
                 return {
-                    "response_text": proposal_rejected_text,
-                    "response_buttons": None,
+                    "response_text": _PROPOSAL_REJECTED_MESSAGE,
+                    "response_buttons": HANDOFF_OFFER_BUTTONS,
                     "requires_handoff": False,
                     "pending_action_id": None,
                     "collected_data": {**collected_data, "stage": None},
