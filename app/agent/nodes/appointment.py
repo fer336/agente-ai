@@ -51,7 +51,6 @@ from app.agent.first_visit_intake_wording import (
     RETRY_ASK_INTROS,
     pick_static_intro,
     previous_intake_intro,
-    repeats_opening,
 )
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
@@ -411,9 +410,6 @@ _NO_SPECIALTIES_MESSAGE = (
 _OPERATION_MENU_MESSAGE = "Qué querés hacer?"
 _MAIN_MENU_RESET_MESSAGE = "Listo, volvemos al principio. Qué querés hacer?"
 _OPERATION_SELECTION_REMINDER = "Por favor, elegí una opción tocando un botón."
-#: Sampling temperature for the intake ask/re-ask intro: high on purpose, so consecutive
-#: asks are not worded the same.
-_INTAKE_ASK_TEMPERATURE = 0.9
 
 
 #: The messages below show a fictional example; each takes it as an argument so every
@@ -1916,57 +1912,17 @@ def create_appointment_node(
         recent_messages: list[dict[str, str]],
         contact_memory: str | None,
     ) -> str:
-        """LLM-worded intro plus the missing fields as "- " bullets.
+        """Fixed intro plus the missing fields as "- " bullets.
 
-        The bullets are appended verbatim, never generated: the model only
-        words the question, so the field list and its fixed order cannot drift
-        (same split as `_confirmation_message`). On any provider failure the
-        static intro takes its place, bullets unchanged.
+        The intro is one of the static wordings, rotated so two consecutive asks never
+        open the same way. It used to be written by the model, and a small model turned
+        it into three paragraphs (greeting, "a professional must evaluate you", a request
+        for a phone number and an administration hand-off) above the list. The bullets
+        are appended verbatim, so the field list and its fixed order cannot drift.
         """
         previous_intro = previous_intake_intro(recent_messages)
-        if first:
-            situacion = (
-                "El paciente confirmó que es su primera vez en la clínica. Para dejarlo "
-                "registrado necesitamos algunos datos."
-            )
-            instruccion = (
-                "Decile que necesitás unos datos para registrarlo. NO listes los datos ni "
-                "nombres de campos: la lista se agrega aparte, después de tu mensaje. No "
-                "vuelvas a preguntar si es su primera vez. Sin saludo, en una oración corta."
-            )
-            static_intros = FIRST_ASK_INTROS
-        else:
-            situacion = "El paciente ya pasó parte de sus datos de registro y todavía faltan otros."
-            instruccion = (
-                "Agradecé brevemente y decile que todavía faltan algunos datos. NO listes "
-                "los datos ni nombres de campos: la lista se agrega aparte, después de tu "
-                "mensaje. No vuelvas a preguntar si es su primera vez. Sin saludo, una "
-                "oración corta."
-            )
-            static_intros = RETRY_ASK_INTROS
-        context: dict[str, object] = {"situacion": situacion, "instruccion": instruccion}
-        if previous_intro is not None:
-            context["intro_anterior"] = previous_intro
-            context["instruccion"] = (
-                f"{instruccion} Ya le pediste datos antes con este mensaje: "
-                f'"{previous_intro}". No repitas su apertura ni su frase: empezá y redactá '
-                "distinto."
-            )
-        static_intro = pick_static_intro(static_intros, previous_intro, len(recent_messages))
-        intro = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "first_visit_intake_ask",
-            context,
-            static_intro,
-            recent_messages,
-            contact_memory,
-            temperature=_INTAKE_ASK_TEMPERATURE,
-        )
-        if repeats_opening(intro, previous_intro):
-            # The model ignored the instruction: the rotated static wording
-            # guarantees two consecutive asks never open the same way.
-            intro = static_intro
+        static_intros = FIRST_ASK_INTROS if first else RETRY_ASK_INTROS
+        intro = pick_static_intro(static_intros, previous_intro, len(recent_messages))
         return f"{intro}\n\n{format_field_bullets(missing_fields)}"
 
     async def _identify_existing_patient(

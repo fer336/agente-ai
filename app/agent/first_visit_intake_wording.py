@@ -1,16 +1,16 @@
 """Wording helpers for the first-visit intake ask and re-ask.
 
-Every ask is worded by the LLM, but a model told the same thing on consecutive turns
-opens with the same sentence each time ("Buenísimo, gracias por la info. Todavía me
-faltan…"). The helpers here give it the previous intro to avoid, catch a repeat after
-generation, and rotate the static fallback so it never repeats either.
+The intro of every ask is one of the fixed wordings below, rotated so two consecutive asks
+never open the same way. The model used to write it, and a small model turned it into
+three paragraphs (greeting, "a professional must evaluate you", a request for a phone
+number and an administration hand-off) above the field list.
 """
 
 import re
 import unicodedata
 
-#: Static wordings: the fallback when the LLM fails or repeats itself. Openings (first
-#: two words) are distinct within each tuple so a rotation never lands on the same one.
+#: Fixed wordings. Openings (first two words) are distinct within each tuple so a rotation
+#: never lands on the same one.
 FIRST_ASK_INTROS = (
     "Para dejarte registrado necesito que me pases estos datos:",
     "Perfecto, para registrarte necesito estos datos:",
