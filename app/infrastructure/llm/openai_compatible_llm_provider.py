@@ -1,6 +1,7 @@
 import json
 import re
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_types import (
@@ -31,6 +32,7 @@ from app.infrastructure.llm.exceptions import (
 )
 from app.infrastructure.observability.tool_tracing import traced_call
 
+_T = TypeVar("_T")
 _PROVIDER = "llm"
 
 #: Kept in sync with the welcome menu's payload->intent contract
@@ -307,6 +309,32 @@ class OpenAICompatibleLLMProvider:
         self._client = client
         self._runtime_config_service = runtime_config_service
 
+    async def _complete_json(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        parse: Callable[[str], _T],
+    ) -> _T:
+        """Chat-complete and parse; on a non-JSON answer, retry exactly once.
+
+        The retry shows the model its own bad answer plus a reminder to return only
+        the JSON. A second failure raises, as before: no loop, no guessing.
+        """
+        content = await self._client.chat_completion(model, messages, temperature=temperature)
+        try:
+            return parse(content)
+        except LLMInvalidResponseError:
+            retry_messages = [
+                *messages,
+                {"role": "assistant", "content": content},
+                {"role": "user", "content": _JSON_ONLY_REMINDER},
+            ]
+            retry = await self._client.chat_completion(
+                model, retry_messages, temperature=temperature
+            )
+            return parse(retry)
+
     async def classify_intent(self, message: str, context: dict[str, object]) -> IntentResult:
         config = await self._runtime_config_service.get_config()
         messages = [{"role": "system", "content": config.classify_intent_prompt}]
@@ -321,10 +349,9 @@ class OpenAICompatibleLLMProvider:
         messages.append({"role": "user", "content": message})
 
         async def _call() -> IntentResult:
-            content = await self._client.chat_completion(
-                config.model, messages, temperature=config.temperature
+            return await self._complete_json(
+                config.model, messages, config.temperature, _parse_intent_result
             )
-            return _parse_intent_result(content)
 
         return await traced_call(
             tool_name="ClassifyIntentTool",
@@ -375,10 +402,9 @@ class OpenAICompatibleLLMProvider:
         messages.append({"role": "user", "content": message})
 
         async def _call() -> UnderstandingResult:
-            content = await self._client.chat_completion(
-                config.model, messages, temperature=config.temperature
+            return await self._complete_json(
+                config.model, messages, config.temperature, _parse_understanding_result
             )
-            return _parse_understanding_result(content)
 
         return await traced_call(
             tool_name="UnderstandTool",
@@ -406,10 +432,12 @@ class OpenAICompatibleLLMProvider:
         ]
 
         async def _call() -> ExtractionResult:
-            content = await self._client.chat_completion(
-                config.model, messages, temperature=config.temperature
+            return await self._complete_json(
+                config.model,
+                messages,
+                config.temperature,
+                lambda content: _parse_extraction_result(content, required_fields),
             )
-            return _parse_extraction_result(content, required_fields)
 
         return await traced_call(
             tool_name="ExtractInformationTool",
@@ -517,6 +545,13 @@ class OpenAICompatibleLLMProvider:
             error_type_of=_error_type_of,
         )
 
+
+#: Sent on the single retry after the model answered in prose instead of the JSON the
+#: prompt asked for (seen live with Gemini Flash-Lite, which replied to the patient).
+_JSON_ONLY_REMINDER = (
+    "Tu respuesta anterior no era el JSON pedido. No le respondas al paciente: devolvé "
+    "SOLO el JSON con la forma indicada, sin texto adicional ni markdown."
+)
 
 #: A model asked for "ONLY a JSON" often still wraps it in a markdown fence
 #: (```json ... ```) — seen live with Gemini, which made every extraction fail.
