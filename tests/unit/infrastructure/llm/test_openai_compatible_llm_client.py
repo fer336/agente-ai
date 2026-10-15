@@ -318,3 +318,22 @@ async def test_api_error_never_includes_the_api_key(monkeypatch: pytest.MonkeyPa
         await client.chat_completion("model", [{"role": "user", "content": "hi"}])
 
     assert "super-secret-key" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_sends_the_response_format_only_when_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_requests(monkeypatch, _chat_response("ok"))
+    client = OpenAICompatibleLLMClient(
+        base_url="http://100.109.17.87:20128/v1", api_key="sk-secret", timeout_seconds=20
+    )
+    schema_format = {"type": "json_schema", "json_schema": {"name": "x", "schema": {}}}
+
+    await client.chat_completion("model", [{"role": "user", "content": "hi"}])
+    await client.chat_completion(
+        "model", [{"role": "user", "content": "hi"}], response_format=schema_format
+    )
+
+    assert "response_format" not in json_module.loads(captured[0].content)
+    assert json_module.loads(captured[1].content)["response_format"] == schema_format

@@ -333,7 +333,11 @@ def _get_llm_client() -> OpenAICompatibleLLMClient:
 
 @lru_cache
 def _get_real_llm_provider() -> OpenAICompatibleLLMProvider:
-    return OpenAICompatibleLLMProvider(_get_llm_client(), get_runtime_config_service())
+    return OpenAICompatibleLLMProvider(
+        _get_llm_client(),
+        get_runtime_config_service(),
+        structured_output=get_settings().llm_structured_output,
+    )
 
 
 def get_llm_provider() -> LLMProvider:

@@ -573,3 +573,15 @@ def test_conversation_idle_reset_delay_defaults_to_three_hours():
 
     assert settings.conversation_idle_reset_delay_seconds == 10800
     assert DEFAULT_IDLE_RESET_DELAY_SECONDS == settings.conversation_idle_reset_delay_seconds
+
+
+def test_llm_structured_output_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("LLM_STRUCTURED_OUTPUT", raising=False)
+
+    assert Settings(_env_file=None).llm_structured_output is False
+
+
+def test_llm_structured_output_is_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("LLM_STRUCTURED_OUTPUT", "true")
+
+    assert Settings(_env_file=None).llm_structured_output is True
