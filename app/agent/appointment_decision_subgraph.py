@@ -50,7 +50,13 @@ from app.agent.nodes.appointment_selection import (
     step_slots_page,
     text_leaks_a_name,
 )
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import (
+    all_of,
+    generate_or_fallback,
+    mentions_all,
+    mentions_any,
+    mentions_none,
+)
 from app.agent.workflow_state import invalidate_from
 from app.application.appointments.search_availability import SearchAvailabilityUseCase
 from app.application.appointments.search_availability_any_professional import (
@@ -453,6 +459,10 @@ def build_appointment_decision_graph(
             _CHOOSE_SPECIALTY_PROMPT,
             recent_messages,
             contact_memory,
+            validator=all_of(
+                mentions_all("especialidad"),
+                mentions_none("administración", "administracion", "día", "dia", "horario"),
+            ),
         )
         if text_leaks_a_name(text, [s.name for s in specialties]):
             text = _CHOOSE_SPECIALTY_PROMPT
@@ -690,6 +700,10 @@ def build_appointment_decision_graph(
             static_prompt,
             recent_messages,
             contact_memory,
+            validator=all_of(
+                mentions_any("horario", "turno"),
+                mentions_none("administración", "administracion", "registr"),
+            ),
         )
         if text_leaks_a_name(text, list(professional_names.values())):
             text = static_prompt

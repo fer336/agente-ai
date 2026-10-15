@@ -273,6 +273,44 @@ async def test_the_identification_ask_stays_on_script_when_the_model_improvises(
 
 
 @pytest.mark.asyncio
+async def test_the_specialty_invitation_stays_on_script_when_the_model_improvises():
+    """Live bug: above the "Elegí especialidad" list the model asked for day, time and an
+    administration hand-off instead of inviting the patient to pick a specialty."""
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ImprovisingLLM())
+    question = await _start_create(node)
+
+    result = await _answer_as_existing_patient(node, question)
+
+    assert result["response_list"] is not None
+    assert (
+        result["response_text"]
+        == "Para qué especialidad querés el turno? Elegí una opción de la lista:"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_next_slots_invitation_stays_on_script_when_the_model_improvises():
+    """Live bug: above the "Elegí horario" list the model said it had registered the request and
+    offered an administration hand-off, instead of inviting the patient to pick a slot."""
+    node, _, _ = await _make_node_and_conversation(
+        **_ortodoncia_node_kwargs(), llm_provider=_ImprovisingLLM()
+    )
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Quería un turno de ortodoncia",
+            collected_data={"specialty_mention": "ortodoncia", "operation_mention": "create"},
+        )
+    )
+
+    result = await _answer_as_existing_patient(node, intake)
+
+    assert result["response_list"] is not None
+    assert "Con gusto te ayudo" not in result["response_text"]
+    assert result["response_text"].startswith("Estos son los próximos turnos disponibles")
+
+
+@pytest.mark.asyncio
 async def test_confirming_the_first_visit_question_asks_for_the_five_fields():
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(llm_provider=llm)

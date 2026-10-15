@@ -84,7 +84,13 @@ from app.agent.nodes.appointment_selection import (
 from app.agent.nodes.appointment_selection import (
     step_slots_page as _step_slots_page,
 )
-from app.agent.nodes.llm_response import generate_or_fallback, mentions_all, mentions_any
+from app.agent.nodes.llm_response import (
+    all_of,
+    generate_or_fallback,
+    mentions_all,
+    mentions_any,
+    mentions_none,
+)
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.reminder_action import (
     REMINDER_IDENTITY_KEY,
@@ -2038,6 +2044,10 @@ def create_appointment_node(
             _CHOOSE_SPECIALTY_PROMPT,
             recent_messages,
             contact_memory,
+            validator=all_of(
+                mentions_all("especialidad"),
+                mentions_none("administración", "administracion", "día", "dia", "horario"),
+            ),
         )
         if text_leaks_a_name(text, [s.name for s in specialties]):
             text = _CHOOSE_SPECIALTY_PROMPT

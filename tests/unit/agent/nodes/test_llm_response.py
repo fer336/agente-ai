@@ -1,10 +1,12 @@
 import pytest
 
 from app.agent.nodes.llm_response import (
+    all_of,
     conversation_started,
     generate_or_fallback,
     mentions_all,
     mentions_any,
+    mentions_none,
     strip_leading_greeting,
 )
 from app.domain.repositories.llm_provider import ResponseContext
@@ -225,3 +227,23 @@ def test_mentions_all_requires_every_term_ignoring_case(text, expected):
 )
 def test_mentions_any_requires_at_least_one_term(text, expected):
     assert mentions_any("mail", "correo")(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Elegí una especialidad de la lista", True),
+        ("¿Querés que te pase con administración?", False),
+        ("Decime qué día te queda bien", False),
+    ],
+)
+def test_mentions_none_rejects_any_forbidden_term(text, expected):
+    assert mentions_none("administración", "día")(text) is expected
+
+
+def test_all_of_requires_every_check_to_pass():
+    check = all_of(mentions_all("especialidad"), mentions_none("administración"))
+
+    assert check("Elegí una especialidad") is True
+    assert check("Elegí una especialidad o pasá con administración") is False
+    assert check("Elegí una opción") is False
