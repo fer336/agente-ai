@@ -3725,6 +3725,38 @@ async def test_confirmation_stage_falls_back_to_reminder_when_pending_action_loo
 
 
 @pytest.mark.asyncio
+async def test_tapping_cancel_on_the_confirmation_gets_a_fixed_reply_with_the_two_buttons():
+    """Live bug: the model answered "a professional must evaluate your case... do you want me
+    to put you in touch?" with no buttons. The reply is fixed and carries Administración and
+    Menú principal."""
+    repositories_provider = make_proposal_repositories_provider()
+    node, _, _ = await _make_node_and_conversation(
+        proposal_repositories_provider=repositories_provider, llm_provider=_ImprovisingLLM()
+    )
+    async with repositories_provider() as repositories:
+        await repositories.pending_actions.save(make_pending_action(id_="pa-1", status="pending"))
+
+    result = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=REJECT_APPOINTMENT_PAYLOAD,
+            pending_action_id="pa-1",
+            collected_data={"stage": STAGE_AWAITING_CONFIRMATION},
+        )
+    )
+
+    text = result["response_text"]
+    assert text.startswith("Veo que cancelaste")
+    assert "administración" in text and "menú principal" in text
+    assert "No se hizo ningún cambio" in text
+    assert "profesional" not in text
+    assert [(b.id, b.title) for b in result["response_buttons"]] == [
+        (MENU_ADMIN_PAYLOAD, "💬 Administración"),
+        (MENU_MAIN_PAYLOAD, "Menú principal"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_confirmation_stage_rejects_the_pending_action():
     repositories_provider = make_proposal_repositories_provider()
     node, conversation_repository, _ = await _make_node_and_conversation(
@@ -3744,7 +3776,7 @@ async def test_confirmation_stage_rejects_the_pending_action():
 
     assert result["collected_data"]["stage"] is None
     assert result["pending_action_id"] is None
-    assert result["response_text"] == "[fake-response for intent=proposal_rejected]"
+    assert "cancelaste" in result["response_text"]
     async with repositories_provider() as repositories:
         rejected = await repositories.pending_actions.get_by_id("pa-1")
         assert rejected is not None
