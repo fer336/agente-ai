@@ -26,6 +26,11 @@ from app.agent.action_claims import claims_executed_action
         "Dale si, ya te anoté.",
         "Dale sí, te lo cancelo.",
         "Apenas te lo confirmo, nos vemos.",
+        # Live (2026-10-15): said before the patient tapped Confirmar.
+        "He registrado tu solicitud para el viernes 16/10 a las 11:00 hs.",
+        "Ya registré tu solicitud.",
+        "Registré tu turno para el lunes.",
+        "Hemos registrado tu consulta.",
     ],
 )
 def test_claims_of_an_executed_action_are_detected(text):
@@ -50,6 +55,9 @@ def test_claims_of_an_executed_action_are_detected(text):
         "Listo, descartamos esa propuesta. Necesitás algo más?",
         "El lunes tenemos horarios disponibles.",
         "Por favor, confirmá o cancelá tocando uno de los botones.",
+        "Cuando toques Confirmar, registramos tu solicitud.",
+        "¿Querés que registre tu solicitud?",
+        "Todavía no registré nada: tocá ✅ Confirmar.",
         "",
     ],
 )
