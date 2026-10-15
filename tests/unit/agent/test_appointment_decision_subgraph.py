@@ -19,6 +19,8 @@ import app.agent.appointment_decision_subgraph as appointment_decision_subgraph
 from app.agent.appointment_decision_subgraph import (
     _AGGREGATE_SEARCH_WINDOW,
     _AGGREGATE_TARGET_SLOTS,
+    _SLOT_SELECTION_REMINDER,
+    _STALE_SLOT_SELECTION_MESSAGE,
     SPECIALTY_SLOTS_REQUEST_KEY,
     build_appointment_decision_graph,
 )
@@ -506,7 +508,7 @@ async def test_missing_slot_payload_reminds_with_the_current_options():
 
     result = await graph.ainvoke(state)
 
-    assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
+    assert result["response_text"] == _SLOT_SELECTION_REMINDER
     assert result["response_buttons"] is None
     # Aggregated screen (no professional chosen): one page, no navigation row.
     assert [row.id for row in result["response_list"].rows] == [
@@ -589,7 +591,7 @@ async def test_stale_slot_payload_is_rejected():
 
     result = await graph.ainvoke(state)
 
-    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+    assert result["response_text"] == _STALE_SLOT_SELECTION_MESSAGE
 
 
 @pytest.mark.asyncio
@@ -705,7 +707,7 @@ async def test_unknown_specialty_payload_during_slot_selection_keeps_the_stale_f
     result = await graph.ainvoke(state)
 
     assert result["decision_node"] == "choose_slot"
-    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+    assert result["response_text"] == _STALE_SLOT_SELECTION_MESSAGE
 
 
 class _RaisingSpecialtyGateway:
@@ -753,7 +755,7 @@ async def test_specialty_payload_reroute_falls_back_to_stale_when_catalog_lookup
     result = await graph.ainvoke(state)
 
     assert result["decision_node"] == "choose_slot"
-    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+    assert result["response_text"] == _STALE_SLOT_SELECTION_MESSAGE
 
 
 @pytest.mark.asyncio
@@ -784,7 +786,7 @@ async def test_specialty_payload_reroute_falls_back_to_stale_when_catalog_lookup
     result = await graph.ainvoke(state)
 
     assert result["decision_node"] == "choose_slot"
-    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+    assert result["response_text"] == _STALE_SLOT_SELECTION_MESSAGE
 
 
 @pytest.mark.asyncio

@@ -50,7 +50,13 @@ from app.agent.nodes.appointment_selection import (
     step_slots_page,
     text_leaks_a_name,
 )
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import (
+    all_of,
+    generate_or_fallback,
+    mentions_all,
+    mentions_any,
+    mentions_none,
+)
 from app.agent.workflow_state import invalidate_from
 from app.application.appointments.search_availability import SearchAvailabilityUseCase
 from app.application.appointments.search_availability_any_professional import (
@@ -453,6 +459,10 @@ def build_appointment_decision_graph(
             _CHOOSE_SPECIALTY_PROMPT,
             recent_messages,
             contact_memory,
+            validator=all_of(
+                mentions_all("especialidad"),
+                mentions_none("administración", "administracion", "día", "dia", "horario"),
+            ),
         )
         if text_leaks_a_name(text, [s.name for s in specialties]):
             text = _CHOOSE_SPECIALTY_PROMPT
@@ -487,25 +497,7 @@ def build_appointment_decision_graph(
         by `choose_browse_mode` when the patient's next reply isn't one of
         these buttons."""
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "choose_browse_mode",
-            {
-                "situacion": (
-                    "No encontramos turnos próximos para esa especialidad; hay que "
-                    "ofrecerle cambiar de especialidad, volver al menú principal o hablar "
-                    "con administración."
-                ),
-                "instruccion": (
-                    "Le vamos a mostrar 3 botones debajo de tu mensaje — no los repitas "
-                    "en el texto y NO ofrezcas elegir un profesional, solo planteá la pregunta."
-                ),
-            },
-            _NO_SLOTS_FALLBACK_PROMPT,
-            recent_messages,
-            contact_memory,
-        )
+        text = _NO_SLOTS_FALLBACK_PROMPT
         return {
             "response_text": text,
             "response_buttons": _NO_SLOTS_FALLBACK_BUTTONS,
@@ -559,23 +551,7 @@ def build_appointment_decision_graph(
                 contact_memory,
             )
 
-        reminder_text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "browse_mode_reminder",
-            {
-                "situacion": (
-                    "El paciente escribió texto libre o tocó algo inválido en este paso; "
-                    "solo puede elegir tocando uno de los 3 botones."
-                ),
-                "instruccion": (
-                    "Pedile que toque uno de los botones — no los repitas en el texto."
-                ),
-            },
-            _NO_SLOTS_FALLBACK_REMINDER,
-            recent_messages,
-            contact_memory,
-        )
+        reminder_text = _NO_SLOTS_FALLBACK_REMINDER
         return {
             "response_text": reminder_text,
             "response_buttons": _NO_SLOTS_FALLBACK_BUTTONS,
@@ -690,6 +666,10 @@ def build_appointment_decision_graph(
             static_prompt,
             recent_messages,
             contact_memory,
+            validator=all_of(
+                mentions_any("horario", "turno"),
+                mentions_none("administración", "administracion", "registr"),
+            ),
         )
         if text_leaks_a_name(text, list(professional_names.values())):
             text = static_prompt
@@ -954,27 +934,7 @@ def build_appointment_decision_graph(
                     "decision_node": "choose_specialty",
                     "exit_reason": "none",
                 }
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "specialty_retry",
-                {
-                    "situacion": (
-                        "El paciente no eligió una especialidad válida de la lista "
-                        "interactiva que le mostramos."
-                    ),
-                    "instruccion": (
-                        "Pedile que elija una especialidad de la lista interactiva. "
-                        "No menciones números ni repitas la lista en el texto."
-                    ),
-                    "intentos_seguidos": retry_count,
-                },
-                _SPECIALTY_NOT_UNDERSTOOD_MESSAGE,
-                state.get("recent_messages", []),
-                state.get("contact_memory_summary"),
-            )
-            if text_leaks_a_name(text, [option.name for option in options]):
-                text = _SPECIALTY_NOT_UNDERSTOOD_MESSAGE
+            text = _SPECIALTY_NOT_UNDERSTOOD_MESSAGE
             page = current_page(collected_data, "specialties_page")
             return {
                 "response_text": text,
@@ -1053,20 +1013,7 @@ def build_appointment_decision_graph(
             )
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-            no_slots_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_slots",
-                {
-                    "situacion": (
-                        "No hay horarios disponibles en los próximos días; ofrecele pasarlo "
-                        "con administración."
-                    ),
-                },
-                _NO_SLOTS_MESSAGE,
-                state.get("recent_messages", []),
-                state.get("contact_memory_summary"),
-            )
+            no_slots_text = _NO_SLOTS_MESSAGE
             return {
                 "response_text": no_slots_text,
                 "response_buttons": _NO_AVAILABILITY_BUTTONS,
@@ -1085,21 +1032,7 @@ def build_appointment_decision_graph(
         professional_names = {p.id: p.full_name for p in professionals}
         page = current_page(collected_data, "slots_page")
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        choose_slot_text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "choose_slot",
-            {
-                "situacion": "Hay horarios disponibles y hay que invitar al paciente a elegir uno.",
-                "instruccion": (
-                    "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno."
-                ),
-            },
-            _CHOOSE_SLOT_PROMPT,
-            state.get("recent_messages", []),
-            state.get("contact_memory_summary"),
-        )
+        choose_slot_text = _CHOOSE_SLOT_PROMPT
         return {
             "response_text": choose_slot_text,
             "response_buttons": None,
@@ -1144,23 +1077,7 @@ def build_appointment_decision_graph(
                 collected_data,
                 1 if button_payload == LIST_MORE_PAYLOAD else -1,
             )
-            more_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "choose_slot",
-                {
-                    "situacion": (
-                        "Hay más horarios disponibles y hay que invitar al paciente a elegir uno."
-                    ),
-                    "instruccion": (
-                        "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
-                        "los menciones ni los repitas, solo invitá a elegir uno."
-                    ),
-                },
-                _CHOOSE_SLOT_PROMPT,
-                recent_messages,
-                contact_memory,
-            )
+            more_text = _CHOOSE_SLOT_PROMPT
             return {
                 "response_text": more_text,
                 "response_buttons": None,
@@ -1211,36 +1128,10 @@ def build_appointment_decision_graph(
 
         slot_id = slot_payload_id(button_payload)
         if slot_id is None:
-            intent, situacion, static_message = (
-                (
-                    "slot_selection_reminder",
-                    (
-                        "El paciente escribió texto libre pero en este paso solo se "
-                        "puede elegir un horario tocando un botón."
-                    ),
-                    _SLOT_SELECTION_REMINDER,
-                )
+            message = (
+                _SLOT_SELECTION_REMINDER
                 if button_payload is None
-                else (
-                    "stale_slot_selection",
-                    "El paciente tocó un horario de un mensaje anterior que ya no está vigente.",
-                    _STALE_SLOT_SELECTION_MESSAGE,
-                )
-            )
-            message = await generate_or_fallback(
-                llm_provider,
-                str(state["conversation_id"]),
-                intent,
-                {
-                    "situacion": situacion,
-                    "instruccion": (
-                        "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
-                        "mensaje — NO la repitas, solo invitá a elegir uno."
-                    ),
-                },
-                static_message,
-                recent_messages,
-                contact_memory,
+                else _STALE_SLOT_SELECTION_MESSAGE
             )
             page = current_page(collected_data, "slots_page")
             return {
@@ -1255,23 +1146,7 @@ def build_appointment_decision_graph(
 
         selected = slot_by_id(available_slots, slot_id)
         if selected is None:
-            stale_slot_text = await generate_or_fallback(
-                llm_provider,
-                str(state["conversation_id"]),
-                "stale_slot_selection",
-                {
-                    "situacion": (
-                        "El paciente tocó un horario de un mensaje anterior que ya no está vigente."
-                    ),
-                    "instruccion": (
-                        "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
-                        "mensaje — NO la repitas, solo invitá a elegir uno."
-                    ),
-                },
-                _STALE_SLOT_SELECTION_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
+            stale_slot_text = _STALE_SLOT_SELECTION_MESSAGE
             page = current_page(collected_data, "slots_page")
             return {
                 "response_text": stale_slot_text,

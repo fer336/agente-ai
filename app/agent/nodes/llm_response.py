@@ -68,6 +68,21 @@ def mentions_any(*terms: str) -> Callable[[str], bool]:
     return lambda text: any(term in text.casefold() for term in wanted)
 
 
+def mentions_none(*terms: str) -> Callable[[str], bool]:
+    """Validator: the model text must name none of ``terms`` (case-insensitive).
+
+    Blocks a known off-script move, e.g. offering an administration hand-off above a list
+    whose only job is to invite the patient to pick a row.
+    """
+    forbidden = [term.casefold() for term in terms]
+    return lambda text: not any(term in text.casefold() for term in forbidden)
+
+
+def all_of(*checks: Callable[[str], bool]) -> Callable[[str], bool]:
+    """Validator: every one of ``checks`` must accept the model text."""
+    return lambda text: all(check(text) for check in checks)
+
+
 async def generate_or_fallback(
     llm_provider: LLMProvider,
     conversation_id: str,

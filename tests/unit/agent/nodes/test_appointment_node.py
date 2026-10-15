@@ -17,9 +17,18 @@ from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
 )
+from app.agent.handoff_offer import HANDOFF_OFFER_KEY
 from app.agent.nodes.appointment import (
+    _APPOINTMENT_SELECTION_REMINDER,
+    _CHOOSE_APPOINTMENT_PROMPT,
+    _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT,
     _ESCALATE_IDENTIFICATION_AFTER_ATTEMPTS,
     _MAIN_MENU_RESET_MESSAGE,
+    _NO_APPOINTMENTS_MESSAGE,
+    _SLOT_SELECTION_REMINDER,
+    _STALE_APPOINTMENT_SELECTION_MESSAGE,
+    _STALE_SLOT_SELECTION_MESSAGE,
+    _STALE_TAP_MESSAGE,
     _VIEW_OTHER_PROFESSIONALS_PAYLOAD,
     CANCEL_APPOINTMENT_ACTION,
     CONFIRM_APPOINTMENT_PAYLOAD,
@@ -270,6 +279,44 @@ async def test_the_identification_ask_stays_on_script_when_the_model_improvises(
     assert "DNI" in ask["response_text"]
     assert "nombre" in ask["response_text"].casefold()
     assert "administración" not in ask["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_the_specialty_invitation_stays_on_script_when_the_model_improvises():
+    """Live bug: above the "Elegí especialidad" list the model asked for day, time and an
+    administration hand-off instead of inviting the patient to pick a specialty."""
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ImprovisingLLM())
+    question = await _start_create(node)
+
+    result = await _answer_as_existing_patient(node, question)
+
+    assert result["response_list"] is not None
+    assert (
+        result["response_text"]
+        == "Para qué especialidad querés el turno? Elegí una opción de la lista:"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_next_slots_invitation_stays_on_script_when_the_model_improvises():
+    """Live bug: above the "Elegí horario" list the model said it had registered the request and
+    offered an administration hand-off, instead of inviting the patient to pick a slot."""
+    node, _, _ = await _make_node_and_conversation(
+        **_ortodoncia_node_kwargs(), llm_provider=_ImprovisingLLM()
+    )
+    intake = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            user_message="Quería un turno de ortodoncia",
+            collected_data={"specialty_mention": "ortodoncia", "operation_mention": "create"},
+        )
+    )
+
+    result = await _answer_as_existing_patient(node, intake)
+
+    assert result["response_list"] is not None
+    assert "Con gusto te ayudo" not in result["response_text"]
+    assert result["response_text"].startswith("Estos son los próximos turnos disponibles")
 
 
 @pytest.mark.asyncio
@@ -1004,13 +1051,15 @@ async def test_a_welcome_list_operation_row_abandons_a_stale_stage_for_a_differe
 
 
 @pytest.mark.asyncio
-async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the_llm():
+async def test_llm_worded_steps_forward_recent_messages_and_contact_memory_to_the_llm():
     # Regression: `generate_or_fallback` calls used to build `ResponseContext`
     # with no conversation history at all, so the model had no way to know
     # it (or the patient) had just spoken — reliably re-greeting on
     # back-to-back replies (seen live: two consecutive messages both opened
     # with "Hola"). `AgentState["recent_messages"]`/`["contact_memory_summary"]`
     # must actually reach the LLM call, not just exist unused on the state.
+    # The operation menu is fixed text now, so this uses the identification ask, which
+    # the model still words (validated).
     from app.domain.repositories.llm_provider import ResponseContext
 
     captured: list[ResponseContext] = []
@@ -1027,19 +1076,17 @@ async def test_operation_menu_forwards_recent_messages_and_contact_memory_to_the
     ]
     state = make_agent_state(
         conversation_id="conv-1",
-        collected_data={},
+        user_message="quiero cancelar",
+        collected_data={"operation_mention": "cancel"},
         recent_messages=recent,
         contact_memory_summary="Paciente frecuente.",
     )
 
     await node(state)
 
+    assert captured[0].intent == "ask_identification"
     assert captured[0].recent_messages == recent
     assert captured[0].contact_memory == "Paciente frecuente."
-    # Regression: the LLM-worded reply used to leave the 3 operation
-    # buttons (Sacar turno/Reagendar/Cancelar) with no inviting text at
-    # all — an explicit instruction to do so must reach the prompt.
-    assert "instruccion" in captured[0].collected_data
 
 
 def _assert_next_slots_screen(result, *, max_rows: int = 10) -> None:
@@ -1210,8 +1257,8 @@ async def test_a_named_professional_without_slots_offers_the_specialtys_next_slo
 
 @pytest.mark.asyncio
 async def test_a_named_professional_never_renders_a_professional_list_for_the_llm():
-    # The slots prompt must tell the model not to name professionals; the old
-    # "choose_professional" prompt is never generated in the create flow.
+    # The slots invitation is fixed text now (the model never words it, so it can never name a
+    # professional); the old "choose_professional" prompt is never generated in the create flow.
     from app.domain.repositories.llm_provider import ResponseContext
 
     captured: list[ResponseContext] = []
@@ -1238,8 +1285,7 @@ async def test_a_named_professional_never_renders_a_professional_list_for_the_ll
     await _answer_as_existing_patient(node, intake)
 
     assert not any(context.intent == "choose_professional" for context in captured)
-    slot_context = next(c for c in captured if c.intent == "choose_slot")
-    assert "instruccion" in slot_context.collected_data
+    assert not any(context.intent == "choose_slot" for context in captured)
 
 
 @pytest.mark.asyncio
@@ -2141,7 +2187,7 @@ async def test_a_registered_dni_in_a_non_create_operation_lists_their_appointmen
     # straight to the appointments lookup (none seeded here).
     assert result["collected_data"].get("stage") != STAGE_AWAITING_NEW_PATIENT_DETAILS
     assert "Ya figur" in result["response_text"]
-    assert "intent=no_appointments" in result["response_text"]
+    assert _NO_APPOINTMENTS_MESSAGE in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -2426,7 +2472,7 @@ async def test_no_availability_choice_stage_re_offers_main_menu_on_a_stale_tap()
     assert [(button.id, button.title) for button in result["response_buttons"]] == [
         (MENU_MAIN_PAYLOAD, "Menú principal"),
     ]
-    assert result["response_text"] == "[fake-response for intent=stale_tap]"
+    assert result["response_text"] == _STALE_TAP_MESSAGE
 
 
 @pytest.mark.asyncio
@@ -3219,7 +3265,7 @@ async def test_slot_selection_stage_reminds_instead_of_advancing_on_free_text():
 
     result = await node(state)
 
-    assert "[fake-response for intent=slot_selection_reminder]" in result["response_text"]
+    assert result["response_text"] == _SLOT_SELECTION_REMINDER
     assert "collected_data" not in result
     assert result["response_buttons"] is None
     # Aggregated next-slots screen: one page, no navigation row.
@@ -3245,7 +3291,7 @@ async def test_slot_selection_stage_reoffers_on_a_stale_button():
 
     result = await node(state)
 
-    assert "[fake-response for intent=stale_slot_selection]" in result["response_text"]
+    assert result["response_text"] == _STALE_SLOT_SELECTION_MESSAGE
     assert "collected_data" not in result
 
 
@@ -3278,7 +3324,7 @@ async def test_slot_selection_stage_proposes_immediately_when_rescheduling():
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
     }
-    assert "[fake-response for intent=propose_reschedule_confirmation]" in result["response_text"]
+    assert result["response_text"].startswith("Vas a reagendar tu turno con Profesional.")
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "SENSITIVE_CONFIRMATION"
@@ -3535,7 +3581,7 @@ async def test_confirmation_stage_confirm_tap_with_no_pending_action_id_routes_a
 
     result = await node(state)
 
-    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
     assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
     assert result["pending_action_id"] is None
 
@@ -3553,7 +3599,7 @@ async def test_confirmation_stage_cancelar_tap_with_no_pending_action_id_routes_
 
     result = await node(state)
 
-    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
     assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
     assert result["pending_action_id"] is None
 
@@ -3853,11 +3899,10 @@ async def test_identification_stage_offers_appointments_for_cancel():
     assert result["collected_data"]["stage"] == STAGE_AWAITING_APPOINTMENT_SELECTION
     assert result["collected_data"]["patient_appointments"] == [appointment]
     assert result["response_buttons"] == [_appointment_button(appointment)]
-    # Regression, seen live: a cancel-selection screen used to reuse the
-    # same generic "choose_appointment" intent as reschedule/view, which
-    # let the model default to booking-toned phrasing ("te lo reservo y
-    # listo") while the patient was cancelling.
-    assert "[fake-response for intent=choose_appointment_to_cancel]" in result["response_text"]
+    # Regression, seen live: a cancel-selection screen used to reuse the same generic
+    # invitation as reschedule/view, which let the model default to booking-toned phrasing
+    # ("te lo reservo y listo") while the patient was cancelling. It has its own fixed text.
+    assert result["response_text"] == _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT
 
 
 @pytest.mark.asyncio
@@ -3879,7 +3924,7 @@ async def test_identification_stage_offers_appointments_for_reschedule_with_dist
     shown = await node(state)
     result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
-    assert "[fake-response for intent=choose_appointment_to_reschedule]" in result["response_text"]
+    assert result["response_text"] == _CHOOSE_APPOINTMENT_PROMPT
 
 
 @pytest.mark.asyncio
@@ -3897,8 +3942,9 @@ async def test_identification_stage_reports_no_appointments_for_cancel():
     shown = await node(state)
     result = await confirm_identification(node, shown, conversation_id=state["conversation_id"])
 
-    assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES}
-    assert result["response_text"] == "[fake-response for intent=no_appointments]"
+    # The fixed text offers the administration hand-off, so the offer is remembered too.
+    assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES, HANDOFF_OFFER_KEY: True}
+    assert result["response_text"] == _NO_APPOINTMENTS_MESSAGE
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "FREE_INPUT"
@@ -3964,7 +4010,7 @@ async def test_appointment_selection_stage_reminds_instead_of_advancing_on_free_
 
     result = await node(state)
 
-    assert "[fake-response for intent=appointment_selection_reminder]" in result["response_text"]
+    assert result["response_text"] == _APPOINTMENT_SELECTION_REMINDER
     assert "collected_data" not in result
     assert len(result["response_buttons"]) == 1
 
@@ -3990,7 +4036,7 @@ async def test_appointment_selection_stage_reoffers_on_a_stale_button():
 
     result = await node(state)
 
-    assert "[fake-response for intent=stale_appointment_selection]" in result["response_text"]
+    assert result["response_text"] == _STALE_APPOINTMENT_SELECTION_MESSAGE
     assert "collected_data" not in result
 
 
@@ -4020,11 +4066,9 @@ async def test_appointment_selection_stage_proposes_cancellation_on_a_valid_sele
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
     assert result["pending_action_id"] is not None
-    assert "[fake-response for intent=propose_cancel_confirmation]" in result["response_text"]
-    # The patient's name (already known from identification) reaches the
-    # LLM call so it can ask for confirmation by name, per this session's
-    # brief ("Bárbaro, {nombre} confirmá el turno a cancelar...").
-    assert "Juan Perez" in result["response_text"]
+    assert result["response_text"].startswith("Vas a cancelar tu turno con Profesional.")
+    # The proposal is fixed text now: it no longer addresses the patient by name.
+    assert "Juan Perez" not in result["response_text"]
     assert {b.id for b in result["response_buttons"]} == {
         CONFIRM_APPOINTMENT_PAYLOAD,
         REJECT_APPOINTMENT_PAYLOAD,
@@ -4289,7 +4333,7 @@ async def test_slot_selection_stage_proposes_reschedule_when_rescheduling():
     result = await node(state)
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
-    assert "[fake-response for intent=propose_reschedule_confirmation]" in result["response_text"]
+    assert result["response_text"].startswith("Vas a reagendar tu turno con Profesional.")
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "SENSITIVE_CONFIRMATION"
@@ -4972,7 +5016,7 @@ async def test_confirmation_stage_cancelar_tap_ignores_a_stale_operation_mention
 
     result = await node(state)
 
-    assert result["response_text"] == "[fake-response for intent=operation_menu]"
+    assert result["response_text"] == _MAIN_MENU_RESET_MESSAGE
     assert result["collected_data"] == {"stage": STAGE_AWAITING_OPERATION_SELECTION}
     assert result["pending_action_id"] is None
 
@@ -5127,7 +5171,7 @@ async def test_a_remembered_patient_is_not_asked_for_identification_to_view_appo
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(llm_provider=llm)
 
-    await node(
+    result = await node(
         make_agent_state(
             conversation_id="conv-1",
             button_payload=OPERATION_CANCEL_PAYLOAD,
@@ -5139,7 +5183,7 @@ async def test_a_remembered_patient_is_not_asked_for_identification_to_view_appo
     assert "ask_identification" not in llm.intents
     # Nothing scheduled for this patient in the fake gateway: the no-appointments reply,
     # never an identification prompt.
-    assert "no_appointments" in llm.intents
+    assert result["response_text"] == _NO_APPOINTMENTS_MESSAGE
 
 
 @pytest.mark.asyncio

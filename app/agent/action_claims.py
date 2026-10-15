@@ -22,8 +22,8 @@ SAFE_ACTION_CLAIM_ANSWER = (
 
 #: First-person present ("te lo confirmo") and past ("ya lo cancelé") of the actions.
 _FIRST_PERSON_PRESENT = r"(?:confirmo|cancelo|reprogramo|reservo|agendo|anoto)"
-_FIRST_PERSON_PAST = r"(?:confirmé|cancelé|reprogramé|reservé|agendé|anoté)"
-_PARTICIPLE = r"(?:confirmad|cancelad|reprogramad|agendad|anotad|reservad)[oa]s?"
+_FIRST_PERSON_PAST = r"(?:confirmé|cancelé|reprogramé|reservé|agendé|anoté|registré)"
+_PARTICIPLE = r"(?:confirmad|cancelad|reprogramad|agendad|anotad|reservad|registrad)[oa]s?"
 
 _CLAIM_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -36,8 +36,8 @@ _CLAIM_PATTERNS = tuple(
         rf"\bte\s+{_FIRST_PERSON_PRESENT}\b(?!\s+(?:que|si|cu[aá]l|cu[aá]nto|cu[aá]ndo|el\s+dato)\b)",
         # "ya te anoté", "ya lo cancelé", "ya confirmé", "he confirmado"
         rf"\bya\s+(?:te\s+)?(?:(?:lo|la)\s+)?{_FIRST_PERSON_PAST}\b",
-        rf"\b{_FIRST_PERSON_PAST}\s+(?:tu|el|ese|su|la)\s+(?:turno|cita|consulta|reserva)\b",
-        r"\bhe\s+(?:confirmad|cancelad|reprogramad|agendad|anotad|reservad)o\b",
+        rf"\b{_FIRST_PERSON_PAST}\s+(?:tu|el|ese|su|la)\s+(?:turno|cita|consulta|reserva|solicitud)\b",
+        r"\b(?:he|hemos)\s+(?:confirmad|cancelad|reprogramad|agendad|anotad|reservad|registrad)o\b",
         # "confirmamos tu turno", "cancelamos el turno"
         r"\b(?:confirmamos|cancelamos|reprogramamos|agendamos|anotamos|reservamos)\s+"
         r"(?:tu|el|ese|su|la)\s+(?:turno|cita|consulta|reserva)\b",

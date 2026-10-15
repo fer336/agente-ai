@@ -116,15 +116,14 @@ async def test_the_same_choice_is_offered_from_a_direct_identification_stage(ope
 
 
 @pytest.mark.asyncio
-async def test_the_wording_is_llm_built_without_the_names_and_never_asks_for_insurance():
+async def test_the_wording_is_fixed_and_never_asks_for_insurance_whatever_the_model_writes():
     llm = _ScriptedLLM(_NOT_FOUND_REPLY)
     node, _, _ = await make_node_and_conversation(llm_provider=llm)
 
     result = await _not_found_after_existing_patient_answer(node)
 
-    assert result["response_text"] == _NOT_FOUND_REPLY
-    context = next(c for c in llm.contexts if c.intent == "patient_not_found")
-    assert "30999888" not in str(context.collected_data)
+    assert result["response_text"] == _PATIENT_NOT_FOUND_MESSAGE
+    assert not any(c.intent == "patient_not_found" for c in llm.contexts)
 
 
 @pytest.mark.asyncio

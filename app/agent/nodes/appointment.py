@@ -84,7 +84,13 @@ from app.agent.nodes.appointment_selection import (
 from app.agent.nodes.appointment_selection import (
     step_slots_page as _step_slots_page,
 )
-from app.agent.nodes.llm_response import generate_or_fallback, mentions_all, mentions_any
+from app.agent.nodes.llm_response import (
+    all_of,
+    generate_or_fallback,
+    mentions_all,
+    mentions_any,
+    mentions_none,
+)
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.reminder_action import (
     REMINDER_IDENTITY_KEY,
@@ -528,8 +534,6 @@ _PATIENT_NOT_FOUND_BUTTONS = [
 #: Retries that end "not found" again, and free-text replies at the choice, before handing off.
 _NOT_FOUND_MAX_RETRIES = 2
 _NOT_FOUND_MAX_FREE_TEXT = 2
-#: A "no patient found" reply must never ask for the data of a registration.
-_PATIENT_NOT_FOUND_FORBIDDEN_WORDS = ("obra social", "prepaga", "mail", "correo", "email")
 #: LEGACY wording of `STAGE_AWAITING_NEW_PATIENT_DETAILS` (old checkpoints only).
 _NEW_PATIENT_DETAILS_NOT_UNDERSTOOD_MESSAGE = (
     "No pude leer bien esos datos. Escribime tu obra social y tu mail juntos, "
@@ -607,15 +611,6 @@ _STALE_APPOINTMENT_SELECTION_MESSAGE = "Esa opción ya no está disponible. Eleg
 _CONFIRMATION_REMINDER = (
     "Por favor, confirmá o cancelá tocando uno de los botones — todavía no puedo "
     "tomar la confirmación por texto."
-)
-#: Mandatory instruction of every LLM-worded confirmation reminder (see the "instruccion"
-#: key of `generate_or_fallback` contexts). Free text never confirms nor cancels, and the
-#: reply once read as if the action was about to happen ("ahí lo cancelo entonces").
-_CONFIRMATION_REMINDER_INSTRUCTION = (
-    "Pedile en 1 o 2 oraciones cortas que toque uno de los botones ✅ Confirmar o ❌ Cancelar. "
-    "Todavía no se hizo nada: no digas ni insinúes que ya lo hiciste ni que lo vas a hacer "
-    "(nada de 'lo cancelo', 'lo agendo', 'lo reprogramo', 'ya lo hago'), solo pedile que use "
-    "los botones."
 )
 _PROPOSAL_REJECTED_MESSAGE = "Listo, descartamos esa propuesta. Necesitás algo más?"
 _SLOT_TAKEN_MESSAGE = (
@@ -961,113 +956,37 @@ def _view_action_from_input(button_payload: str | None, text: str) -> str | None
 #: the wrong day because a paraphrase dropped or mangled a digit is a much
 #: worse failure than a slightly repetitive sentence, so this data never
 #: passes through free-form generation (user's own explicit call).
-async def _confirmation_message(
-    llm_provider: LLMProvider,
-    conversation_id: ConversationId,
+def _confirmation_message(
     slot: AppointmentSlot,
     professional_names: dict[str, str],
-    recent_messages: list[dict[str, str]],
-    contact_memory: str | None,
     extra_line: str = "",
 ) -> str:
     professional_name = professional_names.get(slot.professional_id, "Profesional")
     datetime_block = _format_confirmation_datetime(slot.time_range.start)
-    text = await generate_or_fallback(
-        llm_provider,
-        str(conversation_id),
-        "propose_create_confirmation",
-        {
-            "situacion": (
-                "Encontramos un horario disponible para el turno que el paciente quiere "
-                "sacar y hay que preguntarle si confirma la reserva."
-            ),
-            "profesional": professional_name,
-            "instruccion": (
-                "Decí que hay un horario disponible con ese profesional y terminá "
-                "preguntando si confirma la reserva. NO menciones fecha ni hora — esos "
-                "datos se agregan aparte, después de tu mensaje, tal cual vienen."
-            ),
-        },
-        f"Tengo disponible con {professional_name}.\n\nConfirmás que querés reservar este turno?",
-        recent_messages,
-        contact_memory,
-    )
+    text = f"Tengo disponible con {professional_name}.\n\nConfirmás que querés reservar este turno?"
     # Like the date block, this line is code-written, never part of the model's text.
     detail = f"{datetime_block}\n{extra_line}" if extra_line else datetime_block
     return f"{text}\n\n{detail}"
 
 
-async def _cancel_confirmation_message(
-    llm_provider: LLMProvider,
-    conversation_id: ConversationId,
+def _cancel_confirmation_message(
     appointment: Appointment,
     professional_names: dict[str, str],
-    patient_name: str | None,
-    recent_messages: list[dict[str, str]],
-    contact_memory: str | None,
 ) -> str:
     slot = appointment.slot
     professional_name = professional_names.get(slot.professional_id, "Profesional")
     datetime_block = _format_confirmation_datetime(slot.time_range.start)
-    context: dict[str, object] = {
-        "situacion": (
-            "El paciente pidió cancelar un turno y hay que pedirle que confirme antes de "
-            "hacerlo, para que el horario quede liberado."
-        ),
-        "profesional": professional_name,
-        "instruccion": (
-            "Pedile que confirme que quiere cancelar ese turno con ese profesional, así el "
-            "horario queda liberado. NO menciones fecha ni hora — esos datos se agregan "
-            "aparte, después de tu mensaje, tal cual vienen."
-        ),
-    }
-    if patient_name:
-        context["nombre_paciente"] = patient_name
-        context["instruccion"] = (
-            f"{context['instruccion']} Podés dirigirte a {patient_name} por su nombre."
-        )
-    text = await generate_or_fallback(
-        llm_provider,
-        str(conversation_id),
-        "propose_cancel_confirmation",
-        context,
-        f"Vas a cancelar tu turno con {professional_name}.\n\nConfirmás que querés cancelarlo?",
-        recent_messages,
-        contact_memory,
-    )
+    text = f"Vas a cancelar tu turno con {professional_name}.\n\nConfirmás que querés cancelarlo?"
     return f"{text}\n\n{datetime_block}"
 
 
-async def _reschedule_confirmation_message(
-    llm_provider: LLMProvider,
-    conversation_id: ConversationId,
+def _reschedule_confirmation_message(
     slot: AppointmentSlot,
     professional_names: dict[str, str],
-    recent_messages: list[dict[str, str]],
-    contact_memory: str | None,
 ) -> str:
     professional_name = professional_names.get(slot.professional_id, "Profesional")
     datetime_block = _format_confirmation_datetime(slot.time_range.start)
-    text = await generate_or_fallback(
-        llm_provider,
-        str(conversation_id),
-        "propose_reschedule_confirmation",
-        {
-            "situacion": (
-                "El paciente eligió un nuevo horario para reagendar su turno y hay que "
-                "confirmarlo antes de hacer el cambio."
-            ),
-            "profesional": professional_name,
-            "instruccion": (
-                "Decí que va a reagendar el turno a ese horario con ese profesional y "
-                "terminá preguntando si confirma el cambio. NO menciones fecha ni hora — "
-                "esos datos se agregan aparte, después de tu mensaje, tal cual vienen."
-            ),
-        },
-        f"Vas a reagendar tu turno con {professional_name}.\n\nConfirmás el cambio?",
-        recent_messages,
-        contact_memory,
-    )
+    text = f"Vas a reagendar tu turno con {professional_name}.\n\nConfirmás el cambio?"
     return f"{text}\n\n{datetime_block}"
 
 
@@ -1093,32 +1012,9 @@ def _new_patient_proposal_payload(
     }
 
 
-async def _verification_confirmation_message(
-    llm_provider: LLMProvider,
-    conversation_id: ConversationId,
-    patient: Patient,
-    recent_messages: list[dict[str, str]],
-    contact_memory: str | None,
-) -> str:
+def _verification_confirmation_message(patient: Patient) -> str:
     data_block = f"Nombre: {patient.full_name}\nDNI: {patient.dni}"
-    text = await generate_or_fallback(
-        llm_provider,
-        str(conversation_id),
-        "propose_verification_confirmation",
-        {
-            "situacion": (
-                "Encontramos al paciente registrado y hay que confirmar que estos datos "
-                "son correctos."
-            ),
-            "instruccion": (
-                "Preguntá si estos datos son correctos. NO reescribas el nombre ni el "
-                "DNI — esos datos se agregan aparte, después de tu mensaje, tal cual vienen."
-            ),
-        },
-        "Encontramos estos datos, ¿son correctos?",
-        recent_messages,
-        contact_memory,
-    )
+    text = "Encontramos estos datos, ¿son correctos?"
     return f"{text}\n\n{data_block}"
 
 
@@ -1567,21 +1463,7 @@ def create_appointment_node(
             # One Flow serves both returning and new patients; the reply's
             # `es_paciente` answer decides which path handles it.
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            intake_intro = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "send_patient_intake_flow",
-                {
-                    "situacion": (
-                        "Hay que identificar al paciente antes de seguir — le vamos a "
-                        "mandar un formulario corto donde indica si ya es paciente y "
-                        "completa sus datos."
-                    ),
-                },
-                _SEND_INTAKE_FLOW_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
+            intake_intro = _SEND_INTAKE_FLOW_MESSAGE
             return {
                 "response_text": intake_intro,
                 "response_buttons": None,
@@ -1596,20 +1478,7 @@ def create_appointment_node(
             }
         if verification_flow_id:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            intro = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "send_verification_flow",
-                {
-                    "situacion": (
-                        "Hay que identificar al paciente antes de seguir — le vamos a "
-                        "mandar un formulario corto para que confirme nombre y DNI."
-                    ),
-                },
-                _SEND_VERIFICATION_FLOW_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
+            intro = _SEND_VERIFICATION_FLOW_MESSAGE
             return {
                 "response_text": intro,
                 "response_buttons": None,
@@ -1644,20 +1513,7 @@ def create_appointment_node(
         Flow successfully, so both are expected to be configured together.
         """
         await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-        intro = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "send_registration_flow",
-            {
-                "situacion": (
-                    "No encontramos al paciente registrado — hay que pedirle que "
-                    "complete sus datos con un formulario."
-                ),
-            },
-            _SEND_REGISTRATION_FLOW_MESSAGE,
-            recent_messages,
-            contact_memory,
-        )
+        intro = _SEND_REGISTRATION_FLOW_MESSAGE
         return {
             "response_text": intro,
             "response_buttons": None,
@@ -1714,13 +1570,7 @@ def create_appointment_node(
                 state["contact_memory_summary"],
             )
         await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-        verification_text = await _verification_confirmation_message(
-            llm_provider,
-            conversation_id,
-            identified_patient,
-            state["recent_messages"],
-            state["contact_memory_summary"],
-        )
+        verification_text = _verification_confirmation_message(identified_patient)
         return {
             "response_text": verification_text,
             "response_buttons": _CONFIRM_BUTTONS,
@@ -2038,6 +1888,10 @@ def create_appointment_node(
             _CHOOSE_SPECIALTY_PROMPT,
             recent_messages,
             contact_memory,
+            validator=all_of(
+                mentions_all("especialidad"),
+                mentions_none("administración", "administracion", "día", "dia", "horario"),
+            ),
         )
         if text_leaks_a_name(text, [s.name for s in specialties]):
             text = _CHOOSE_SPECIALTY_PROMPT
@@ -2544,20 +2398,7 @@ def create_appointment_node(
             )
         if not slots:
             await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_slots",
-                {
-                    "situacion": (
-                        "No hay horarios disponibles en los próximos días; ofrecele pasarlo "
-                        "con administración."
-                    ),
-                },
-                _NO_SLOTS_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
+            text = _NO_SLOTS_MESSAGE
             return {
                 "response_text": text,
                 "response_buttons": _NO_AVAILABILITY_BUTTONS,
@@ -2575,21 +2416,7 @@ def create_appointment_node(
         }
         page = current_page(collected_data, "slots_page")
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "choose_slot",
-            {
-                "situacion": "Hay horarios disponibles y hay que invitar al paciente a elegir uno.",
-                "instruccion": (
-                    "Le vamos a mostrar una lista de horarios debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno."
-                ),
-            },
-            _CHOOSE_SLOT_PROMPT,
-            recent_messages,
-            contact_memory,
-        )
+        text = _CHOOSE_SLOT_PROMPT
         return {
             "response_text": text,
             "response_buttons": None,
@@ -2700,14 +2527,8 @@ def create_appointment_node(
             _proposal_payload(patient, selected, _booking_topic_comment(collected_data)),
         )
         await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-        confirmation_text = await _confirmation_message(
-            llm_provider,
-            conversation_id,
-            selected,
-            professional_names,
-            recent_messages,
-            contact_memory,
-            _aligner_option_line(collected_data),
+        confirmation_text = _confirmation_message(
+            selected, professional_names, _aligner_option_line(collected_data)
         )
         return {
             "response_text": confirmation_text,
@@ -2733,15 +2554,7 @@ def create_appointment_node(
         appointments = await get_patient_appointments.execute(patient_id)
         if not appointments:
             await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
-            text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "no_appointments",
-                {"situacion": "No encontramos turnos próximos a nombre del paciente."},
-                _NO_APPOINTMENTS_MESSAGE,
-                recent_messages,
-                contact_memory,
-            )
+            text = _NO_APPOINTMENTS_MESSAGE
             no_appointments_data: dict[str, object] = {"patient": patient}
             offers_handoff = offers_administration_handoff(text)
             if offers_handoff:
@@ -2792,38 +2605,12 @@ def create_appointment_node(
         contact_memory: str | None,
     ) -> dict[str, object]:
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        # Operation-specific framing — CANCEL and RESCHEDULE both reach
-        # this same "pick which appointment" screen, but the tone must not
-        # be interchangeable: seen live, a generic "invitá a elegir uno"
-        # situacion left the model free to default to upbeat booking
-        # phrasing ("te lo reservo y listo") even while the patient was
-        # canceling. A single shared `intent="choose_appointment"` also let
-        # the very next confirmation turn pick up that booking TONE via
-        # `recent_messages`, even though that turn's own instruction
-        # already forbids repeating the date/time itself.
-        if collected_data.get("operation") == CANCEL_APPOINTMENT_ACTION:
-            intent = "choose_appointment_to_cancel"
-            situacion = "El paciente quiere cancelar un turno — hay que pedirle que elija cuál."
-            fallback = _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT
-        else:
-            intent = "choose_appointment_to_reschedule"
-            situacion = "El paciente quiere reprogramar un turno — hay que pedirle que elija cuál."
-            fallback = _CHOOSE_APPOINTMENT_PROMPT
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            intent,
-            {
-                "situacion": situacion,
-                "instruccion": (
-                    "Le vamos a mostrar una lista de sus turnos debajo de tu mensaje — NO "
-                    "los menciones ni los repitas, solo invitá a elegir uno. No uses tono de "
-                    "reserva ni digas que se lo vas a agendar."
-                ),
-            },
-            fallback,
-            recent_messages,
-            contact_memory,
+        # CANCEL and RESCHEDULE reach the same "pick which appointment" screen but each
+        # has its own fixed invitation, so the cancel tone never reads like a booking.
+        text = (
+            _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT
+            if collected_data.get("operation") == CANCEL_APPOINTMENT_ACTION
+            else _CHOOSE_APPOINTMENT_PROMPT
         )
         return {
             "response_text": text,
@@ -2865,26 +2652,7 @@ def create_appointment_node(
             if professional.specialty_id is not None
         }
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
-        intro = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "view_appointments_summary",
-            {
-                "situacion": (
-                    "El paciente quiere ver sus turnos próximos. Debajo de tu mensaje va el "
-                    "detalle de cada turno y después los botones Reagendar, Cancelar y "
-                    "Menú principal."
-                ),
-                "instruccion": (
-                    "Escribí una sola frase corta que presente el detalle. NO saludes, NO "
-                    "menciones fechas, horarios ni profesionales, y NO ofrezcas reservar "
-                    "nada nuevo."
-                ),
-            },
-            _VIEW_SUMMARY_INTRO,
-            recent_messages,
-            contact_memory,
-        )
+        intro = _VIEW_SUMMARY_INTRO
         lines = [
             _view_summary_line(
                 appointment,
@@ -2925,16 +2693,7 @@ def create_appointment_node(
             _cancel_proposal_payload(appointment),
         )
         await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
-        cancel_patient = cast(dict[str, object] | None, collected_data.get("patient"))
-        cancel_confirmation_text = await _cancel_confirmation_message(
-            llm_provider,
-            conversation_id,
-            appointment,
-            professional_names,
-            str(cancel_patient["full_name"]) if cancel_patient else None,
-            state["recent_messages"],
-            state["contact_memory_summary"],
-        )
+        cancel_confirmation_text = _cancel_confirmation_message(appointment, professional_names)
         return {
             "response_text": cancel_confirmation_text,
             "response_buttons": _CONFIRM_BUTTONS,
@@ -3009,29 +2768,7 @@ def create_appointment_node(
         if cast(int, collected_data.get("not_found_retries", 0)) >= _NOT_FOUND_MAX_RETRIES:
             # The patient already retried and is still unknown: stop looping.
             return {"intent": "handoff"}
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "patient_not_found",
-            {
-                "situacion": (
-                    "No se encontró ningún paciente con los datos (nombre completo y DNI) "
-                    "que dio la persona."
-                ),
-                "instruccion": (
-                    "Decile con claridad y calidez que no encontraste a ningún paciente con "
-                    "esos datos. NO le pidas obra social, mail ni ningún otro dato, y no "
-                    "repitas su nombre ni su DNI. Van a aparecer 3 botones debajo (registrarse, "
-                    "probar otro dato, hablar con administración): invitalo a tocar uno, sin "
-                    "listarlos. Sin saludo, en una o dos oraciones cortas."
-                ),
-            },
-            _PATIENT_NOT_FOUND_MESSAGE,
-            state["recent_messages"],
-            state["contact_memory_summary"],
-        )
-        if any(word in text.casefold() for word in _PATIENT_NOT_FOUND_FORBIDDEN_WORDS):
-            text = _PATIENT_NOT_FOUND_MESSAGE
+        text = _PATIENT_NOT_FOUND_MESSAGE
         await set_conversation_input_state.execute(conversation_id, INTERACTIVE_SELECTION)
         kept = {key: value for key, value in collected_data.items() if key != "patient"}
         return {
@@ -3396,21 +3133,7 @@ def create_appointment_node(
                             "confirmation gate; falling back to the reminder",
                             exc_info=exc,
                         )
-                        confirmation_reminder_text = await generate_or_fallback(
-                            llm_provider,
-                            str(conversation_id),
-                            "confirmation_reminder",
-                            {
-                                "situacion": (
-                                    "El paciente escribió texto libre pero en este paso solo se "
-                                    "puede confirmar o cancelar tocando uno de los 2 botones."
-                                ),
-                                "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
-                            },
-                            _CONFIRMATION_REMINDER,
-                            state["recent_messages"],
-                            state["contact_memory_summary"],
-                        )
+                        confirmation_reminder_text = _CONFIRMATION_REMINDER
                         return {
                             "response_text": confirmation_reminder_text,
                             "response_buttons": _CONFIRM_BUTTONS,
@@ -3465,21 +3188,7 @@ def create_appointment_node(
                     )
                     returned_to_main_menu = True
                 else:
-                    confirmation_reminder_text = await generate_or_fallback(
-                        llm_provider,
-                        str(conversation_id),
-                        "confirmation_reminder",
-                        {
-                            "situacion": (
-                                "El paciente escribió texto libre pero en este paso solo se "
-                                "puede confirmar o cancelar tocando uno de los 2 botones."
-                            ),
-                            "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
-                        },
-                        _CONFIRMATION_REMINDER,
-                        state["recent_messages"],
-                        state["contact_memory_summary"],
-                    )
+                    confirmation_reminder_text = _CONFIRMATION_REMINDER
                     return {
                         "response_text": confirmation_reminder_text,
                         "response_buttons": (
@@ -3862,21 +3571,7 @@ def create_appointment_node(
                 # normalized to `button_payload = None` above, so it takes
                 # the same recovery path free text with nothing to confirm
                 # already does).
-                stale_confirmation_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "confirmation_reminder",
-                    {
-                        "situacion": (
-                            "El paciente tocó un botón que no es válido en este paso; solo se "
-                            "puede confirmar o cancelar tocando uno de los 2 botones vigentes."
-                        ),
-                        "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
-                    },
-                    _CONFIRMATION_REMINDER,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                stale_confirmation_text = _CONFIRMATION_REMINDER
                 return {
                     "response_text": stale_confirmation_text,
                     "response_buttons": _CONFIRM_BUTTONS,
@@ -3941,24 +3636,7 @@ def create_appointment_node(
                     collected_data,
                     1 if button_payload == LIST_MORE_PAYLOAD else -1,
                 )
-                more_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "choose_slot",
-                    {
-                        "situacion": (
-                            "Hay más horarios disponibles y hay que invitar al paciente a "
-                            "elegir uno."
-                        ),
-                        "instruccion": (
-                            "Le vamos a mostrar una lista de horarios debajo de tu mensaje — "
-                            "NO los menciones ni los repitas, solo invitá a elegir uno."
-                        ),
-                    },
-                    _CHOOSE_SLOT_PROMPT,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                more_text = _CHOOSE_SLOT_PROMPT
                 return {
                     "response_text": more_text,
                     "response_buttons": None,
@@ -3987,39 +3665,10 @@ def create_appointment_node(
 
             slot_id = slot_payload_id(button_payload)
             if slot_id is None:
-                intent, situacion, static_message = (
-                    (
-                        "slot_selection_reminder",
-                        (
-                            "El paciente escribió texto libre pero en este paso solo se "
-                            "puede elegir un horario tocando un botón."
-                        ),
-                        _SLOT_SELECTION_REMINDER,
-                    )
+                message = (
+                    _SLOT_SELECTION_REMINDER
                     if button_payload is None
-                    else (
-                        "stale_slot_selection",
-                        (
-                            "El paciente tocó un horario de un mensaje anterior que ya no "
-                            "está vigente."
-                        ),
-                        _STALE_SLOT_SELECTION_MESSAGE,
-                    )
-                )
-                message = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    intent,
-                    {
-                        "situacion": situacion,
-                        "instruccion": (
-                            "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
-                            "mensaje — NO la repitas, solo invitá a elegir uno."
-                        ),
-                    },
-                    static_message,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                    else _STALE_SLOT_SELECTION_MESSAGE
                 )
                 page = current_page(collected_data, "slots_page")
                 return {
@@ -4031,24 +3680,7 @@ def create_appointment_node(
 
             selected = slot_by_id(available_slots, slot_id)
             if selected is None:
-                stale_slot_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "stale_slot_selection",
-                    {
-                        "situacion": (
-                            "El paciente tocó un horario de un mensaje anterior que ya no "
-                            "está vigente."
-                        ),
-                        "instruccion": (
-                            "Le vamos a mostrar la lista de horarios de nuevo debajo de tu "
-                            "mensaje — NO la repitas, solo invitá a elegir uno."
-                        ),
-                    },
-                    _STALE_SLOT_SELECTION_MESSAGE,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                stale_slot_text = _STALE_SLOT_SELECTION_MESSAGE
                 page = current_page(collected_data, "slots_page")
                 return {
                     "response_text": stale_slot_text,
@@ -4091,14 +3723,7 @@ def create_appointment_node(
                 RESCHEDULE_APPOINTMENT_ACTION,
                 _reschedule_proposal_payload(rescheduling_appointment_id, selected),
             )
-            confirmation_text = await _reschedule_confirmation_message(
-                llm_provider,
-                conversation_id,
-                selected,
-                professional_names,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
+            confirmation_text = _reschedule_confirmation_message(selected, professional_names)
 
             await set_conversation_input_state.execute(conversation_id, SENSITIVE_CONFIRMATION)
             return {
@@ -4131,24 +3756,7 @@ def create_appointment_node(
                 }
             view_action = _view_action_from_input(state["button_payload"], state["user_message"])
             if view_action is None:
-                view_reminder_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "view_action_reminder",
-                    {
-                        "situacion": (
-                            "El paciente está viendo sus turnos y no eligió qué hacer: solo "
-                            "puede reagendar, cancelar o volver al menú principal."
-                        ),
-                        "instruccion": (
-                            "Los botones se muestran de nuevo debajo de tu mensaje — NO "
-                            "repitas los turnos, solo invitá a elegir una opción."
-                        ),
-                    },
-                    _VIEW_ACTION_REMINDER,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                view_reminder_text = _VIEW_ACTION_REMINDER
                 return {
                     "response_text": view_reminder_text,
                     "response_buttons": _VIEW_ACTION_BUTTONS,
@@ -4209,36 +3817,10 @@ def create_appointment_node(
             if button_payload is None or not button_payload.startswith(
                 SELECT_APPOINTMENT_PAYLOAD_PREFIX
             ):
-                intent, situacion, static_message = (
-                    (
-                        "appointment_selection_reminder",
-                        (
-                            "El paciente escribió texto libre pero en este paso solo se "
-                            "puede elegir un turno tocando un botón."
-                        ),
-                        _APPOINTMENT_SELECTION_REMINDER,
-                    )
+                message = (
+                    _APPOINTMENT_SELECTION_REMINDER
                     if button_payload is None
-                    else (
-                        "stale_appointment_selection",
-                        "El paciente tocó un turno de un mensaje anterior que ya no está vigente.",
-                        _STALE_APPOINTMENT_SELECTION_MESSAGE,
-                    )
-                )
-                message = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    intent,
-                    {
-                        "situacion": situacion,
-                        "instruccion": (
-                            "Le vamos a mostrar la lista de sus turnos de nuevo debajo de tu "
-                            "mensaje — NO la repitas, solo invitá a elegir uno."
-                        ),
-                    },
-                    static_message,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
+                    else _STALE_APPOINTMENT_SELECTION_MESSAGE
                 )
                 return {
                     "response_text": message,
@@ -4254,24 +3836,7 @@ def create_appointment_node(
             )
             professional_names = cast(dict[str, str], collected_data.get("professional_names", {}))
             if selected_appointment is None:
-                stale_appointment_text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "stale_appointment_selection",
-                    {
-                        "situacion": (
-                            "El paciente tocó un turno de un mensaje anterior que ya no "
-                            "está vigente."
-                        ),
-                        "instruccion": (
-                            "Le vamos a mostrar la lista de sus turnos de nuevo debajo de tu "
-                            "mensaje — NO la repitas, solo invitá a elegir uno."
-                        ),
-                    },
-                    _STALE_APPOINTMENT_SELECTION_MESSAGE,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                stale_appointment_text = _STALE_APPOINTMENT_SELECTION_MESSAGE
                 return {
                     "response_text": stale_appointment_text,
                     "response_buttons": [
@@ -4335,20 +3900,7 @@ def create_appointment_node(
             # something else (see `_STALE_TAP_MESSAGE`'s own comment).
             # Re-offer the same single valid option rather than silently
             # falling through to the generic operation-menu fallback.
-            stale_tap_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "stale_tap",
-                {
-                    "situacion": (
-                        "El paciente tocó un botón de un mensaje anterior que ya no está "
-                        "vigente; hay que decírselo y ofrecerle el botón vigente de abajo."
-                    ),
-                },
-                _STALE_TAP_MESSAGE,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
+            stale_tap_text = _STALE_TAP_MESSAGE
             return {
                 "response_text": stale_tap_text,
                 "response_buttons": _NO_AVAILABILITY_BUTTONS,
@@ -4420,21 +3972,7 @@ def create_appointment_node(
                     state["recent_messages"],
                     state["contact_memory_summary"],
                 )
-            verification_reminder_text = await generate_or_fallback(
-                llm_provider,
-                str(conversation_id),
-                "confirmation_reminder",
-                {
-                    "situacion": (
-                        "El paciente tocó un botón que no es válido en este paso; solo se "
-                        "puede confirmar o decir que no es así tocando uno de los 2 botones."
-                    ),
-                    "instruccion": _CONFIRMATION_REMINDER_INSTRUCTION,
-                },
-                _CONFIRMATION_REMINDER,
-                state["recent_messages"],
-                state["contact_memory_summary"],
-            )
+            verification_reminder_text = _CONFIRMATION_REMINDER
             return {
                 "response_text": verification_reminder_text,
                 "response_buttons": _CONFIRM_BUTTONS,
@@ -4969,21 +4507,7 @@ def create_appointment_node(
                 _OPERATION_BY_PAYLOAD.get(button_payload) if button_payload is not None else None
             )
             if operation is None:
-                text = await generate_or_fallback(
-                    llm_provider,
-                    str(conversation_id),
-                    "operation_selection_reminder",
-                    {
-                        "situacion": (
-                            "El paciente escribió texto libre pero en este paso solo se "
-                            "puede elegir tocando uno de los 3 botones (Sacar turno, "
-                            "Reagendar, Cancelar)."
-                        ),
-                    },
-                    _OPERATION_SELECTION_REMINDER,
-                    state["recent_messages"],
-                    state["contact_memory_summary"],
-                )
+                text = _OPERATION_SELECTION_REMINDER
                 return {
                     "response_text": text,
                     "response_buttons": _OPERATION_BUTTONS,
@@ -5107,32 +4631,7 @@ def create_appointment_node(
                 identification_result = {**identification_result, "pending_action_id": None}
             return identification_result
 
-        situacion = (
-            'El paciente tocó "Volver al Menú" para abandonar lo que estaba haciendo y '
-            "empezar de nuevo."
-            if returned_to_main_menu
-            else (
-                "El paciente quiere hacer algo con un turno, pero todavía no dijo "
-                "si es para sacar uno nuevo, reagendar o cancelar."
-            )
-        )
-        text = await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "operation_menu",
-            {
-                "situacion": situacion,
-                "tono": "Cordial y breve, como alguien de la clínica atendiendo por WhatsApp.",
-                "instruccion": (
-                    "Van a aparecer 3 botones debajo de tu mensaje (Sacar turno, Reagendar, "
-                    "Cancelar) — cerrá el mensaje invitando a tocar uno de ellos, sin "
-                    "listarlos ni repetir sus nombres."
-                ),
-            },
-            _MAIN_MENU_RESET_MESSAGE if returned_to_main_menu else _OPERATION_MENU_MESSAGE,
-            state["recent_messages"],
-            state["contact_memory_summary"],
-        )
+        text = _MAIN_MENU_RESET_MESSAGE if returned_to_main_menu else _OPERATION_MENU_MESSAGE
         operation_menu_result: dict[str, object] = {
             "response_text": text,
             "response_buttons": _OPERATION_BUTTONS,
