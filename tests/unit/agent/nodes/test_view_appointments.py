@@ -3,9 +3,14 @@ being routed as a reschedule."""
 
 import pytest
 
+from app.agent.handoff_offer import HANDOFF_OFFER_KEY
 from app.agent.nodes.appointment import (
+    _CHOOSE_APPOINTMENT_PROMPT,
+    _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT,
+    _NO_APPOINTMENTS_MESSAGE,
     _OPERATION_BY_MENTION,
     _OPERATION_BY_PAYLOAD,
+    _VIEW_SUMMARY_INTRO,
     CANCEL_APPOINTMENT_ACTION,
     OPERATION_VIEW_PAYLOAD,
     RESCHEDULE_APPOINTMENT_ACTION,
@@ -226,8 +231,9 @@ async def test_viewing_with_no_appointments_keeps_the_no_appointments_reply():
 
     result = await _identify(node)
 
-    assert result["response_text"] == "[fake-response for intent=no_appointments]"
-    assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES}
+    assert result["response_text"] == _NO_APPOINTMENTS_MESSAGE
+    # The fixed text offers the administration hand-off, so the offer is remembered too.
+    assert result["collected_data"] == {"patient": _PATIENT_PRIMITIVES, HANDOFF_OFFER_KEY: True}
 
 
 async def _awaiting_view_action(*days: int, llm=None):
@@ -282,18 +288,14 @@ async def test_cancel_with_one_appointment_goes_straight_to_the_confirmation(kwa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "payload,operation,intent",
+    "payload,operation,invitation",
     [
-        (
-            VIEW_RESCHEDULE_PAYLOAD,
-            RESCHEDULE_APPOINTMENT_ACTION,
-            "choose_appointment_to_reschedule",
-        ),
-        (VIEW_CANCEL_PAYLOAD, CANCEL_APPOINTMENT_ACTION, "choose_appointment_to_cancel"),
+        (VIEW_RESCHEDULE_PAYLOAD, RESCHEDULE_APPOINTMENT_ACTION, _CHOOSE_APPOINTMENT_PROMPT),
+        (VIEW_CANCEL_PAYLOAD, CANCEL_APPOINTMENT_ACTION, _CHOOSE_APPOINTMENT_TO_CANCEL_PROMPT),
     ],
 )
 async def test_several_appointments_reuse_the_appointment_selection_step(
-    payload, operation, intent
+    payload, operation, invitation
 ):
     node, _, data = await _awaiting_view_action(1, 2)
     appointments = data["patient_appointments"]
@@ -304,7 +306,7 @@ async def test_several_appointments_reuse_the_appointment_selection_step(
     assert out["stage"] == STAGE_AWAITING_APPOINTMENT_SELECTION
     assert out["operation"] == operation
     assert result["response_buttons"] == [_appointment_button(a) for a in appointments]
-    assert f"intent={intent}" in result["response_text"]
+    assert result["response_text"] == invitation
 
 
 @pytest.mark.asyncio
@@ -376,7 +378,8 @@ async def test_the_reschedule_entry_point_keeps_the_selection_step_with_new_fram
 
     assert result["collected_data"]["stage"] == STAGE_AWAITING_APPOINTMENT_SELECTION
     assert result["response_buttons"] == [_appointment_button(appointment)]
-    assert "choose_appointment_to_reschedule" in intents
+    assert result["response_text"] == _CHOOSE_APPOINTMENT_PROMPT
+    assert "choose_appointment_to_reschedule" not in intents
 
 
 @pytest.mark.asyncio
@@ -387,9 +390,10 @@ async def test_the_summary_intro_is_requested_without_a_greeting_intent():
         available_slots=[slot], llm_provider=llm
     )
 
-    await _summary_for(node, gateway, slot)
+    _, result = await _summary_for(node, gateway, slot)
 
-    assert "view_appointments_summary" in llm.intents
+    assert result["response_text"].startswith(_VIEW_SUMMARY_INTRO)
+    assert "view_appointments_summary" not in llm.intents
     conversation = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert conversation is not None
     assert conversation.input_state == "INTERACTIVE_SELECTION"

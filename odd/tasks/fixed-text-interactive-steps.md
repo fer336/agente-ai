@@ -36,8 +36,8 @@ Texts that accompany buttons must match them exactly, and an action must never b
 ## Tasks
 - [x] T0 Map every `generate_or_fallback` call: interactive or free-form, validator, fixed fallback. Evidence: explorer table, 78 call sites (53 appointment.py, 13 subgraph, 12 other nodes); ~45 interactive without validator.
 - [x] T1 Action-claim guard catches "registré/registrado ... solicitud". Evidence: 4 new claim cases RED then GREEN, 3 pending-wording cases stay false; `tests/unit/agent` 1685 passed.
-- [ ] T2 Interactive steps in `appointment.py` send fixed text (propose_* x4, send_*_flow x3, no_slots, choose_slot x2, no_appointments, view summary, patient_not_found, confirmation_reminder x4, stale_* x4, view_action_reminder, operation_selection_reminder, operation_menu, variable-intent sites). Check: tests with an improvising LLM.
-- [ ] T3 Interactive steps in `appointment_decision_subgraph.py` send fixed text (choose_browse_mode, browse_mode_reminder, specialty_retry, no_slots, choose_slot x2, stale_slot_selection, variable-intent site). Same check.
+- [x] T2 Interactive steps in `appointment.py` send fixed text (propose_* x4, send_*_flow x3, no_slots, choose_slot x2, no_appointments, view summary, patient_not_found, confirmation_reminder x4, stale_* x4, view_action_reminder, operation_selection_reminder, operation_menu, variable-intent sites). Evidence: writer converted 34 call sites; 17 new tests with an improvising LLM (RED then GREEN) in `tests/unit/agent/nodes/test_fixed_interactive_text.py`; parent spot check `tests/unit`: 3651 passed, 3 known failures.
+- [x] T3 Interactive steps in `appointment_decision_subgraph.py` send fixed text (choose_browse_mode, browse_mode_reminder, specialty_retry, no_slots, choose_slot x2, stale_slot_selection, variable-intent site). Evidence: same writer run (4 subgraph steps covered by tests; `operation_selection_reminder`, `view_action_reminder` and `propose_verification_confirmation` converted without a dedicated test).
 - [ ] T4 Re-run promptfoo `flows.yaml` with the real LLM on the final branch and record results.
 
 ## Acceptance criteria
@@ -47,10 +47,12 @@ Texts that accompany buttons must match them exactly, and an action must never b
 - Full unit suite green except the 3 known failures in `tests/unit/api/dependencies/test_gateway_dependency.py`.
 
 ## Progress
-Branch created. T0 and T1 done. T2/T3 go to one writer (route: delegated, 2 large files).
+Branch created. T0-T3 done; T4 (promptfoo with real LLM) pending.
 
 ## Verification evidence
-(none yet)
+Writer: `uv run pytest tests/unit/agent -q` 1701 passed; ruff and mypy clean. Parent spot check: `uv run pytest tests/unit -q` 3651 passed, 3 failed (known `test_gateway_dependency.py`); ruff check and mypy app/agent clean. Remaining model-worded calls: 27 in appointment.py, 5 in the subgraph (validated steps, success/close wording, session_lost, proposals, slot_taken).
+
+Behaviour changes to confirm: `no_appointments` fixed text offers administration so the result now carries `HANDOFF_OFFER_KEY`; the cancel proposal no longer greets the patient by name; deleted test `test_the_confirmation_reminder_instruction_only_asks_to_use_the_buttons` (it asserted an LLM instruction that no longer exists).
 
 ## Next step
-Commit T1, delegate T2+T3 to one writer.
+T4: re-run promptfoo `flows.yaml` with the real LLM (needs the user's authorization for the Google key again).
