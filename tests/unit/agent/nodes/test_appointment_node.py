@@ -17,6 +17,7 @@ from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
 )
+from app.agent.first_visit_intake_wording import FIRST_ASK_INTROS, RETRY_ASK_INTROS
 from app.agent.handoff_offer import HANDOFF_OFFER_KEY
 from app.agent.nodes.appointment import (
     _APPOINTMENT_SELECTION_REMINDER,
@@ -320,6 +321,22 @@ async def test_the_next_slots_invitation_stays_on_script_when_the_model_improvis
 
 
 @pytest.mark.asyncio
+async def test_the_data_request_after_new_patient_is_the_fixed_intro_and_the_list():
+    """Live bug: the model wrote three paragraphs (greeting, "a professional must evaluate
+    you", then a request for a phone number and an administration hand-off) above the list."""
+    node, _, _ = await _make_node_and_conversation(llm_provider=_ImprovisingLLM())
+    question = await _start_create(node)
+
+    intake = await _confirm_first_visit(node, question)
+
+    intro, _, bullets = intake["response_text"].partition("\n\n- ")
+    assert intro in FIRST_ASK_INTROS
+    assert bullets.startswith("Nombre completo")
+    assert "administración" not in intake["response_text"]
+    assert "\n\n" not in intro
+
+
+@pytest.mark.asyncio
 async def test_confirming_the_first_visit_question_asks_for_the_five_fields():
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(llm_provider=llm)
@@ -331,11 +348,11 @@ async def test_confirming_the_first_visit_question_asks_for_the_five_fields():
     assert intake["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
     assert intake["collected_data"]["first_visit_intake"]["stage"] == "collect"
     assert intake["response_buttons"] is None
-    assert intake["response_text"] == (
-        "Necesito que me pases estos datos para registrarte.\n\n" + _INTAKE_BULLETS_ALL
-    )
+    intro, _, bullets = intake["response_text"].partition("\n\n")
+    assert intro in FIRST_ASK_INTROS
+    assert bullets == _INTAKE_BULLETS_ALL
     assert intake.get("response_list") is None
-    assert llm.intents == ["first_visit_intake_ask"]
+    assert "first_visit_intake_ask" not in llm.intents
 
 
 @pytest.mark.asyncio
@@ -616,7 +633,7 @@ async def test_asking_to_book_after_a_reschedule_without_appointments_reuses_nam
     llm.intents.clear()
     result = await _confirm_first_visit(node, question)
 
-    assert llm.intents == ["first_visit_intake_ask"]
+    assert "first_visit_intake_ask" not in llm.intents
     assert result["response_buttons"] is None
     assert result["response_text"].endswith("- Correo electrónico\n- Obra social\n- Plan")
     assert "Nombre completo" not in result["response_text"]
@@ -5303,28 +5320,19 @@ async def _two_consecutive_re_asks(llm):
 
 
 @pytest.mark.asyncio
-async def test_consecutive_re_asks_do_not_repeat_the_intro_even_if_the_llm_does():
-    # Chat B regression (live): "Buenísimo, gracias por la info. Todavía me faltan…"
-    # opened consecutive re-asks. That sentence came from the LLM (the static fallback
-    # reads differently), so the repeat must be caught after generation too.
+async def test_consecutive_re_asks_never_repeat_the_intro_whatever_the_model_would_write():
+    # Chat B regression (live): "Buenísimo, gracias por la info. Todavía me faltan…" opened
+    # consecutive re-asks. The intro is now one of the fixed, rotated wordings, so a model
+    # that repeats itself cannot reach the patient.
     (first_re_ask, second_re_ask), _ = await _two_consecutive_re_asks(_RepeatingIntroLLM())
 
     first_intro = first_re_ask.split("\n\n")[0]
     second_intro = second_re_ask.split("\n\n")[0]
-    assert first_intro == _REPEATED_INTRO
+    assert first_intro in RETRY_ASK_INTROS
+    assert second_intro in RETRY_ASK_INTROS
     assert second_intro != first_intro
+    assert _REPEATED_INTRO not in first_re_ask + second_re_ask
     assert second_re_ask.split("\n\n")[1].startswith("- ")
-
-
-@pytest.mark.asyncio
-async def test_the_intake_ask_tells_the_llm_the_previous_intro_and_asks_for_variety():
-    llm = _RepeatingIntroLLM()
-    await _two_consecutive_re_asks(llm)
-
-    second_ask = llm.ask_contexts[-1]
-    assert second_ask.collected_data["intro_anterior"] == _REPEATED_INTRO
-    assert "No repitas" in str(second_ask.collected_data["instruccion"])
-    assert second_ask.temperature is not None and second_ask.temperature >= 0.8
 
 
 @pytest.mark.asyncio
