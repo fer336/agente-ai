@@ -31,7 +31,6 @@ from app.agent.first_visit_intake_extraction import (
 )
 from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CONFIRM_PAYLOAD,
-    FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -85,7 +84,7 @@ from app.agent.nodes.appointment_selection import (
 from app.agent.nodes.appointment_selection import (
     step_slots_page as _step_slots_page,
 )
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import generate_or_fallback, mentions_all, mentions_any
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.reminder_action import (
     REMINDER_IDENTITY_KEY,
@@ -1548,6 +1547,7 @@ def create_appointment_node(
             _identification_prompt_text(example_name, example_dni),
             recent_messages,
             contact_memory,
+            validator=mentions_all("nombre", "dni"),
         )
 
     async def _begin_identification(
@@ -2115,34 +2115,6 @@ def create_appointment_node(
             intro = static_intro
         return f"{intro}\n\n{format_field_bullets(missing_fields)}"
 
-    async def _first_visit_question_message(
-        conversation_id: ConversationId,
-        recent_messages: list[dict[str, str]],
-        contact_memory: str | None,
-    ) -> str:
-        """LLM-worded first-visit question; the two buttons come from the intake graph."""
-        return await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "first_visit_question",
-            {
-                "situacion": (
-                    "El paciente quiere sacar un turno. Antes hay que saber si es su primera "
-                    "cita en Smiling Pilar."
-                ),
-                "instruccion": (
-                    "Preguntá si es su primera vez en Smiling Pilar. Van a aparecer 2 botones "
-                    "debajo de tu mensaje (Soy paciente nuevo, Ya soy paciente): pedile que "
-                    "elija Soy paciente nuevo si es su primera vez, así lo registrás, o Ya soy "
-                    "paciente si ya se atendió en la clínica. NO listes datos ni nombres de "
-                    "campos. Sin saludo, en una o dos oraciones cortas."
-                ),
-            },
-            FIRST_VISIT_QUESTION,
-            recent_messages,
-            contact_memory,
-        )
-
     async def _identify_existing_patient(
         state: AgentState,
         collected_data: dict[str, object],
@@ -2288,14 +2260,9 @@ def create_appointment_node(
         result = await first_visit_intake_graph.ainvoke(intake_state)
         conversation_id = ConversationId(state["conversation_id"])
         ask_fields = cast(list[str] | None, result.get("ask_fields"))
-        if result.get("ask_kind") == "question" and result.get("stage") == "question":
-            result = {
-                **result,
-                "response_text": await _first_visit_question_message(
-                    conversation_id, state["recent_messages"], state["contact_memory_summary"]
-                ),
-            }
-        elif ask_fields:
+        # The first-visit question keeps the subgraph's fixed text: it must match its two
+        # buttons exactly, so the model never rewrites it.
+        if ask_fields:
             result = {
                 **result,
                 "response_text": await _first_visit_ask_message(
@@ -4575,6 +4542,7 @@ def create_appointment_node(
                     _identification_not_understood_message(example_name, example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_any("nombre", "dni"),
                 )
                 if escalating:
                     await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
@@ -4618,6 +4586,7 @@ def create_appointment_node(
                     _name_incomplete_message(example_name, example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("apellido"),
                 )
                 return {
                     "response_text": text,
@@ -4648,6 +4617,7 @@ def create_appointment_node(
                     _ask_name_only_message(example_name),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("nombre"),
                 )
                 return {
                     "response_text": text,
@@ -4672,6 +4642,7 @@ def create_appointment_node(
                     _ask_dni_only_message(example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("dni"),
                 )
                 return {
                     "response_text": text,
@@ -4713,6 +4684,7 @@ def create_appointment_node(
                     _dni_format_invalid_message(example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("dni"),
                 )
                 return {
                     "response_text": text,
@@ -4851,6 +4823,7 @@ def create_appointment_node(
                     _NEW_PATIENT_DETAILS_NOT_UNDERSTOOD_MESSAGE,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("obra social"),
                 )
                 return {
                     "response_text": text,
@@ -4870,6 +4843,7 @@ def create_appointment_node(
                     _ASK_NEW_PATIENT_OBRA_SOCIAL_ONLY_MESSAGE,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("obra social"),
                 )
                 return {
                     "response_text": text,
@@ -4889,6 +4863,7 @@ def create_appointment_node(
                     _ASK_NEW_PATIENT_EMAIL_ONLY_MESSAGE,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_any("mail", "correo"),
                 )
                 return {
                     "response_text": text,

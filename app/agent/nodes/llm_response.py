@@ -52,6 +52,22 @@ def without_mid_conversation_greeting(text: str, recent_messages: list[dict[str,
     return text
 
 
+def mentions_all(*terms: str) -> Callable[[str], bool]:
+    """Validator: the model text must name every ``terms`` (case-insensitive).
+
+    For a step whose whole job is to ask for one thing ("nombre", "DNI"): a reply that
+    never names it improvised, so the caller's fixed text is sent instead.
+    """
+    wanted = [term.casefold() for term in terms]
+    return lambda text: all(term in text.casefold() for term in wanted)
+
+
+def mentions_any(*terms: str) -> Callable[[str], bool]:
+    """Validator: the model text must name at least one of ``terms`` (case-insensitive)."""
+    wanted = [term.casefold() for term in terms]
+    return lambda text: any(term in text.casefold() for term in wanted)
+
+
 async def generate_or_fallback(
     llm_provider: LLMProvider,
     conversation_id: str,
