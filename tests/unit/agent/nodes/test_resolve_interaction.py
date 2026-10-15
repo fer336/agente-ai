@@ -1,5 +1,6 @@
 import pytest
 
+from app.agent.nodes.appointment import STAGE_AWAITING_SPECIALTY_SELECTION
 from app.agent.nodes.resolve_interaction import (
     MENU_ADMIN_PAYLOAD,
     MENU_APPOINTMENT_PAYLOAD,
@@ -15,6 +16,7 @@ from app.agent.nodes.resolve_interaction import (
     create_resolve_interaction_node,
 )
 from app.domain.repositories.llm_provider import UnderstandingResult
+from app.infrastructure.llm.exceptions import LLMAPIError, LLMInvalidResponseError
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 
@@ -1061,3 +1063,48 @@ async def test_installments_for_aligners_keep_the_aligners_answer():
 
     assert result["intent"] == "faq_topic"
     assert result["collected_data"]["faq_topic_id"] == "alineadores"
+
+
+class _UnderstandingFails(FakeLLMProvider):
+    """The model answered with something that is not the understanding JSON (twice)."""
+
+    async def understand(self, message, context):
+        raise LLMInvalidResponseError("Model output was not the expected understanding JSON shape")
+
+
+@pytest.mark.asyncio
+async def test_an_llm_failure_while_idle_falls_back_to_unknown_instead_of_erroring():
+    node = create_resolve_interaction_node(_UnderstandingFails())
+
+    result = await node(make_agent_state(user_message="tengo una consulta rara"))
+
+    assert result["intent"] == "unknown"
+    assert not result.get("error")
+
+
+@pytest.mark.asyncio
+async def test_an_llm_failure_inside_a_flow_lets_the_active_stage_handle_the_text():
+    node = create_resolve_interaction_node(_UnderstandingFails())
+
+    result = await node(
+        make_agent_state(
+            user_message="quiero otra cosa",
+            collected_data={"stage": STAGE_AWAITING_SPECIALTY_SELECTION},
+        )
+    )
+
+    assert result["intent"] == "appointment"
+    assert not result.get("error")
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_is_also_survived():
+    class _GatewayDown(FakeLLMProvider):
+        async def understand(self, message, context):
+            raise LLMAPIError(404, "model not found")
+
+    node = create_resolve_interaction_node(_GatewayDown())
+
+    result = await node(make_agent_state(user_message="hola, ¿me ayudan?"))
+
+    assert result["intent"] == "unknown"

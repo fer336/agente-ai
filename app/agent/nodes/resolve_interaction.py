@@ -1,3 +1,4 @@
+import logging
 import re
 
 from app.agent.automatic_handoff import requires_automatic_handoff
@@ -63,6 +64,8 @@ from app.domain.value_objects.menu_payloads import (
     parse_faq_option_payload,
 )
 from app.infrastructure.llm.exceptions import LLMProviderError
+
+logger = logging.getLogger(__name__)
 
 _MIN_INTENT_CONFIDENCE = 0.5
 
@@ -697,7 +700,19 @@ async def _resolve(
             return {"intent": "handoff", "interruption": "terminate"}
         return {"intent": "appointment"}
 
-    result = await llm_provider.understand(state["user_message"], context=context)
+    try:
+        result = await llm_provider.understand(state["user_message"], context=context)
+    except LLMProviderError:
+        # The model could not be read (wrong format twice, rate limit, a bad model name).
+        # One bad LLM answer must not take the free text of every patient down: inside a
+        # flow the active stage handles the text, and outside one the patient gets the
+        # "did not understand" menu. The failure is already reported by the traced call.
+        logger.warning(
+            "resolve_interaction.understand_failed conversation=%s active_stage=%s",
+            state["conversation_id"],
+            stage,
+        )
+        return {"intent": "appointment" if has_active_stage else "unknown"}
     carried = _carried_understanding(result)
     if result.intent == "appointment" and not has_active_stage:
         # "Quiero un turno para consulta particular": a consulta particular is always
