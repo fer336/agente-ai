@@ -84,7 +84,7 @@ from app.agent.nodes.appointment_selection import (
 from app.agent.nodes.appointment_selection import (
     step_slots_page as _step_slots_page,
 )
-from app.agent.nodes.llm_response import generate_or_fallback
+from app.agent.nodes.llm_response import generate_or_fallback, mentions_all, mentions_any
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.reminder_action import (
     REMINDER_IDENTITY_KEY,
@@ -1547,6 +1547,7 @@ def create_appointment_node(
             _identification_prompt_text(example_name, example_dni),
             recent_messages,
             contact_memory,
+            validator=mentions_all("nombre", "dni"),
         )
 
     async def _begin_identification(
@@ -4541,6 +4542,7 @@ def create_appointment_node(
                     _identification_not_understood_message(example_name, example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_any("nombre", "dni"),
                 )
                 if escalating:
                     await set_conversation_input_state.execute(conversation_id, FREE_INPUT)
@@ -4584,6 +4586,7 @@ def create_appointment_node(
                     _name_incomplete_message(example_name, example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("apellido"),
                 )
                 return {
                     "response_text": text,
@@ -4614,6 +4617,7 @@ def create_appointment_node(
                     _ask_name_only_message(example_name),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("nombre"),
                 )
                 return {
                     "response_text": text,
@@ -4638,6 +4642,7 @@ def create_appointment_node(
                     _ask_dni_only_message(example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("dni"),
                 )
                 return {
                     "response_text": text,
@@ -4679,6 +4684,7 @@ def create_appointment_node(
                     _dni_format_invalid_message(example_dni),
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("dni"),
                 )
                 return {
                     "response_text": text,
@@ -4817,6 +4823,7 @@ def create_appointment_node(
                     _NEW_PATIENT_DETAILS_NOT_UNDERSTOOD_MESSAGE,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("obra social"),
                 )
                 return {
                     "response_text": text,
@@ -4836,6 +4843,7 @@ def create_appointment_node(
                     _ASK_NEW_PATIENT_OBRA_SOCIAL_ONLY_MESSAGE,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_all("obra social"),
                 )
                 return {
                     "response_text": text,
@@ -4855,6 +4863,7 @@ def create_appointment_node(
                     _ASK_NEW_PATIENT_EMAIL_ONLY_MESSAGE,
                     state["recent_messages"],
                     state["contact_memory_summary"],
+                    validator=mentions_any("mail", "correo"),
                 )
                 return {
                     "response_text": text,

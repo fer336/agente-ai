@@ -297,9 +297,11 @@ async def test_missing_name_and_missing_dni_still_ask_only_for_that_piece():
     only_name = await _type(node, "Juan Perez", _IDENTIFYING)
 
     assert only_dni["collected_data"]["identification_dni"] == "30123456"
-    assert "identification_missing_name" in only_dni["response_text"]
+    assert "nombre" in only_dni["response_text"].casefold()
+    assert "dni" not in only_dni["response_text"].casefold()
     assert only_name["collected_data"]["identification_full_name"] == "Juan Perez"
-    assert "identification_missing_dni" in only_name["response_text"]
+    assert "dni" in only_name["response_text"].casefold()
+    assert "nombre" not in only_name["response_text"].casefold()
     assert only_name["collected_data"]["stage"] == STAGE_AWAITING_IDENTIFICATION
     assert only_dni["collected_data"].get("stage") == STAGE_AWAITING_IDENTIFICATION
 

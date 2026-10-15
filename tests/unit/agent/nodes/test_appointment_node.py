@@ -244,6 +244,34 @@ async def test_first_visit_question_text_is_fixed_and_never_worded_by_the_llm():
     assert "first_visit_question" not in llm.intents
 
 
+class _ImprovisingLLM(_IntakeLLM):
+    """A model that ignores every instruction and answers off-script."""
+
+    async def generate_response(self, context):
+        self.intents.append(context.intent)
+        return "Con gusto te ayudo. Querés que agendemos un turno o te paso con administración?"
+
+
+@pytest.mark.asyncio
+async def test_the_identification_ask_stays_on_script_when_the_model_improvises():
+    """Tapping "Ya soy paciente" must ask for name and DNI, whatever the model writes."""
+    llm = _ImprovisingLLM()
+    node, _, _ = await _make_node_and_conversation(llm_provider=llm)
+    question = await _start_create(node)
+
+    ask = await node(
+        make_agent_state(
+            conversation_id="conv-1",
+            button_payload=FIRST_VISIT_CANCEL_PAYLOAD,
+            collected_data=question["collected_data"],
+        )
+    )
+
+    assert "DNI" in ask["response_text"]
+    assert "nombre" in ask["response_text"].casefold()
+    assert "administración" not in ask["response_text"]
+
+
 @pytest.mark.asyncio
 async def test_confirming_the_first_visit_question_asks_for_the_five_fields():
     llm = _IntakeLLM()

@@ -3,6 +3,8 @@ import pytest
 from app.agent.nodes.llm_response import (
     conversation_started,
     generate_or_fallback,
+    mentions_all,
+    mentions_any,
     strip_leading_greeting,
 )
 from app.domain.repositories.llm_provider import ResponseContext
@@ -198,3 +200,28 @@ async def test_a_genuine_post_execution_message_skips_the_action_claim_guard(mes
     )
 
     assert text == message
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Escribime tu nombre completo y tu DNI.", True),
+        ("Pasame tu Nombre y tu dni, porfa", True),
+        ("¿Querés que agendemos un turno o te paso con administración?", False),
+        ("Escribime tu nombre completo.", False),
+    ],
+)
+def test_mentions_all_requires_every_term_ignoring_case(text, expected):
+    assert mentions_all("nombre", "dni")(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Pasame tu mail", True),
+        ("Pasame tu correo electrónico", True),
+        ("Pasame tu obra social", False),
+    ],
+)
+def test_mentions_any_requires_at_least_one_term(text, expected):
+    assert mentions_any("mail", "correo")(text) is expected
