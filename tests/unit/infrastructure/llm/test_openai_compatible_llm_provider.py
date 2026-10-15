@@ -292,6 +292,77 @@ async def test_understand_accepts_json_wrapped_in_a_markdown_code_fence() -> Non
     assert result.intent == "appointment"
 
 
+class _SequenceClient(_StubClient):
+    """Answers each call with the next canned reply (the last one repeats)."""
+
+    def __init__(self, *contents: str) -> None:
+        super().__init__(contents[-1])
+        self._contents = list(contents)
+
+    async def chat_completion(
+        self, model: str, messages: list[dict[str, str]], *, temperature: float = 0.0
+    ) -> str:
+        await super().chat_completion(model, messages, temperature=temperature)
+        index = min(len(self.calls), len(self._contents)) - 1
+        return self._contents[index]
+
+
+_PROSE = "¡Claro que sí! Para empezar, por favor indicame tu nombre completo."
+
+
+@pytest.mark.asyncio
+async def test_understand_retries_once_when_the_model_answers_in_prose() -> None:
+    client = _SequenceClient(_PROSE, '{"intent": "appointment", "confidence": 0.9}')
+
+    result = await _make_provider(client).understand("quiero un turno", context={})
+
+    assert result.intent == "appointment"
+    assert len(client.calls) == 2
+    retry_messages = client.calls[1][1]
+    assert retry_messages[-2] == {"role": "assistant", "content": _PROSE}
+    assert retry_messages[-1]["role"] == "user"
+    assert "JSON" in retry_messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_extract_information_retries_once_when_the_model_answers_in_prose() -> None:
+    client = _SequenceClient(_PROSE, '{"fields": {"plan": "210"}, "missing_fields": []}')
+
+    result = await _make_provider(client).extract_information("210", required_fields=["plan"])
+
+    assert result.fields == {"plan": "210"}
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_retries_once_when_the_model_answers_in_prose() -> None:
+    client = _SequenceClient(_PROSE, '{"intent": "appointment", "confidence": 0.8}')
+
+    result = await _make_provider(client).classify_intent("quiero un turno", context={})
+
+    assert result.intent == "appointment"
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_understand_gives_up_after_a_single_retry() -> None:
+    client = _SequenceClient(_PROSE)
+
+    with pytest.raises(LLMInvalidResponseError):
+        await _make_provider(client).understand("quiero un turno", context={})
+
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_valid_first_answer_is_not_retried() -> None:
+    client = _SequenceClient('{"intent": "appointment", "confidence": 0.9}')
+
+    await _make_provider(client).understand("quiero un turno", context={})
+
+    assert len(client.calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_extract_information_still_rejects_non_json_prose() -> None:
     provider = _make_provider(_StubClient("```json\nno es un json\n```"))
