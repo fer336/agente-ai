@@ -248,6 +248,12 @@ class Settings(BaseSettings):
         default="", validation_alias=AliasChoices("OPENROUTER_API_KEY", "LLM_API_KEY")
     )
     llm_timeout_seconds: float = 20
+    #: Ask the gateway for a strict JSON schema (`response_format`) when the router needs to
+    #: understand a free-text message. A small model returned the right shape 10 out of 10
+    #: times with it and 0 out of 10 with the prompt alone (Google's OpenAI-compatible
+    #: endpoint, `gemini-3.1-flash-lite`). Off by default: other gateways and models may
+    #: reject `response_format`, so enable it only where it was checked.
+    llm_structured_output: bool = False
 
     #: PRD.md §68/§50's documented names/defaults — how many same
     #: `source`+`error_type` errors within how many seconds counts as

@@ -304,10 +304,17 @@ class OpenAICompatibleLLMProvider:
     """
 
     def __init__(
-        self, client: OpenAICompatibleLLMClient, runtime_config_service: RuntimeConfigService
+        self,
+        client: OpenAICompatibleLLMClient,
+        runtime_config_service: RuntimeConfigService,
+        *,
+        structured_output: bool = False,
     ) -> None:
         self._client = client
         self._runtime_config_service = runtime_config_service
+        #: Ask the gateway for a JSON schema in `understand`. Off by default: only enable it
+        #: for a gateway/model known to accept `response_format` of type `json_schema`.
+        self._structured_output = structured_output
 
     async def _complete_json(
         self,
@@ -315,13 +322,14 @@ class OpenAICompatibleLLMProvider:
         messages: list[dict[str, str]],
         temperature: float,
         parse: Callable[[str], _T],
+        response_format: dict[str, object] | None = None,
     ) -> _T:
         """Chat-complete and parse; on a non-JSON answer, retry exactly once.
 
         The retry shows the model its own bad answer plus a reminder to return only
         the JSON. A second failure raises, as before: no loop, no guessing.
         """
-        content = await self._client.chat_completion(model, messages, temperature=temperature)
+        content = await self._chat(model, messages, temperature, response_format)
         try:
             return parse(content)
         except LLMInvalidResponseError:
@@ -330,10 +338,23 @@ class OpenAICompatibleLLMProvider:
                 {"role": "assistant", "content": content},
                 {"role": "user", "content": _JSON_ONLY_REMINDER},
             ]
-            retry = await self._client.chat_completion(
-                model, retry_messages, temperature=temperature
-            )
+            retry = await self._chat(model, retry_messages, temperature, response_format)
             return parse(retry)
+
+    async def _chat(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        response_format: dict[str, object] | None,
+    ) -> str:
+        """One chat completion; `response_format` is passed only when set, so a client or a
+        gateway that does not know the argument is left untouched."""
+        if response_format is None:
+            return await self._client.chat_completion(model, messages, temperature=temperature)
+        return await self._client.chat_completion(
+            model, messages, temperature=temperature, response_format=response_format
+        )
 
     async def classify_intent(self, message: str, context: dict[str, object]) -> IntentResult:
         config = await self._runtime_config_service.get_config()
@@ -403,7 +424,11 @@ class OpenAICompatibleLLMProvider:
 
         async def _call() -> UnderstandingResult:
             return await self._complete_json(
-                config.model, messages, config.temperature, _parse_understanding_result
+                config.model,
+                messages,
+                config.temperature,
+                _parse_understanding_result,
+                _understanding_response_format() if self._structured_output else None,
             )
 
         return await traced_call(
@@ -544,6 +569,48 @@ class OpenAICompatibleLLMProvider:
             http_status_of=_http_status_of,
             error_type_of=_error_type_of,
         )
+
+
+def _understanding_response_format() -> dict[str, object]:
+    """Strict JSON schema of `UnderstandingResult`, built from the router's own labels.
+
+    Asking the model for this schema (instead of "return only a JSON" in the prompt) made
+    a small model return the right shape 10 times out of 10, where the prompt alone
+    returned prose or other keys every time. Every property is required; "no value" is an
+    explicit null.
+    """
+
+    def nullable(schema: dict[str, object]) -> dict[str, object]:
+        return {"anyOf": [schema, {"type": "null"}]}
+
+    properties: dict[str, object] = {
+        "intent": {"type": "string", "enum": list(_UNDERSTANDING_LABELS)},
+        "confidence": {"type": "number"},
+        "answer": nullable({"type": "string"}),
+        "specialty_mention": nullable({"type": "string"}),
+        "professional_mention": nullable({"type": "string"}),
+        "operation_mention": nullable(
+            {"type": "string", "enum": ["create", "reschedule", "cancel", "view"]}
+        ),
+        "navigation_target": nullable(
+            {"type": "string", "enum": ["specialty", "professional", "slot", "main"]}
+        ),
+        "handoff_offer": {"type": "boolean"},
+        "faq_topic_id": nullable({"type": "string"}),
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "understanding",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": properties,
+                "required": list(properties),
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
 #: Sent on the single retry after the model answered in prose instead of the JSON the

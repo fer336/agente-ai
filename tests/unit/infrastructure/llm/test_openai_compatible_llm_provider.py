@@ -16,6 +16,7 @@ from app.infrastructure.llm.exceptions import (
     LLMTimeoutError,
 )
 from app.infrastructure.llm.openai_compatible_llm_provider import (
+    _UNDERSTANDING_LABELS,
     DEFAULT_CLASSIFY_INTENT_PROMPT,
     DEFAULT_EXTRACT_INFORMATION_PROMPT,
     DEFAULT_GENERATE_RESPONSE_PROMPT,
@@ -751,3 +752,75 @@ def test_understand_prompt_describes_the_thanks_label_and_lists_it_in_the_contra
     assert "thanks" in DEFAULT_UNDERSTAND_PROMPT.split("una de:")[1].split(">")[0]
     assert "- thanks:" in DEFAULT_UNDERSTAND_PROMPT
     assert "sin pedir nada" in DEFAULT_UNDERSTAND_PROMPT
+
+
+class _FormatRecordingClient(_StubClient):
+    """Records the `response_format` each call carried (None when it carried none)."""
+
+    def __init__(self, content: str) -> None:
+        super().__init__(content)
+        self.formats: list[object] = []
+
+    async def chat_completion(self, model, messages, *, temperature=0.0, **extra):
+        self.formats.append(extra.get("response_format"))
+        return await super().chat_completion(model, messages, temperature=temperature)
+
+
+_UNDERSTANDING_JSON = '{"intent": "appointment", "confidence": 0.9}'
+
+
+def _provider_with(client, *, structured_output: bool) -> OpenAICompatibleLLMProvider:
+    runtime_config_service = make_runtime_config_service(model="gemini-3.1-flash-lite")
+    return OpenAICompatibleLLMProvider(
+        client,  # type: ignore[arg-type]
+        runtime_config_service,
+        structured_output=structured_output,
+    )
+
+
+@pytest.mark.asyncio
+async def test_understand_sends_no_response_format_unless_structured_output_is_enabled() -> None:
+    client = _FormatRecordingClient(_UNDERSTANDING_JSON)
+
+    await _provider_with(client, structured_output=False).understand("quiero un turno", context={})
+
+    assert client.formats == [None]
+
+
+@pytest.mark.asyncio
+async def test_understand_sends_the_strict_understanding_schema_when_enabled() -> None:
+    client = _FormatRecordingClient(_UNDERSTANDING_JSON)
+
+    await _provider_with(client, structured_output=True).understand("quiero un turno", context={})
+
+    response_format = client.formats[0]
+    assert response_format["type"] == "json_schema"  # type: ignore[index]
+    spec = response_format["json_schema"]  # type: ignore[index]
+    schema = spec["schema"]
+    assert spec["strict"] is True
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == set(schema["properties"])
+    assert {"intent", "confidence", "answer", "handoff_offer"} <= set(schema["properties"])
+    assert schema["properties"]["intent"]["enum"] == list(_UNDERSTANDING_LABELS)
+
+
+@pytest.mark.asyncio
+async def test_the_retry_after_a_bad_answer_keeps_the_schema() -> None:
+    client = _FormatRecordingClient("not json")
+    provider = _provider_with(client, structured_output=True)
+
+    with pytest.raises(LLMInvalidResponseError):
+        await provider.understand("quiero un turno", context={})
+
+    assert len(client.formats) == 2
+    assert all(f is not None and f["type"] == "json_schema" for f in client.formats)  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_only_understand_uses_the_schema() -> None:
+    client = _FormatRecordingClient('{"intent": "appointment", "confidence": 0.9}')
+    provider = _provider_with(client, structured_output=True)
+
+    await provider.classify_intent("quiero un turno", context={})
+
+    assert client.formats == [None]

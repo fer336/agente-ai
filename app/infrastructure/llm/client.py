@@ -38,7 +38,12 @@ class OpenAICompatibleLLMClient:
         self._timeout_seconds = timeout_seconds
 
     async def chat_completion(
-        self, model: str, messages: list[dict[str, str]], *, temperature: float = 0.0
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.0,
+        response_format: dict[str, object] | None = None,
     ) -> str:
         """Sends a chat-completion request, returns the first choice's raw
         message content (never parsed here — callers own their own
@@ -55,7 +60,7 @@ class OpenAICompatibleLLMClient:
 
         url = f"{self._base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        payload = {
+        payload: dict[str, object] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
@@ -65,6 +70,10 @@ class OpenAICompatibleLLMClient:
             # JSON object `chat_completion`'s own parsing below expects.
             "stream": False,
         }
+        if response_format is not None:
+            # Asks the model for a constrained output (e.g. a JSON schema). Sent only when
+            # given: a gateway that does not support it must keep working unchanged.
+            payload["response_format"] = response_format
         response: httpx.Response | None = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
