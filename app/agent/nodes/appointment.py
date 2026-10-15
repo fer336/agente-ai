@@ -31,7 +31,6 @@ from app.agent.first_visit_intake_extraction import (
 )
 from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CONFIRM_PAYLOAD,
-    FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -2115,34 +2114,6 @@ def create_appointment_node(
             intro = static_intro
         return f"{intro}\n\n{format_field_bullets(missing_fields)}"
 
-    async def _first_visit_question_message(
-        conversation_id: ConversationId,
-        recent_messages: list[dict[str, str]],
-        contact_memory: str | None,
-    ) -> str:
-        """LLM-worded first-visit question; the two buttons come from the intake graph."""
-        return await generate_or_fallback(
-            llm_provider,
-            str(conversation_id),
-            "first_visit_question",
-            {
-                "situacion": (
-                    "El paciente quiere sacar un turno. Antes hay que saber si es su primera "
-                    "cita en Smiling Pilar."
-                ),
-                "instruccion": (
-                    "Preguntá si es su primera vez en Smiling Pilar. Van a aparecer 2 botones "
-                    "debajo de tu mensaje (Soy paciente nuevo, Ya soy paciente): pedile que "
-                    "elija Soy paciente nuevo si es su primera vez, así lo registrás, o Ya soy "
-                    "paciente si ya se atendió en la clínica. NO listes datos ni nombres de "
-                    "campos. Sin saludo, en una o dos oraciones cortas."
-                ),
-            },
-            FIRST_VISIT_QUESTION,
-            recent_messages,
-            contact_memory,
-        )
-
     async def _identify_existing_patient(
         state: AgentState,
         collected_data: dict[str, object],
@@ -2288,14 +2259,9 @@ def create_appointment_node(
         result = await first_visit_intake_graph.ainvoke(intake_state)
         conversation_id = ConversationId(state["conversation_id"])
         ask_fields = cast(list[str] | None, result.get("ask_fields"))
-        if result.get("ask_kind") == "question" and result.get("stage") == "question":
-            result = {
-                **result,
-                "response_text": await _first_visit_question_message(
-                    conversation_id, state["recent_messages"], state["contact_memory_summary"]
-                ),
-            }
-        elif ask_fields:
+        # The first-visit question keeps the subgraph's fixed text: it must match its two
+        # buttons exactly, so the model never rewrites it.
+        if ask_fields:
             result = {
                 **result,
                 "response_text": await _first_visit_ask_message(

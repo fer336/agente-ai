@@ -12,6 +12,7 @@ from app.agent.first_visit_intake_subgraph import (
     FIRST_VISIT_CONFIRM_PAYLOAD,
     FIRST_VISIT_EXISTING_DNI_NO_PAYLOAD,
     FIRST_VISIT_EXISTING_DNI_YES_PAYLOAD,
+    FIRST_VISIT_QUESTION,
     FIRST_VISIT_REVIEW_CANCEL_PAYLOAD,
     FIRST_VISIT_REVIEW_CONFIRM_PAYLOAD,
     FIRST_VISIT_REVIEW_MODIFY_PAYLOAD,
@@ -141,13 +142,11 @@ class _IntakeLLM(FakeLLMProvider):
     def __init__(self) -> None:
         super().__init__()
         self.intents: list[str] = []
-        self.question_instructions: list[str] = []
 
     async def generate_response(self, context):
         self.intents.append(context.intent)
         if context.intent == "first_visit_question":
-            self.question_instructions.append(str(context.collected_data["instruccion"]))
-            return "Dale, es tu primera cita en Smiling Pilar? Confirmame así te registro."
+            return "¿Cuál es el motivo de tu consulta? ¿Tenés preferencia de horario?"
         if context.intent == "first_visit_intake_ask":
             return "Necesito que me pases estos datos para registrarte."
         return await super().generate_response(context)
@@ -220,30 +219,29 @@ async def test_create_operation_asks_the_first_visit_question_with_confirm_and_c
     question = await _start_create(node)
 
     assert question["collected_data"]["stage"] == STAGE_AWAITING_FIRST_VISIT_INTAKE
-    assert question["response_text"] == (
-        "Dale, es tu primera cita en Smiling Pilar? Confirmame así te registro."
-    )
     assert [(b.id, b.title) for b in question["response_buttons"]] == [
         (FIRST_VISIT_CONFIRM_PAYLOAD, "Soy paciente nuevo"),
         (FIRST_VISIT_CANCEL_PAYLOAD, "Ya soy paciente"),
     ]
     assert "- " not in question["response_text"]
     assert question.get("response_list") is None
-    assert llm.intents == ["first_visit_question"]
 
 
 @pytest.mark.asyncio
-async def test_first_visit_question_instruction_refers_to_the_two_new_buttons():
+async def test_first_visit_question_text_is_fixed_and_never_worded_by_the_llm():
+    """The text must match its two buttons exactly, so the model never rewrites it.
+
+    The fake LLM answers this intent with an off-topic reply: it must not reach the patient.
+    """
     llm = _IntakeLLM()
     node, _, _ = await _make_node_and_conversation(llm_provider=llm)
 
-    await _start_create(node)
+    question = await _start_create(node)
 
-    instruction = llm.question_instructions[0]
-    assert "Soy paciente nuevo" in instruction
-    assert "Ya soy paciente" in instruction
-    assert "Confirmar" not in instruction
-    assert "Cancelar" not in instruction
+    assert question["response_text"] == FIRST_VISIT_QUESTION
+    assert "Soy paciente nuevo" in question["response_text"]
+    assert "Ya soy paciente" in question["response_text"]
+    assert "first_visit_question" not in llm.intents
 
 
 @pytest.mark.asyncio
@@ -486,7 +484,8 @@ async def test_an_unclear_first_visit_answer_asks_the_question_again_with_the_bu
         )
     )
 
-    assert llm.intents == ["first_visit_question"]
+    assert again["response_text"] == FIRST_VISIT_QUESTION
+    assert "first_visit_question" not in llm.intents
     assert [b.id for b in again["response_buttons"]] == [
         FIRST_VISIT_CONFIRM_PAYLOAD,
         FIRST_VISIT_CANCEL_PAYLOAD,
@@ -537,7 +536,8 @@ async def test_asking_to_book_after_a_reschedule_without_appointments_reuses_nam
             collected_data={**no_appointments["collected_data"], "operation_mention": "create"},
         )
     )
-    assert llm.intents == ["first_visit_question"]
+    assert question["response_text"] == FIRST_VISIT_QUESTION
+    assert "first_visit_question" not in llm.intents
     llm.intents.clear()
     result = await _confirm_first_visit(node, question)
 
