@@ -1,4 +1,6 @@
 import json
+import re
+from typing import Any
 
 from app.application.config.runtime_config_service import RuntimeConfigService
 from app.application.errors.error_types import (
@@ -516,9 +518,21 @@ class OpenAICompatibleLLMProvider:
         )
 
 
+#: A model asked for "ONLY a JSON" often still wraps it in a markdown fence
+#: (```json ... ```) — seen live with Gemini, which made every extraction fail.
+_CODE_FENCE_PATTERN = re.compile(r"^```[A-Za-z]*\s*\n?(.*?)\n?\s*```$", re.DOTALL)
+
+
+def _load_json(content: str) -> Any:
+    """`json.loads` that also accepts the JSON wrapped in a markdown code fence."""
+    text = content.strip()
+    fenced = _CODE_FENCE_PATTERN.match(text)
+    return json.loads(fenced.group(1) if fenced else text)
+
+
 def _parse_intent_result(content: str) -> IntentResult:
     try:
-        data = json.loads(content)
+        data = _load_json(content)
         intent = str(data["intent"])
         confidence = float(data["confidence"])
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -537,7 +551,7 @@ def _parse_understanding_result(content: str) -> UnderstandingResult:
     extra question, while a wrong intent sends the whole turn elsewhere.
     """
     try:
-        data = json.loads(content)
+        data = _load_json(content)
         intent = str(data["intent"])
         confidence = float(data["confidence"])
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
@@ -570,7 +584,7 @@ def _parse_understanding_result(content: str) -> UnderstandingResult:
 
 def _parse_extraction_result(content: str, required_fields: list[str]) -> ExtractionResult:
     try:
-        data = json.loads(content)
+        data = _load_json(content)
         fields = dict(data["fields"])
         missing_fields = [str(f) for f in data["missing_fields"]]
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:

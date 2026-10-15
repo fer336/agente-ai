@@ -241,6 +241,65 @@ async def test_extract_information_parses_fields_and_missing_fields() -> None:
     assert result.missing_fields == ["dni"]
 
 
+_FENCED_EXTRACTION = (
+    '```json\n{"fields": {"nombre_completo": "Fernando cassera", "obra_social": "Osde",'
+    ' "plan": "210"}, "missing_fields": []}\n```'
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        _FENCED_EXTRACTION,
+        _FENCED_EXTRACTION.replace("```json", "```"),
+        f"  {_FENCED_EXTRACTION}\n",
+        _FENCED_EXTRACTION.replace("```json", "```JSON"),
+    ],
+)
+async def test_extract_information_accepts_json_wrapped_in_a_markdown_code_fence(
+    raw: str,
+) -> None:
+    provider = _make_provider(_StubClient(raw))
+
+    result = await provider.extract_information(
+        "Fernando cassera, Osde 210", required_fields=["nombre_completo", "obra_social", "plan"]
+    )
+
+    assert result.fields == {
+        "nombre_completo": "Fernando cassera",
+        "obra_social": "Osde",
+        "plan": "210",
+    }
+    assert result.missing_fields == []
+
+
+@pytest.mark.asyncio
+async def test_classify_intent_accepts_json_wrapped_in_a_markdown_code_fence() -> None:
+    client = _StubClient('```json\n{"intent": "appointment", "confidence": 0.87}\n```')
+
+    result = await _make_provider(client).classify_intent("quiero un turno", context={})
+
+    assert (result.intent, result.confidence) == ("appointment", 0.87)
+
+
+@pytest.mark.asyncio
+async def test_understand_accepts_json_wrapped_in_a_markdown_code_fence() -> None:
+    client = _StubClient('```json\n{"intent": "appointment", "confidence": 0.9}\n```')
+
+    result = await _make_provider(client).understand("quiero un turno", context={})
+
+    assert result.intent == "appointment"
+
+
+@pytest.mark.asyncio
+async def test_extract_information_still_rejects_non_json_prose() -> None:
+    provider = _make_provider(_StubClient("```json\nno es un json\n```"))
+
+    with pytest.raises(LLMInvalidResponseError):
+        await provider.extract_information("hola", required_fields=["plan"])
+
+
 @pytest.mark.asyncio
 async def test_extract_information_substitutes_required_fields_into_the_configured_prompt() -> None:
     client = _StubClient('{"fields": {}, "missing_fields": []}')
