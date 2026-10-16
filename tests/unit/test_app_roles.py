@@ -25,6 +25,9 @@ ADMIN_PATHS = {
     "/admin/api/errors/{error_id}",
     "/admin/api/errors/{error_id}/resolve",
     "/admin/api/runs/{agent_run_id}",
+    "/admin/api/graphs",
+    "/admin/api/graphs/state",
+    "/admin/api/kpis",
     "/admin/api/config",
     "/admin/api/flows/create",
     "/admin/api/flows/intake-draft",
@@ -39,6 +42,8 @@ ADMIN_PATHS = {
     "/admin/errors",
     "/admin/errors/{error_id}",
     "/admin/runs/{agent_run_id}",
+    "/admin/agent",
+    "/admin/kpis",
     "/admin/llm-config",
     "/admin/static",
 }
