@@ -174,6 +174,34 @@ PostgreSQL 16 and Redis 7 for local work. Production runs as a Docker Swarm stac
 (`docker-stack.yml`, one replica, settings injected as the
 `agente_ai_backend_env` secret) from the image `ghcr.io/fer336/agente-ai`.
 
+### Service roles
+
+One image, three roles chosen with `APP_ROLE` (default `all`, today's behavior):
+
+| `APP_ROLE` | Serves | Workers | Migrations |
+|---|---|---|---|
+| `bot` | WhatsApp and Chatwoot webhooks, `/public`, `/internal/eval`, `/health`, `/ready` | follow-up and reminder workers | yes |
+| `admin` | `/admin/*`, `/health`, `/ready` | none | skipped |
+| `all` | everything | yes | yes |
+
+An unknown value makes `entrypoint.sh` exit with an error.
+
+In production the stack runs two services from the same image (the release
+pipeline pins both `image:` lines together):
+
+- `backend` (`APP_ROLE=bot`) owns migrations and workers. The public `/health`
+  and `/ready` on `agent.qeva-ai.com` belong to it, and so does the release
+  `verify-health` check.
+- `admin` (`APP_ROLE=admin`) has its own Swarm healthcheck on its `/health`.
+
+Traefik routes by path on the same host: the `agente-ai-admin` router
+(`Host(...) && PathPrefix(`/admin`)`, `priority=100`) sends `/admin/*` to
+`admin`; the `agente-ai-backend` router is a plain `Host()` rule and takes every
+other path. No DNS, certificate or cookie change is needed.
+
+Rollback to the single-service layout: set `APP_ROLE=all` on `backend`, remove
+the `admin` service from `docker-stack.yml` and redeploy.
+
 ## Evals
 
 promptfoo drives `POST /internal/eval/chat` (the real graph with fake Dentalink

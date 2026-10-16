@@ -33,11 +33,13 @@ Today one FastAPI app and one Swarm service (`backend`, 1 replica, host `agent.q
 
 ## Tasks
 - [x] S1 `APP_ROLE` setting and `create_app(role)` factory with per-role router, mount and lifespan selection + tests (admin app 404s webhook paths, bot app 404s `/admin`, `all` unchanged).
-- [ ] S2 Role-aware `entrypoint.sh` and compose update.
-- [ ] S3 `docker-stack.yml` admin service, Traefik priority, healthchecks, docs/runbook.
+- [x] S2 Role-aware `entrypoint.sh` and compose update.
+- [x] S3 `docker-stack.yml` admin service, Traefik priority, healthchecks, docs/runbook.
 - [ ] S4 Resolve the open reset/debounce check and record the result.
 
 S1 evidence: unit 3681 passed (3 known failures), ruff/mypy clean, RED observed (ImportError). Not verified: real uvicorn with APP_ROLE=admin|bot.
+
+S2+S3 evidence: unit 3688 passed (3 known failures), ruff/mypy clean; entrypoint checked with a fake `uv` for admin/bot/all/unset/unknown; stack validated offline with `docker compose config -q` and `docker stack config`; 7 stack tests with RED observed; release pin step passes with two `image:` lines (grep needs at least one match). Admin healthcheck uses /health (not /ready) on purpose to avoid restart loops on a Postgres/Redis blip. Not verified: a real Swarm/Traefik run, `python` on PATH in the image (copied from compose), uvicorn with APP_ROLE=admin|bot.
 
 ## Acceptance criteria
 - With `APP_ROLE` unset, the app behaves exactly as today.

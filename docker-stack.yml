@@ -30,6 +30,10 @@ services:
     environment:
       POSTGRES_HOST: postgres_postgres-vector
       REDIS_HOST: redis_redis
+      # Bot role: webhooks, /public, /internal/eval, workers and migrations.
+      # The admin panel runs in the separate `admin` service below. To go back
+      # to the single-service layout set this to `all` (see README).
+      APP_ROLE: bot
     secrets:
       - source: agente_ai_backend_env
         target: /run/secrets/backend.env
@@ -58,14 +62,75 @@ services:
         - "traefik.enable=true"
         - "traefik.docker.network=network_public"
 
-        # Single router: this backend serves everything (webhooks, health,
-        # admin) at the domain root — no /api or /auth path split like
-        # apartamentos-backend has, so one Host() rule covers it all.
+        # Bot router: a plain Host() rule with no path rule and no explicit
+        # priority. It does not need a path rule because the `admin` router
+        # below carries Host() && PathPrefix(`/admin`) with priority=100:
+        # Traefik evaluates higher priority first, so /admin/* goes to the
+        # admin service and every other path (webhooks, /public, /health,
+        # /ready, /internal/eval) falls through to this router. Without the
+        # explicit priority Traefik orders by rule length and the longer admin
+        # rule would only win by accident.
         - "traefik.http.routers.agente-ai-backend.rule=Host(`agent.qeva-ai.com`)"
         - "traefik.http.routers.agente-ai-backend.entrypoints=websecure"
         - "traefik.http.routers.agente-ai-backend.tls.certresolver=letsencryptresolver"
 
         - "traefik.http.services.agente-ai-backend.loadbalancer.server.port=8000"
+
+  # Admin panel: same image as `backend`, started with APP_ROLE=admin so it
+  # serves only /admin/* plus /health and /ready, starts no workers and does
+  # not run migrations (the bot service owns both). Keep the `image:` line in
+  # the same format as `backend`: the release pipeline pins every `image:` line
+  # carrying the registry prefix, so both services move together.
+  admin:
+    image: ghcr.io/fer336/agente-ai:v0.61.2
+    networks:
+      - network_public
+    environment:
+      POSTGRES_HOST: postgres_postgres-vector
+      REDIS_HOST: redis_redis
+      APP_ROLE: admin
+    secrets:
+      - source: agente_ai_backend_env
+        target: /run/secrets/backend.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # The public /health and /ready belong to the bot (Traefik sends only
+    # /admin/* here), so this service needs its own Swarm healthcheck.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=network_public"
+
+        # Same host as the bot, /admin only. priority=100 is explicit so it
+        # always beats the bot's Host()-only router regardless of rule length.
+        - "traefik.http.routers.agente-ai-admin.rule=Host(`agent.qeva-ai.com`) && PathPrefix(`/admin`)"
+        - "traefik.http.routers.agente-ai-admin.priority=100"
+        - "traefik.http.routers.agente-ai-admin.entrypoints=websecure"
+        - "traefik.http.routers.agente-ai-admin.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.agente-ai-admin.service=agente-ai-admin"
+
+        - "traefik.http.services.agente-ai-admin.loadbalancer.server.port=8000"
 
 networks:
   network_public:

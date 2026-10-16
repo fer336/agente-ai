@@ -57,11 +57,13 @@ EXPOSE 8000
 #: uvicorn` sidesteps the console-script file entirely as a second layer
 #: of protection against the same class of bug.
 #:
-#: entrypoint.sh runs `alembic upgrade head` against the real production
+#: entrypoint.sh runs `alembic upgrade head` (for APP_ROLE=bot or all; the
+#: admin role skips it) against the real production
 #: database before exec'ing uvicorn — this only has a live DB connection
 #: once the container is actually running on the target node (CI has no
 #: network path to production Postgres, so migrations can't run any
-#: earlier in the pipeline). Safe with `replicas: 1` in docker-stack.yml;
+#: earlier in the pipeline). Safe with `replicas: 1` for the migrating
+#: service in docker-stack.yml;
 #: would need a separate one-shot migration job instead of an entrypoint
 #: if replicas are ever scaled beyond 1.
 ENTRYPOINT ["./entrypoint.sh"]

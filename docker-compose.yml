@@ -7,6 +7,10 @@ services:
     image: ghcr.io/fer336/agente-ai:v0.0.0
     env_file: .env
     environment:
+      # APP_ROLE is unset here, so this single service runs everything (the
+      # default `all`). To try the split locally, set APP_ROLE=bot here and
+      # add a second service from the same image with APP_ROLE=admin on
+      # another host port; see "Docker and deploy" in README.md.
       # Override the .env file's localhost defaults so the app resolves
       # its dependencies via Docker Compose service-name DNS instead.
       POSTGRES_HOST: postgres
