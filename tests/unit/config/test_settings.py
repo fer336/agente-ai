@@ -585,3 +585,20 @@ def test_llm_structured_output_is_read_from_the_environment(monkeypatch):
     monkeypatch.setenv("LLM_STRUCTURED_OUTPUT", "true")
 
     assert Settings(_env_file=None).llm_structured_output is True
+
+
+def test_app_role_defaults_to_all(monkeypatch):
+    monkeypatch.delenv("APP_ROLE", raising=False)
+    assert Settings(_env_file=None).app_role == "all"
+
+
+@pytest.mark.parametrize("role", ["bot", "admin", "all"])
+def test_app_role_reads_each_valid_value_from_env(monkeypatch, role):
+    monkeypatch.setenv("APP_ROLE", role)
+    assert Settings(_env_file=None).app_role == role
+
+
+def test_app_role_rejects_an_invalid_value(monkeypatch):
+    monkeypatch.setenv("APP_ROLE", "worker")
+    with pytest.raises(ValueError):
+        Settings(_env_file=None)
