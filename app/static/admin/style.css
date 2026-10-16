@@ -1148,6 +1148,12 @@ button:disabled {
   opacity: 0.6;
 }
 
+/* Numbers kept on screen after a failed load: they belong to the previous period. */
+.kpi-stale-data {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
 .kpi-panel {
   display: flex;
   flex-direction: column;
@@ -1495,8 +1501,10 @@ button:disabled {
   }
 
   .kpi-page .kpi-busy .kpi-cards,
-  .kpi-page .kpi-busy .kpi-content {
+  .kpi-page .kpi-busy .kpi-content,
+  .kpi-page .kpi-stale-data {
     opacity: 1;
+    filter: none;
   }
 
   /* Header */

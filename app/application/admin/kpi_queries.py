@@ -103,7 +103,12 @@ class KpiEvidence:
     taken_without: int
     cancelled_with: int
     cancelled_without: int
-    truncated: bool
+    #: Unmatched rows whose match window reaches back past the oldest fetched execution,
+    #: so a dropped (older) execution might have backed them. Not counted as "without".
+    taken_unverifiable: int
+    cancelled_unverifiable: int
+    truncated: bool  # the evidence fetch hit the row cap
+    exact: bool  # the with/without split is complete (False when truncated)
 
 
 @dataclass(frozen=True)
@@ -281,14 +286,25 @@ class KpiQueryService:
         truncated = len(fetched) > self._row_cap
         executions = fetched[: self._row_cap]
 
-        taken_with = _count_matched(taken_rows, _evidence_for(ACTION_CREATE, executions))
-        cancelled_with = _count_matched(cancelled_rows, _evidence_for(ACTION_CANCEL, executions))
+        # Newest first: when truncated, the dropped executions are all at or before the
+        # oldest kept one, so older confirmations cannot be judged either way.
+        horizon = min((e.created_at for e in executions), default=None) if truncated else None
+
+        taken_with, taken_unverifiable = _match(
+            taken_rows, _evidence_for(ACTION_CREATE, executions), horizon
+        )
+        cancelled_with, cancelled_unverifiable = _match(
+            cancelled_rows, _evidence_for(ACTION_CANCEL, executions), horizon
+        )
         return KpiEvidence(
             taken_with=taken_with,
-            taken_without=len(taken_rows) - taken_with,
+            taken_without=len(taken_rows) - taken_with - taken_unverifiable,
             cancelled_with=cancelled_with,
-            cancelled_without=len(cancelled_rows) - cancelled_with,
+            cancelled_without=len(cancelled_rows) - cancelled_with - cancelled_unverifiable,
+            taken_unverifiable=taken_unverifiable,
+            cancelled_unverifiable=cancelled_unverifiable,
             truncated=truncated,
+            exact=not truncated,
         )
 
 
@@ -338,10 +354,18 @@ def _evidence_for(
     return by_conversation
 
 
-def _count_matched(rows: list[ConfirmedPendingAction], evidence: dict[str, list[datetime]]) -> int:
+def _match(
+    rows: list[ConfirmedPendingAction],
+    evidence: dict[str, list[datetime]],
+    horizon: datetime | None,
+) -> tuple[int, int]:
     """One-to-one matching: each execution backs at most one confirmation, so two
-    confirmations in a conversation are not both 'proven' by a single tool call."""
+    confirmations in a conversation are not both 'proven' by a single tool call.
+
+    Returns (matched, unverifiable). With a `horizon` (evidence fetch truncated), an
+    unmatched row whose window starts at or before it is unverifiable, not 'without'."""
     matched = 0
+    unverifiable = 0
     for row in sorted(rows, key=lambda r: r.confirmed_at):
         times = evidence.get(row.conversation_id, [])
         low = row.confirmed_at - EVIDENCE_BEFORE
@@ -351,4 +375,7 @@ def _count_matched(rows: list[ConfirmedPendingAction], evidence: dict[str, list[
                 del times[index]
                 matched += 1
                 break
-    return matched
+        else:
+            if horizon is not None and low <= horizon:
+                unverifiable += 1
+    return matched, unverifiable

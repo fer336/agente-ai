@@ -285,6 +285,36 @@ const Kpis = (() => {
     return Boolean(data.truncated || data.previous_truncated || (data.evidence && data.evidence.truncated));
   }
 
+  // The with/without evidence split is complete unless the API says otherwise
+  // (an older payload without the field counts as exact).
+  function isEvidenceExact(data) {
+    return !(data && data.evidence && data.evidence.exact === false);
+  }
+
+  const EVIDENCE_INEXACT_TEXT = "Evidencia incompleta: el período es demasiado largo para verificar todos los turnos";
+
+  // A count that is only a lower bound when the evidence is not exact:
+  // "3" or "al menos 3".
+  function evidenceCountText(count, exact) {
+    return exact ? fmtInt(count) : `al menos ${fmtInt(count)}`;
+  }
+
+  // Unmatched confirmations that could not be judged (evidence fetch truncated).
+  function unverifiableCount(data) {
+    const e = data && data.evidence ? data.evidence : {};
+    return (e.taken_unverifiable || 0) + (e.cancelled_unverifiable || 0);
+  }
+
+  // What the screen shows after a load: stale means the numbers on screen belong
+  // to an older period because the latest request failed.
+  function staleView({ data, failed }) {
+    if (!failed || !data || !data.period) return { stale: false, text: "" };
+    return {
+      stale: true,
+      text: `Mostrando datos del período ${fmtDate(data.period.date_from)} al ${fmtDate(data.period.date_to)}; no se pudo cargar el nuevo período.`,
+    };
+  }
+
   // ------------------------------------------------------------ print/PDF
   // Pure helpers for the printed report (header, footer, file name, button
   // state). The DOM wiring is further down.
@@ -332,6 +362,10 @@ const Kpis = (() => {
     const without = data && data.evidence ? data.evidence.taken_without : 0;
     const rule = "Un turno cuenta como tomado cuando el paciente lo confirma";
     if (!total) return `${rule}.`;
+    if (!isEvidenceExact(data)) {
+      const lead = without ? `${rule}; al menos ${fmtInt(without)} de los ${fmtInt(total)} no tienen registro de la herramienta de Dentalink` : rule;
+      return `${lead}. ${EVIDENCE_INEXACT_TEXT}.`;
+    }
     if (!without) return `${rule}; todos los turnos tomados tienen registro de la herramienta de Dentalink.`;
     return `${rule}; ${fmtInt(without)} de los ${fmtInt(total)} ${without === 1 ? "no tiene" : "no tienen"} registro de la herramienta de Dentalink.`;
   }
@@ -363,11 +397,12 @@ const Kpis = (() => {
     const taken = describeChange(t.taken);
     const cancelled = describeChange(t.cancelled);
     const without = data.evidence.taken_without;
+    const exact = isEvidenceExact(data);
     const takenTotal = t.taken.current;
     const card = (label, value, sub, opts = {}) =>
       `<div class="kpi-card${opts.warn ? " kpi-card-warn" : ""}">
         <span class="kpi-card-label">${esc(label)}</span>
-        <span class="kpi-card-value${opts.warn ? " kpi-warn-text" : ""}">${esc(fmtInt(value))}</span>
+        <span class="kpi-card-value${opts.warn ? " kpi-warn-text" : ""}">${esc(typeof value === "string" ? value : fmtInt(value))}</span>
         <span class="kpi-card-sub${opts.dir ? " kpi-dir-" + opts.dir : ""}">${esc(sub)}</span>
       </div>`;
     return (
@@ -376,7 +411,7 @@ const Kpis = (() => {
       card("Turnos reprogramados (vía bot)", t.rescheduled.current, "Se cuentan aparte de los tomados") +
       card(
         "Tomados sin evidencia registrada",
-        without,
+        evidenceCountText(without, exact),
         `de ${fmtInt(takenTotal)} tomados: sin registro de la herramienta de Dentalink`,
         { warn: without > 0 }
       )
@@ -495,19 +530,22 @@ const Kpis = (() => {
 
   function renderEvidence(data) {
     const e = data.evidence;
-    const row = (label, count, criteria, warn) =>
-      `<tr><td>${esc(label)}</td><td class="kpi-num${warn && count > 0 ? " kpi-warn-text" : ""}">${esc(fmtInt(count))}</td><td class="kpi-muted">${esc(criteria)}</td></tr>`;
+    const exact = isEvidenceExact(data);
+    const row = (label, count, criteria, warn, lowerBound) =>
+      `<tr><td>${esc(label)}</td><td class="kpi-num${warn && count > 0 ? " kpi-warn-text" : ""}">${esc(evidenceCountText(count, !lowerBound))}</td><td class="kpi-muted">${esc(criteria)}</td></tr>`;
     return `<section class="kpi-panel kpi-screen-only" aria-labelledby="kpi-h-evidence">
       <h2 id="kpi-h-evidence">Cómo se contó</h2>
       <div class="kpi-scroll"><table class="kpi-table">
         <thead><tr><th>Concepto</th><th class="kpi-num">Cantidad</th><th>Criterio</th></tr></thead>
         <tbody>
           ${row("Tomados con evidencia", e.taken_with, "Confirmación del paciente y herramienta de Dentalink completada")}
-          ${row("Tomados sin evidencia", e.taken_without, "Confirmados por el paciente, sin registro de la herramienta", true)}
+          ${row("Tomados sin evidencia", e.taken_without, "Confirmados por el paciente, sin registro de la herramienta", true, !exact)}
           ${row("Cancelados vía bot con evidencia", e.cancelled_with, "Confirmación del paciente y herramienta de Dentalink completada")}
-          ${row("Cancelados vía bot sin evidencia", e.cancelled_without, "No incluye cancelaciones hechas por el equipo en Dentalink", true)}
+          ${row("Cancelados vía bot sin evidencia", e.cancelled_without, "No incluye cancelaciones hechas por el equipo en Dentalink", true, !exact)}
+          ${unverifiableCount(data) > 0 ? row("Sin poder verificar", unverifiableCount(data), "Confirmaciones más antiguas que el último registro de herramienta analizado", false, false) : ""}
         </tbody>
       </table></div>
+      ${exact ? "" : `<p class="kpi-muted">${esc(EVIDENCE_INEXACT_TEXT)}.</p>`}
     </section>`;
   }
 
@@ -609,6 +647,17 @@ const Kpis = (() => {
     $("kpi-to").max = S.today;
   }
 
+  // Old numbers kept after a failed load: say which period they belong to and
+  // mute them. Cleared by the next successful load.
+  function syncStale() {
+    const view = staleView({ data: S.data, failed: S.failed });
+    const notice = $("kpi-stale");
+    notice.hidden = !view.stale;
+    $("kpi-stale-text").textContent = view.text;
+    $("kpi-cards").classList.toggle("kpi-stale-data", view.stale);
+    $("kpi-content").classList.toggle("kpi-stale-data", view.stale);
+  }
+
   function syncPeriodText(data) {
     const el = $("kpi-period-text");
     if (!data) {
@@ -645,8 +694,10 @@ const Kpis = (() => {
         S.todayFromApi = true;
       }
       showBanner("");
+      syncStale();
       fillPrint(data);
       $("kpi-incomplete").hidden = !isIncomplete(data);
+      $("kpi-evidence-inexact").hidden = isEvidenceExact(data);
       $("kpi-cards").innerHTML = renderCards(data);
       $("kpi-content").innerHTML = renderContent(data);
       $("kpi-updated").textContent = `Actualizado ${ADMIN.formatDateTime(data.generated_at)}`;
@@ -658,6 +709,8 @@ const Kpis = (() => {
       S.failed = true;
       // Stay usable: keep whatever was on screen, explain, offer a retry.
       showBanner("No se pudieron cargar los KPIs. Revisá la conexión e intentá de nuevo.");
+      syncStale();
+      if (S.data) syncPeriodText(S.data);
       if (!S.data) {
         $("kpi-cards").innerHTML = "";
         $("kpi-content").innerHTML = "";
@@ -770,6 +823,11 @@ const Kpis = (() => {
     heatGrid,
     isEmptyKpis,
     isIncomplete,
+    isEvidenceExact,
+    evidenceCountText,
+    unverifiableCount,
+    staleView,
+    EVIDENCE_INEXACT_TEXT,
     printFileTitle,
     printPeriodText,
     formatClinicDateTime,

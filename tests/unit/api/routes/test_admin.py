@@ -979,8 +979,13 @@ async def test_explicit_period_returns_the_aggregated_payload(
         "taken_without",
         "cancelled_with",
         "cancelled_without",
+        "taken_unverifiable",
+        "cancelled_unverifiable",
         "truncated",
+        "exact",
     }
+    assert body["evidence"]["exact"] is True
+    assert body["evidence"]["taken_unverifiable"] == 0
     day = next(d for d in body["per_day"] if d["date"] == "2026-09-10")
     assert day == {"date": "2026-09-10", "taken": 2, "cancelled": 1}
 

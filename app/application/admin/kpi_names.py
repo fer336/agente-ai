@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 300.0
 DEFAULT_TIMEOUT_SECONDS = 5.0
+DEFAULT_FAILURE_TTL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -22,9 +23,12 @@ class KpiNames:
 
 
 class _CachedNames:
-    """One catalog, cached in-process. Failures are logged and never raised: a failed
-    refresh keeps serving the last good value (or `{}` if there never was one), and is
-    not cached, so the next call retries."""
+    """One catalog, cached in-process. Failures are logged and never raised.
+
+    Concurrent callers share ONE in-flight fetch (no lock is held while awaiting the
+    network). A failed fetch is cached negatively for `failure_ttl_seconds`: callers get
+    the last good value (or `{}` if there never was one) without calling the source again.
+    """
 
     def __init__(
         self,
@@ -32,29 +36,42 @@ class _CachedNames:
         fetch: Callable[[], Awaitable[dict[str, str]]],
         ttl_seconds: float,
         timeout_seconds: float,
+        failure_ttl_seconds: float,
         clock: Callable[[], float],
     ) -> None:
         self._label = label
         self._fetch = fetch
         self._ttl = ttl_seconds
         self._timeout = timeout_seconds
+        self._failure_ttl = failure_ttl_seconds
         self._clock = clock
         self._value: dict[str, str] = {}
         self._loaded_at: float | None = None
-        self._lock = asyncio.Lock()
+        self._failed_at: float | None = None
+        self._inflight: asyncio.Task[None] | None = None
 
     async def get(self) -> dict[str, str]:
-        async with self._lock:
-            if self._loaded_at is not None and self._clock() - self._loaded_at < self._ttl:
-                return self._value
-            try:
-                self._value = await asyncio.wait_for(self._fetch(), timeout=self._timeout)
-                self._loaded_at = self._clock()
-            except Exception as error:
-                logger.warning(
-                    "KPI %s names unavailable, using ids as labels: %r", self._label, error
-                )
+        now = self._clock()
+        if self._loaded_at is not None and now - self._loaded_at < self._ttl:
             return self._value
+        if self._failed_at is not None and now - self._failed_at < self._failure_ttl:
+            return self._value
+        if self._inflight is None:
+            self._inflight = asyncio.create_task(self._refresh())
+        # Shielded so one cancelled caller does not cancel the fetch the others share.
+        await asyncio.shield(self._inflight)
+        return self._value
+
+    async def _refresh(self) -> None:
+        try:
+            self._value = await asyncio.wait_for(self._fetch(), timeout=self._timeout)
+            self._loaded_at = self._clock()
+            self._failed_at = None
+        except Exception as error:
+            self._failed_at = self._clock()
+            logger.warning("KPI %s names unavailable, using ids as labels: %r", self._label, error)
+        finally:
+            self._inflight = None
 
 
 class KpiNameCatalog:
@@ -71,6 +88,7 @@ class KpiNameCatalog:
         specialties: Callable[[], Awaitable[list[Specialty]]],
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        failure_ttl_seconds: float = DEFAULT_FAILURE_TTL_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         async def fetch_professionals() -> dict[str, str]:
@@ -80,10 +98,15 @@ class KpiNameCatalog:
             return {s.id: s.name for s in await specialties()}
 
         self._professionals = _CachedNames(
-            "professional", fetch_professionals, ttl_seconds, timeout_seconds, clock
+            "professional",
+            fetch_professionals,
+            ttl_seconds,
+            timeout_seconds,
+            failure_ttl_seconds,
+            clock,
         )
         self._specialties = _CachedNames(
-            "specialty", fetch_specialties, ttl_seconds, timeout_seconds, clock
+            "specialty", fetch_specialties, ttl_seconds, timeout_seconds, failure_ttl_seconds, clock
         )
 
     async def load(self) -> KpiNames:

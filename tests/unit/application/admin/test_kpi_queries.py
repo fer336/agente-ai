@@ -361,6 +361,75 @@ async def test_evidence_matches_same_conversation_within_window_one_to_one():
     assert (kpis.evidence.taken_with, kpis.evidence.taken_without) == (3, 3)
     assert (kpis.evidence.cancelled_with, kpis.evidence.cancelled_without) == (1, 1)
     assert kpis.evidence.truncated is False
+    assert kpis.evidence.exact is True
+    assert (kpis.evidence.taken_unverifiable, kpis.evidence.cancelled_unverifiable) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_truncated_evidence_does_not_count_rows_older_than_the_oldest_execution_as_without():
+    h = Harness(row_cap=2)
+    await h.confirm("create_appointment", _utc(5, 15))  # no evidence, older than any kept one
+    await h.confirm("create_appointment", _utc(8, 15))  # no evidence, inside the kept range
+    for day in (6, 7, 9):  # three executions > cap 2: the day-6 one is dropped
+        await h.evidence("create_appointment", _utc(day, 15), conversation_id="conv-2")
+
+    kpis = await h.kpis()
+
+    assert kpis.evidence.truncated is True
+    assert kpis.evidence.exact is False
+    assert kpis.evidence.taken_with == 0
+    assert kpis.evidence.taken_unverifiable == 1
+    assert kpis.evidence.taken_without == 1
+
+
+@pytest.mark.asyncio
+async def test_truncated_evidence_still_matches_rows_inside_the_kept_range():
+    h = Harness(row_cap=2)
+    await h.confirm("cancel_appointment", _utc(5, 15))
+    await h.confirm("cancel_appointment", _utc(8, 15))
+    await h.evidence("cancel_appointment", _utc(8, 15, 1))
+    await h.evidence("cancel_appointment", _utc(9, 15), conversation_id="conv-2")
+    await h.evidence("cancel_appointment", _utc(4, 15), conversation_id="conv-2")
+
+    kpis = await h.kpis()
+
+    assert kpis.evidence.exact is False
+    assert kpis.evidence.cancelled_with == 1
+    assert kpis.evidence.cancelled_unverifiable == 1
+    assert kpis.evidence.cancelled_without == 0
+
+
+@pytest.mark.asyncio
+async def test_unverifiable_boundary_is_inclusive_of_the_oldest_executions_window():
+    h = Harness(row_cap=2)
+    oldest_kept = _utc(8, 15)
+    # window low bound of the row == oldest kept execution: a dropped one could match.
+    await h.confirm("create_appointment", oldest_kept + timedelta(minutes=2))
+    # one minute later its low bound is newer than anything dropped: genuinely without.
+    await h.confirm("create_appointment", oldest_kept + timedelta(minutes=3))
+    await h.evidence("create_appointment", oldest_kept - timedelta(days=1), conversation_id="c2")
+    await h.evidence("create_appointment", oldest_kept, conversation_id="c2")
+    await h.evidence("create_appointment", oldest_kept + timedelta(days=1), conversation_id="c2")
+
+    kpis = await h.kpis()
+
+    assert kpis.evidence.taken_unverifiable == 1
+    assert kpis.evidence.taken_without == 1
+
+
+@pytest.mark.asyncio
+async def test_evidence_at_exactly_the_cap_is_exact():
+    h = Harness(row_cap=2)
+    await h.confirm("create_appointment", _utc(5, 15))
+    await h.evidence("create_appointment", _utc(6, 15), conversation_id="c2")
+    await h.evidence("create_appointment", _utc(7, 15), conversation_id="c2")
+
+    kpis = await h.kpis()
+
+    assert kpis.evidence.truncated is False
+    assert kpis.evidence.exact is True
+    assert kpis.evidence.taken_without == 1
+    assert kpis.evidence.taken_unverifiable == 0
 
 
 @pytest.mark.asyncio

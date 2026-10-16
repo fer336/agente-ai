@@ -539,7 +539,10 @@ class KpiEvidenceResponse(BaseModel):
     taken_without: int
     cancelled_with: int
     cancelled_without: int
+    taken_unverifiable: int
+    cancelled_unverifiable: int
     truncated: bool
+    exact: bool
 
     @classmethod
     def from_evidence(cls, evidence: KpiEvidence) -> "KpiEvidenceResponse":
@@ -548,7 +551,10 @@ class KpiEvidenceResponse(BaseModel):
             taken_without=evidence.taken_without,
             cancelled_with=evidence.cancelled_with,
             cancelled_without=evidence.cancelled_without,
+            taken_unverifiable=evidence.taken_unverifiable,
+            cancelled_unverifiable=evidence.cancelled_unverifiable,
             truncated=evidence.truncated,
+            exact=evidence.exact,
         )
 
 
