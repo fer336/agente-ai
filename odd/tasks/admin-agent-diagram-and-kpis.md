@@ -29,7 +29,7 @@ Status: Track A in progress on branch `feat/admin-agent-diagram` (started 2026-1
 - Frontend: KPI cards, inline-SVG charts (per-day taken vs cancelled, top bars, weekday x hour strip), `@media print` A4 layout with header, footer and light theme, and an "Exportar PDF" button calling `window.print()`.
 
 ## Tasks
-- [ ] 1 Design artifact of both pages (including the A4 print layout) for the user's approval. Creating it publishes a page: ask first.
+- [x] 1 Design artifact of both pages (including the A4 print layout). Evidence: user approved on 2026-10-16 (private canvas https://claude.ai/artifact/J8StXB1tvRuHtfocnuhLio; source files kept in the session scratchpad). Prototype simplifies handle_error/Fin arrows and two sibling edges; the real page draws all edges.
 - [ ] 2 B1 data audit: read-only SQL the user runs on production (confirmed create rows vs completed tool executions, empty specialties, test contacts) to fix the KPI rules.
 - [x] 3 A1 topology endpoint + drift guard test. Evidence: commit 4fa71dd, delegated writer, tests and lint green; assess medium, under_budget.
 - [x] 4 A2 node execution window query (Protocol, SQL, fake) + tests. Evidence: unit 3687 passed (3 known failures), mypy and ruff clean; SQL integration test collects but skipped (no DB); RED not observed (tests and code written in one pass). Finding: RUNNING rows are flushed, not committed, until the turn ends (`repositories.py:327`), so the diagram shows finished turns only.
