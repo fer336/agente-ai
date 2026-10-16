@@ -241,6 +241,40 @@ conversation, so the next message starts a fresh session with the welcome menu.
 - Skipped: conversations in human mode keep their context.
 - Failures are logged without patient data and never break the worker tick.
 
+## Admin panel: agent diagram and KPIs
+
+Two pages of the admin panel (same login and roles as the rest):
+
+- `/admin/agent` draws the agent's graphs (main, appointment decision, first-visit
+  intake) in one interactive diagram that cycles through them every 8 s. It
+  pauses on hover or focus, with the tab hidden, and with `prefers-reduced-motion`;
+  arrows, Space, Tab, Enter and Esc work; the view is kept in the URL hash
+  (`#g=&focus=&w=&play=`). Node state (runs, failures, average and p50 time, last
+  error) comes from `GET /admin/api/graphs/state?window=15m|1h|24h`, polled every
+  5 s. A node appears when its turn ends, not while it runs, because the
+  `node_executions` rows are committed once per turn. Topology comes from
+  `GET /admin/api/graphs`, built from the compiled graphs. `#run=<id>` colors the
+  nodes with one run's executions; the run pages link to it ("Ver en diagrama").
+  Nodes inside the two subgraphs are shown as structure only (not traced).
+- `/admin/kpis` shows appointments taken by the bot, cancelled via the bot,
+  rescheduled (counted apart), the previous-period comparison, per-day series,
+  most-booked professionals and specialties, and a weekday-by-hour grid, from
+  `GET /admin/api/kpis?from=&to=` (default last 30 days, max 366). "Exportar PDF"
+  opens the browser's print dialog with an A4 layout; choose "Guardar como PDF".
+
+How the KPIs are counted (the bot's own data only, never Dentalink):
+
+- A booking is a `pending_actions` row of type `create_appointment` with status
+  `confirmed`, dated by `confirmed_at` (now stamped when the patient confirms; rows
+  confirmed before that change have no date and are not counted). `confirmed` is
+  not proof that the booking was made, so the page also reports how many have no
+  completed Dentalink tool execution.
+- Cancellations are only those made through the bot. Cancelling in Dentalink
+  leaves no trace here.
+- Test and real conversations cannot be told apart, and resetting a conversation
+  deletes its tool evidence but keeps its pending actions. Review the numbers
+  against real data before relying on them.
+
 ## Documentation
 
 | File | What it is |

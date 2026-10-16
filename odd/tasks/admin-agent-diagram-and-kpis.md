@@ -1,6 +1,6 @@
 # Admin panel: one live agent diagram + KPI dashboard with PDF export
 
-Status: Track A in progress on branch `feat/admin-agent-diagram` (started 2026-10-16). Track B waits for real bot data: nothing is connected yet, so the B1 audit is postponed. The full plan lives outside the repo at `~/.claude/plans/el-dise-o-de-la-joyful-waffle.md`; this document is the durable summary.
+Status: Tracks A and B implemented on branch `feat/admin-agent-diagram` (2026-10-16); only the B1 data audit is open because the bot has no real data yet. Delivery strategy (stacked PRs vs feature-branch chain) still to be chosen by the user. The full plan lives outside the repo at `~/.claude/plans/el-dise-o-de-la-joyful-waffle.md`; this document is the durable summary.
 
 ## Objective
 (a) Replace the per-run Mermaid charts with **one** interactive diagram that cycles through the agent's graphs and shows each one's state. (b) Add a KPI dashboard (appointments taken by the bot, appointments cancelled, most-booked) with a button that exports a well formatted PDF with charts.
@@ -42,7 +42,7 @@ Status: Track A in progress on branch `feat/admin-agent-diagram` (started 2026-1
 - [x] 11 B4 KPI dashboard page. Evidence: unit 3764 passed (3 known failures), mypy/ruff/node --check clean; Node unit script plus headless Chromium against a stub API (periods, hash round trip, hostile values, empty/truncated/error states, no horizontal scroll at 375 px). DEVIATION from the approved design: the API returns weekday and hour as separate marginals, so the page shows two heat strips instead of the weekday x hour grid; fixed in task B4b. Not verified: real endpoint, screen reader, visual comparison with the prototype.
 - [x] 11b B4b Weekday x hour matrix: service + endpoint return `weekday_hour` and the page draws the approved grid (tests first). Evidence: unit 3766 passed (3 known failures), RED observed (8 failed), mypy/ruff/node --check clean; headless Chromium against a stub (table semantics, widening, no scroll at 375 px; fixed a hidden-text overflow bug). Not verified: real endpoint, screen reader.
 - [x] 12 B5 print layout and PDF export button. Evidence: unit 3768 passed (3 known failures), mypy/ruff/node --check clean; headless Chromium Page.printToPDF: standard report on 1 A4 page (also the widened dataset), PDF text has header/period/KPIs/scope note and no nav or button text, clean section breaks in a stress case, minimum 12 px text, PDF /Title carries the period; 22/22 Node checks. Not verified: real Chrome print preview, other browsers, pdftoppm rendering, manual Ctrl+P firing beforeprint. The clinic time zone is a constant in the print header (must follow `clinic_timezone`).
-- [ ] 13 Docs.
+- [x] 13 Docs. Evidence: README section "Admin panel: agent diagram and KPIs" (behavior, polling limits, KPI counting rules and caveats); docs-only, structural readback.
 
 ## Acceptance criteria
 - One diagram page that cycles through the three graphs, shows aggregated per-node state, updates every few seconds without nodes jumping, and is keyboard operable; no per-run Mermaid copies remain.
