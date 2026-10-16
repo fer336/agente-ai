@@ -122,44 +122,78 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await close_agent_checkpointer()
 
 
-#: The default `/docs`, `/redoc`, `/openapi.json` are public and unauthenticated
-#: by default — disabled here so the API schema (including the `/admin/*`
-#: surface) isn't world-readable. `admin_docs_router` re-exposes equivalents
-#: under `/admin/docs`, `/admin/redoc`, `/admin/openapi.json`, gated behind
-#: the same admin session auth as the rest of the panel.
-app = FastAPI(
-    title="Clinic AI Agent",
-    lifespan=lifespan,
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
-app.include_router(health_router)
-app.include_router(webhook_router)
-app.include_router(chatwoot_webhook_router)
-app.include_router(admin_auth_router)
-app.include_router(admin_router)
-app.include_router(admin_llm_config_router)
-app.include_router(admin_docs_router)
-app.include_router(admin_pages_router)
-app.include_router(internal_eval_router)
-#: The admin panel's own CSS/JS (app/static/admin/{style.css,app.js}) —
-#: plain static files, no auth needed to fetch them (they carry no data,
-#: only markup/behavior; the real data calls from app.js are what the
-#: session cookie/CSRF check actually guards).
-app.mount(
-    "/admin/static",
-    StaticFiles(directory=Path(__file__).resolve().parent / "static" / "admin"),
-    name="admin-static",
-)
-#: Public files WhatsApp's servers fetch by URL (e.g. the clinic location image sent with
-#: the "Cómo llegar" button). Serves only `app/static/public`; no auth, no directory
-#: listing (`html=False`), nothing outside that folder.
-app.mount(
-    "/public",
-    StaticFiles(directory=Path(__file__).resolve().parent / "static" / "public", html=False),
-    name="public-static",
-)
+@asynccontextmanager
+async def admin_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Lifespan of the admin-only role: no workers, only the shared shutdown cleanup.
+
+    The checkpointer pool is opened lazily, so closing it is a no-op when the
+    admin process never used it.
+    """
+    yield
+    await close_agent_checkpointer()
+
+
+_ADMIN_STATIC_DIR = Path(__file__).resolve().parent / "static" / "admin"
+_PUBLIC_STATIC_DIR = Path(__file__).resolve().parent / "static" / "public"
+
+
+def create_app(role: str = "all") -> FastAPI:
+    """Build the FastAPI app for one deployment role.
+
+    - `bot`: health, WhatsApp/Chatwoot webhooks, internal eval, `/public`, and
+      the background workers.
+    - `admin`: health plus the admin panel (`/admin/*`); starts no workers.
+    - `all`: everything (the historical single-process behavior).
+
+    The default `/docs`, `/redoc`, `/openapi.json` are public and unauthenticated
+    by default, so they are disabled here so the API schema (including the
+    `/admin/*` surface) isn't world-readable. `admin_docs_router` re-exposes
+    equivalents under `/admin/docs`, `/admin/redoc`, `/admin/openapi.json`,
+    gated behind the same admin session auth as the rest of the panel.
+    """
+    if role not in ("bot", "admin", "all"):
+        raise ValueError(f"Unknown app role: {role!r}")
+    serves_bot = role in ("bot", "all")
+    serves_admin = role in ("admin", "all")
+
+    app = FastAPI(
+        title="Clinic AI Agent",
+        lifespan=lifespan if serves_bot else admin_lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    app.include_router(health_router)
+    if serves_bot:
+        app.include_router(webhook_router)
+        app.include_router(chatwoot_webhook_router)
+    if serves_admin:
+        app.include_router(admin_auth_router)
+        app.include_router(admin_router)
+        app.include_router(admin_llm_config_router)
+        app.include_router(admin_docs_router)
+        app.include_router(admin_pages_router)
+    if serves_bot:
+        app.include_router(internal_eval_router)
+    if serves_admin:
+        #: The admin panel's own CSS/JS (app/static/admin/{style.css,app.js}) —
+        #: plain static files, no auth needed to fetch them (they carry no data,
+        #: only markup/behavior; the real data calls from app.js are what the
+        #: session cookie/CSRF check actually guards).
+        app.mount("/admin/static", StaticFiles(directory=_ADMIN_STATIC_DIR), name="admin-static")
+    if serves_bot:
+        #: Public files WhatsApp's servers fetch by URL (e.g. the clinic location image
+        #: sent with the "Cómo llegar" button). Serves only `app/static/public`; no auth,
+        #: no directory listing (`html=False`), nothing outside that folder.
+        app.mount(
+            "/public",
+            StaticFiles(directory=_PUBLIC_STATIC_DIR, html=False),
+            name="public-static",
+        )
+    return app
+
+
+app = create_app(get_settings().app_role)
 
 
 if __name__ == "__main__":

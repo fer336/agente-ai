@@ -27,6 +27,9 @@ class Settings(BaseSettings):
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    #: Which surfaces this process serves: `bot` (webhooks + workers), `admin`
+    #: (panel only) or `all` (both, the historical single-process behavior).
+    app_role: Literal["bot", "admin", "all"] = "all"
 
     postgres_host: str = "localhost"
     postgres_port: int = 5432

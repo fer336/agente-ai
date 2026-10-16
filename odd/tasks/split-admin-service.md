@@ -32,10 +32,12 @@ Today one FastAPI app and one Swarm service (`backend`, 1 replica, host `agent.q
 - English artifacts; test first; default `all` must not change behavior; push, PR, merge and the production deploy are the user's decisions.
 
 ## Tasks
-- [ ] S1 `APP_ROLE` setting and `create_app(role)` factory with per-role router, mount and lifespan selection + tests (admin app 404s webhook paths, bot app 404s `/admin`, `all` unchanged).
+- [x] S1 `APP_ROLE` setting and `create_app(role)` factory with per-role router, mount and lifespan selection + tests (admin app 404s webhook paths, bot app 404s `/admin`, `all` unchanged).
 - [ ] S2 Role-aware `entrypoint.sh` and compose update.
 - [ ] S3 `docker-stack.yml` admin service, Traefik priority, healthchecks, docs/runbook.
 - [ ] S4 Resolve the open reset/debounce check and record the result.
+
+S1 evidence: unit 3681 passed (3 known failures), ruff/mypy clean, RED observed (ImportError). Not verified: real uvicorn with APP_ROLE=admin|bot.
 
 ## Acceptance criteria
 - With `APP_ROLE` unset, the app behaves exactly as today.
