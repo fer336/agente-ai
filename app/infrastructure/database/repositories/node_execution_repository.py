@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +41,15 @@ class SqlAlchemyNodeExecutionRepository:
             select(NodeExecutionModel)
             .where(NodeExecutionModel.agent_run_id == agent_run_id)
             .order_by(NodeExecutionModel.started_at)
+        )
+        return [_to_entity(model) for model in result.scalars()]
+
+    async def list_since(self, since: datetime, limit: int) -> list[NodeExecution]:
+        result = await self._session.execute(
+            select(NodeExecutionModel)
+            .where(NodeExecutionModel.started_at >= since)
+            .order_by(NodeExecutionModel.started_at.desc())
+            .limit(limit)
         )
         return [_to_entity(model) for model in result.scalars()]
 

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.domain.entities.tool_execution import COMPLETED, FAILED, ToolExecution
 from app.infrastructure.database.repositories.tool_execution_repository import (
@@ -50,3 +50,38 @@ async def test_get_by_agent_run_id_returns_only_matching_executions(db_session, 
     executions = await repository.get_by_agent_run_id(agent_run_id)
 
     assert {execution.id for execution in executions} == {"te-2", "te-3"}
+
+
+async def test_list_completed_evidence_filters_joins_conversation_and_orders(
+    db_session, agent_run_id, conversation_id
+):
+    repository = SqlAlchemyToolExecutionRepository(db_session)
+    base = datetime(2026, 9, 10, 10, 0, tzinfo=UTC)
+    seeds = [
+        ("e-create", "CreateAppointmentTool", "create_appointment", COMPLETED, 0),
+        ("e-cancel", "CancelAppointmentTool", "cancel_appointment", COMPLETED, 10),
+        ("e-failed", "CreateAppointmentTool", "create_appointment", FAILED, 5),
+        ("e-other", "SearchAvailabilityTool", "search_availability", COMPLETED, 5),
+        ("e-late", "CreateAppointmentTool", "create_appointment", COMPLETED, 600),
+    ]
+    for id_, tool_name, operation, status, minutes in seeds:
+        execution = _tool_execution(agent_run_id, id_, status)
+        execution.tool_name = tool_name
+        execution.operation = operation
+        execution.created_at = base + timedelta(minutes=minutes)
+        await repository.save(execution)
+
+    rows = await repository.list_completed_evidence(
+        ["create_appointment", "cancel_appointment"], base, base + timedelta(hours=1), 10
+    )
+    limited = await repository.list_completed_evidence(
+        ["create_appointment", "cancel_appointment"], base, base + timedelta(hours=1), 1
+    )
+
+    assert [(row.operation, row.tool_name) for row in rows] == [
+        ("cancel_appointment", "CancelAppointmentTool"),
+        ("create_appointment", "CreateAppointmentTool"),
+    ]
+    assert {row.conversation_id for row in rows} == {conversation_id}
+    assert all(row.status == COMPLETED for row in rows)
+    assert [row.operation for row in limited] == ["cancel_appointment"]

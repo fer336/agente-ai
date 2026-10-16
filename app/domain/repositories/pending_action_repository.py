@@ -1,7 +1,41 @@
+from collections.abc import Collection
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.domain.entities.pending_action import PendingAction
 from app.domain.value_objects.conversation_id import ConversationId
+
+
+@dataclass(frozen=True)
+class ConfirmedPendingAction:
+    """Read model of a confirmed `pending_actions` row for admin KPIs."""
+
+    id: str
+    conversation_id: str
+    action_type: str
+    payload: dict[str, object]
+    confirmed_at: datetime
+
+
+@runtime_checkable
+class ConfirmedActionReader(Protocol):
+    """Read-only port for KPI queries over confirmed pending actions.
+
+    Kept apart from `PendingActionRepository` so the write-side port (and its
+    conformance test) stay untouched; the SQL and fake repositories implement both.
+    """
+
+    async def list_confirmed_between(
+        self,
+        action_types: Collection[str],
+        start: datetime,
+        end: datetime,
+        limit: int,
+    ) -> list[ConfirmedPendingAction]:
+        """Rows with `status == 'confirmed'`, `action_type` in the set and
+        `start <= confirmed_at < end`, newest first, at most `limit` rows."""
+        ...
 
 
 @runtime_checkable

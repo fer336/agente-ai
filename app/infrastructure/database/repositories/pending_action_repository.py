@@ -1,9 +1,12 @@
+from collections.abc import Collection
+from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.entities.pending_action import PendingAction
+from app.domain.repositories.pending_action_repository import ConfirmedPendingAction
 from app.domain.value_objects.confirmation_token import ConfirmationToken
 from app.domain.value_objects.conversation_id import ConversationId
 from app.infrastructure.database.models.pending_action import PendingActionModel
@@ -78,10 +81,47 @@ class SqlAlchemyPendingActionRepository:
                 PendingActionModel.id == pending_action_id,
                 PendingActionModel.status == "pending",
             )
-            .values(status="confirmed")
+            # `confirmed_at` was never written before the KPI work; stamping it here is
+            # what makes `list_confirmed_between` possible (older rows stay NULL).
+            .values(status="confirmed", confirmed_at=func.now())
         )
         await self._session.flush()
         return cast("CursorResult[Any]", result).rowcount == 1
+
+    async def list_confirmed_between(
+        self,
+        action_types: Collection[str],
+        start: datetime,
+        end: datetime,
+        limit: int,
+    ) -> list[ConfirmedPendingAction]:
+        result = await self._session.execute(
+            select(
+                PendingActionModel.id,
+                PendingActionModel.conversation_id,
+                PendingActionModel.action_type,
+                PendingActionModel.payload,
+                PendingActionModel.confirmed_at,
+            )
+            .where(
+                PendingActionModel.status == "confirmed",
+                PendingActionModel.action_type.in_(list(action_types)),
+                PendingActionModel.confirmed_at >= start,
+                PendingActionModel.confirmed_at < end,
+            )
+            .order_by(PendingActionModel.confirmed_at.desc())
+            .limit(limit)
+        )
+        return [
+            ConfirmedPendingAction(
+                id=row.id,
+                conversation_id=row.conversation_id,
+                action_type=row.action_type,
+                payload=row.payload,
+                confirmed_at=row.confirmed_at,
+            )
+            for row in result
+        ]
 
 
 def _to_entity(model: PendingActionModel) -> PendingAction:

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from app.domain.entities.node_execution import NodeExecution
 
 
@@ -17,6 +19,11 @@ class FakeNodeExecutionRepository:
         matches = [ne for ne in self._by_id.values() if ne.agent_run_id == agent_run_id]
         matches.sort(key=lambda ne: ne.started_at)
         return matches
+
+    async def list_since(self, since: datetime, limit: int) -> list[NodeExecution]:
+        matches = [ne for ne in self._by_id.values() if ne.started_at >= since]
+        matches.sort(key=lambda ne: ne.started_at, reverse=True)
+        return matches[:limit]
 
     async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
         self._by_id = {

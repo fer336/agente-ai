@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from app.domain.entities.node_execution import NodeExecution
@@ -12,6 +13,13 @@ class NodeExecutionRepository(Protocol):
     async def get_by_id(self, node_execution_id: str) -> NodeExecution | None: ...
 
     async def get_by_agent_run_id(self, agent_run_id: str) -> list[NodeExecution]: ...
+
+    async def list_since(self, since: datetime, limit: int) -> list[NodeExecution]:
+        """Executions with `started_at >= since`, newest first, at most `limit`.
+
+        Newest-first so the cap drops the oldest rows (admin graph state).
+        """
+        ...
 
     async def delete_by_agent_run_id(self, agent_run_id: str) -> None:
         """Deletes every node execution for one run (`ResetConversationUseCase`)."""

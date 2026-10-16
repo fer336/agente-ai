@@ -361,11 +361,1441 @@ button:disabled {
   margin-top: 16px;
 }
 
-.graph-container {
+/* ---- Agent diagram page (/admin/agent) ---- */
+
+.agd-main {
+  --agd-edge: #6b7280; /* edge/arrow stroke; no existing token is dim enough */
+  --agd-idle: #6b7280; /* "no data" dot */
+  --agd-dash: #3a3f4b;
+  max-width: 1400px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agd-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agd-head h1 {
+  font-size: 22px;
+  margin: 0;
+}
+
+.agd-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.agd-tabs-wrap,
+.agd-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.agd-tabs,
+.agd-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agd-tabs button,
+.agd-seg button {
+  min-height: 36px;
+  padding: 0 16px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.agd-seg button {
+  padding: 0 12px;
+}
+
+.agd-tabs button[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.agd-seg button[aria-pressed="true"] {
+  background: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agd-pause-btn {
+  min-height: 44px;
+  padding: 0 16px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.agd-pause-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
+.agd-pause-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.agd-cycle-note {
+  font-size: 13px;
+}
+
+.agd-icon-btn {
+  width: 44px;
+  height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.agd-tabs button:focus-visible,
+.agd-seg button:focus-visible,
+.agd-icon-btn:focus-visible,
+.agd-pause-btn:focus-visible,
+.agd-banner button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agd-updated {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-updated-dot {
+  color: var(--ok);
+}
+
+.agd-updated.agd-stale .agd-updated-dot {
+  color: var(--warn);
+}
+
+.agd-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  background: rgba(240, 87, 106, 0.1);
+  color: var(--text);
+}
+
+.agd-banner[hidden] {
+  display: none;
+}
+
+.agd-banner button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.agd-runbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(79, 140, 255, 0.1);
+}
+
+.agd-runbar[hidden] {
+  display: none;
+}
+
+.agd-runbar-error {
+  border-color: var(--err);
+  background: rgba(240, 87, 106, 0.1);
+}
+
+.agd-runbar-title {
+  font-weight: 600;
+}
+
+.agd-runbar-meta {
+  flex: 1 1 200px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.agd-runbar button {
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.agd-runbar button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agd-run-only {
+  display: none;
+}
+
+.agd-run-mode .agd-run-only {
+  display: inline;
+}
+
+.agd-run-mode .agd-live-only {
+  display: none;
+}
+
+.agd-seg button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.agd-status {
+  min-height: 18px; /* reserved so the message appearing never shifts the diagram */
+  margin: -8px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-stage {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agd-canvas {
   overflow-x: auto;
+  min-height: 160px;
+}
+
+.agd-svg {
+  display: block;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.agd-svg[hidden] {
+  display: none;
+}
+
+.agd-title {
+  fill: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agd-edge {
+  fill: none;
+  stroke: var(--agd-edge);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.agd-edge-cond {
+  stroke-dasharray: 6 4;
+}
+
+.agd-arrow-head {
+  fill: var(--agd-edge);
+}
+
+.agd-fin rect {
+  fill: none;
+  stroke: var(--agd-dash);
+  stroke-dasharray: 4 4;
+}
+
+.agd-fin-text,
+.agd-caption,
+.agd-metric,
+.agd-badge {
+  fill: var(--muted);
+}
+
+.agd-start rect {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+
+.agd-start-text {
+  fill: var(--muted);
+}
+
+.agd-node {
+  cursor: pointer;
+}
+
+.agd-node rect {
+  fill: var(--panel);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.agd-node:hover rect {
+  stroke: var(--muted);
+}
+
+.agd-node.agd-selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.agd-node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Some engines ignore outline on SVG groups: also ring the box itself. */
+.agd-node:focus-visible rect {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.agd-node.agd-error rect {
+  stroke: var(--err);
+  stroke-dasharray: 4 3;
+}
+
+.agd-name {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+.agd-badge {
+  font-size: 11px;
+}
+
+.agd-state {
+  fill: var(--text);
+}
+
+.agd-s-ok .agd-dot {
+  fill: var(--ok);
+}
+
+.agd-s-fail .agd-dot {
+  fill: var(--err);
+}
+
+.agd-s-run .agd-dot {
+  fill: var(--warn);
+}
+
+.agd-s-idle .agd-dot,
+.agd-s-nodata .agd-dot,
+.agd-s-loading .agd-dot {
+  fill: var(--agd-idle);
+}
+
+.agd-s-idle .agd-name,
+.agd-s-nodata .agd-name,
+.agd-s-loading .agd-name,
+.agd-s-idle .agd-state,
+.agd-s-nodata .agd-state,
+.agd-s-loading .agd-state {
+  fill: var(--muted);
+}
+
+.agd-skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 32px 24px;
+}
+
+.agd-skeleton[hidden] {
+  display: none;
+}
+
+.agd-sk-row {
+  display: flex;
+  gap: 16px;
+}
+
+.agd-sk-row i {
+  display: block;
+  width: 144px;
+  height: 80px;
+  border-radius: 8px;
+  background: var(--border);
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .agd-sk-row i {
+    animation: agd-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes agd-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.agd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+
+.agd-legend-dot.agd-ok {
+  color: var(--ok);
+}
+
+.agd-legend-dot.agd-bad {
+  color: var(--err);
+}
+
+.agd-legend-dot.agd-run {
+  color: var(--warn);
+}
+
+.agd-legend-dot.agd-idle {
+  color: var(--agd-idle);
+}
+
+.agd-legend-sel {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+}
+
+.agd-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agd-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.agd-detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.agd-detail-meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.agd-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agd-stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.agd-stat-value {
+  font-size: 24px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.agd-stat-value.agd-bad {
+  color: var(--err);
+}
+
+.agd-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.agd-tools {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.agd-tools .agd-bad {
+  color: var(--err);
+}
+
+.agd-note-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+/* ---- KPIs page (/admin/kpis) ---- */
+
+.kpi-main {
+  max-width: 1400px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.kpi-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kpi-head h1 {
+  font-size: 22px;
+  margin: 0;
+}
+
+.kpi-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.kpi-period,
+.kpi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.kpi-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.kpi-seg button {
+  min-height: 36px;
+  padding: 0 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.kpi-seg button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.kpi-period-text,
+.kpi-updated,
+.kpi-muted {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.kpi-btn-primary,
+.kpi-btn-quiet,
+.kpi-banner button {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.kpi-btn-primary {
+  background: var(--accent);
+  border: 0;
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.kpi-btn-quiet,
+.kpi-banner button {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.kpi-btn-primary:disabled,
+.kpi-btn-quiet:disabled,
+.kpi-btn-primary[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.kpi-export-hint {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.kpi-export-hint:empty {
+  display: none;
+}
+
+/* Print-only report parts: shown by the @media print block at the end. */
+.kpi-print-head,
+.kpi-print-foot {
+  display: none;
+}
+
+.kpi-seg button:focus-visible,
+.kpi-btn-primary:focus-visible,
+.kpi-btn-quiet:focus-visible,
+.kpi-banner button:focus-visible,
+.kpi-custom input:focus-visible,
+.kpi-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.kpi-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.kpi-custom[hidden],
+.kpi-banner[hidden],
+.kpi-notice[hidden] {
+  display: none;
+}
+
+.kpi-custom label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.kpi-custom input {
+  min-height: 36px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.kpi-custom-error {
+  color: var(--err);
+  font-size: 13px;
+}
+
+.kpi-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  background: rgba(240, 87, 106, 0.1);
+}
+
+.kpi-notice {
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.kpi-notice-warn {
+  border-color: var(--warn);
+  color: var(--text);
+}
+
+.kpi-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.kpi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.kpi-card-warn {
+  border-color: var(--warn);
+}
+
+.kpi-card-label,
+.kpi-card-sub {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+}
+
+.kpi-card-value {
+  font-size: 40px;
+  line-height: 44px;
+  font-weight: 600;
+}
+
+.kpi-warn-text {
+  color: var(--warn);
+}
+
+.kpi-card-sub.kpi-dir-up {
+  color: var(--ok);
+}
+
+.kpi-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.kpi-busy .kpi-cards,
+.kpi-busy .kpi-content {
+  opacity: 0.6;
+}
+
+/* Numbers kept on screen after a failed load: they belong to the previous period. */
+.kpi-stale-data {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.kpi-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.kpi-panel h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.kpi-panel h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.kpi-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.kpi-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.kpi-swatch {
+  width: 28px;
+  height: 8px;
+  vertical-align: middle;
+}
+
+.kpi-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.kpi-grid line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.kpi-axis text {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.kpi-line-taken,
+.kpi-line-cancelled {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.kpi-line-taken {
+  stroke: var(--accent);
+}
+
+.kpi-line-cancelled {
+  stroke: var(--warn);
+  stroke-dasharray: 6 5;
+}
+
+.kpi-area-taken {
+  fill: var(--accent);
+  fill-opacity: 0.14;
+}
+
+.kpi-dot-taken {
+  fill: var(--accent);
+}
+
+.kpi-dot-cancelled {
+  fill: var(--warn);
+}
+
+.kpi-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 16px;
+}
+
+.kpi-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.kpi-bar-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.kpi-bar-label {
+  overflow-wrap: anywhere;
+}
+
+.kpi-bar-track {
+  display: block;
+  height: 14px;
+  background: var(--bg);
+  border-radius: 4px;
+}
+
+.kpi-bar-fill {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+}
+
+.kpi-fill-accent {
+  background: var(--accent);
+}
+
+.kpi-fill-ok {
+  background: var(--ok);
+}
+
+.kpi-bar-count {
+  text-align: right;
+  font-weight: 600;
+}
+
+.kpi-scroll {
+  overflow-x: auto;
+  position: relative; /* contains the absolutely positioned .kpi-sr text */
+}
+
+.kpi-heat {
+  border-collapse: separate;
+  border-spacing: 3px;
+  min-width: 540px;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.kpi-heat th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: center;
+}
+
+.kpi-heat tbody th {
+  width: 44px;
+  text-align: left;
+  padding-right: 4px;
+}
+
+.kpi-heat-corner {
+  width: 44px;
+}
+
+.kpi-heat-cell {
+  /* --a is the per-cell alpha set inline by kpis.js */
+  --heat-rgb: 79, 140, 255;
+  background: rgba(var(--heat-rgb), var(--a, 0));
+  height: 30px;
+  text-align: center;
+  vertical-align: middle;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.kpi-heat-zero {
+  background: var(--bg);
+}
+
+.kpi-heat-dark {
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.kpi-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.kpi-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.kpi-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.kpi-table th,
+.kpi-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.kpi-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.kpi-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.kpi-table .kpi-num {
+  text-align: right;
+}
+
+.kpi-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.kpi-details .kpi-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
+.kpi-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  padding: 48px 24px;
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  text-align: center;
+  font-size: 16px;
+}
+
+.kpi-sk i {
+  display: block;
+  height: 14px;
+  margin: 6px 0;
+  border-radius: 4px;
+  background: var(--border);
+  animation: kpi-pulse 1.4s ease-in-out infinite;
+}
+
+.kpi-sk i:first-child {
+  width: 55%;
+}
+
+.kpi-sk i:nth-child(2) {
+  height: 36px;
+  width: 35%;
+}
+
+.kpi-sk-chart {
+  min-height: 220px;
+}
+
+@keyframes kpi-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpi-sk i {
+    animation: none;
+  }
+}
+
+/* ---- KPIs page: A4 print layout (browser "Save as PDF") ----
+   Light theme whatever the screen theme is. The content box of the page is
+   186mm x 273mm (about 703 x 1032 CSS px); the standard 30-day report is
+   sized to fit it on one sheet. Type is 12px or larger, rules 1px or thicker. */
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  body.kpi-page {
+    /* Remap the dark tokens so every existing rule turns into the print ink. */
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --border: #c9cdd4;
+    --text: #1a1d23;
+    --muted: #3d424b;
+    --accent: #2457c5;
+    --ok: #1f7a4d;
+    --warn: #8a5600;
+    --err: #9b1c2c;
+    background: #ffffff;
+    color: #1a1d23;
+    font-size: 13px;
+    line-height: 18px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Not part of a report: navigation, period controls, buttons, loading and
+     error states, the on-screen notices (the footer carries the same text)
+     and every interactive affordance. */
+  .kpi-page .topbar,
+  .kpi-page .kpi-head,
+  .kpi-page .kpi-toolbar,
+  .kpi-page .kpi-custom,
+  .kpi-page .kpi-banner,
+  .kpi-page .kpi-notice,
+  .kpi-page .kpi-sk,
+  .kpi-page .kpi-details,
+  .kpi-page .kpi-screen-only,
+  .kpi-page button {
+    display: none !important;
+  }
+
+  .kpi-page main.kpi-main {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    gap: 14px;
+  }
+
+  .kpi-page .kpi-busy .kpi-cards,
+  .kpi-page .kpi-busy .kpi-content,
+  .kpi-page .kpi-stale-data {
+    opacity: 1;
+    filter: none;
+  }
+
+  /* Header */
+  .kpi-page .kpi-print-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #1a1d23;
+    break-after: avoid;
+  }
+
+  .kpi-print-id {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .kpi-print-clinic {
+    font-size: 12px;
+    line-height: 16px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #5a606b;
+  }
+
+  .kpi-print-title {
+    margin: 0;
+    font-size: 26px;
+    line-height: 32px;
+    font-weight: 700;
+  }
+
+  .kpi-print-meta {
+    margin: 0;
+    text-align: right;
+    font-size: 13px;
+    line-height: 18px;
+    color: #3d424b;
+  }
+
+  .kpi-print-meta span {
+    display: block;
+  }
+
+  /* KPI cards: one row of four */
+  .kpi-page .kpi-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .kpi-page .kpi-card {
+    gap: 2px;
+    padding: 10px 12px;
+    border: 1px solid #c9cdd4;
+    border-radius: 6px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-card-warn {
+    border-color: #a86a00;
+  }
+
+  .kpi-page .kpi-card-label,
+  .kpi-page .kpi-card-sub {
+    font-size: 12px;
+    line-height: 16px;
+    color: #3d424b;
+  }
+
+  .kpi-page .kpi-card-value {
+    font-size: 30px;
+    line-height: 36px;
+    font-weight: 700;
+  }
+
+  .kpi-page .kpi-card-sub.kpi-dir-up {
+    color: #1f7a4d;
+  }
+
+  .kpi-page .kpi-warn-text {
+    color: #8a5600;
+  }
+
+  /* Sections: no boxes, a heading and its figure kept together */
+  .kpi-page .kpi-content {
+    gap: 14px;
+  }
+
+  .kpi-page .kpi-panel {
+    gap: 6px;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-panel h2 {
+    margin: 0;
+    font-size: 15px;
+    line-height: 20px;
+    color: #1a1d23;
+    text-transform: none;
+    letter-spacing: 0;
+    break-after: avoid;
+  }
+
+  .kpi-page .kpi-panel-head {
+    break-after: avoid;
+    flex-wrap: nowrap;
+    gap: 12px;
+  }
+
+  .kpi-page .kpi-legend,
+  .kpi-page .kpi-muted {
+    font-size: 12px;
+    line-height: 16px;
+    color: #3d424b;
+  }
+
+  .kpi-page .kpi-legend {
+    flex-wrap: nowrap;
+    gap: 16px;
+    white-space: nowrap;
+  }
+
+  /* Vector charts at the full printable width. The dashed vs solid line pair
+     is what tells the series apart without color. */
+  .kpi-page .kpi-svg {
+    width: 100%;
+    height: auto;
+    break-inside: avoid;
+  }
+
+  /* The SVG is scaled to the 703px page width (viewBox is 800 wide, so x0.88):
+     14 user units print at about 12.3px, never below 12px. */
+  .kpi-page .kpi-axis text {
+    fill: #3d424b;
+    font-size: 14px;
+  }
+
+  .kpi-page .kpi-line-taken {
+    stroke: #2457c5;
+    stroke-width: 2;
+  }
+
+  .kpi-page .kpi-line-cancelled {
+    stroke: #8a5600;
+    stroke-width: 2;
+    stroke-dasharray: 6 5;
+  }
+
+  .kpi-page .kpi-area-taken {
+    fill: #2457c5;
+    fill-opacity: 0.12;
+  }
+
+  .kpi-page .kpi-dot-taken {
+    fill: #2457c5;
+  }
+
+  .kpi-page .kpi-dot-cancelled {
+    fill: #8a5600;
+  }
+
+  /* Two bar lists side by side */
+  .kpi-page .kpi-two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-bars {
+    gap: 8px;
+  }
+
+  .kpi-page .kpi-bar-row {
+    grid-template-columns: minmax(0, 124px) minmax(0, 1fr) 28px;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 18px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-bar-track {
+    height: 12px;
+    background: #eceef2;
+    border-radius: 0;
+  }
+
+  .kpi-page .kpi-bar-fill {
+    height: 12px;
+    border-radius: 0;
+  }
+
+  .kpi-page .kpi-fill-accent {
+    background: #2457c5;
+  }
+
+  .kpi-page .kpi-fill-ok {
+    background: #1f7a4d;
+  }
+
+  /* Weekday x hour grid */
+  .kpi-page .kpi-scroll {
+    overflow: visible;
+    border: 0;
+  }
+
+  .kpi-page .kpi-heat {
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    border-spacing: 3px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-heat th,
+  .kpi-page .kpi-heat td {
+    padding: 0;
+    border: 0;
+  }
+
+  .kpi-page .kpi-heat th {
+    font-size: 12px;
+    text-transform: none;
+    color: #3d424b;
+  }
+
+  .kpi-page .kpi-heat-cell {
+    --heat-rgb: 36, 87, 197;
+    height: 22px;
+    border-radius: 0;
+    font-size: 12px;
+    color: #1a1d23;
+    /* ink on the darkest cell stays readable: cap the fill strength */
+    background: rgba(var(--heat-rgb), calc(var(--a, 0) * 0.9));
+  }
+
+  .kpi-page .kpi-heat-zero {
+    background: #f1f3f6;
+  }
+
+  .kpi-page .kpi-heat-dark {
+    color: #1a1d23;
+    font-weight: 700;
+  }
+
+  .kpi-page tr {
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-empty {
+    background: none;
+    border: 1px dashed #c9cdd4;
+    break-inside: avoid;
+  }
+
+  /* Footer: scope note, evidence caveat, truncation notice */
+  .kpi-page .kpi-print-foot {
+    display: block;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid #c9cdd4;
+    font-size: 12px;
+    line-height: 16px;
+    color: #3d424b;
+    break-inside: avoid;
+  }
+
+  .kpi-print-foot p {
+    margin: 0;
+  }
+
+  .kpi-page .kpi-print-trunc {
+    margin-top: 4px;
+    font-weight: 700;
+    color: #1a1d23;
+  }
+
+  .kpi-page .kpi-print-trunc[hidden] {
+    display: none;
+  }
+
+  /* No loaded data (Ctrl+P on an empty or failed page): no report frame. */
+  .kpi-page .kpi-main:not(.kpi-printable) .kpi-print-head,
+  .kpi-page .kpi-main:not(.kpi-printable) .kpi-print-foot {
+    display: none;
+  }
 }

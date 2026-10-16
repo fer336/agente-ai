@@ -1,8 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import update
+
 from app.domain.entities.pending_action import PendingAction
 from app.domain.value_objects.confirmation_token import ConfirmationToken
 from app.domain.value_objects.conversation_id import ConversationId
+from app.infrastructure.database.models.pending_action import PendingActionModel
 from app.infrastructure.database.repositories.pending_action_repository import (
     SqlAlchemyPendingActionRepository,
 )
@@ -99,3 +102,53 @@ async def test_mark_confirmed_if_pending_fails_when_already_expired(db_session, 
     fetched = await repository.get_by_id("pa-7")
     assert fetched is not None
     assert fetched.status == "expired"
+
+
+async def test_mark_confirmed_if_pending_stamps_confirmed_at(db_session, conversation_id):
+    repository = SqlAlchemyPendingActionRepository(db_session)
+    await repository.save(_pending_action(conversation_id, "pa-8", "pending"))
+
+    await repository.mark_confirmed_if_pending("pa-8")
+    rows = await repository.list_confirmed_between(
+        ["create_appointment"],
+        datetime.now(UTC) - timedelta(minutes=5),
+        datetime.now(UTC) + timedelta(minutes=5),
+        10,
+    )
+
+    assert [row.id for row in rows] == ["pa-8"]
+
+
+async def test_list_confirmed_between_filters_orders_newest_first_and_applies_limit(
+    db_session, conversation_id
+):
+    repository = SqlAlchemyPendingActionRepository(db_session)
+    base = datetime(2026, 9, 10, 8, 0, tzinfo=UTC)
+    seeds = [
+        ("k-old", "create_appointment", "confirmed", 0),
+        ("k-start", "create_appointment", "confirmed", 60),
+        ("k-mid", "create_appointment", "confirmed", 120),
+        ("k-cancel", "cancel_appointment", "confirmed", 130),
+        ("k-expired", "create_appointment", "expired", 140),
+        ("k-end", "create_appointment", "confirmed", 180),
+    ]
+    for id_, action_type, status, minutes in seeds:
+        action = _pending_action(conversation_id, id_, status)
+        action.action_type = action_type
+        action.payload = {"professional_id": "7"}
+        await repository.save(action)
+        await db_session.execute(
+            update(PendingActionModel)
+            .where(PendingActionModel.id == id_)
+            .values(confirmed_at=base + timedelta(minutes=minutes))
+        )
+
+    start, end = base + timedelta(minutes=60), base + timedelta(minutes=180)
+    rows = await repository.list_confirmed_between(["create_appointment"], start, end, 10)
+    limited = await repository.list_confirmed_between(["create_appointment"], start, end, 1)
+
+    assert [row.id for row in rows] == ["k-mid", "k-start"]
+    assert [row.id for row in limited] == ["k-mid"]
+    assert rows[0].conversation_id == conversation_id
+    assert rows[0].payload == {"professional_id": "7"}
+    assert rows[0].confirmed_at == base + timedelta(minutes=120)

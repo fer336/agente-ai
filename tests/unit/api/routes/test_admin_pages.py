@@ -38,6 +38,8 @@ async def test_admin_root_redirects_to_conversations():
         "/admin/conversations/conv-1",
         "/admin/errors",
         "/admin/errors/err-1",
+        "/admin/agent",
+        "/admin/kpis",
         "/admin/runs/run-1",
     ],
 )
@@ -51,8 +53,96 @@ async def test_page_serves_html_with_no_auth_dependency(path: str):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("asset", ["app.js", "style.css"])
+@pytest.mark.parametrize("asset", ["app.js", "style.css", "agent-diagram.js", "kpis.js"])
 async def test_static_asset_serves(asset: str):
     response = await _get(f"/admin/static/{asset}")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/admin/conversations/conv-1", "/admin/runs/run-1"])
+async def test_detail_pages_drop_mermaid_and_link_to_the_diagram(path: str):
+    response = await _get(path)
+
+    assert response.status_code == 200
+    assert "mermaid" not in response.text.lower()
+    assert "graph-view" not in response.text
+    assert "/admin/agent#run=" in response.text
+
+
+@pytest.mark.asyncio
+async def test_graph_view_asset_is_gone():
+    response = await _get("/admin/static/graph-view.js")
+
+    assert response.status_code == 404
+
+
+_NAV_LINKS = [
+    '<a href="/admin/conversations"',
+    '<a href="/admin/errors"',
+    '<a href="/admin/agent"',
+    '<a href="/admin/kpis"',
+    '<a href="/admin/llm-config"',
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/admin/conversations",
+        "/admin/conversations/conv-1",
+        "/admin/errors",
+        "/admin/errors/err-1",
+        "/admin/agent",
+        "/admin/kpis",
+        "/admin/llm-config",
+        "/admin/runs/run-1",
+    ],
+)
+async def test_nav_links_to_kpis_after_agent(path: str):
+    response = await _get(path)
+
+    assert response.status_code == 200
+    positions = [response.text.index(link) for link in _NAV_LINKS]
+    assert positions == sorted(positions)
+    assert ">KPIs</a>" in response.text
+
+
+@pytest.mark.asyncio
+async def test_kpis_page_loads_its_script_and_states_the_scope():
+    response = await _get("/admin/kpis")
+
+    assert "/admin/static/kpis.js" in response.text
+    assert "no incluye turnos cargados o cancelados directamente en Dentalink" in response.text
+
+
+@pytest.mark.asyncio
+async def test_kpis_page_has_the_print_report_hooks():
+    response = await _get("/admin/kpis")
+
+    html = response.text
+    assert '<body class="kpi-page">' in html
+    # Print-only header and footer, filled by kpis.js; the clinic name is a constant.
+    assert 'id="kpi-print-head"' in html
+    assert "Smiling Pilar" in html
+    assert "Informe de turnos del bot" in html
+    assert 'id="kpi-print-period"' in html
+    assert 'id="kpi-print-generated"' in html
+    assert 'id="kpi-print-foot"' in html
+    assert 'id="kpi-print-evidence"' in html
+    assert 'id="kpi-print-trunc"' in html
+    # The export button starts disabled until data is loaded.
+    assert 'id="kpi-export"' in html
+    assert 'aria-disabled="true"' in html
+
+
+@pytest.mark.asyncio
+async def test_stylesheet_has_an_a4_print_layout_for_the_kpis_page():
+    response = await _get("/admin/static/style.css")
+
+    css = response.text
+    assert "@page" in css and "size: A4" in css
+    assert "@media print" in css
+    assert "print-color-adjust: exact" in css
