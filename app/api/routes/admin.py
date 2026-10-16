@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.dependencies.admin import (
     get_committing_error_query_service,
@@ -14,6 +15,7 @@ from app.api.dependencies.auth import require_csrf, require_role
 from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
+from app.application.admin.graph_topology import GraphView, get_graph_topology
 from app.application.admin.run_queries import RunQueryService
 from app.application.agreements.list_agreements import ListAgreementsUseCase
 from app.application.conversations.reset_conversation import ResetConversationUseCase
@@ -348,6 +350,60 @@ async def get_run_detail(
         agent_run=AgentRunResponse.from_entity(detail.agent_run),
         node_executions=[NodeExecutionResponse.model_validate(n) for n in detail.node_executions],
         tool_executions=[ToolExecutionResponse.model_validate(t) for t in detail.tool_executions],
+    )
+
+
+class GraphNodeResponse(BaseModel):
+    id: str
+    label: str
+    kind: Literal["start", "end", "node"]
+    traced: bool
+
+
+class GraphEdgeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(serialization_alias="from")
+    to: str
+    conditional: bool
+
+
+class AgentGraphResponse(BaseModel):
+    id: Literal["main", "appointment_decision", "first_visit_intake"]
+    label: str
+    nodes: list[GraphNodeResponse]
+    edges: list[GraphEdgeResponse]
+
+    @classmethod
+    def from_view(cls, view: GraphView) -> "AgentGraphResponse":
+        return cls(
+            id=view.id,  # type: ignore[arg-type]
+            label=view.label,
+            nodes=[
+                GraphNodeResponse(id=n.id, label=n.label, kind=n.kind, traced=n.traced)
+                for n in view.nodes
+            ],
+            edges=[
+                GraphEdgeResponse(from_=e.source, to=e.target, conditional=e.conditional)
+                for e in view.edges
+            ],
+        )
+
+
+class AgentGraphsResponse(BaseModel):
+    graphs: list[AgentGraphResponse]
+
+
+@router.get("/graphs", response_model=AgentGraphsResponse, response_model_by_alias=True)
+async def get_agent_graphs(
+    response: Response,
+    _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+) -> AgentGraphsResponse:
+    """Static agent topology (read from the compiled graphs). `private` because the
+    route sits behind admin auth: a shared cache must not store it."""
+    response.headers["Cache-Control"] = "private, max-age=300"
+    return AgentGraphsResponse(
+        graphs=[AgentGraphResponse.from_view(g) for g in get_graph_topology()]
     )
 
 

@@ -669,3 +669,32 @@ async def test_read_only_cannot_create_an_intake_draft(_stub_ycloud_client: _Stu
 
     assert response.status_code == 403
     assert _stub_ycloud_client.create_flow_calls == []
+
+
+# --- GET /admin/api/graphs: static agent topology -------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [ADMIN_TECHNICAL, ADMIN_CLINIC, READ_ONLY])
+async def test_every_role_can_read_the_agent_graphs(role: str):
+    response = await _get("/admin/api/graphs", cookies=_session_cookies(role))
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, max-age=300"
+    graphs = response.json()["graphs"]
+    assert [g["id"] for g in graphs] == ["main", "appointment_decision", "first_visit_intake"]
+    main = graphs[0]
+    assert main["label"] == "Principal"
+    assert {"id": "faq_topic", "label": "faq_topic", "kind": "node", "traced": True} in main[
+        "nodes"
+    ]
+    assert {"from": "__start__", "to": "check_conversation_mode", "conditional": False} in main[
+        "edges"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cannot_read_the_agent_graphs():
+    response = await _get("/admin/api/graphs")
+
+    assert response.status_code == 401
