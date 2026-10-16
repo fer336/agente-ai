@@ -3,6 +3,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -12,16 +13,22 @@ from app.api.dependencies.admin import (
     get_conversation_query_service,
     get_error_query_service,
     get_graph_state_query_service,
+    get_kpi_name_catalog,
+    get_kpi_query_service,
     get_run_query_service,
 )
 from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.graph_state_queries import GraphStateQueryService
+from app.application.admin.kpi_names import KpiNameCatalog
+from app.application.admin.kpi_queries import KpiQueryService
 from app.application.admin.run_queries import RunQueryService
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_CLINIC, ADMIN_TECHNICAL, READ_ONLY
 from app.domain.entities.agreement import Agreement
+from app.domain.entities.professional import Professional
+from app.domain.entities.specialty import Specialty
 from app.infrastructure.auth.session_tokens import create_session_token
 from app.infrastructure.ycloud.exceptions import YCloudAPIError
 from app.main import app
@@ -32,6 +39,7 @@ from tests.fixtures.gateways import (
     make_error_repository,
     make_message_repository,
     make_node_execution_repository,
+    make_pending_action_repository,
     make_tool_execution_repository,
 )
 from tests.fixtures.seed_objects import (
@@ -40,6 +48,7 @@ from tests.fixtures.seed_objects import (
     make_error_record,
     make_message,
     make_node_execution,
+    make_pending_action,
     make_tool_execution,
 )
 
@@ -59,6 +68,7 @@ class _AdminFakes:
     errors: object
     node_executions: object
     tool_executions: object
+    pending_actions: object
 
 
 @pytest.fixture(autouse=True)
@@ -71,17 +81,21 @@ def _override_admin_dependencies() -> _AdminFakes:
     errors = make_error_repository()
     node_executions = make_node_execution_repository()
     tool_executions = make_tool_execution_repository()
+    pending_actions = make_pending_action_repository()
 
     conversation_service = ConversationQueryService(conversations, messages, agent_runs, errors)
     error_service = ErrorQueryService(errors)
     run_service = RunQueryService(agent_runs, node_executions, tool_executions)
     graph_state_service = GraphStateQueryService(node_executions)
+    kpi_service = KpiQueryService(pending_actions, tool_executions)
 
     app.dependency_overrides[get_conversation_query_service] = lambda: conversation_service
     app.dependency_overrides[get_error_query_service] = lambda: error_service
     app.dependency_overrides[get_committing_error_query_service] = lambda: error_service
     app.dependency_overrides[get_run_query_service] = lambda: run_service
     app.dependency_overrides[get_graph_state_query_service] = lambda: graph_state_service
+    app.dependency_overrides[get_kpi_query_service] = lambda: kpi_service
+    app.dependency_overrides[get_kpi_name_catalog] = lambda: _name_catalog()
 
     yield _AdminFakes(
         conversations=conversations,
@@ -90,8 +104,23 @@ def _override_admin_dependencies() -> _AdminFakes:
         errors=errors,
         node_executions=node_executions,
         tool_executions=tool_executions,
+        pending_actions=pending_actions,
     )
     app.dependency_overrides.clear()
+
+
+def _name_catalog(*, fail: bool = False) -> KpiNameCatalog:
+    async def professionals() -> list[Professional]:
+        if fail:
+            raise RuntimeError("dentalink down")
+        return [Professional(id="p1", full_name="Dra. Ana", specialty_id="s1")]
+
+    async def specialties() -> list[Specialty]:
+        if fail:
+            raise RuntimeError("dentalink down")
+        return [Specialty(id="s1", name="Ortodoncia")]
+
+    return KpiNameCatalog(professionals=professionals, specialties=specialties)
 
 
 def _session_cookies(role: str, now: datetime | None = None) -> dict[str, str]:
@@ -804,3 +833,226 @@ async def test_graph_state_returns_the_aggregated_payload(
     assert node["avg_ms"] == 100.0
     assert node["p50_ms"] == 100.0
     assert node["last_run_id"] == "run-ok"
+
+
+# --- GET /admin/api/kpis: appointment KPIs (aggregates only) --------------
+
+_KPI_KEYS = {
+    "generated_at",
+    "period",
+    "previous_period",
+    "totals",
+    "per_day",
+    "top_professionals",
+    "top_specialties",
+    "weekday",
+    "hour",
+    "without_slot",
+    "evidence",
+    "truncated",
+    "previous_truncated",
+}
+
+
+async def _confirm(
+    fakes: _AdminFakes,
+    id_: str,
+    at: datetime,
+    action_type: str = "create_appointment",
+    **payload: object,
+) -> None:
+    repo = fakes.pending_actions
+    await repo.save(
+        make_pending_action(
+            id_=id_, action_type=action_type, payload=dict(payload), status="confirmed"
+        )
+    )
+    repo.set_confirmed_at(id_, at)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [ADMIN_TECHNICAL, ADMIN_CLINIC, READ_ONLY])
+async def test_every_role_can_read_the_kpis(role: str):
+    response = await _get("/admin/api/kpis", cookies=_session_cookies(role))
+
+    assert response.status_code == 200
+    assert set(response.json()) == _KPI_KEYS
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cannot_read_the_kpis():
+    response = await _get("/admin/api/kpis")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_kpis_are_never_cached():
+    response = await _get("/admin/api/kpis", cookies=_session_cookies(READ_ONLY))
+
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_kpis_default_to_the_last_30_days_ending_today_in_the_clinic_timezone():
+    today = datetime.now(ZoneInfo(Settings().clinic_timezone)).date()
+
+    body = (await _get("/admin/api/kpis", cookies=_session_cookies(READ_ONLY))).json()
+
+    assert body["period"]["date_to"] == today.isoformat()
+    assert body["period"]["date_from"] == (today - timedelta(days=29)).isoformat()
+    assert body["period"]["days"] == 30
+    assert len(body["per_day"]) == 30
+
+
+@pytest.mark.asyncio
+async def test_kpis_default_from_is_29_days_before_an_explicit_to():
+    body = (await _get("/admin/api/kpis?to=2026-09-30", cookies=_session_cookies(READ_ONLY))).json()
+
+    assert body["period"]["date_from"] == "2026-09-01"
+    assert body["period"]["date_to"] == "2026-09-30"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_period_returns_zeros_not_an_error():
+    body = (
+        await _get(
+            "/admin/api/kpis?from=2026-09-01&to=2026-09-30", cookies=_session_cookies(READ_ONLY)
+        )
+    ).json()
+
+    zero = {"current": 0, "previous": 0, "change_pct": None}
+    assert body["totals"] == {"taken": zero, "cancelled": zero, "rescheduled": zero}
+    assert body["top_professionals"] == []
+    assert body["top_specialties"] == []
+    assert body["weekday"] == [0] * 7
+    assert body["hour"] == [0] * 24
+    assert body["without_slot"] == 0
+    assert body["truncated"] is False
+    assert all(day["taken"] == 0 and day["cancelled"] == 0 for day in body["per_day"])
+
+
+@pytest.mark.asyncio
+async def test_explicit_period_returns_the_aggregated_payload(
+    _override_admin_dependencies: _AdminFakes,
+):
+    fakes = _override_admin_dependencies
+    september = datetime(2026, 9, 10, 15, 0, tzinfo=UTC)
+    await _confirm(
+        fakes,
+        "a1",
+        september,
+        professional_id="p1",
+        specialty_id="s1",
+        slot_start="2026-09-14T10:30:00",
+        patient_name="Juan Perez",
+    )
+    await _confirm(fakes, "a2", september, professional_id="p1", specialty_id="s1")
+    await _confirm(fakes, "c1", september, "cancel_appointment")
+    await _confirm(fakes, "r1", september, "reschedule_appointment")
+    await _confirm(fakes, "a-prev", datetime(2026, 8, 10, 15, 0, tzinfo=UTC))
+
+    response = await _get(
+        "/admin/api/kpis?from=2026-09-01&to=2026-09-30", cookies=_session_cookies(READ_ONLY)
+    )
+
+    body = response.json()
+    assert body["totals"]["taken"] == {"current": 2, "previous": 1, "change_pct": 100.0}
+    assert body["totals"]["cancelled"] == {"current": 1, "previous": 0, "change_pct": None}
+    assert body["totals"]["rescheduled"] == {"current": 1, "previous": 0, "change_pct": None}
+    assert body["period"]["date_from"] == "2026-09-01"
+    assert body["period"]["date_to"] == "2026-09-30"
+    assert body["previous_period"]["date_from"] == "2026-08-02"
+    assert body["top_professionals"] == [{"id": "p1", "label": "Dra. Ana", "count": 2}]
+    assert body["top_specialties"] == [{"id": "s1", "label": "Ortodoncia", "count": 2}]
+    assert body["weekday"][0] == 1  # 2026-09-14 is a Monday
+    assert body["hour"][10] == 1
+    assert body["without_slot"] == 1
+    assert set(body["evidence"]) == {
+        "taken_with",
+        "taken_without",
+        "cancelled_with",
+        "cancelled_without",
+        "truncated",
+    }
+    day = next(d for d in body["per_day"] if d["date"] == "2026-09-10")
+    assert day == {"date": "2026-09-10", "taken": 2, "cancelled": 1}
+
+
+@pytest.mark.asyncio
+async def test_kpis_never_expose_patient_data(_override_admin_dependencies: _AdminFakes):
+    await _confirm(
+        _override_admin_dependencies,
+        "a1",
+        datetime(2026, 9, 10, 15, 0, tzinfo=UTC),
+        professional_id="p1",
+        patient_name="Juan Perez",
+        patient_id="patient-77",
+    )
+
+    response = await _get(
+        "/admin/api/kpis?from=2026-09-01&to=2026-09-30", cookies=_session_cookies(READ_ONLY)
+    )
+
+    assert "Juan" not in response.text
+    assert "patient-77" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_labels_fall_back_to_ids_when_the_name_loader_fails(
+    _override_admin_dependencies: _AdminFakes,
+):
+    app.dependency_overrides[get_kpi_name_catalog] = lambda: _name_catalog(fail=True)
+    await _confirm(
+        _override_admin_dependencies,
+        "a1",
+        datetime(2026, 9, 10, 15, 0, tzinfo=UTC),
+        professional_id="p1",
+        specialty_id="s1",
+    )
+
+    response = await _get(
+        "/admin/api/kpis?from=2026-09-01&to=2026-09-30", cookies=_session_cookies(READ_ONLY)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["top_professionals"] == [{"id": "p1", "label": "p1", "count": 1}]
+    assert body["top_specialties"] == [{"id": "s1", "label": "s1", "count": 1}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    [
+        "from=not-a-date",
+        "from=2026-13-40&to=2026-09-30",
+        "to=31/12/2026",
+        "from=2026-09-30&to=2026-09-01",
+        "from=2024-12-31&to=2026-01-01",
+    ],
+)
+async def test_kpis_reject_invalid_ranges_with_422(query: str):
+    response = await _get(f"/admin/api/kpis?{query}", cookies=_session_cookies(READ_ONLY))
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_kpis_range_errors_carry_a_clear_message():
+    response = await _get(
+        "/admin/api/kpis?from=2026-09-30&to=2026-09-01", cookies=_session_cookies(READ_ONLY)
+    )
+
+    assert isinstance(response.json()["detail"], str)
+    assert "366" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_kpis_accept_a_range_of_exactly_366_days():
+    response = await _get(
+        "/admin/api/kpis?from=2025-01-01&to=2026-01-01", cookies=_session_cookies(READ_ONLY)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["period"]["days"] == 366

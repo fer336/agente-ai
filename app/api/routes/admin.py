@@ -1,7 +1,8 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.dependencies.admin import (
@@ -9,6 +10,8 @@ from app.api.dependencies.admin import (
     get_conversation_query_service,
     get_error_query_service,
     get_graph_state_query_service,
+    get_kpi_name_catalog,
+    get_kpi_query_service,
     get_reset_conversation_use_case,
     get_run_query_service,
 )
@@ -18,6 +21,15 @@ from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.graph_state_queries import GraphState, GraphStateQueryService
 from app.application.admin.graph_topology import GraphView, get_graph_topology
+from app.application.admin.kpi_names import KpiNameCatalog
+from app.application.admin.kpi_queries import (
+    DailyCount,
+    KpiEvidence,
+    KpiPeriod,
+    KpiQueryService,
+    Kpis,
+    TopEntry,
+)
 from app.application.admin.run_queries import RunQueryService
 from app.application.agreements.list_agreements import ListAgreementsUseCase
 from app.application.conversations.reset_conversation import ResetConversationUseCase
@@ -464,6 +476,159 @@ async def get_graph_state(
     response.headers["Cache-Control"] = "no-store"
     state = await query_service.get_state(window, datetime.now(UTC))
     return GraphStateResponse.from_state(state)
+
+
+class KpiPeriodResponse(BaseModel):
+    date_from: date
+    date_to: date
+    days: int
+    start: datetime
+    end: datetime
+
+    @classmethod
+    def from_period(cls, period: KpiPeriod) -> "KpiPeriodResponse":
+        return cls(
+            date_from=period.date_from,
+            date_to=period.date_to,
+            days=period.days,
+            start=period.start,
+            end=period.end,
+        )
+
+
+class KpiTotalResponse(BaseModel):
+    current: int
+    previous: int
+    #: Percentage change vs the previous period; null when `previous` is 0.
+    change_pct: float | None
+
+    @classmethod
+    def of(cls, current: int, previous: int) -> "KpiTotalResponse":
+        change = round((current - previous) / previous * 100, 1) if previous else None
+        return cls(current=current, previous=previous, change_pct=change)
+
+
+class KpiTotalsResponse(BaseModel):
+    taken: KpiTotalResponse
+    cancelled: KpiTotalResponse  # via bot only
+    rescheduled: KpiTotalResponse
+
+
+class KpiDailyResponse(BaseModel):
+    date: date
+    taken: int
+    cancelled: int
+
+    @classmethod
+    def from_daily(cls, daily: DailyCount) -> "KpiDailyResponse":
+        return cls(date=daily.date, taken=daily.taken, cancelled=daily.cancelled)
+
+
+class KpiTopEntryResponse(BaseModel):
+    id: str
+    label: str
+    count: int
+
+    @classmethod
+    def from_entry(cls, entry: TopEntry) -> "KpiTopEntryResponse":
+        return cls(id=entry.id, label=entry.label, count=entry.count)
+
+
+class KpiEvidenceResponse(BaseModel):
+    taken_with: int
+    taken_without: int
+    cancelled_with: int
+    cancelled_without: int
+    truncated: bool
+
+    @classmethod
+    def from_evidence(cls, evidence: KpiEvidence) -> "KpiEvidenceResponse":
+        return cls(
+            taken_with=evidence.taken_with,
+            taken_without=evidence.taken_without,
+            cancelled_with=evidence.cancelled_with,
+            cancelled_without=evidence.cancelled_without,
+            truncated=evidence.truncated,
+        )
+
+
+class KpisResponse(BaseModel):
+    """Aggregates only: counts and ids/labels of professionals and specialties, never
+    patient data."""
+
+    generated_at: datetime
+    period: KpiPeriodResponse
+    previous_period: KpiPeriodResponse
+    totals: KpiTotalsResponse
+    per_day: list[KpiDailyResponse]
+    top_professionals: list[KpiTopEntryResponse]
+    top_specialties: list[KpiTopEntryResponse]
+    weekday: list[int]  # 7 entries, 0 = Monday
+    hour: list[int]  # 24 entries, clinic hour of day
+    without_slot: int
+    evidence: KpiEvidenceResponse
+    truncated: bool
+    previous_truncated: bool
+
+    @classmethod
+    def from_kpis(cls, kpis: Kpis) -> "KpisResponse":
+        return cls(
+            generated_at=kpis.generated_at,
+            period=KpiPeriodResponse.from_period(kpis.period),
+            previous_period=KpiPeriodResponse.from_period(kpis.previous_period),
+            totals=KpiTotalsResponse(
+                taken=KpiTotalResponse.of(kpis.taken, kpis.previous.taken),
+                cancelled=KpiTotalResponse.of(kpis.cancelled, kpis.previous.cancelled),
+                rescheduled=KpiTotalResponse.of(kpis.rescheduled, kpis.previous.rescheduled),
+            ),
+            per_day=[KpiDailyResponse.from_daily(d) for d in kpis.per_day],
+            top_professionals=[KpiTopEntryResponse.from_entry(e) for e in kpis.top_professionals],
+            top_specialties=[KpiTopEntryResponse.from_entry(e) for e in kpis.top_specialties],
+            weekday=list(kpis.weekday),
+            hour=list(kpis.hour),
+            without_slot=kpis.without_slot,
+            evidence=KpiEvidenceResponse.from_evidence(kpis.evidence),
+            truncated=kpis.truncated,
+            previous_truncated=kpis.previous_truncated,
+        )
+
+
+_KPI_DEFAULT_DAYS = 30
+_KPI_RANGE_ERROR = (
+    "Rango de fechas inválido: 'from' no puede ser posterior a 'to' "
+    "ni el período superar los 366 días."
+)
+
+
+@router.get("/kpis", response_model=KpisResponse)
+async def get_kpis(
+    response: Response,
+    from_: date | None = Query(default=None, alias="from"),
+    to: date | None = Query(default=None),
+    _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+    query_service: KpiQueryService = Depends(get_kpi_query_service),
+    name_catalog: KpiNameCatalog = Depends(get_kpi_name_catalog),
+    settings: Settings = Depends(get_settings),
+) -> KpisResponse:
+    """Appointment KPIs for a clinic-local date range (default: the last 30 days up to
+    today). Labels come from a best-effort Dentalink catalog; on any failure the ids are
+    used as labels. `no-store`: figures must never be served stale."""
+    response.headers["Cache-Control"] = "no-store"
+    now = datetime.now(UTC)
+    date_to = to if to is not None else now.astimezone(ZoneInfo(settings.clinic_timezone)).date()
+    date_from = from_ if from_ is not None else date_to - timedelta(days=_KPI_DEFAULT_DAYS - 1)
+    names = await name_catalog.load()
+    try:
+        kpis = await query_service.get_kpis(
+            date_from,
+            date_to,
+            now,
+            professional_names=names.professionals.get,
+            specialty_names=names.specialties.get,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=_KPI_RANGE_ERROR) from error
+    return KpisResponse.from_kpis(kpis)
 
 
 @router.get("/config", response_model=ConfigResponse)
