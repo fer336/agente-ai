@@ -35,11 +35,14 @@ Today one FastAPI app and one Swarm service (`backend`, 1 replica, host `agent.q
 - [x] S1 `APP_ROLE` setting and `create_app(role)` factory with per-role router, mount and lifespan selection + tests (admin app 404s webhook paths, bot app 404s `/admin`, `all` unchanged).
 - [x] S2 Role-aware `entrypoint.sh` and compose update.
 - [x] S3 `docker-stack.yml` admin service, Traefik priority, healthchecks, docs/runbook.
-- [ ] S4 Resolve the open reset/debounce check and record the result.
+- [x] S4 Resolve the open reset/debounce check and record the result. Evidence: `DebounceTracker.clear` only deletes the Redis key (`app/infrastructure/redis/debounce.py:48`) and `is_stale` treats a missing key as NOT stale (`:42`), so a reset never cancelled a bot task already sleeping in memory, in one process or two. Splitting does not change that behavior. Pre-existing and out of scope: a reset during an in-flight debounce window can still let the pending turn run.
+- [ ] S5 From the native review (reliability warning, `entrypoint.sh`): the admin role skips migrations and nothing orders it after the bot, so after a release with a migration it can serve on the old schema. The admin entrypoint must wait until `alembic current` reports head (bounded wait, then exit non-zero so Swarm restarts it) + test with a fake `uv`.
 
 S1 evidence: unit 3681 passed (3 known failures), ruff/mypy clean, RED observed (ImportError). Not verified: real uvicorn with APP_ROLE=admin|bot.
 
 S2+S3 evidence: unit 3688 passed (3 known failures), ruff/mypy clean; entrypoint checked with a fake `uv` for admin/bot/all/unset/unknown; stack validated offline with `docker compose config -q` and `docker stack config`; 7 stack tests with RED observed; release pin step passes with two `image:` lines (grep needs at least one match). Admin healthcheck uses /health (not /ready) on purpose to avoid restart loops on a Postgres/Redis blip. Not verified: a real Swarm/Traefik run, `python` on PATH in the image (copied from compose), uvicorn with APP_ROLE=admin|bot.
+
+Native review (4 lenses, high risk, 2026-10-16): approved, no blocking findings. Warning R3 became S5. Readability suggestions left for later: one source for the valid role names (`app/main.py`, `Settings`, `entrypoint.sh`), and group the per-role router registration in `create_app`.
 
 ## Acceptance criteria
 - With `APP_ROLE` unset, the app behaves exactly as today.
@@ -47,4 +50,4 @@ S2+S3 evidence: unit 3688 passed (3 known failures), ruff/mypy clean; entrypoint
 - Unit suite green except the 3 known failures in `tests/unit/api/dependencies/test_gateway_dependency.py`.
 
 ## Next step
-S1.
+S5.
