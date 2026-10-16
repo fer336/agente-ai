@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KPIs — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors">Errores</a>
+      <a href="/admin/agent">Agente</a>
+      <a href="/admin/kpis" class="active">KPIs</a>
+      <a href="/admin/llm-config">Configuración LLM</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main class="kpi-main" id="kpi-main" aria-busy="true">
+    <div class="kpi-head">
+      <h1>KPIs</h1>
+      <span class="muted">Turnos tomados y cancelados por el bot, y los más pedidos.</span>
+    </div>
+
+    <div class="kpi-toolbar">
+      <div class="kpi-period">
+        <div class="kpi-seg" id="kpi-presets" role="group" aria-label="Período">
+          <button type="button" data-preset="7" aria-pressed="false">7 días</button>
+          <button type="button" data-preset="30" aria-pressed="true">30 días</button>
+          <button type="button" data-preset="90" aria-pressed="false">90 días</button>
+          <button type="button" data-preset="custom" aria-pressed="false">Personalizado</button>
+        </div>
+        <span class="kpi-period-text" id="kpi-period-text"></span>
+      </div>
+      <div class="kpi-actions">
+        <span class="kpi-updated" id="kpi-updated" role="status"></span>
+        <button type="button" id="kpi-refresh" class="kpi-btn-quiet">Actualizar</button>
+        <button type="button" id="kpi-export" class="kpi-btn-primary">Exportar PDF</button>
+      </div>
+    </div>
+
+    <div class="kpi-custom" id="kpi-custom" hidden>
+      <label>Desde <input type="date" id="kpi-from" /></label>
+      <label>Hasta <input type="date" id="kpi-to" /></label>
+      <button type="button" id="kpi-apply" class="kpi-btn-primary">Aplicar</button>
+      <span class="kpi-custom-error" id="kpi-custom-error" role="alert"></span>
+    </div>
+
+    <div class="kpi-banner" id="kpi-banner" role="alert" hidden>
+      <span id="kpi-banner-text"></span>
+      <button type="button" id="kpi-retry">Reintentar</button>
+    </div>
+    <div class="kpi-notice kpi-notice-warn" id="kpi-incomplete" role="status" hidden>
+      <strong>Datos incompletos.</strong> El período tiene más registros de los que se pueden analizar, así que las cifras pueden ser menores a las reales o la comparación con el período anterior, inexacta. Probá con un período más corto.
+    </div>
+    <div class="kpi-notice" role="note">Datos registrados por el bot; no incluye turnos cargados o cancelados directamente en Dentalink.</div>
+
+    <div class="kpi-cards" id="kpi-cards">
+      <div class="kpi-card kpi-sk" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="kpi-card kpi-sk" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="kpi-card kpi-sk" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="kpi-card kpi-sk" aria-hidden="true"><i></i><i></i><i></i></div>
+    </div>
+    <div class="kpi-content" id="kpi-content">
+      <div class="kpi-panel kpi-sk kpi-sk-chart" aria-label="Cargando gráficos" role="status"><i></i><i></i><i></i></div>
+    </div>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script src="/admin/static/kpis.js"></script>
+</body>
+</html>
