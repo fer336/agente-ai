@@ -51,7 +51,9 @@ class GraphStateQueryService:
         self._row_cap = row_cap
 
     async def get_state(self, window: Window, now: datetime) -> GraphState:
-        rows = await self._node_executions.list_since(now - WINDOWS[window], self._row_cap)
+        # Fetch one extra row: its presence is the exact signal that the cap cut data off.
+        fetched = await self._node_executions.list_since(now - WINDOWS[window], self._row_cap + 1)
+        rows = fetched[: self._row_cap]
         by_node: dict[str, list[NodeExecution]] = {}
         for row in rows:  # newest first
             by_node.setdefault(row.node_name, []).append(row)
@@ -62,7 +64,7 @@ class GraphStateQueryService:
             window=window,
             nodes={name: _aggregate(group) for name, group in by_node.items()},
             unmapped=tuple(sorted(name for name in by_node if name not in known)),
-            truncated=len(rows) >= self._row_cap,
+            truncated=len(fetched) > self._row_cap,
         )
 
 

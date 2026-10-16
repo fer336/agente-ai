@@ -11,11 +11,13 @@ from app.api.dependencies.admin import (
     get_committing_error_query_service,
     get_conversation_query_service,
     get_error_query_service,
+    get_graph_state_query_service,
     get_run_query_service,
 )
 from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
+from app.application.admin.graph_state_queries import GraphStateQueryService
 from app.application.admin.run_queries import RunQueryService
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_CLINIC, ADMIN_TECHNICAL, READ_ONLY
@@ -73,11 +75,13 @@ def _override_admin_dependencies() -> _AdminFakes:
     conversation_service = ConversationQueryService(conversations, messages, agent_runs, errors)
     error_service = ErrorQueryService(errors)
     run_service = RunQueryService(agent_runs, node_executions, tool_executions)
+    graph_state_service = GraphStateQueryService(node_executions)
 
     app.dependency_overrides[get_conversation_query_service] = lambda: conversation_service
     app.dependency_overrides[get_error_query_service] = lambda: error_service
     app.dependency_overrides[get_committing_error_query_service] = lambda: error_service
     app.dependency_overrides[get_run_query_service] = lambda: run_service
+    app.dependency_overrides[get_graph_state_query_service] = lambda: graph_state_service
 
     yield _AdminFakes(
         conversations=conversations,
@@ -698,3 +702,105 @@ async def test_anonymous_cannot_read_the_agent_graphs():
     response = await _get("/admin/api/graphs")
 
     assert response.status_code == 401
+
+
+# --- GET /admin/api/graphs/state: per-node aggregates ---------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [ADMIN_TECHNICAL, ADMIN_CLINIC, READ_ONLY])
+async def test_every_role_can_read_the_graph_state(role: str):
+    response = await _get("/admin/api/graphs/state", cookies=_session_cookies(role))
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cannot_read_the_graph_state():
+    response = await _get("/admin/api/graphs/state")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_graph_state_rejects_an_invalid_window():
+    response = await _get("/admin/api/graphs/state?window=2h", cookies=_session_cookies(READ_ONLY))
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_graph_state_defaults_to_the_one_hour_window():
+    response = await _get("/admin/api/graphs/state", cookies=_session_cookies(READ_ONLY))
+
+    assert response.json()["window"] == "1h"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", ["15m", "1h", "24h"])
+async def test_graph_state_echoes_the_requested_window(window: str):
+    response = await _get(
+        f"/admin/api/graphs/state?window={window}", cookies=_session_cookies(READ_ONLY)
+    )
+
+    assert response.json()["window"] == window
+
+
+@pytest.mark.asyncio
+async def test_graph_state_returns_the_aggregated_payload(
+    _override_admin_dependencies: _AdminFakes,
+):
+    now = datetime.now(UTC)
+    repo = _override_admin_dependencies.node_executions
+    await repo.save(
+        make_node_execution(
+            id_="ne-ok",
+            node_name="faq_topic",
+            started_at=now - timedelta(minutes=5),
+            finished_at=now - timedelta(minutes=5),
+            duration_ms=100,
+            agent_run_id="run-ok",
+        )
+    )
+    await repo.save(
+        make_node_execution(
+            id_="ne-old",
+            node_name="faq_topic",
+            started_at=now - timedelta(hours=3),
+            finished_at=now - timedelta(hours=3),
+        )
+    )
+    await repo.save(
+        make_node_execution(
+            id_="ne-ghost",
+            node_name="ghost_node",
+            started_at=now - timedelta(minutes=1),
+            finished_at=now - timedelta(minutes=1),
+        )
+    )
+
+    body = (
+        await _get("/admin/api/graphs/state?window=1h", cookies=_session_cookies(READ_ONLY))
+    ).json()
+
+    assert set(body) == {"generated_at", "window", "nodes", "unmapped", "truncated"}
+    assert body["truncated"] is False
+    assert body["unmapped"] == ["ghost_node"]
+    node = body["nodes"]["faq_topic"]
+    assert set(node) == {
+        "count",
+        "failed",
+        "running",
+        "last_status",
+        "last_at",
+        "avg_ms",
+        "p50_ms",
+        "last_error_id",
+        "last_run_id",
+    }
+    assert node["count"] == 1
+    assert node["failed"] == 0
+    assert node["avg_ms"] == 100.0
+    assert node["p50_ms"] == 100.0
+    assert node["last_run_id"] == "run-ok"

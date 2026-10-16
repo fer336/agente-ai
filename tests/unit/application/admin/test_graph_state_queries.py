@@ -125,7 +125,7 @@ async def test_unmapped_lists_node_names_absent_from_traced_topology():
 
 
 @pytest.mark.asyncio
-async def test_truncated_when_row_cap_is_hit():
+async def test_truncated_when_more_rows_than_the_cap_exist():
     service = await _service(_row("a", 1), _row("b", 2), _row("c", 3), row_cap=2)
 
     state = await service.get_state("15m", NOW)
@@ -133,6 +133,16 @@ async def test_truncated_when_row_cap_is_hit():
     assert state.truncated is True
     assert state.nodes[NODE].count == 2
     assert state.nodes[NODE].last_at == NOW - timedelta(minutes=1)
+
+
+@pytest.mark.asyncio
+async def test_not_truncated_when_rows_equal_the_cap_exactly():
+    service = await _service(_row("a", 1), _row("b", 2), row_cap=2)
+
+    state = await service.get_state("15m", NOW)
+
+    assert state.truncated is False
+    assert state.nodes[NODE].count == 2
 
 
 @pytest.mark.asyncio

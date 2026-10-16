@@ -33,7 +33,7 @@ Status: Track A in progress on branch `feat/admin-agent-diagram` (started 2026-1
 - [ ] 2 B1 data audit: read-only SQL the user runs on production (confirmed create rows vs completed tool executions, empty specialties, test contacts) to fix the KPI rules.
 - [x] 3 A1 topology endpoint + drift guard test. Evidence: commit 4fa71dd, delegated writer, tests and lint green; assess medium, under_budget.
 - [x] 4 A2 node execution window query (Protocol, SQL, fake) + tests. Evidence: unit 3687 passed (3 known failures), mypy and ruff clean; SQL integration test collects but skipped (no DB); RED not observed (tests and code written in one pass). Finding: RUNNING rows are flushed, not committed, until the turn ends (`repositories.py:327`), so the diagram shows finished turns only.
-- [ ] 5 A3 graph state endpoint + role/window tests.
+- [x] 5 A3 graph state endpoint + role/window tests. Evidence: unit 3699 passed (3 known failures), mypy and ruff clean, RED observed (import errors); also fixed A2 review notes (exact `truncated`, 422 on bad window). A1+A2 slice reviewed and approved by native review (reliability lens).
 - [ ] 6 A4 agent diagram page.
 - [ ] 7 A5 cycling, keyboard, hash, reduced motion.
 - [ ] 8 A6 replace per-run Mermaid with run overlay; remove Mermaid and `graph-view.js`.

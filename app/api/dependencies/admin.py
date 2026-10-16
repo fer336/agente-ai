@@ -8,6 +8,7 @@ from app.api.dependencies.redis import get_debounce_tracker, get_shared_redis_cl
 from app.application.admin.authenticate_admin import AuthenticateAdminUseCase
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
+from app.application.admin.graph_state_queries import GraphStateQueryService
 from app.application.admin.run_queries import RunQueryService
 from app.application.conversations.reset_conversation import ResetConversationUseCase
 from app.application.memory.memory_service import MemoryService
@@ -97,6 +98,12 @@ def get_run_query_service(session: AsyncSession = Depends(get_db_session)) -> Ru
         node_executions=SqlAlchemyNodeExecutionRepository(session),
         tool_executions=SqlAlchemyToolExecutionRepository(session),
     )
+
+
+def get_graph_state_query_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> GraphStateQueryService:
+    return GraphStateQueryService(SqlAlchemyNodeExecutionRepository(session))
 
 
 async def get_reset_conversation_use_case(

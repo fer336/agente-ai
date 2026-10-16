@@ -8,6 +8,7 @@ from app.api.dependencies.admin import (
     get_committing_error_query_service,
     get_conversation_query_service,
     get_error_query_service,
+    get_graph_state_query_service,
     get_reset_conversation_use_case,
     get_run_query_service,
 )
@@ -15,6 +16,7 @@ from app.api.dependencies.auth import require_csrf, require_role
 from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
 from app.application.admin.conversation_queries import ConversationQueryService
 from app.application.admin.error_queries import ErrorQueryService
+from app.application.admin.graph_state_queries import GraphState, GraphStateQueryService
 from app.application.admin.graph_topology import GraphView, get_graph_topology
 from app.application.admin.run_queries import RunQueryService
 from app.application.agreements.list_agreements import ListAgreementsUseCase
@@ -405,6 +407,63 @@ async def get_agent_graphs(
     return AgentGraphsResponse(
         graphs=[AgentGraphResponse.from_view(g) for g in get_graph_topology()]
     )
+
+
+class NodeStateResponse(BaseModel):
+    count: int
+    failed: int
+    running: int
+    last_status: str
+    last_at: datetime
+    avg_ms: float | None
+    p50_ms: float | None
+    last_error_id: str | None
+    last_run_id: str
+
+
+class GraphStateResponse(BaseModel):
+    generated_at: datetime
+    window: str
+    nodes: dict[str, NodeStateResponse]
+    unmapped: list[str]
+    truncated: bool
+
+    @classmethod
+    def from_state(cls, state: GraphState) -> "GraphStateResponse":
+        return cls(
+            generated_at=state.generated_at,
+            window=state.window,
+            nodes={
+                name: NodeStateResponse(
+                    count=node.count,
+                    failed=node.failed,
+                    running=node.running,
+                    last_status=node.last_status,
+                    last_at=node.last_at,
+                    avg_ms=node.avg_ms,
+                    p50_ms=node.p50_ms,
+                    last_error_id=node.last_error_id,
+                    last_run_id=node.last_run_id,
+                )
+                for name, node in state.nodes.items()
+            },
+            unmapped=list(state.unmapped),
+            truncated=state.truncated,
+        )
+
+
+@router.get("/graphs/state", response_model=GraphStateResponse)
+async def get_graph_state(
+    response: Response,
+    window: Literal["15m", "1h", "24h"] = "1h",
+    _session: SessionPayload = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+    query_service: GraphStateQueryService = Depends(get_graph_state_query_service),
+) -> GraphStateResponse:
+    """Live per-node aggregates over the window. `no-store`: it is polled and must
+    never be served stale."""
+    response.headers["Cache-Control"] = "no-store"
+    state = await query_service.get_state(window, datetime.now(UTC))
+    return GraphStateResponse.from_state(state)
 
 
 @router.get("/config", response_model=ConfigResponse)
