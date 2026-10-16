@@ -369,3 +369,423 @@ button:disabled {
   margin-bottom: 16px;
   overflow-x: auto;
 }
+
+/* ---- Agent diagram page (/admin/agent) ---- */
+
+.agd-main {
+  --agd-edge: #6b7280; /* edge/arrow stroke; no existing token is dim enough */
+  --agd-idle: #6b7280; /* "no data" dot */
+  --agd-dash: #3a3f4b;
+  max-width: 1400px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agd-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agd-head h1 {
+  font-size: 22px;
+  margin: 0;
+}
+
+.agd-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.agd-tabs-wrap,
+.agd-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.agd-tabs,
+.agd-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agd-tabs button,
+.agd-seg button {
+  min-height: 36px;
+  padding: 0 16px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.agd-seg button {
+  padding: 0 12px;
+}
+
+.agd-tabs button[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.agd-seg button[aria-pressed="true"] {
+  background: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agd-icon-btn {
+  width: 44px;
+  height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.agd-tabs button:focus-visible,
+.agd-seg button:focus-visible,
+.agd-icon-btn:focus-visible,
+.agd-banner button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agd-updated {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-updated-dot {
+  color: var(--ok);
+}
+
+.agd-updated.agd-stale .agd-updated-dot {
+  color: var(--warn);
+}
+
+.agd-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  background: rgba(240, 87, 106, 0.1);
+  color: var(--text);
+}
+
+.agd-banner[hidden] {
+  display: none;
+}
+
+.agd-banner button {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.agd-status {
+  min-height: 18px; /* reserved so the message appearing never shifts the diagram */
+  margin: -8px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-stage {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agd-canvas {
+  overflow-x: auto;
+  min-height: 160px;
+}
+
+.agd-svg {
+  display: block;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.agd-svg[hidden] {
+  display: none;
+}
+
+.agd-title {
+  fill: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agd-edge {
+  fill: none;
+  stroke: var(--agd-edge);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.agd-edge-cond {
+  stroke-dasharray: 6 4;
+}
+
+.agd-arrow-head {
+  fill: var(--agd-edge);
+}
+
+.agd-fin rect {
+  fill: none;
+  stroke: var(--agd-dash);
+  stroke-dasharray: 4 4;
+}
+
+.agd-fin-text,
+.agd-caption,
+.agd-metric,
+.agd-badge {
+  fill: var(--muted);
+}
+
+.agd-start rect {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+
+.agd-start-text {
+  fill: var(--muted);
+}
+
+.agd-node {
+  cursor: pointer;
+}
+
+.agd-node rect {
+  fill: var(--panel);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.agd-node:hover rect {
+  stroke: var(--muted);
+}
+
+.agd-node.agd-selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.agd-node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agd-node.agd-error rect {
+  stroke: var(--err);
+  stroke-dasharray: 4 3;
+}
+
+.agd-name {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+.agd-badge {
+  font-size: 11px;
+}
+
+.agd-state {
+  fill: var(--text);
+}
+
+.agd-s-ok .agd-dot {
+  fill: var(--ok);
+}
+
+.agd-s-fail .agd-dot {
+  fill: var(--err);
+}
+
+.agd-s-idle .agd-dot,
+.agd-s-nodata .agd-dot,
+.agd-s-loading .agd-dot {
+  fill: var(--agd-idle);
+}
+
+.agd-s-idle .agd-name,
+.agd-s-nodata .agd-name,
+.agd-s-loading .agd-name,
+.agd-s-idle .agd-state,
+.agd-s-nodata .agd-state,
+.agd-s-loading .agd-state {
+  fill: var(--muted);
+}
+
+.agd-skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 32px 24px;
+}
+
+.agd-skeleton[hidden] {
+  display: none;
+}
+
+.agd-sk-row {
+  display: flex;
+  gap: 16px;
+}
+
+.agd-sk-row i {
+  display: block;
+  width: 144px;
+  height: 80px;
+  border-radius: 8px;
+  background: var(--border);
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .agd-sk-row i {
+    animation: agd-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes agd-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.agd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+
+.agd-legend-dot.agd-ok {
+  color: var(--ok);
+}
+
+.agd-legend-dot.agd-bad {
+  color: var(--err);
+}
+
+.agd-legend-dot.agd-idle {
+  color: var(--agd-idle);
+}
+
+.agd-legend-sel {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+}
+
+.agd-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.agd-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.agd-detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.agd-detail-meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agd-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.agd-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agd-stat-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.agd-stat-value {
+  font-size: 24px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.agd-stat-value.agd-bad {
+  color: var(--err);
+}
+
+.agd-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.agd-note-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}

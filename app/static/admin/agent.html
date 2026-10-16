@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agente — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors">Errores</a>
+      <a href="/admin/agent" class="active">Agente</a>
+      <a href="/admin/llm-config">Configuración LLM</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main class="agd-main">
+    <div class="agd-head">
+      <h1>Agente</h1>
+      <span class="muted">Un solo diagrama que recorre los grafos del agente y muestra su estado.</span>
+    </div>
+
+    <div class="agd-toolbar">
+      <div class="agd-tabs-wrap">
+        <button type="button" id="agd-prev" class="agd-icon-btn" aria-label="Grafo anterior">‹</button>
+        <div class="agd-tabs" id="agd-tabs" role="tablist" aria-label="Grafos del agente"></div>
+        <button type="button" id="agd-next" class="agd-icon-btn" aria-label="Grafo siguiente">›</button>
+      </div>
+      <div class="agd-controls">
+        <div class="agd-seg" id="agd-window" role="group" aria-label="Ventana de tiempo">
+          <button type="button" data-window="15m" aria-pressed="false">15 min</button>
+          <button type="button" data-window="1h" aria-pressed="true">1 h</button>
+          <button type="button" data-window="24h" aria-pressed="false">24 h</button>
+        </div>
+        <span class="agd-updated" id="agd-updated"><span class="agd-updated-dot" id="agd-updated-dot" aria-hidden="true">○</span> <span id="agd-updated-text">Cargando…</span></span>
+      </div>
+    </div>
+
+    <div class="agd-banner" id="agd-banner" role="alert" hidden></div>
+    <div class="agd-status" id="agd-status" role="status"></div>
+
+    <div class="agd-stage" id="agd-stage" role="tabpanel">
+      <div class="agd-canvas" id="agd-canvas" aria-busy="true">
+        <div class="agd-skeleton" id="agd-skeleton" aria-label="Cargando diagrama">
+          <span class="agd-sk-row"><i></i><i></i><i></i></span>
+          <span class="agd-sk-row"><i></i><i></i><i></i><i></i></span>
+          <span class="agd-sk-row"><i></i><i></i></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="agd-legend">
+      <div class="agd-legend-items">
+        <span><span class="agd-legend-dot agd-ok">●</span> Sin fallos</span>
+        <span><span class="agd-legend-dot agd-bad">●</span> Con fallos en la ventana</span>
+        <span><span class="agd-legend-dot agd-idle">○</span> Sin ejecuciones</span>
+        <span><span class="agd-legend-sel" aria-hidden="true"></span> Nodo seleccionado</span>
+        <span>Cada nodo: ejecuciones · tiempo promedio</span>
+      </div>
+      <span>Los nodos se actualizan al terminar cada turno.</span>
+    </div>
+
+    <section class="agd-detail" id="agd-detail" aria-label="Detalle del nodo" aria-live="polite"></section>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script src="/admin/static/agent-diagram.js"></script>
+</body>
+</html>

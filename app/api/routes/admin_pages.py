@@ -47,6 +47,11 @@ async def admin_error_detail_page(error_id: str) -> FileResponse:
     return FileResponse(_STATIC_DIR / "error-detail.html")
 
 
+@router.get("/agent")
+async def admin_agent_page() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "agent.html")
+
+
 @router.get("/runs/{agent_run_id}")
 async def admin_run_detail_page(agent_run_id: str) -> FileResponse:
     return FileResponse(_STATIC_DIR / "run-detail.html")

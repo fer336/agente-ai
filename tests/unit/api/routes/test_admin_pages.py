@@ -38,6 +38,7 @@ async def test_admin_root_redirects_to_conversations():
         "/admin/conversations/conv-1",
         "/admin/errors",
         "/admin/errors/err-1",
+        "/admin/agent",
         "/admin/runs/run-1",
     ],
 )
@@ -51,7 +52,7 @@ async def test_page_serves_html_with_no_auth_dependency(path: str):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("asset", ["app.js", "style.css"])
+@pytest.mark.parametrize("asset", ["app.js", "style.css", "agent-diagram.js"])
 async def test_static_asset_serves(asset: str):
     response = await _get(f"/admin/static/{asset}")
 
