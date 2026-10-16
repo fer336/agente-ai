@@ -57,3 +57,21 @@ async def test_static_asset_serves(asset: str):
     response = await _get(f"/admin/static/{asset}")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/admin/conversations/conv-1", "/admin/runs/run-1"])
+async def test_detail_pages_drop_mermaid_and_link_to_the_diagram(path: str):
+    response = await _get(path)
+
+    assert response.status_code == 200
+    assert "mermaid" not in response.text.lower()
+    assert "graph-view" not in response.text
+    assert "/admin/agent#run=" in response.text
+
+
+@pytest.mark.asyncio
+async def test_graph_view_asset_is_gone():
+    response = await _get("/admin/static/graph-view.js")
+
+    assert response.status_code == 404

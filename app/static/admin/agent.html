@@ -43,6 +43,11 @@
       </div>
     </div>
 
+    <div class="agd-runbar" id="agd-runbar" role="status" hidden>
+      <span class="agd-runbar-title" id="agd-runbar-title"></span>
+      <span class="agd-runbar-meta" id="agd-runbar-meta"></span>
+      <button type="button" id="agd-run-exit">Volver al estado en vivo</button>
+    </div>
     <div class="agd-banner" id="agd-banner" role="alert" hidden></div>
     <div class="agd-status" id="agd-status" role="status"></div>
 
@@ -58,13 +63,18 @@
 
     <div class="agd-legend">
       <div class="agd-legend-items">
-        <span><span class="agd-legend-dot agd-ok">●</span> Sin fallos</span>
-        <span><span class="agd-legend-dot agd-bad">●</span> Con fallos en la ventana</span>
-        <span><span class="agd-legend-dot agd-idle">○</span> Sin ejecuciones</span>
+        <span class="agd-live-only"><span class="agd-legend-dot agd-ok">●</span> Sin fallos</span>
+        <span class="agd-live-only"><span class="agd-legend-dot agd-bad">●</span> Con fallos en la ventana</span>
+        <span class="agd-live-only"><span class="agd-legend-dot agd-idle">○</span> Sin ejecuciones</span>
+        <span class="agd-run-only"><span class="agd-legend-dot agd-ok">●</span> OK</span>
+        <span class="agd-run-only"><span class="agd-legend-dot agd-bad">●</span> Fallo</span>
+        <span class="agd-run-only"><span class="agd-legend-dot agd-run">◐</span> En curso</span>
+        <span class="agd-run-only"><span class="agd-legend-dot agd-idle">○</span> No ejecutado</span>
         <span><span class="agd-legend-sel" aria-hidden="true"></span> Nodo seleccionado</span>
-        <span>Cada nodo: ejecuciones · tiempo promedio</span>
+        <span class="agd-live-only">Cada nodo: ejecuciones · tiempo promedio</span>
+        <span class="agd-run-only">Cada nodo: duración en esta corrida</span>
       </div>
-      <span>Los nodos se actualizan al terminar cada turno.</span>
+      <span class="agd-live-only">Los nodos se actualizan al terminar cada turno.</span>
     </div>
 
     <section class="agd-detail" id="agd-detail" aria-label="Detalle del nodo" aria-live="polite"></section>

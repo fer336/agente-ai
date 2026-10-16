@@ -7,6 +7,12 @@
 // handling live in the "interaction" section; their decisions are pure
 // functions (parseHash, serializeHash, nextIndex, cycleState, nodeAriaLabel)
 // exported for Node so they can be exercised without a browser.
+//
+// Run mode (`#run=<agent_run_id>`) swaps the live aggregates for one agent
+// run: the nodes are colored from GET /admin/api/runs/{id}, the cycle and the
+// polling stay off, and a banner offers the way back to the live state.
+// summarizeRun, pickRunGraph, describeRunNode and runNodeAriaLabel are the pure
+// parts of it.
 
 const AgentDiagram = (() => {
   "use strict";
@@ -365,13 +371,15 @@ const AgentDiagram = (() => {
   const CYCLE_MS = 8000;
   const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 
-  // Parses `#g=<graph>&focus=<node>&w=<window>&play=<0|1>`. Returns only the
-  // keys that hold a well-formed value; anything unknown or malformed is left
-  // undefined so the caller falls back to its default. Ids are only shape-checked
-  // here: whether the graph/node exists is the caller's call. The values are
-  // never used as HTML.
+  // Parses `#g=<graph>&focus=<node>&w=<window>&play=<0|1>&run=<agent_run_id>`.
+  // Returns only the keys that hold a well-formed value; anything unknown or
+  // malformed is left undefined so the caller falls back to its default. Ids
+  // are only shape-checked here: whether the graph/node/run exists is the
+  // caller's call. The values are never used as HTML. A `run` that is present
+  // but malformed is reported as `runInvalid` so the page can say so instead of
+  // silently showing the live state.
   function parseHash(hash) {
-    const out = { g: undefined, focus: undefined, w: undefined, play: undefined };
+    const out = { g: undefined, focus: undefined, w: undefined, play: undefined, run: undefined, runInvalid: false };
     const text = String(hash || "").replace(/^#/, "");
     let params;
     try {
@@ -385,6 +393,11 @@ const AgentDiagram = (() => {
     if (focus !== null && ID_PATTERN.test(focus)) out.focus = focus;
     const w = params.get("w");
     if (w !== null && WINDOW_IDS.includes(w)) out.w = w;
+    const run = params.get("run");
+    if (run !== null) {
+      if (ID_PATTERN.test(run)) out.run = run;
+      else out.runInvalid = true;
+    }
     const play = params.get("play");
     if (play === "0") out.play = false;
     else if (play === "1") out.play = true;
@@ -398,6 +411,7 @@ const AgentDiagram = (() => {
     if (state.focus) parts.push(`focus=${encodeURIComponent(state.focus)}`);
     if (state.w) parts.push(`w=${encodeURIComponent(state.w)}`);
     if (typeof state.play === "boolean") parts.push(`play=${state.play ? 1 : 0}`);
+    if (state.run) parts.push(`run=${encodeURIComponent(state.run)}`);
     return parts.length ? `#${parts.join("&")}` : "";
   }
 
@@ -410,9 +424,10 @@ const AgentDiagram = (() => {
   // Decides whether the auto-cycle should be ticking. `play` is the user's
   // intent (manual pause, node pin, reduced-motion default); the rest are
   // transient conditions that pause without changing the intent.
-  // Returns "running" or the reason it is not: "idle" (fewer than 2 graphs),
-  // "paused" (intent off), "hidden", "hover", "focus".
-  function cycleState({ play, hovering, focusInside, hidden, graphCount }) {
+  // Returns "running" or the reason it is not: "run" (run mode never cycles),
+  // "idle" (fewer than 2 graphs), "paused" (intent off), "hidden", "hover", "focus".
+  function cycleState({ play, hovering, focusInside, hidden, graphCount, runMode }) {
+    if (runMode) return "run";
     if (!(graphCount > 1)) return "idle";
     if (!play) return "paused";
     if (hidden) return "hidden";
@@ -432,6 +447,88 @@ const AgentDiagram = (() => {
     if (ns.failed > 0) state = plural(ns.failed, "fallo", "fallos");
     else state = ns.running > 0 ? "sin fallos, en curso" : "sin fallos";
     return `${name}, ${runs}, ${state}`;
+  }
+
+  // ---------------------------------------------------------------- run mode --
+
+  const RUN_TEXT = { ok: "OK", fail: "Fallo", running: "En curso", none: "No ejecutado" };
+
+  // Folds GET /admin/api/runs/{id} into per-node states keyed by node name. A
+  // node can execute more than once in a run, so: fail if any execution failed,
+  // else running if any is still running, else ok. Duration is the sum of the
+  // finished executions (null while running). Tool executions are attached to
+  // their node through node_execution_id.
+  function summarizeRun(detail) {
+    const run = (detail && detail.agent_run) || {};
+    const execs = Array.isArray(detail && detail.node_executions) ? detail.node_executions : [];
+    const tools = Array.isArray(detail && detail.tool_executions) ? detail.tool_executions : [];
+    const nodes = {};
+    execs
+      .slice()
+      .sort((a, b) => String(a.started_at).localeCompare(String(b.started_at)))
+      .forEach((e) => {
+        const n = nodes[e.node_name] || (nodes[e.node_name] = { status: "ok", count: 0, durationMs: 0, errorId: null, executionIds: [], tools: [] });
+        n.count += 1;
+        n.executionIds.push(e.id);
+        if (e.status === "failed") {
+          n.status = "fail";
+          if (!n.errorId && e.error_id) n.errorId = e.error_id;
+        } else if (e.status === "running" && n.status !== "fail") {
+          n.status = "running";
+        }
+        if (!n.errorId && e.error_id) n.errorId = e.error_id;
+        n.durationMs += Number(e.duration_ms) || 0;
+      });
+    Object.values(nodes).forEach((n) => {
+      if (n.status === "running") n.durationMs = null;
+      n.tools = tools.filter((t) => n.executionIds.includes(t.node_execution_id));
+    });
+    return {
+      id: run.id,
+      status: run.status,
+      startedAt: run.started_at,
+      errorId: run.error_id || null,
+      hasFailure: Object.values(nodes).some((n) => n.status === "fail") || run.status === "failed",
+      nodes,
+    };
+  }
+
+  // Graph whose traced nodes best match the nodes the run executed. `preferred`
+  // (an explicit g= in the URL) wins when it exists; ties and runs that matched
+  // nothing fall back to the first graph (main).
+  function pickRunGraph(graphs, nodeNames, preferredId) {
+    if (!graphs.length) return -1;
+    const pref = graphs.findIndex((g) => g.id === preferredId);
+    if (pref >= 0) return pref;
+    const names = new Set(nodeNames);
+    let best = 0;
+    let bestScore = -1;
+    graphs.forEach((g, i) => {
+      const score = g.nodes.filter((n) => n.traced && names.has(n.id)).length;
+      if (score > bestScore) {
+        best = i;
+        bestScore = score;
+      }
+    });
+    return best;
+  }
+
+  // What a traced node shows in run mode. `rs` is a summarizeRun node entry or
+  // undefined (not executed in this run).
+  function describeRunNode(rs) {
+    if (!rs) return { cls: "idle", metric: "—", dot: "○", text: RUN_TEXT.none };
+    const metric = fmtMs(rs.durationMs) + (rs.count > 1 ? ` · ${fmtInt(rs.count)}×` : "");
+    if (rs.status === "fail") return { cls: "fail", metric, dot: "●", text: RUN_TEXT.fail };
+    if (rs.status === "running") return { cls: "run", metric, dot: "◐", text: RUN_TEXT.running };
+    return { cls: "ok", metric, dot: "●", text: RUN_TEXT.ok };
+  }
+
+  function runNodeAriaLabel(name, traced, rs, loading) {
+    if (!traced) return `${name}, interno, sin datos de nodo`;
+    if (loading) return `${name}, cargando`;
+    if (!rs) return `${name}, no ejecutado en esta corrida`;
+    const status = { ok: "OK", fail: "fallo", running: "en curso" }[rs.status];
+    return `${name}, ${status}, ${fmtMs(rs.durationMs)}`;
   }
 
   // ------------------------------------------------------------- rendering --
@@ -575,13 +672,25 @@ const AgentDiagram = (() => {
   }
 
   function patchNode(view, ns, loading) {
-    const d = describeNode(view, ns, loading);
+    paintNode(view, describeNode(view, ns, loading), nodeAriaLabel(view.name, view.traced, ns, loading));
+  }
+
+  function patchRunNode(view, rs, loading) {
+    const d = !view.traced
+      ? describeNode(view, undefined, false)
+      : loading
+        ? describeNode(view, undefined, true)
+        : describeRunNode(rs);
+    paintNode(view, d, runNodeAriaLabel(view.name, view.traced, rs, loading));
+  }
+
+  function paintNode(view, d, aria) {
     const keepSelected = view.g.classList.contains("agd-selected") ? " agd-selected" : "";
     view.g.setAttribute("class", `agd-node agd-s-${d.cls}${keepSelected}`);
     if (view.metric && view.metric.textContent !== d.metric) view.metric.textContent = d.metric;
     if (view.dot.textContent !== d.dot) view.dot.textContent = d.dot;
     if (view.label.textContent !== d.text) view.label.textContent = d.text;
-    view.g.setAttribute("aria-label", nodeAriaLabel(view.name, view.traced, ns, loading));
+    view.g.setAttribute("aria-label", aria);
   }
 
   // ------------------------------------------------------------ controller --
@@ -612,6 +721,11 @@ const AgentDiagram = (() => {
     reduced: false,
     cycleTimer: null,
     cycleMs: CYCLE_MS,
+    // Run mode: null when live, else {id, state: "loading"|"ready"|"error",
+    // summary, message}. While set, nothing polls and nothing cycles.
+    run: null,
+    runSeq: 0,
+    runController: null,
     ready: false, // topology loaded and hash applied: only then is the hash written
     applying: false, // true while applying a hash: suppresses intermediate writes
   };
@@ -695,9 +809,34 @@ const AgentDiagram = (() => {
     writeHash();
   }
 
+  function patchRunGraph(b) {
+    const loading = S.run.state === "loading";
+    const summary = S.run.state === "ready" ? S.run.summary : null;
+    b.views.forEach((view, id) => {
+      if (view.isError) {
+        const text = loading ? "—" : !summary ? "Sin datos de la corrida" : summary.hasFailure ? "La corrida tuvo fallos" : "Sin fallos en la corrida";
+        if (view.caption.textContent !== text) view.caption.textContent = text;
+        view.g.setAttribute("aria-label", `${view.label}, ${text.toLowerCase()}`);
+        return;
+      }
+      // After a failed load, "no ejecutado" on every node would be a lie: show
+      // the neutral "sin datos" look instead.
+      if (S.run.state === "error") {
+        paintNode(view, { cls: view.traced ? "idle" : "nodata", metric: view.traced ? "—" : null, dot: "○", text: view.traced ? "Sin datos de la corrida" : "Sin datos de nodo" }, `${view.name}, sin datos de la corrida`);
+        return;
+      }
+      patchRunNode(view, summary ? summary.nodes[id] : undefined, loading);
+    });
+  }
+
   function patchGraph(graphId) {
     const b = S.built.get(graphId);
     if (!b) return;
+    if (S.run) {
+      patchRunGraph(b);
+      syncSelection(graphId);
+      return;
+    }
     const loading = S.data === null;
     const nodes = S.data ? S.data.nodes : {};
     let failedTotal = 0;
@@ -744,7 +883,7 @@ const AgentDiagram = (() => {
   // Clicking (or Enter/Space on) a node selects it AND pins the view: the
   // cycle is paused as a manual pause, so it stays paused until resumed.
   function pin(nodeId) {
-    S.play = false;
+    if (!S.run) S.play = false; // run mode never cycles: keep the user's intent as is
     select(nodeId);
     rearm();
   }
@@ -781,6 +920,8 @@ const AgentDiagram = (() => {
     let html;
     if (!id) {
       html = `<p class="muted">Seleccione un nodo del diagrama para ver su detalle.</p>`;
+    } else if (S.run) {
+      html = runDetailHtml(graph, id);
     } else {
       const node = graph.nodes.find((n) => n.id === id);
       const ns = S.data ? S.data.nodes[id] : undefined;
@@ -819,6 +960,52 @@ const AgentDiagram = (() => {
     updateMeta();
   }
 
+  // Detail panel in run mode: that run's execution of the node, not aggregates.
+  function runDetailHtml(graph, id) {
+    const node = graph.nodes.find((n) => n.id === id);
+    const head = `<div class="agd-detail-head"><h2>${ADMIN.escapeHtml(node.label)}</h2><span class="agd-detail-meta" id="agd-detail-meta">Corrida ${ADMIN.escapeHtml(shortId(S.run.id))}</span></div>`;
+    let body;
+    if (id === ERROR_NODE_ID) {
+      const errorId = S.run.state === "ready" ? S.run.summary.errorId : null;
+      body = `<p class="agd-note-text">Recibe el error de cualquier nodo del grafo. No se traza como nodo.</p>
+        <div class="agd-links">${errorId ? `<a class="link" href="/admin/errors/${encodeURIComponent(errorId)}">Ver error de la corrida</a>` : ""}</div>`;
+    } else if (!node.traced) {
+      body = `<p class="agd-note-text">Nodo interno de un subgrafo, sin trazado: no hay datos de ejecución por nodo.</p>`;
+    } else if (S.run.state === "loading") {
+      body = `<p class="muted">Cargando…</p>`;
+    } else if (S.run.state === "error") {
+      body = `<p class="agd-note-text">No hay datos de la corrida.</p>`;
+    } else {
+      const rs = S.run.summary.nodes[id];
+      const d = describeRunNode(rs);
+      if (!rs) {
+        body = `<div class="agd-stats">${stat("Estado", d.text)}</div>
+          <p class="agd-note-text">Este nodo no se ejecutó en esta corrida.</p>`;
+      } else {
+        const links = [];
+        if (rs.errorId) links.push(`<a class="link" href="/admin/errors/${encodeURIComponent(rs.errorId)}">Ver error</a>`);
+        const tools = rs.tools.length
+          ? `<ul class="agd-tools">${rs.tools
+              .map((t) => {
+                const bad = t.status === "failed";
+                const err = t.error_id ? ` <a class="link" href="/admin/errors/${encodeURIComponent(t.error_id)}">ver error</a>` : "";
+                return `<li><span class="${bad ? "agd-bad" : ""}">${bad ? "✗" : "✓"}</span> ${ADMIN.escapeHtml(t.tool_name)} · ${ADMIN.escapeHtml(t.provider)} · ${ADMIN.escapeHtml(t.operation)} <span class="muted">(${ADMIN.escapeHtml(fmtMs(t.duration_ms))})</span>${err}</li>`;
+              })
+              .join("")}</ul>`
+          : "";
+        body = `<div class="agd-stats">${stat("Estado", d.text, rs.status === "fail" ? "agd-bad" : "")}${stat("Duración", fmtMs(rs.durationMs))}${rs.count > 1 ? stat("Ejecuciones", fmtInt(rs.count)) : ""}</div>
+          ${links.length ? `<div class="agd-links">${links.join("")}</div>` : ""}
+          ${tools}`;
+      }
+    }
+    const outputs = outputsOf(graph, id);
+    return `${head}
+      ${body}
+      ${outputs ? `<p class="agd-note-text">${ADMIN.escapeHtml(outputs)}</p>` : ""}`;
+  }
+
+  const shortId = (id) => String(id || "").slice(0, 8);
+
   function lastRunAgeSeconds(ns) {
     const lastMs = Date.parse(ns.last_at);
     if (Number.isNaN(lastMs)) return null;
@@ -827,7 +1014,7 @@ const AgentDiagram = (() => {
 
   function updateMeta() {
     const meta = $("agd-detail-meta");
-    if (!meta) return;
+    if (!meta || S.run) return;
     const id = S.selected[activeGraph().id];
     const ns = S.data && id ? S.data.nodes[id] : undefined;
     let text = `Ventana: ${WINDOW_PHRASE[S.win]}`;
@@ -842,7 +1029,12 @@ const AgentDiagram = (() => {
     const el = $("agd-updated");
     const dot = $("agd-updated-dot");
     const text = $("agd-updated-text");
-    el.classList.toggle("agd-stale", S.stale);
+    el.classList.toggle("agd-stale", S.stale && !S.run);
+    if (S.run) {
+      dot.textContent = "○";
+      text.textContent = "Corrida fija, sin actualización en vivo";
+      return;
+    }
     if (!S.data) {
       dot.textContent = "○";
       text.textContent = S.stale ? "Sin datos" : "Cargando…";
@@ -856,7 +1048,9 @@ const AgentDiagram = (() => {
   function updateStatusRow() {
     const row = $("agd-status");
     let msg = "";
-    if (S.data) {
+    if (S.run) {
+      if (S.run.state === "ready" && Object.keys(S.run.summary.nodes).length === 0) msg = "La corrida no registró nodos.";
+    } else if (S.data) {
       const reportable = Object.keys(S.data.nodes).length === 0;
       if (reportable) msg = "Sin ejecuciones en la ventana";
       else if (S.data.truncated) msg = "La ventana tiene más ejecuciones de las que se analizan: los números son parciales.";
@@ -879,6 +1073,14 @@ const AgentDiagram = (() => {
 
   // -------------------------------------------------------------- polling --
 
+  function stopPolling() {
+    clearTimeout(S.timer);
+    S.timer = null;
+    S.generation++; // drops any response still in flight
+    if (S.controller) S.controller.abort();
+    S.controller = null;
+  }
+
   function schedule(ms) {
     clearTimeout(S.timer);
     S.timer = null;
@@ -886,6 +1088,7 @@ const AgentDiagram = (() => {
   }
 
   async function poll() {
+    if (S.run) return;
     clearTimeout(S.timer);
     if (S.controller) S.controller.abort();
     const controller = new AbortController();
@@ -918,6 +1121,7 @@ const AgentDiagram = (() => {
     S.win = win;
     syncWindowButtons();
     writeHash();
+    if (S.run) return; // the window only applies to the live aggregates
     // The old numbers belong to another window: show them as loading until the
     // new payload arrives (stale responses are dropped by the generation guard).
     S.data = null;
@@ -934,9 +1138,127 @@ const AgentDiagram = (() => {
     });
   }
 
+  // -------------------------------------------------------------- run mode --
+
+  function cancelRunLoad() {
+    S.runSeq++;
+    if (S.runController) S.runController.abort();
+    S.runController = null;
+  }
+
+  function enterRun(run) {
+    cancelRunLoad();
+    stopPolling(); // no live polling while a run is shown
+    S.run = run;
+  }
+
+  // Leaves run mode state-wise; the caller refreshes the UI and restarts polling.
+  function exitRunState() {
+    cancelRunLoad();
+    S.run = null;
+    S.data = null; // pre-run numbers would be stale: show loading until the next poll
+  }
+
+  function failRun(message) {
+    S.run.state = "error";
+    S.run.message = message;
+    syncRunUi();
+  }
+
+  async function loadRun() {
+    const run = S.run;
+    cancelRunLoad();
+    const seq = S.runSeq;
+    const controller = new AbortController();
+    S.runController = controller;
+    try {
+      const response = await ADMIN.apiFetch(`/runs/${encodeURIComponent(run.id)}`, { signal: controller.signal });
+      if (seq !== S.runSeq) return;
+      if (!response.ok) {
+        failRun(
+          response.status === 404
+            ? "No se encontró esa corrida. Verifique el identificador."
+            : response.status === 403
+              ? "No tiene permiso para ver esa corrida."
+              : `No se pudo cargar la corrida (HTTP ${response.status}).`
+        );
+        return;
+      }
+      const summary = summarizeRun(await response.json());
+      if (seq !== S.runSeq) return;
+      run.summary = summary;
+      run.state = "ready";
+      const pending = run.pending || {};
+      S.applying = true;
+      try {
+        if (pending.autoGraph) {
+          const idx = pickRunGraph(S.graphs, Object.keys(summary.nodes), undefined);
+          const target = S.graphs[idx];
+          if (pending.focus !== undefined && !S.selected[target.id] && S.built.get(target.id).views.has(pending.focus)) {
+            S.selected[target.id] = pending.focus;
+          }
+          setActive(idx);
+        }
+      } finally {
+        S.applying = false;
+      }
+      syncRunUi();
+      writeHash();
+    } catch (err) {
+      if (seq !== S.runSeq || (err && err.name === "AbortError")) return;
+      failRun("No se pudo cargar la corrida. Compruebe la conexión y recargue la página.");
+    }
+  }
+
+  const RUN_STATUS_TEXT = { completed: "OK", failed: "Fallo", running: "En curso" };
+
+  // Repaints everything that depends on live-vs-run mode.
+  function syncRunUi() {
+    const run = S.run;
+    const main = document.querySelector(".agd-main");
+    if (main) main.classList.toggle("agd-run-mode", !!run);
+    document.querySelectorAll("#agd-window button").forEach((btn) => {
+      btn.disabled = !!run;
+    });
+    const bar = $("agd-runbar");
+    bar.hidden = !run;
+    if (run) {
+      const failed = run.state === "error";
+      bar.classList.toggle("agd-runbar-error", failed);
+      bar.setAttribute("role", failed ? "alert" : "status");
+      $("agd-runbar-title").textContent = run.id ? `Corrida ${shortId(run.id)}` : "Corrida";
+      let meta;
+      if (failed) meta = run.message;
+      else if (run.state === "loading") meta = "Cargando…";
+      else {
+        const parts = [`Iniciada ${ADMIN.formatDateTime(run.summary.startedAt)}`];
+        if (RUN_STATUS_TEXT[run.summary.status]) parts.push(`Estado: ${RUN_STATUS_TEXT[run.summary.status]}`);
+        meta = parts.join(" · ");
+      }
+      $("agd-runbar-meta").textContent = meta;
+    }
+    S.built.forEach((_, id) => patchGraph(id));
+    updateStatusRow();
+    updateIndicator();
+    renderDetail();
+  }
+
+  // "Volver al estado en vivo": drop `run` from the URL and resume polling.
+  function leaveRun() {
+    if (!S.run) return;
+    exitRunState();
+    syncRunUi();
+    rearm();
+    writeHash();
+    poll();
+    const tab = S.graphs.length ? $(`agd-tab-${activeGraph().id}`) : null;
+    if (tab) tab.focus();
+  }
+
   // ----------------------------------------------------- cycle, hash, keys --
 
   const CYCLE_NOTES = {
+    run: () => "Sin recorrido automático en la vista de una corrida",
     running: () => `Cambia de grafo cada ${Math.round(S.cycleMs / 1000)} s`,
     hover: () => "En pausa mientras el cursor está sobre el diagrama",
     focus: () => "En pausa mientras el foco está en el diagrama",
@@ -946,7 +1268,7 @@ const AgentDiagram = (() => {
     const btn = $("agd-play");
     btn.textContent = S.play ? "⏸ Pausar recorrido" : "▶ Reanudar recorrido";
     btn.setAttribute("aria-pressed", String(!S.play));
-    btn.disabled = S.graphs.length < 2;
+    btn.disabled = S.graphs.length < 2 || !!S.run;
     const note = CYCLE_NOTES[state];
     const text = note ? note() : "";
     if ($("agd-cycle-note").textContent !== text) $("agd-cycle-note").textContent = text;
@@ -964,6 +1286,7 @@ const AgentDiagram = (() => {
       focusInside: S.focusInside,
       hidden: document.hidden,
       graphCount: S.graphs.length,
+      runMode: !!S.run,
     });
     if (state === "running") {
       S.cycleTimer = setTimeout(() => setActive(nextIndex(S.active, 1, S.graphs.length)), S.cycleMs);
@@ -983,7 +1306,9 @@ const AgentDiagram = (() => {
   function writeHash() {
     if (!S.ready || S.applying || !S.graphs.length) return;
     const g = activeGraph();
-    const hash = serializeHash({ g: g.id, focus: S.selected[g.id], w: S.win, play: S.play });
+    // The run id is kept even when its load failed, so the URL stays what the
+    // user opened until they leave run mode. A malformed run id has no id to keep.
+    const hash = serializeHash({ g: g.id, focus: S.selected[g.id], w: S.win, play: S.run ? undefined : S.play, run: S.run && S.run.id });
     if (hash === location.hash) return;
     try {
       history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
@@ -998,9 +1323,19 @@ const AgentDiagram = (() => {
   // an explicit user edit and is honoured as written.
   function applyHash(h, initial) {
     S.applying = true;
+    const wasRun = !!S.run;
     try {
+      // Run state first: setWindow/setActive below consult it.
+      if (h.run && S.run && S.run.id === h.run && S.run.state === "ready") {
+        // Same run already loaded (e.g. only `w` or `focus` changed): keep it.
+      } else if (h.run || h.runInvalid) {
+        enterRun(h.run ? { id: h.run, state: "loading", summary: null, message: "" } : { id: null, state: "error", summary: null, message: "El identificador de corrida de la URL no es válido." });
+      } else if (wasRun) {
+        exitRunState();
+      }
       const gi = S.graphs.findIndex((g) => g.id === h.g);
       const graph = S.graphs[gi >= 0 ? gi : 0];
+      if (S.run && S.run.state === "loading") S.run.pending = { autoGraph: gi < 0, focus: h.focus };
       const win = h.w || DEFAULT_WINDOW;
       if (initial) {
         S.win = win;
@@ -1019,8 +1354,11 @@ const AgentDiagram = (() => {
     } finally {
       S.applying = false;
     }
+    syncRunUi();
     rearm();
     writeHash();
+    if (S.run && S.run.state === "loading") loadRun();
+    else if (!S.run && wasRun) poll();
   }
 
   const isTextControl = (el) =>
@@ -1043,6 +1381,7 @@ const AgentDiagram = (() => {
       event.preventDefault();
       setActive(nextIndex(S.active, event.key === "ArrowLeft" ? -1 : 1, S.graphs.length));
     } else if (event.key === " ") {
+      if (S.run) return;
       const onRegion = onBody || (t.id === "agd-stage" || t.id === "agd-canvas" || t.classList.contains("agd-svg"));
       if (!onRegion) return;
       event.preventDefault();
@@ -1073,7 +1412,7 @@ const AgentDiagram = (() => {
     S.graphs.forEach(ensureBuilt);
     S.ready = true;
     applyHash(parseHash(location.hash), true);
-    poll();
+    if (!S.run) poll();
   }
 
   async function init() {
@@ -1084,6 +1423,7 @@ const AgentDiagram = (() => {
     $("agd-prev").addEventListener("click", () => S.graphs.length && setActive(nextIndex(S.active, -1, S.graphs.length)));
     $("agd-next").addEventListener("click", () => S.graphs.length && setActive(nextIndex(S.active, 1, S.graphs.length)));
     $("agd-play").addEventListener("click", () => setPlay(!S.play));
+    $("agd-run-exit").addEventListener("click", leaveRun);
     document.querySelectorAll("#agd-window button").forEach((btn) => {
       btn.addEventListener("click", () => setWindow(btn.dataset.window));
     });
@@ -1150,7 +1490,7 @@ const AgentDiagram = (() => {
         clearTimeout(S.timer);
         S.generation++;
         if (S.controller) S.controller.abort();
-      } else if (S.graphs.length) {
+      } else if (S.graphs.length && !S.run) {
         poll();
       }
     });
@@ -1175,6 +1515,10 @@ const AgentDiagram = (() => {
     nextIndex,
     cycleState,
     nodeAriaLabel,
+    summarizeRun,
+    pickRunGraph,
+    describeRunNode,
+    runNodeAriaLabel,
   };
 })();
 
