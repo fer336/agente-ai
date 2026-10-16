@@ -3,8 +3,10 @@
 // The topology comes from GET /admin/api/graphs and is laid out ONCE per graph
 // (cached); the live numbers come from GET /admin/api/graphs/state and are only
 // patched into the existing SVG (classes + text), so nodes never move between
-// polls. Cycling, keyboard shortcuts, URL hash and reduced-motion handling are
-// out of scope here (task A5).
+// polls. Auto-cycle, keyboard shortcuts, URL hash state and reduced-motion
+// handling live in the "interaction" section; their decisions are pure
+// functions (parseHash, serializeHash, nextIndex, cycleState, nodeAriaLabel)
+// exported for Node so they can be exercised without a browser.
 
 const AgentDiagram = (() => {
   "use strict";
@@ -355,6 +357,83 @@ const AgentDiagram = (() => {
 
   const plural = (n, one, many) => `${fmtInt(n)} ${n === 1 ? one : many}`;
 
+  // ----------------------------------------------------------- interaction --
+  // Pure helpers (no DOM, no timers).
+
+  const WINDOW_IDS = ["15m", "1h", "24h"];
+  const DEFAULT_WINDOW = "1h";
+  const CYCLE_MS = 8000;
+  const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+  // Parses `#g=<graph>&focus=<node>&w=<window>&play=<0|1>`. Returns only the
+  // keys that hold a well-formed value; anything unknown or malformed is left
+  // undefined so the caller falls back to its default. Ids are only shape-checked
+  // here: whether the graph/node exists is the caller's call. The values are
+  // never used as HTML.
+  function parseHash(hash) {
+    const out = { g: undefined, focus: undefined, w: undefined, play: undefined };
+    const text = String(hash || "").replace(/^#/, "");
+    let params;
+    try {
+      params = new URLSearchParams(text);
+    } catch (e) {
+      return out;
+    }
+    const g = params.get("g");
+    if (g !== null && ID_PATTERN.test(g)) out.g = g;
+    const focus = params.get("focus");
+    if (focus !== null && ID_PATTERN.test(focus)) out.focus = focus;
+    const w = params.get("w");
+    if (w !== null && WINDOW_IDS.includes(w)) out.w = w;
+    const play = params.get("play");
+    if (play === "0") out.play = false;
+    else if (play === "1") out.play = true;
+    return out;
+  }
+
+  // Inverse of parseHash. Omits keys without a value; `focus` only when set.
+  function serializeHash(state) {
+    const parts = [];
+    if (state.g) parts.push(`g=${encodeURIComponent(state.g)}`);
+    if (state.focus) parts.push(`focus=${encodeURIComponent(state.focus)}`);
+    if (state.w) parts.push(`w=${encodeURIComponent(state.w)}`);
+    if (typeof state.play === "boolean") parts.push(`play=${state.play ? 1 : 0}`);
+    return parts.length ? `#${parts.join("&")}` : "";
+  }
+
+  // Wrapping index step (Prev = -1, Next = +1).
+  function nextIndex(index, delta, count) {
+    if (!(count > 0)) return 0;
+    return (((index + delta) % count) + count) % count;
+  }
+
+  // Decides whether the auto-cycle should be ticking. `play` is the user's
+  // intent (manual pause, node pin, reduced-motion default); the rest are
+  // transient conditions that pause without changing the intent.
+  // Returns "running" or the reason it is not: "idle" (fewer than 2 graphs),
+  // "paused" (intent off), "hidden", "hover", "focus".
+  function cycleState({ play, hovering, focusInside, hidden, graphCount }) {
+    if (!(graphCount > 1)) return "idle";
+    if (!play) return "paused";
+    if (hidden) return "hidden";
+    if (hovering) return "hover";
+    if (focusInside) return "focus";
+    return "running";
+  }
+
+  // Accessible name of a node: its name plus its state, e.g.
+  // "appointment, 54 ejecuciones, 2 fallos".
+  function nodeAriaLabel(name, traced, ns, loading) {
+    if (!traced) return `${name}, interno, sin datos de nodo`;
+    if (loading) return `${name}, cargando`;
+    if (!ns || ns.count === 0) return `${name}, sin ejecuciones`;
+    const runs = plural(ns.count, "ejecución", "ejecuciones");
+    let state;
+    if (ns.failed > 0) state = plural(ns.failed, "fallo", "fallos");
+    else state = ns.running > 0 ? "sin fallos, en curso" : "sin fallos";
+    return `${name}, ${runs}, ${state}`;
+  }
+
   // ------------------------------------------------------------- rendering --
 
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -502,12 +581,11 @@ const AgentDiagram = (() => {
     if (view.metric && view.metric.textContent !== d.metric) view.metric.textContent = d.metric;
     if (view.dot.textContent !== d.dot) view.dot.textContent = d.dot;
     if (view.label.textContent !== d.text) view.label.textContent = d.text;
-    view.g.setAttribute("aria-label", `${view.name}: ${d.metric ? d.metric + ", " : ""}${d.text}`);
+    view.g.setAttribute("aria-label", nodeAriaLabel(view.name, view.traced, ns, loading));
   }
 
   // ------------------------------------------------------------ controller --
 
-  const WINDOWS = { "15m": "15 min", "1h": "1 h", "24h": "24 h" };
   const WINDOW_PHRASE = { "15m": "últimos 15 min", "1h": "última hora", "24h": "últimas 24 h" };
   const POLL_MS = 5000;
   const BACKOFF_MS = 30000;
@@ -526,6 +604,16 @@ const AgentDiagram = (() => {
     generation: 0,
     controller: null,
     detailHtml: null,
+    // Interaction state. `play` is the user's intent; hovering/focusInside/
+    // document.hidden pause the cycle without changing it.
+    play: true,
+    hovering: false,
+    focusInside: false,
+    reduced: false,
+    cycleTimer: null,
+    cycleMs: CYCLE_MS,
+    ready: false, // topology loaded and hash applied: only then is the hash written
+    applying: false, // true while applying a hash: suppresses intermediate writes
   };
 
   const $ = (id) => document.getElementById(id);
@@ -597,8 +685,14 @@ const AgentDiagram = (() => {
       if (g.id === activeGraph().id) b.svg.removeAttribute("hidden");
       else b.svg.setAttribute("hidden", "");
     });
+    // A focused node of the graph that just got hidden would keep focus (and
+    // the "focus inside" pause) on an invisible element.
+    const focused = document.activeElement;
+    if (focused && focused.closest && focused.closest("svg[hidden]")) focused.blur();
     syncTabs();
     renderDetail();
+    rearm(); // any graph change (manual or automatic) restarts the 8 s timer
+    writeHash();
   }
 
   function patchGraph(graphId) {
@@ -616,6 +710,12 @@ const AgentDiagram = (() => {
             ? "Sin fallos en la ventana"
             : `${plural(failedTotal, "fallo", "fallos")} en la ventana`;
         if (view.caption.textContent !== text) view.caption.textContent = text;
+        view.g.setAttribute(
+          "aria-label",
+          loading
+            ? `${view.label}, cargando`
+            : `${view.label}, ${failedTotal === 0 ? "sin fallos" : plural(failedTotal, "fallo", "fallos")} en la ventana`
+        );
         return;
       }
       patchNode(view, nodes[id], loading);
@@ -626,7 +726,11 @@ const AgentDiagram = (() => {
   function syncSelection(graphId) {
     const b = S.built.get(graphId);
     if (!b) return;
-    b.views.forEach((view, id) => view.g.classList.toggle("agd-selected", S.selected[graphId] === id));
+    b.views.forEach((view, id) => {
+      const on = S.selected[graphId] === id;
+      view.g.classList.toggle("agd-selected", on);
+      view.g.setAttribute("aria-pressed", String(on));
+    });
   }
 
   function select(nodeId) {
@@ -634,6 +738,25 @@ const AgentDiagram = (() => {
     S.selected[g.id] = nodeId;
     syncSelection(g.id);
     renderDetail();
+    writeHash();
+  }
+
+  // Clicking (or Enter/Space on) a node selects it AND pins the view: the
+  // cycle is paused as a manual pause, so it stays paused until resumed.
+  function pin(nodeId) {
+    S.play = false;
+    select(nodeId);
+    rearm();
+  }
+
+  // Esc: close the detail panel (back to its placeholder) and clear the selection.
+  function clearSelection() {
+    const g = activeGraph();
+    if (!S.selected[g.id]) return;
+    delete S.selected[g.id];
+    syncSelection(g.id);
+    renderDetail();
+    writeHash();
   }
 
   function outputsOf(graph, nodeId) {
@@ -794,6 +917,7 @@ const AgentDiagram = (() => {
     if (win === S.win) return;
     S.win = win;
     syncWindowButtons();
+    writeHash();
     // The old numbers belong to another window: show them as loading until the
     // new payload arrives (stale responses are dropped by the generation guard).
     S.data = null;
@@ -808,6 +932,124 @@ const AgentDiagram = (() => {
     document.querySelectorAll("#agd-window button").forEach((btn) => {
       btn.setAttribute("aria-pressed", String(btn.dataset.window === S.win));
     });
+  }
+
+  // ----------------------------------------------------- cycle, hash, keys --
+
+  const CYCLE_NOTES = {
+    running: () => `Cambia de grafo cada ${Math.round(S.cycleMs / 1000)} s`,
+    hover: () => "En pausa mientras el cursor está sobre el diagrama",
+    focus: () => "En pausa mientras el foco está en el diagrama",
+  };
+
+  function syncPlayControls(state) {
+    const btn = $("agd-play");
+    btn.textContent = S.play ? "⏸ Pausar recorrido" : "▶ Reanudar recorrido";
+    btn.setAttribute("aria-pressed", String(!S.play));
+    btn.disabled = S.graphs.length < 2;
+    const note = CYCLE_NOTES[state];
+    const text = note ? note() : "";
+    if ($("agd-cycle-note").textContent !== text) $("agd-cycle-note").textContent = text;
+  }
+
+  // (Re)starts the one-shot cycle timer from zero if the cycle should be
+  // ticking, otherwise clears it. Called on every change that can affect the
+  // cycle, which is also what restarts the 8 s countdown after a manual action.
+  function rearm() {
+    clearTimeout(S.cycleTimer);
+    S.cycleTimer = null;
+    const state = cycleState({
+      play: S.play,
+      hovering: S.hovering,
+      focusInside: S.focusInside,
+      hidden: document.hidden,
+      graphCount: S.graphs.length,
+    });
+    if (state === "running") {
+      S.cycleTimer = setTimeout(() => setActive(nextIndex(S.active, 1, S.graphs.length)), S.cycleMs);
+    }
+    syncPlayControls(state);
+  }
+
+  function setPlay(on) {
+    S.play = on;
+    rearm();
+    writeHash();
+  }
+
+  // Writes the state to the URL with replaceState (no history entries, no
+  // hashchange event). Skipped until the initial hash has been applied so a
+  // failed load does not clobber the incoming hash.
+  function writeHash() {
+    if (!S.ready || S.applying || !S.graphs.length) return;
+    const g = activeGraph();
+    const hash = serializeHash({ g: g.id, focus: S.selected[g.id], w: S.win, play: S.play });
+    if (hash === location.hash) return;
+    try {
+      history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
+    } catch (e) {
+      // Some embedded contexts forbid it; the page works without URL state.
+    }
+  }
+
+  // Applies a parsed hash as the full view state: absent or invalid parts fall
+  // back to defaults. `focus` selects that node and implies play=0. On the
+  // initial load reduced motion always wins over play=1; a later hashchange is
+  // an explicit user edit and is honoured as written.
+  function applyHash(h, initial) {
+    S.applying = true;
+    try {
+      const gi = S.graphs.findIndex((g) => g.id === h.g);
+      const graph = S.graphs[gi >= 0 ? gi : 0];
+      const win = h.w || DEFAULT_WINDOW;
+      if (initial) {
+        S.win = win;
+        syncWindowButtons();
+      } else {
+        setWindow(win);
+      }
+      S.selected = {};
+      const focusOk = h.focus !== undefined && S.built.get(graph.id).views.has(h.focus);
+      if (focusOk) S.selected[graph.id] = h.focus;
+      setActive(S.graphs.indexOf(graph));
+      S.built.forEach((_, id) => syncSelection(id));
+      if (focusOk) S.play = false;
+      else if (h.play === undefined) S.play = !S.reduced;
+      else S.play = initial && S.reduced ? false : h.play;
+    } finally {
+      S.applying = false;
+    }
+    rearm();
+    writeHash();
+  }
+
+  const isTextControl = (el) =>
+    !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+
+  // Page-level shortcuts. The listener sits on `document` only because a focused
+  // <body> is not inside the page container; it ignores every event whose target
+  // is outside <main> (topbar, logout) or body, and any text/select control, so
+  // it never fires while typing or on controls it does not own.
+  //   Left/Right: previous/next graph.  Space: play/pause, only when focus is on
+  //   body or the diagram region itself (never on a button/link/node: those
+  //   keep their own Space behaviour).  Esc: clear selection / close detail.
+  function onKeydown(event) {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !S.graphs.length) return;
+    const t = event.target;
+    const onBody = t === document.body || t === document.documentElement;
+    if (!onBody && !(t.closest && t.closest(".agd-main"))) return;
+    if (isTextControl(t)) return;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      setActive(nextIndex(S.active, event.key === "ArrowLeft" ? -1 : 1, S.graphs.length));
+    } else if (event.key === " ") {
+      const onRegion = onBody || (t.id === "agd-stage" || t.id === "agd-canvas" || t.classList.contains("agd-svg"));
+      if (!onRegion) return;
+      event.preventDefault();
+      if (!event.repeat) setPlay(!S.play);
+    } else if (event.key === "Escape") {
+      clearSelection();
+    }
   }
 
   // ----------------------------------------------------------------- init --
@@ -828,7 +1070,9 @@ const AgentDiagram = (() => {
     $("agd-skeleton").hidden = true;
     $("agd-canvas").setAttribute("aria-busy", "false");
     renderTabs();
-    setActive(0);
+    S.graphs.forEach(ensureBuilt);
+    S.ready = true;
+    applyHash(parseHash(location.hash), true);
     poll();
   }
 
@@ -837,8 +1081,9 @@ const AgentDiagram = (() => {
     $("who-label").textContent = `${me.username} · ${me.role}`;
     $("logout-btn").addEventListener("click", ADMIN.logout);
 
-    $("agd-prev").addEventListener("click", () => S.graphs.length && setActive(S.active - 1));
-    $("agd-next").addEventListener("click", () => S.graphs.length && setActive(S.active + 1));
+    $("agd-prev").addEventListener("click", () => S.graphs.length && setActive(nextIndex(S.active, -1, S.graphs.length)));
+    $("agd-next").addEventListener("click", () => S.graphs.length && setActive(nextIndex(S.active, 1, S.graphs.length)));
+    $("agd-play").addEventListener("click", () => setPlay(!S.play));
     document.querySelectorAll("#agd-window button").forEach((btn) => {
       btn.addEventListener("click", () => setWindow(btn.dataset.window));
     });
@@ -847,17 +1092,60 @@ const AgentDiagram = (() => {
     const canvas = $("agd-canvas");
     const pick = (event) => {
       const g = event.target.closest("[data-node-id]");
-      if (g) select(g.getAttribute("data-node-id"));
+      if (g) pin(g.getAttribute("data-node-id"));
     };
     canvas.addEventListener("click", pick);
     canvas.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        pick(event);
+        if (!event.repeat) pick(event);
       }
     });
 
+    // Pause the cycle while the pointer is over the diagram or focus is in it.
+    const stage = $("agd-stage");
+    stage.addEventListener("mouseenter", () => {
+      S.hovering = true;
+      rearm();
+    });
+    stage.addEventListener("mouseleave", () => {
+      S.hovering = false;
+      rearm();
+    });
+    stage.addEventListener("focusin", () => {
+      S.focusInside = true;
+      rearm();
+    });
+    stage.addEventListener("focusout", (event) => {
+      if (event.relatedTarget && stage.contains(event.relatedTarget)) return;
+      S.focusInside = false;
+      rearm();
+    });
+
+    document.addEventListener("keydown", onKeydown);
+    window.addEventListener("hashchange", () => {
+      if (S.ready) applyHash(parseHash(location.hash), false);
+    });
+
+    S.cycleMs = Number(globalThis.__AGD_CYCLE_MS) > 0 ? Number(globalThis.__AGD_CYCLE_MS) : CYCLE_MS; // test hook
+    try {
+      const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+      S.reduced = mq.matches;
+      S.play = !S.reduced;
+      // Turning reduced motion on mid-session stops the cycle; turning it off
+      // never starts one by itself.
+      const onMotion = (event) => {
+        S.reduced = event.matches;
+        if (S.reduced) setPlay(false);
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onMotion);
+      else if (mq.addListener) mq.addListener(onMotion);
+    } catch (e) {
+      S.reduced = false;
+    }
+
     document.addEventListener("visibilitychange", () => {
+      rearm();
       if (document.hidden) {
         clearTimeout(S.timer);
         S.generation++;
@@ -875,7 +1163,19 @@ const AgentDiagram = (() => {
     await loadTopology();
   }
 
-  return { init, computeLayout, splitName, fmtInt, fmtMs, fmtAgo };
+  return {
+    init,
+    computeLayout,
+    splitName,
+    fmtInt,
+    fmtMs,
+    fmtAgo,
+    parseHash,
+    serializeHash,
+    nextIndex,
+    cycleState,
+    nodeAriaLabel,
+  };
 })();
 
 if (typeof module !== "undefined" && module.exports) {
