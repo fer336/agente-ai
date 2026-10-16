@@ -116,3 +116,33 @@ async def test_kpis_page_loads_its_script_and_states_the_scope():
 
     assert "/admin/static/kpis.js" in response.text
     assert "no incluye turnos cargados o cancelados directamente en Dentalink" in response.text
+
+
+@pytest.mark.asyncio
+async def test_kpis_page_has_the_print_report_hooks():
+    response = await _get("/admin/kpis")
+
+    html = response.text
+    assert '<body class="kpi-page">' in html
+    # Print-only header and footer, filled by kpis.js; the clinic name is a constant.
+    assert 'id="kpi-print-head"' in html
+    assert "Smiling Pilar" in html
+    assert "Informe de turnos del bot" in html
+    assert 'id="kpi-print-period"' in html
+    assert 'id="kpi-print-generated"' in html
+    assert 'id="kpi-print-foot"' in html
+    assert 'id="kpi-print-evidence"' in html
+    assert 'id="kpi-print-trunc"' in html
+    # The export button starts disabled until data is loaded.
+    assert 'id="kpi-export"' in html
+    assert 'aria-disabled="true"' in html
+
+
+@pytest.mark.asyncio
+async def test_stylesheet_has_an_a4_print_layout_for_the_kpis_page():
+    response = await _get("/admin/static/style.css")
+
+    css = response.text
+    assert "@page" in css and "size: A4" in css
+    assert "@media print" in css
+    assert "print-color-adjust: exact" in css

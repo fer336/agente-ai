@@ -997,9 +997,26 @@ button:disabled {
 }
 
 .kpi-btn-primary:disabled,
-.kpi-btn-quiet:disabled {
+.kpi-btn-quiet:disabled,
+.kpi-btn-primary[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
+}
+
+.kpi-export-hint {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.kpi-export-hint:empty {
+  display: none;
+}
+
+/* Print-only report parts: shown by the @media print block at the end. */
+.kpi-print-head,
+.kpi-print-foot {
+  display: none;
 }
 
 .kpi-seg button:focus-visible,
@@ -1306,6 +1323,9 @@ button:disabled {
 }
 
 .kpi-heat-cell {
+  /* --a is the per-cell alpha set inline by kpis.js */
+  --heat-rgb: 79, 140, 255;
+  background: rgba(var(--heat-rgb), var(--a, 0));
   height: 30px;
   text-align: center;
   vertical-align: middle;
@@ -1419,5 +1439,355 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .kpi-sk i {
     animation: none;
+  }
+}
+
+/* ---- KPIs page: A4 print layout (browser "Save as PDF") ----
+   Light theme whatever the screen theme is. The content box of the page is
+   186mm x 273mm (about 703 x 1032 CSS px); the standard 30-day report is
+   sized to fit it on one sheet. Type is 12px or larger, rules 1px or thicker. */
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  body.kpi-page {
+    /* Remap the dark tokens so every existing rule turns into the print ink. */
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --border: #c9cdd4;
+    --text: #1a1d23;
+    --muted: #3d424b;
+    --accent: #2457c5;
+    --ok: #1f7a4d;
+    --warn: #8a5600;
+    --err: #9b1c2c;
+    background: #ffffff;
+    color: #1a1d23;
+    font-size: 13px;
+    line-height: 18px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Not part of a report: navigation, period controls, buttons, loading and
+     error states, the on-screen notices (the footer carries the same text)
+     and every interactive affordance. */
+  .kpi-page .topbar,
+  .kpi-page .kpi-head,
+  .kpi-page .kpi-toolbar,
+  .kpi-page .kpi-custom,
+  .kpi-page .kpi-banner,
+  .kpi-page .kpi-notice,
+  .kpi-page .kpi-sk,
+  .kpi-page .kpi-details,
+  .kpi-page .kpi-screen-only,
+  .kpi-page button {
+    display: none !important;
+  }
+
+  .kpi-page main.kpi-main {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    gap: 14px;
+  }
+
+  .kpi-page .kpi-busy .kpi-cards,
+  .kpi-page .kpi-busy .kpi-content {
+    opacity: 1;
+  }
+
+  /* Header */
+  .kpi-page .kpi-print-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #1a1d23;
+    break-after: avoid;
+  }
+
+  .kpi-print-id {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .kpi-print-clinic {
+    font-size: 12px;
+    line-height: 16px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #5a606b;
+  }
+
+  .kpi-print-title {
+    margin: 0;
+    font-size: 26px;
+    line-height: 32px;
+    font-weight: 700;
+  }
+
+  .kpi-print-meta {
+    margin: 0;
+    text-align: right;
+    font-size: 13px;
+    line-height: 18px;
+    color: #3d424b;
+  }
+
+  .kpi-print-meta span {
+    display: block;
+  }
+
+  /* KPI cards: one row of four */
+  .kpi-page .kpi-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .kpi-page .kpi-card {
+    gap: 2px;
+    padding: 10px 12px;
+    border: 1px solid #c9cdd4;
+    border-radius: 6px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-card-warn {
+    border-color: #a86a00;
+  }
+
+  .kpi-page .kpi-card-label,
+  .kpi-page .kpi-card-sub {
+    font-size: 12px;
+    line-height: 16px;
+    color: #3d424b;
+  }
+
+  .kpi-page .kpi-card-value {
+    font-size: 30px;
+    line-height: 36px;
+    font-weight: 700;
+  }
+
+  .kpi-page .kpi-card-sub.kpi-dir-up {
+    color: #1f7a4d;
+  }
+
+  .kpi-page .kpi-warn-text {
+    color: #8a5600;
+  }
+
+  /* Sections: no boxes, a heading and its figure kept together */
+  .kpi-page .kpi-content {
+    gap: 14px;
+  }
+
+  .kpi-page .kpi-panel {
+    gap: 6px;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-panel h2 {
+    margin: 0;
+    font-size: 15px;
+    line-height: 20px;
+    color: #1a1d23;
+    text-transform: none;
+    letter-spacing: 0;
+    break-after: avoid;
+  }
+
+  .kpi-page .kpi-panel-head {
+    break-after: avoid;
+    flex-wrap: nowrap;
+    gap: 12px;
+  }
+
+  .kpi-page .kpi-legend,
+  .kpi-page .kpi-muted {
+    font-size: 12px;
+    line-height: 16px;
+    color: #3d424b;
+  }
+
+  .kpi-page .kpi-legend {
+    flex-wrap: nowrap;
+    gap: 16px;
+    white-space: nowrap;
+  }
+
+  /* Vector charts at the full printable width. The dashed vs solid line pair
+     is what tells the series apart without color. */
+  .kpi-page .kpi-svg {
+    width: 100%;
+    height: auto;
+    break-inside: avoid;
+  }
+
+  /* The SVG is scaled to the 703px page width (viewBox is 800 wide, so x0.88):
+     14 user units print at about 12.3px, never below 12px. */
+  .kpi-page .kpi-axis text {
+    fill: #3d424b;
+    font-size: 14px;
+  }
+
+  .kpi-page .kpi-line-taken {
+    stroke: #2457c5;
+    stroke-width: 2;
+  }
+
+  .kpi-page .kpi-line-cancelled {
+    stroke: #8a5600;
+    stroke-width: 2;
+    stroke-dasharray: 6 5;
+  }
+
+  .kpi-page .kpi-area-taken {
+    fill: #2457c5;
+    fill-opacity: 0.12;
+  }
+
+  .kpi-page .kpi-dot-taken {
+    fill: #2457c5;
+  }
+
+  .kpi-page .kpi-dot-cancelled {
+    fill: #8a5600;
+  }
+
+  /* Two bar lists side by side */
+  .kpi-page .kpi-two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-bars {
+    gap: 8px;
+  }
+
+  .kpi-page .kpi-bar-row {
+    grid-template-columns: minmax(0, 124px) minmax(0, 1fr) 28px;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 18px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-bar-track {
+    height: 12px;
+    background: #eceef2;
+    border-radius: 0;
+  }
+
+  .kpi-page .kpi-bar-fill {
+    height: 12px;
+    border-radius: 0;
+  }
+
+  .kpi-page .kpi-fill-accent {
+    background: #2457c5;
+  }
+
+  .kpi-page .kpi-fill-ok {
+    background: #1f7a4d;
+  }
+
+  /* Weekday x hour grid */
+  .kpi-page .kpi-scroll {
+    overflow: visible;
+    border: 0;
+  }
+
+  .kpi-page .kpi-heat {
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    border-spacing: 3px;
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-heat th,
+  .kpi-page .kpi-heat td {
+    padding: 0;
+    border: 0;
+  }
+
+  .kpi-page .kpi-heat th {
+    font-size: 12px;
+    text-transform: none;
+    color: #3d424b;
+  }
+
+  .kpi-page .kpi-heat-cell {
+    --heat-rgb: 36, 87, 197;
+    height: 22px;
+    border-radius: 0;
+    font-size: 12px;
+    color: #1a1d23;
+    /* ink on the darkest cell stays readable: cap the fill strength */
+    background: rgba(var(--heat-rgb), calc(var(--a, 0) * 0.9));
+  }
+
+  .kpi-page .kpi-heat-zero {
+    background: #f1f3f6;
+  }
+
+  .kpi-page .kpi-heat-dark {
+    color: #1a1d23;
+    font-weight: 700;
+  }
+
+  .kpi-page tr {
+    break-inside: avoid;
+  }
+
+  .kpi-page .kpi-empty {
+    background: none;
+    border: 1px dashed #c9cdd4;
+    break-inside: avoid;
+  }
+
+  /* Footer: scope note, evidence caveat, truncation notice */
+  .kpi-page .kpi-print-foot {
+    display: block;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid #c9cdd4;
+    font-size: 12px;
+    line-height: 16px;
+    color: #3d424b;
+    break-inside: avoid;
+  }
+
+  .kpi-print-foot p {
+    margin: 0;
+  }
+
+  .kpi-page .kpi-print-trunc {
+    margin-top: 4px;
+    font-weight: 700;
+    color: #1a1d23;
+  }
+
+  .kpi-page .kpi-print-trunc[hidden] {
+    display: none;
+  }
+
+  /* No loaded data (Ctrl+P on an empty or failed page): no report frame. */
+  .kpi-page .kpi-main:not(.kpi-printable) .kpi-print-head,
+  .kpi-page .kpi-main:not(.kpi-printable) .kpi-print-foot {
+    display: none;
   }
 }

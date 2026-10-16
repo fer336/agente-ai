@@ -285,6 +285,72 @@ const Kpis = (() => {
     return Boolean(data.truncated || data.previous_truncated || (data.evidence && data.evidence.truncated));
   }
 
+  // ------------------------------------------------------------ print/PDF
+  // Pure helpers for the printed report (header, footer, file name, button
+  // state). The DOM wiring is further down.
+
+  // "KPIs-2026-09-16_2026-10-15": the browser proposes document.title as the
+  // PDF file name, so ISO dates (sortable, no slashes) are used. Falls back to
+  // plain "KPIs" when the period is missing or malformed.
+  function printFileTitle(period) {
+    if (!period || !isIsoDate(period.date_from) || !isIsoDate(period.date_to)) return "KPIs";
+    return `KPIs-${period.date_from}_${period.date_to}`;
+  }
+
+  // "Período: 16/09/2026 al 15/10/2026"
+  function printPeriodText(period) {
+    if (!period || !isIsoDate(period.date_from) || !isIsoDate(period.date_to)) return "";
+    return `Período: ${fmtDate(period.date_from)} al ${fmtDate(period.date_to)}`;
+  }
+
+  // "15/10/2026 11:30" in the given IANA time zone (the clinic's). Hand
+  // assembled from Intl parts so the result does not depend on the browser's
+  // es-AR separators. Returns "" for an unparsable timestamp; an unknown zone
+  // falls back to the browser's own.
+  function formatClinicDateTime(iso, timeZone) {
+    const date = new Date(iso);
+    if (!iso || Number.isNaN(date.getTime())) return "";
+    const options = { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+    let formatter;
+    try {
+      formatter = new Intl.DateTimeFormat("es-AR", { ...options, timeZone });
+    } catch (e) {
+      formatter = new Intl.DateTimeFormat("es-AR", options);
+    }
+    const part = Object.fromEntries(formatter.formatToParts(date).map((p) => [p.type, p.value]));
+    return `${part.day}/${part.month}/${part.year} ${part.hour}:${part.minute}`;
+  }
+
+  function printGeneratedText(iso, timeZone) {
+    const text = formatClinicDateTime(iso, timeZone);
+    return text ? `Generado: ${text}` : "";
+  }
+
+  // Footer caveat: how many taken bookings have no tool evidence.
+  function printEvidenceText(data) {
+    const total = data && data.totals ? data.totals.taken.current : 0;
+    const without = data && data.evidence ? data.evidence.taken_without : 0;
+    const rule = "Un turno cuenta como tomado cuando el paciente lo confirma";
+    if (!total) return `${rule}.`;
+    if (!without) return `${rule}; todos los turnos tomados tienen registro de la herramienta de Dentalink.`;
+    return `${rule}; ${fmtInt(without)} de los ${fmtInt(total)} ${without === 1 ? "no tiene" : "no tienen"} registro de la herramienta de Dentalink.`;
+  }
+
+  // Footer notice when the API analysed only part of the records; "" otherwise.
+  function printTruncationText(data) {
+    if (!data || !isIncomplete(data)) return "";
+    return "Datos incompletos: el período tiene más registros de los que se pueden analizar, así que las cifras pueden ser menores a las reales o la comparación con el período anterior, inexacta.";
+  }
+
+  // Whether "Exportar PDF" may be used, and the reason shown when it may not.
+  // Errored wins over data: after a failed refresh the screen keeps the old
+  // numbers, but a report of possibly stale figures must not be printed.
+  function exportAvailability({ loading, failed, hasData }) {
+    if (loading) return { enabled: false, reason: "Esperá a que terminen de cargar los datos para exportar el PDF." };
+    if (failed || !hasData) return { enabled: false, reason: "No hay datos cargados para exportar. Reintentá la carga primero." };
+    return { enabled: true, reason: "" };
+  }
+
   // ------------------------------------------------------------- rendering
   // Everything below needs a DOM (and ADMIN) and is not unit-tested in Node.
 
@@ -395,7 +461,9 @@ const Kpis = (() => {
       .map((row) => {
         const cells = row.cells
           .map((c) => {
-            const style = c.alpha ? ` style="background:rgba(79,140,255,${c.alpha})"` : "";
+            // Alpha goes through a custom property so the print stylesheet can
+            // swap the (screen) accent color for the printable one.
+            const style = c.alpha ? ` style="--a:${c.alpha}"` : "";
             const cls = `kpi-heat-cell${c.dark ? " kpi-heat-dark" : ""}${c.count ? "" : " kpi-heat-zero"}`;
             const title = `${row.label} ${c.hour}:00 — ${fmtInt(c.count)}`;
             const content = c.count ? esc(fmtInt(c.count)) : '<span class="kpi-sr">0</span>';
@@ -429,7 +497,7 @@ const Kpis = (() => {
     const e = data.evidence;
     const row = (label, count, criteria, warn) =>
       `<tr><td>${esc(label)}</td><td class="kpi-num${warn && count > 0 ? " kpi-warn-text" : ""}">${esc(fmtInt(count))}</td><td class="kpi-muted">${esc(criteria)}</td></tr>`;
-    return `<section class="kpi-panel" aria-labelledby="kpi-h-evidence">
+    return `<section class="kpi-panel kpi-screen-only" aria-labelledby="kpi-h-evidence">
       <h2 id="kpi-h-evidence">Cómo se contó</h2>
       <div class="kpi-scroll"><table class="kpi-table">
         <thead><tr><th>Concepto</th><th class="kpi-num">Cantidad</th><th>Criterio</th></tr></thead>
@@ -471,7 +539,49 @@ const Kpis = (() => {
     data: null,
     seq: 0,
     controller: null,
+    loading: true, // first request in flight
+    failed: false, // last request failed
+    savedTitle: null, // document.title while printing, restored afterwards
   };
+
+  // Print-only header/footer text and the export button state. Everything goes
+  // in through textContent, so nothing from the API can inject markup.
+  function fillPrint(data) {
+    const zone = $("kpi-print-head").dataset.timezone;
+    $("kpi-print-period").textContent = printPeriodText(data.period);
+    $("kpi-print-generated").textContent = printGeneratedText(data.generated_at, zone);
+    $("kpi-print-evidence").textContent = printEvidenceText(data);
+    const trunc = printTruncationText(data);
+    $("kpi-print-trunc").textContent = trunc;
+    $("kpi-print-trunc").hidden = !trunc;
+    $("kpi-main").classList.add("kpi-printable");
+  }
+
+  function syncExport() {
+    const state = exportAvailability({ loading: S.loading, failed: S.failed, hasData: Boolean(S.data) });
+    const btn = $("kpi-export");
+    btn.setAttribute("aria-disabled", String(!state.enabled));
+    btn.title = state.reason;
+    $("kpi-export-hint").textContent = state.reason;
+  }
+
+  function onExport() {
+    if ($("kpi-export").getAttribute("aria-disabled") === "true") return;
+    window.print();
+  }
+
+  // The saved PDF is named after document.title: swap it while printing.
+  function onBeforePrint() {
+    if (!S.data || S.savedTitle !== null) return;
+    S.savedTitle = document.title;
+    document.title = printFileTitle(S.data.period);
+  }
+
+  function onAfterPrint() {
+    if (S.savedTitle === null) return;
+    document.title = S.savedTitle;
+    S.savedTitle = null;
+  }
 
   function setHash(range) {
     const hash = serializeHash(range);
@@ -518,6 +628,8 @@ const Kpis = (() => {
     main.setAttribute("aria-busy", "true");
     main.classList.add("kpi-busy");
     $("kpi-refresh").disabled = true;
+    S.loading = true;
+    syncExport();
     const query = range ? `?from=${range.from}&to=${range.to}` : "";
     try {
       const response = await ADMIN.apiFetch(`/kpis${query}`, { signal: S.controller.signal });
@@ -526,12 +638,14 @@ const Kpis = (() => {
       const data = await response.json();
       if (seq !== S.seq) return;
       S.data = data;
+      S.failed = false;
       S.range = { from: data.period.date_from, to: data.period.date_to };
       if (!range) {
         S.today = data.period.date_to;
         S.todayFromApi = true;
       }
       showBanner("");
+      fillPrint(data);
       $("kpi-incomplete").hidden = !isIncomplete(data);
       $("kpi-cards").innerHTML = renderCards(data);
       $("kpi-content").innerHTML = renderContent(data);
@@ -541,6 +655,7 @@ const Kpis = (() => {
     } catch (error) {
       if (error && error.name === "AbortError") return;
       if (seq !== S.seq) return;
+      S.failed = true;
       // Stay usable: keep whatever was on screen, explain, offer a retry.
       showBanner("No se pudieron cargar los KPIs. Revisá la conexión e intentá de nuevo.");
       if (!S.data) {
@@ -552,6 +667,8 @@ const Kpis = (() => {
         main.setAttribute("aria-busy", "false");
         main.classList.remove("kpi-busy");
         $("kpi-refresh").disabled = false;
+        S.loading = false;
+        syncExport();
         syncControls();
       }
     }
@@ -603,9 +720,10 @@ const Kpis = (() => {
       });
       $("kpi-refresh").addEventListener("click", () => load(S.range));
       $("kpi-retry").addEventListener("click", () => load(S.range));
-      // The print stylesheet (A4, light theme, header/footer) is task B5;
-      // until then this prints the screen layout.
-      $("kpi-export").addEventListener("click", () => window.print());
+      // The A4 report comes from the @media print rules in style.css.
+      $("kpi-export").addEventListener("click", onExport);
+      window.addEventListener("beforeprint", onBeforePrint);
+      window.addEventListener("afterprint", onAfterPrint);
       window.addEventListener("hashchange", () => {
         const next = parseHash(location.hash);
         if (next && (!S.range || next.from !== S.range.from || next.to !== S.range.to)) applyRange(next);
@@ -652,6 +770,13 @@ const Kpis = (() => {
     heatGrid,
     isEmptyKpis,
     isIncomplete,
+    printFileTitle,
+    printPeriodText,
+    formatClinicDateTime,
+    printGeneratedText,
+    printEvidenceText,
+    printTruncationText,
+    exportAvailability,
   };
 })();
 

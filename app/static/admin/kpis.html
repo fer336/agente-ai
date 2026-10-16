@@ -6,7 +6,7 @@
   <title>KPIs — Admin</title>
   <link rel="stylesheet" href="/admin/static/style.css" />
 </head>
-<body>
+<body class="kpi-page">
   <header class="topbar">
     <nav>
       <a href="/admin/conversations">Conversaciones</a>
@@ -21,6 +21,20 @@
     </div>
   </header>
   <main class="kpi-main" id="kpi-main" aria-busy="true">
+    <!-- Print-only report header (hidden on screen). The clinic name and its
+         time zone are the single constants of the report; kpis.js fills the
+         period and the generation time from the loaded data. -->
+    <header class="kpi-print-head" id="kpi-print-head" data-timezone="America/Argentina/Buenos_Aires" aria-hidden="true">
+      <div class="kpi-print-id">
+        <span class="kpi-print-clinic">Smiling Pilar</span>
+        <p class="kpi-print-title">Informe de turnos del bot</p>
+      </div>
+      <p class="kpi-print-meta">
+        <span id="kpi-print-period"></span>
+        <span id="kpi-print-generated"></span>
+      </p>
+    </header>
+
     <div class="kpi-head">
       <h1>KPIs</h1>
       <span class="muted">Turnos tomados y cancelados por el bot, y los más pedidos.</span>
@@ -38,8 +52,9 @@
       </div>
       <div class="kpi-actions">
         <span class="kpi-updated" id="kpi-updated" role="status"></span>
+        <span class="kpi-export-hint" id="kpi-export-hint"></span>
         <button type="button" id="kpi-refresh" class="kpi-btn-quiet">Actualizar</button>
-        <button type="button" id="kpi-export" class="kpi-btn-primary">Exportar PDF</button>
+        <button type="button" id="kpi-export" class="kpi-btn-primary" aria-disabled="true" aria-describedby="kpi-export-hint">Exportar PDF</button>
       </div>
     </div>
 
@@ -68,6 +83,12 @@
     <div class="kpi-content" id="kpi-content">
       <div class="kpi-panel kpi-sk kpi-sk-chart" aria-label="Cargando gráficos" role="status"><i></i><i></i><i></i></div>
     </div>
+
+    <!-- Print-only report footer (hidden on screen). -->
+    <footer class="kpi-print-foot" id="kpi-print-foot" aria-hidden="true">
+      <p>Datos registrados por el bot; no incluye turnos cargados o cancelados directamente en Dentalink. <span id="kpi-print-evidence"></span></p>
+      <p class="kpi-print-trunc" id="kpi-print-trunc" hidden></p>
+    </footer>
   </main>
   <script src="/admin/static/app.js"></script>
   <script src="/admin/static/kpis.js"></script>
