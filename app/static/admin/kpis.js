@@ -227,22 +227,53 @@ const Kpis = (() => {
     return { alpha, dark: ratio >= 0.6 };
   }
 
+  // The API's weekday x hour matrix, defensively normalised to 7 rows x 24
+  // integer columns (anything missing or malformed counts as 0).
+  function heatMatrix(weekdayHour) {
+    const rows = Array.isArray(weekdayHour) ? weekdayHour : [];
+    return WEEKDAYS.map((_, d) =>
+      Array.from({ length: 24 }, (_unused, h) => {
+        const n = Number(Array.isArray(rows[d]) ? rows[d][h] : 0);
+        return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+      })
+    );
+  }
+
   // Hours shown: 8..19 by default, widened to include any hour with data.
-  function heatHourRange(hour) {
+  function heatHourRange(weekdayHour) {
     let lo = HEAT_HOURS_MIN;
     let hi = HEAT_HOURS_MAX;
-    (hour || []).forEach((count, h) => {
-      if (count > 0) {
-        lo = Math.min(lo, h);
-        hi = Math.max(hi, h);
-      }
-    });
+    heatMatrix(weekdayHour).forEach((row) =>
+      row.forEach((count, h) => {
+        if (count > 0) {
+          lo = Math.min(lo, h);
+          hi = Math.max(hi, h);
+        }
+      })
+    );
     return { lo, hi };
   }
 
   // Monday-Saturday always; Sunday only when it has data.
-  function heatWeekdayCount(weekday) {
-    return (weekday || [])[6] > 0 ? 7 : 6;
+  function heatWeekdayCount(weekdayHour) {
+    return heatMatrix(weekdayHour)[6].some((count) => count > 0) ? 7 : 6;
+  }
+
+  // Everything the grid needs, as plain data: visible weekdays and hours, one
+  // row of {count, alpha, dark} per weekday, intensity scaled to the largest
+  // cell of the whole matrix.
+  function heatGrid(weekdayHour) {
+    const matrix = heatMatrix(weekdayHour);
+    const { lo, hi } = heatHourRange(matrix);
+    const dayCount = heatWeekdayCount(matrix);
+    const max = matrix.reduce((acc, row) => Math.max(acc, ...row), 0);
+    const hours = [];
+    for (let h = lo; h <= hi; h++) hours.push(h);
+    const rows = matrix.slice(0, dayCount).map((row, d) => ({
+      label: WEEKDAYS[d],
+      cells: hours.map((h) => ({ hour: h, count: row[h], ...heatIntensity(row[h], max) })),
+    }));
+    return { hours, rows, max };
   }
 
   function isEmptyKpis(data) {
@@ -355,43 +386,41 @@ const Kpis = (() => {
     </section>`;
   }
 
+  // A real <table>: row/column headers give screen readers the weekday and hour
+  // of every cell. Empty cells carry a visually hidden "0".
   function renderHeat(data) {
-    const dayCount = heatWeekdayCount(data.weekday);
-    const { lo, hi } = heatHourRange(data.hour);
-    const strip = (title, labels, counts) => {
-      const max = counts.reduce((a, c) => Math.max(a, c), 0);
-      const head = labels.map((l) => `<span class="kpi-heat-h">${esc(l)}</span>`).join("");
-      const cells = counts
-        .map((c, i) => {
-          const { alpha, dark } = heatIntensity(c, max);
-          const style = alpha ? ` style="background:rgba(79,140,255,${alpha})"` : "";
-          return `<span class="kpi-heat-cell${dark ? " kpi-heat-dark" : ""}${c ? "" : " kpi-heat-zero"}"${style} title="${escAttr(labels[i])}: ${escAttr(fmtInt(c))}">${c ? esc(fmtInt(c)) : ""}</span>`;
-        })
-        .join("");
-      return `<div class="kpi-heat-block">
-        <h3>${esc(title)}</h3>
-        <div class="kpi-scroll"><div class="kpi-heat" style="--kpi-cols:${labels.length}">${head}${cells}</div></div>
-      </div>`;
-    };
-    const dayLabels = WEEKDAYS.slice(0, dayCount);
-    const dayCounts = data.weekday.slice(0, dayCount);
-    const hourLabels = [];
-    const hourCounts = [];
-    for (let h = lo; h <= hi; h++) {
-      hourLabels.push(String(h));
-      hourCounts.push(data.hour[h] || 0);
-    }
+    const grid = heatGrid(data.weekday_hour);
+    const head = grid.hours.map((h) => `<th scope="col">${esc(h)}</th>`).join("");
+    const body = grid.rows
+      .map((row) => {
+        const cells = row.cells
+          .map((c) => {
+            const style = c.alpha ? ` style="background:rgba(79,140,255,${c.alpha})"` : "";
+            const cls = `kpi-heat-cell${c.dark ? " kpi-heat-dark" : ""}${c.count ? "" : " kpi-heat-zero"}`;
+            const title = `${row.label} ${c.hour}:00 — ${fmtInt(c.count)}`;
+            const content = c.count ? esc(fmtInt(c.count)) : '<span class="kpi-sr">0</span>';
+            return `<td class="${cls}"${style} title="${escAttr(title)}">${content}</td>`;
+          })
+          .join("");
+        return `<tr><th scope="row">${esc(row.label)}</th>${cells}</tr>`;
+      })
+      .join("");
     const note =
       data.without_slot > 0
-        ? `<p class="kpi-muted">${esc(fmtInt(data.without_slot))} ${data.without_slot === 1 ? "turno tomado no tiene" : "turnos tomados no tienen"} fecha y hora de turno válidas y no aparece${data.without_slot === 1 ? "" : "n"} en estos gráficos.</p>`
+        ? `<p class="kpi-muted">${esc(fmtInt(data.without_slot))} ${data.without_slot === 1 ? "turno tomado no tiene" : "turnos tomados no tienen"} fecha y hora de turno válidas y no aparece${data.without_slot === 1 ? "" : "n"} en este gráfico.</p>`
         : "";
     return `<section class="kpi-panel" aria-labelledby="kpi-h-heat">
       <div class="kpi-panel-head">
         <h2 id="kpi-h-heat">Día y hora de los turnos tomados</h2>
         <span class="kpi-muted">Hora de la clínica. Cada celda indica la cantidad de turnos; más oscuro, más turnos.</span>
       </div>
-      ${strip("Por día de la semana", dayLabels, dayCounts)}
-      ${strip("Por hora del día", hourLabels, hourCounts)}
+      <div class="kpi-scroll" role="region" aria-labelledby="kpi-h-heat" tabindex="0">
+        <table class="kpi-heat">
+          <caption class="kpi-sr">Turnos tomados por día de la semana (filas) y hora (columnas)</caption>
+          <thead><tr><td class="kpi-heat-corner"></td>${head}</tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
       ${note}
     </section>`;
   }
@@ -617,8 +646,10 @@ const Kpis = (() => {
     areaPointsAttr,
     barWidths,
     heatIntensity,
+    heatMatrix,
     heatHourRange,
     heatWeekdayCount,
+    heatGrid,
     isEmptyKpis,
     isIncomplete,
   };

@@ -99,6 +99,7 @@ async def test_empty_period_returns_zeroes_and_zero_filled_series():
     assert all(day.taken == 0 and day.cancelled == 0 for day in kpis.per_day)
     assert kpis.top_professionals == () and kpis.top_specialties == ()
     assert kpis.weekday == (0,) * 7 and kpis.hour == (0,) * 24
+    assert kpis.weekday_hour == ((0,) * 24,) * 7
     assert kpis.without_slot == 0
     assert kpis.truncated is False
     assert kpis.generated_at == NOW
@@ -267,6 +268,65 @@ async def test_weekday_and_hour_use_clinic_time_and_missing_slot_start_is_counte
     assert kpis.weekday == (1, 0, 1, 0, 0, 0, 1)
     assert kpis.hour[23] == 1 and kpis.hour[10] == 1 and kpis.hour[8] == 1
     assert sum(kpis.hour) == 3
+
+
+@pytest.mark.asyncio
+async def test_weekday_hour_matrix_places_each_slot_in_its_clinic_weekday_and_hour():
+    h = Harness()
+    # Aware UTC slot crossing the day boundary: Monday 23:00 local (row 0, col 23).
+    await h.confirm(
+        "create_appointment", _utc(1, 15), payload={"slot_start": "2026-09-08T02:00:00+00:00"}
+    )
+    # Naive slot is clinic wall-clock: Wednesday 10:30 (row 2, col 10), twice.
+    for minute in (15, 16):
+        await h.confirm(
+            "create_appointment",
+            _utc(1, minute),
+            payload={"slot_start": "2026-09-09T10:30:00"},
+        )
+    # Sunday 08:00 (row 6, col 8).
+    await h.confirm(
+        "create_appointment", _utc(1, 17), payload={"slot_start": "2026-09-13T08:00:00-03:00"}
+    )
+    # Skipped rows (same rules as the marginals).
+    await h.confirm("create_appointment", _utc(1, 18), payload={})
+    await h.confirm("create_appointment", _utc(1, 19), payload={"slot_start": "not a date"})
+    # Not a taken row: never counted.
+    await h.confirm(
+        "cancel_appointment", _utc(1, 20), payload={"slot_start": "2026-09-09T10:30:00"}
+    )
+
+    kpis = await h.kpis()
+
+    matrix = kpis.weekday_hour
+    assert len(matrix) == 7 and all(len(row) == 24 for row in matrix)
+    assert matrix[0][23] == 1
+    assert matrix[2][10] == 2
+    assert matrix[6][8] == 1
+    assert sum(sum(row) for row in matrix) == 4
+    assert kpis.without_slot == 2
+
+
+@pytest.mark.asyncio
+async def test_weekday_and_hour_marginals_equal_the_matrix_row_and_column_sums():
+    h = Harness()
+    slots = [
+        "2026-09-07T08:00:00",
+        "2026-09-07T08:30:00",
+        "2026-09-07T17:00:00",
+        "2026-09-10T08:00:00",
+        "2026-09-12T19:45:00",
+        "2026-09-13T06:00:00",
+        "2026-09-08T02:00:00+00:00",
+    ]
+    for index, slot in enumerate(slots):
+        await h.confirm("create_appointment", _utc(1, 10 + index), payload={"slot_start": slot})
+
+    kpis = await h.kpis()
+
+    assert tuple(sum(row) for row in kpis.weekday_hour) == kpis.weekday
+    assert tuple(sum(col) for col in zip(*kpis.weekday_hour, strict=True)) == kpis.hour
+    assert sum(kpis.weekday) == len(slots)
 
 
 @pytest.mark.asyncio

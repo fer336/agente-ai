@@ -847,6 +847,7 @@ _KPI_KEYS = {
     "top_specialties",
     "weekday",
     "hour",
+    "weekday_hour",
     "without_slot",
     "evidence",
     "truncated",
@@ -927,6 +928,7 @@ async def test_an_empty_period_returns_zeros_not_an_error():
     assert body["top_specialties"] == []
     assert body["weekday"] == [0] * 7
     assert body["hour"] == [0] * 24
+    assert body["weekday_hour"] == [[0] * 24 for _ in range(7)]
     assert body["without_slot"] == 0
     assert body["truncated"] is False
     assert all(day["taken"] == 0 and day["cancelled"] == 0 for day in body["per_day"])
@@ -967,6 +969,10 @@ async def test_explicit_period_returns_the_aggregated_payload(
     assert body["top_specialties"] == [{"id": "s1", "label": "Ortodoncia", "count": 2}]
     assert body["weekday"][0] == 1  # 2026-09-14 is a Monday
     assert body["hour"][10] == 1
+    assert len(body["weekday_hour"]) == 7
+    assert all(len(row) == 24 for row in body["weekday_hour"])
+    assert body["weekday_hour"][0][10] == 1
+    assert sum(sum(row) for row in body["weekday_hour"]) == 1
     assert body["without_slot"] == 1
     assert set(body["evidence"]) == {
         "taken_with",

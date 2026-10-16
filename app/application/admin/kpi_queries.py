@@ -120,6 +120,7 @@ class Kpis:
     top_specialties: tuple[TopEntry, ...]
     weekday: tuple[int, ...]  # 7 entries, 0 = Monday, from taken rows
     hour: tuple[int, ...]  # 24 entries, clinic hour of day, from taken rows
+    weekday_hour: tuple[tuple[int, ...], ...]  # 7 rows (0 = Monday) x 24 hours, taken rows
     without_slot: int  # taken rows with missing/unparsable slot_start
     evidence: KpiEvidence
     truncated: bool  # current period hit row_cap
@@ -171,7 +172,7 @@ class KpiQueryService:
         taken_rows = [r for r in rows if r.action_type == ACTION_CREATE]
         cancelled_rows = [r for r in rows if r.action_type == ACTION_CANCEL]
 
-        weekday, hour, without_slot = self._slot_distributions(taken_rows)
+        weekday, hour, weekday_hour, without_slot = self._slot_distributions(taken_rows)
         return Kpis(
             generated_at=now,
             period=period,
@@ -193,6 +194,7 @@ class KpiQueryService:
             ),
             weekday=weekday,
             hour=hour,
+            weekday_hour=weekday_hour,
             without_slot=without_slot,
             evidence=await self._evidence(period, taken_rows, cancelled_rows),
             truncated=truncated,
@@ -236,18 +238,19 @@ class KpiQueryService:
 
     def _slot_distributions(
         self, taken_rows: list[ConfirmedPendingAction]
-    ) -> tuple[tuple[int, ...], tuple[int, ...], int]:
-        weekday = [0] * 7
-        hour = [0] * 24
+    ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], int]:
+        # The marginals are derived from the matrix so they cannot drift apart.
+        matrix = [[0] * 24 for _ in range(7)]
         without_slot = 0
         for row in taken_rows:
             slot = self._parse_slot_start(row.payload.get(PAYLOAD_SLOT_START))
             if slot is None:
                 without_slot += 1
                 continue
-            weekday[slot.weekday()] += 1
-            hour[slot.hour] += 1
-        return tuple(weekday), tuple(hour), without_slot
+            matrix[slot.weekday()][slot.hour] += 1
+        weekday = tuple(sum(row) for row in matrix)
+        hour = tuple(sum(row[h] for row in matrix) for h in range(24))
+        return weekday, hour, tuple(tuple(row) for row in matrix), without_slot
 
     def _parse_slot_start(self, value: object) -> datetime | None:
         if not isinstance(value, str):

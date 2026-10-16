@@ -1277,26 +1277,38 @@ button:disabled {
 
 .kpi-scroll {
   overflow-x: auto;
+  position: relative; /* contains the absolutely positioned .kpi-sr text */
 }
 
 .kpi-heat {
-  display: grid;
-  grid-template-columns: repeat(var(--kpi-cols), minmax(40px, 1fr));
-  gap: 3px;
-  min-width: 360px;
+  border-collapse: separate;
+  border-spacing: 3px;
+  min-width: 540px;
+  width: 100%;
+  table-layout: fixed;
 }
 
-.kpi-heat-h {
-  text-align: center;
+.kpi-heat th {
   font-size: 12px;
+  font-weight: 500;
   color: var(--muted);
+  text-align: center;
+}
+
+.kpi-heat tbody th {
+  width: 44px;
+  text-align: left;
+  padding-right: 4px;
+}
+
+.kpi-heat-corner {
+  width: 44px;
 }
 
 .kpi-heat-cell {
   height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  text-align: center;
+  vertical-align: middle;
   border-radius: 4px;
   font-size: 12px;
   color: var(--text);
@@ -1311,9 +1323,18 @@ button:disabled {
   font-weight: 600;
 }
 
-.kpi-heat-block {
-  display: flex;
-  flex-direction: column;
+.kpi-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.kpi-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .kpi-table {

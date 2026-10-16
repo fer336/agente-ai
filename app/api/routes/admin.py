@@ -565,6 +565,7 @@ class KpisResponse(BaseModel):
     top_specialties: list[KpiTopEntryResponse]
     weekday: list[int]  # 7 entries, 0 = Monday
     hour: list[int]  # 24 entries, clinic hour of day
+    weekday_hour: list[list[int]]  # 7 rows (0 = Monday) x 24 columns (clinic hour)
     without_slot: int
     evidence: KpiEvidenceResponse
     truncated: bool
@@ -586,6 +587,7 @@ class KpisResponse(BaseModel):
             top_specialties=[KpiTopEntryResponse.from_entry(e) for e in kpis.top_specialties],
             weekday=list(kpis.weekday),
             hour=list(kpis.hour),
+            weekday_hour=[list(row) for row in kpis.weekday_hour],
             without_slot=kpis.without_slot,
             evidence=KpiEvidenceResponse.from_evidence(kpis.evidence),
             truncated=kpis.truncated,
