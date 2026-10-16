@@ -19,7 +19,7 @@ version: "3.8"
 
 services:
   backend:
-    image: ghcr.io/fer336/agente-ai:v0.61.2
+    image: ghcr.io/fer336/agente-ai:v0.62.0
     networks:
       - network_public
     # Services on the shared Swarm overlay must use service discovery instead
@@ -82,7 +82,7 @@ services:
   # the same format as `backend`: the release pipeline pins every `image:` line
   # carrying the registry prefix, so both services move together.
   admin:
-    image: ghcr.io/fer336/agente-ai:v0.61.2
+    image: ghcr.io/fer336/agente-ai:v0.62.0
     networks:
       - network_public
     environment:
