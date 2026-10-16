@@ -1,7 +1,12 @@
+from collections.abc import Collection
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.entities.tool_execution import ToolExecution
+from app.domain.entities.tool_execution import COMPLETED, ToolExecution
+from app.domain.repositories.tool_execution_repository import ToolExecutionEvidence
+from app.infrastructure.database.models.agent_run import AgentRunModel
 from app.infrastructure.database.models.tool_execution import ToolExecutionModel
 
 
@@ -52,6 +57,44 @@ class SqlAlchemyToolExecutionRepository:
         for model in result.scalars().all():
             await self._session.delete(model)
         await self._session.flush()
+
+    async def list_completed_evidence(
+        self,
+        operations: Collection[str],
+        start: datetime,
+        end: datetime,
+        limit: int,
+    ) -> list[ToolExecutionEvidence]:
+        result = await self._session.execute(
+            select(
+                ToolExecutionModel.tool_name,
+                ToolExecutionModel.operation,
+                ToolExecutionModel.status,
+                ToolExecutionModel.created_at,
+                ToolExecutionModel.response_summary,
+                AgentRunModel.conversation_id,
+            )
+            .join(AgentRunModel, AgentRunModel.id == ToolExecutionModel.agent_run_id)
+            .where(
+                ToolExecutionModel.status == COMPLETED,
+                ToolExecutionModel.operation.in_(list(operations)),
+                ToolExecutionModel.created_at >= start,
+                ToolExecutionModel.created_at < end,
+            )
+            .order_by(ToolExecutionModel.created_at.desc())
+            .limit(limit)
+        )
+        return [
+            ToolExecutionEvidence(
+                tool_name=row.tool_name,
+                operation=row.operation,
+                status=row.status,
+                created_at=row.created_at,
+                response_summary=row.response_summary,
+                conversation_id=row.conversation_id,
+            )
+            for row in result
+        ]
 
 
 def _to_entity(model: ToolExecutionModel) -> ToolExecution:

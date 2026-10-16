@@ -165,8 +165,10 @@ def make_node_execution_repository() -> FakeNodeExecutionRepository:
     return FakeNodeExecutionRepository()
 
 
-def make_tool_execution_repository() -> FakeToolExecutionRepository:
-    return FakeToolExecutionRepository()
+def make_tool_execution_repository(
+    agent_runs: FakeAgentRunRepository | None = None,
+) -> FakeToolExecutionRepository:
+    return FakeToolExecutionRepository(agent_runs=agent_runs)
 
 
 def make_error_repository() -> FakeErrorRepository:
@@ -296,8 +298,7 @@ def make_mirror_to_chatwoot_use_case(
 ) -> MirrorMessageToChatwootUseCase:
     chatwoot_gateway = chatwoot_gateway if chatwoot_gateway is not None else FakeChatwootGateway()
     mapping_repository = (
-        mapping_repository if mapping_repository is not None
-        else make_chatwoot_mapping_repository()
+        mapping_repository if mapping_repository is not None else make_chatwoot_mapping_repository()
     )
 
     @asynccontextmanager
@@ -316,7 +317,8 @@ def make_send_reply_use_case(
         messaging_gateway if messaging_gateway is not None else make_ycloud_messaging_gateway()
     )
     sent_messages = (
-        sent_message_repository if sent_message_repository is not None
+        sent_message_repository
+        if sent_message_repository is not None
         else make_sent_message_repository()
     )
 
