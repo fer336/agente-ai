@@ -36,11 +36,13 @@ Today one FastAPI app and one Swarm service (`backend`, 1 replica, host `agent.q
 - [x] S2 Role-aware `entrypoint.sh` and compose update.
 - [x] S3 `docker-stack.yml` admin service, Traefik priority, healthchecks, docs/runbook.
 - [x] S4 Resolve the open reset/debounce check and record the result. Evidence: `DebounceTracker.clear` only deletes the Redis key (`app/infrastructure/redis/debounce.py:48`) and `is_stale` treats a missing key as NOT stale (`:42`), so a reset never cancelled a bot task already sleeping in memory, in one process or two. Splitting does not change that behavior. Pre-existing and out of scope: a reset during an in-flight debounce window can still let the pending turn run.
-- [ ] S5 From the native review (reliability warning, `entrypoint.sh`): the admin role skips migrations and nothing orders it after the bot, so after a release with a migration it can serve on the old schema. The admin entrypoint must wait until `alembic current` reports head (bounded wait, then exit non-zero so Swarm restarts it) + test with a fake `uv`.
+- [x] S5 From the native review (reliability warning, `entrypoint.sh`): the admin role skips migrations and nothing orders it after the bot, so after a release with a migration it can serve on the old schema. The admin entrypoint must wait until `alembic current` reports head (bounded wait, then exit non-zero so Swarm restarts it) + test with a fake `uv`.
 
 S1 evidence: unit 3681 passed (3 known failures), ruff/mypy clean, RED observed (ImportError). Not verified: real uvicorn with APP_ROLE=admin|bot.
 
 S2+S3 evidence: unit 3688 passed (3 known failures), ruff/mypy clean; entrypoint checked with a fake `uv` for admin/bot/all/unset/unknown; stack validated offline with `docker compose config -q` and `docker stack config`; 7 stack tests with RED observed; release pin step passes with two `image:` lines (grep needs at least one match). Admin healthcheck uses /health (not /ready) on purpose to avoid restart loops on a Postgres/Redis blip. Not verified: a real Swarm/Traefik run, `python` on PATH in the image (copied from compose), uvicorn with APP_ROLE=admin|bot.
+
+S5 evidence: unit 3696 passed (3 known failures), ruff/mypy clean, RED observed (3 failed before), 8 entrypoint tests with a fake `uv`; alembic prints `<rev> (head)` at head (checked in alembic 1.19.0 source). Not verified: live DB, real Swarm retry, dash as /bin/sh in the image; multiple heads would pass on any `(head)` (repo has a single head).
 
 Native review (4 lenses, high risk, 2026-10-16): approved, no blocking findings. Warning R3 became S5. Readability suggestions left for later: one source for the valid role names (`app/main.py`, `Settings`, `entrypoint.sh`), and group the per-role router registration in `create_app`.
 
@@ -50,4 +52,4 @@ Native review (4 lenses, high risk, 2026-10-16): approved, no blocking findings.
 - Unit suite green except the 3 known failures in `tests/unit/api/dependencies/test_gateway_dependency.py`.
 
 ## Next step
-S5.
+All tasks done. Open decisions are the user's: push, PR, merge, release, deploy. Optional follow-up: one source for the valid role names.

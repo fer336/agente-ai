@@ -186,6 +186,12 @@ One image, three roles chosen with `APP_ROLE` (default `all`, today's behavior):
 
 An unknown value makes `entrypoint.sh` exit with an error.
 
+Because `admin` skips migrations, its entrypoint waits until `alembic current`
+reports the migration head before starting, so it never serves on a stale schema
+after a release that adds a migration. It polls every `ADMIN_SCHEMA_POLL_SECONDS`
+(default 3) for up to `ADMIN_SCHEMA_WAIT_SECONDS` (default 300), then exits with
+an error so the Swarm restart policy retries.
+
 In production the stack runs two services from the same image (the release
 pipeline pins both `image:` lines together):
 
