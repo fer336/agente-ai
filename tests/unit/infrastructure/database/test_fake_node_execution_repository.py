@@ -50,3 +50,19 @@ async def test_get_by_agent_run_id_returns_only_matching_executions_in_order():
 
 def test_fake_node_execution_repository_satisfies_protocol():
     assert isinstance(FakeNodeExecutionRepository(), NodeExecutionRepository)
+
+
+@pytest.mark.asyncio
+async def test_list_since_filters_orders_newest_first_and_applies_limit():
+    repository = make_node_execution_repository()
+    for id_, minute in (("old", 0), ("edge", 10), ("mid", 20), ("new", 30)):
+        await repository.save(
+            make_node_execution(id_=id_, started_at=datetime(2026, 8, 11, 9, minute, tzinfo=UTC))
+        )
+    since = datetime(2026, 8, 11, 9, 10, tzinfo=UTC)
+
+    all_recent = await repository.list_since(since, limit=10)
+    capped = await repository.list_since(since, limit=2)
+
+    assert [e.id for e in all_recent] == ["new", "mid", "edge"]
+    assert [e.id for e in capped] == ["new", "mid"]

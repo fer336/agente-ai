@@ -42,11 +42,24 @@ async def test_get_by_id_returns_none_when_missing(db_session):
 
 async def test_get_by_agent_run_id_returns_only_matching_executions(db_session, agent_run_id):
     repository = SqlAlchemyNodeExecutionRepository(db_session)
-    await repository.save(
-        _node_execution(agent_run_id, "ne-2", "resolve_interaction", COMPLETED)
-    )
+    await repository.save(_node_execution(agent_run_id, "ne-2", "resolve_interaction", COMPLETED))
     await repository.save(_node_execution(agent_run_id, "ne-3", "appointment", FAILED))
 
     executions = await repository.get_by_agent_run_id(agent_run_id)
 
     assert {execution.id for execution in executions} == {"ne-2", "ne-3"}
+
+
+async def test_list_since_filters_orders_newest_first_and_applies_limit(db_session, agent_run_id):
+    repository = SqlAlchemyNodeExecutionRepository(db_session)
+    for id_, minute in (("ne-old", 0), ("ne-edge", 10), ("ne-mid", 20), ("ne-new", 30)):
+        execution = _node_execution(agent_run_id, id_, "appointment", COMPLETED)
+        execution.started_at = datetime(2026, 8, 11, 9, minute, tzinfo=UTC)
+        await repository.save(execution)
+    since = datetime(2026, 8, 11, 9, 10, tzinfo=UTC)
+
+    recent = await repository.list_since(since, limit=10)
+    capped = await repository.list_since(since, limit=2)
+
+    assert [e.id for e in recent] == ["ne-new", "ne-mid", "ne-edge"]
+    assert [e.id for e in capped] == ["ne-new", "ne-mid"]
