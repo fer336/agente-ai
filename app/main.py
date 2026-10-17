@@ -27,6 +27,7 @@ from app.api.routes.admin_agent_control import router as admin_agent_control_rou
 from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
 from app.api.routes.admin_llm_config import router as admin_llm_config_router
+from app.api.routes.admin_pages import RevalidatingStaticFiles
 from app.api.routes.admin_pages import router as admin_pages_router
 from app.api.routes.chatwoot_webhook import router as chatwoot_webhook_router
 from app.api.routes.health import router as health_router
@@ -185,7 +186,11 @@ def create_app(role: str = "all") -> FastAPI:
         #: plain static files, no auth needed to fetch them (they carry no data,
         #: only markup/behavior; the real data calls from app.js are what the
         #: session cookie/CSRF check actually guards).
-        app.mount("/admin/static", StaticFiles(directory=_ADMIN_STATIC_DIR), name="admin-static")
+        app.mount(
+            "/admin/static",
+            RevalidatingStaticFiles(directory=_ADMIN_STATIC_DIR),
+            name="admin-static",
+        )
     if serves_bot:
         #: Public files WhatsApp's servers fetch by URL (e.g. the clinic location image
         #: sent with the "Cómo llegar" button). Serves only `app/static/public`; no auth,

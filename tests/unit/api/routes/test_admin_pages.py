@@ -170,3 +170,74 @@ async def test_app_js_defines_the_paused_banner_pointing_at_the_control_page():
 
     assert "/agent-control" in response.text
     assert "El agente está pausado" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/admin/agent", "/admin/kpis", "/admin/login"])
+async def test_pages_always_revalidate(path: str):
+    response = await _get(path)
+
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers.get("etag")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asset", ["style.css", "app.js", "agent-diagram.js"])
+async def test_static_assets_always_revalidate(asset: str):
+    response = await _get(f"/admin/static/{asset}")
+
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers.get("etag")
+
+
+@pytest.mark.asyncio
+async def test_static_asset_revalidation_answers_304_when_unchanged():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get("/admin/static/style.css")
+        second = await client.get(
+            "/admin/static/style.css", headers={"If-None-Match": first.headers["etag"]}
+        )
+
+    assert second.status_code == 304
+    assert second.headers["cache-control"] == "no-cache"
+
+
+_HEADER_PAGES = {
+    "/admin/conversations": ("Conversaciones", "/admin/conversations"),
+    "/admin/errors": ("Errores", "/admin/errors"),
+    "/admin/agent": ("Agente", "/admin/agent"),
+    "/admin/kpis": ("KPIs", "/admin/kpis"),
+    "/admin/agent-control": ("Control del agente", "/admin/agent-control"),
+    "/admin/llm-config": ("Configuración LLM", "/admin/llm-config"),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "expected"), list(_HEADER_PAGES.items()))
+async def test_header_has_the_title_on_the_left_and_marks_the_current_nav_item(
+    path: str, expected: tuple[str, str]
+):
+    title, href = expected
+    html = (await _get(path)).text
+
+    # Title and subtitle first, then the nav: the canvas header layout.
+    assert html.index('class="page-id"') < html.index('class="page-nav"')
+    assert f"<h1>{title}</h1>" in html
+    assert 'class="page-sub"' in html
+    assert html.count("<h1>") == 1
+    assert f'<a href="{href}" class="active" aria-current="page">' in html
+    assert html.count('aria-current="page"') == 1
+
+
+@pytest.mark.asyncio
+async def test_stylesheet_uses_the_canvas_tokens_and_a_legible_banner_link():
+    css = (await _get("/admin/static/style.css")).text
+
+    for token in ("--bg: #0f1115", "--panel: #171a21", "--border: #2a2e38", "--accent: #4f8cff"):
+        assert token in css
+    # The link inside the paused banner must not fall back to the browser's dark blue.
+    assert ".pause-banner a {" in css
+    assert "color: var(--accent-hover)" in css
+    # The diagram stage scrolls inside its panel instead of widening the page.
+    assert ".agd-canvas {\n  overflow-x: auto;" in css

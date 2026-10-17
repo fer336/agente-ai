@@ -19,20 +19,54 @@ const AgentDiagram = (() => {
 
   // ---------------------------------------------------------------- layout --
 
+  // Measures of the approved canvas (Main.dc.html): 176x64 boxes, an 87x36
+  // "Inicio" pill, a 191x64 error box, a 44px "Fin" bar.
   const GRID = 4;
-  const NODE_W = 144;
-  const NODE_H = 80;
-  const START_W = 96;
-  const START_H = 32;
+  const NODE_W = 176;
+  const NODE_H = 64;
+  const START_W = 87;
+  const START_H = 36;
+  const GEN_START_W = 88; // even, so the pill's centre sits on the 4 px grid like the boxes
   const DUMMY_W = 8; // virtual node that reserves a column for a long edge
   const GAP_X = 24;
-  const MARGIN = 24;
+  const MARGIN = 16;
   const MIN_CHANNEL = 48;
   const LANE_STEP = 8;
-  const ERR_W = 224;
+  const ERR_W = 191;
   const ERR_H = 64;
   const FIN_H = 44;
   const ERROR_NODE_ID = "handle_error";
+
+  // Fixed composition of the main graph on the canvas (see canvasPlan).
+  const CV = {
+    margin: 17,
+    tallW: 112,
+    tallH: 96,
+    tallGap: 6,
+    topY: 24, // top row: side node and error box
+    midY: 136, // entry and router
+    busY: 236, // horizontal bus under the router
+    leafY: 272,
+    finY: 456,
+    height: 520,
+    minWidth: 880,
+    colGap: 48, // start -> entry
+    routerGap: 96, // entry -> router
+  };
+  // Canvas order of the leaf row: nodes that feed each other sit side by side.
+  // Ids not listed keep the topology order, after the listed ones.
+  const LEAF_ORDER = [
+    "reminder_action",
+    "appointment",
+    "handoff",
+    "specialties",
+    "agreement",
+    "question",
+    "faq_topic",
+    "payment_admin",
+    "location",
+    "fallback",
+  ];
 
   const snap = (v) => Math.round(v / GRID) * GRID;
   const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
@@ -91,6 +125,8 @@ const AgentDiagram = (() => {
    * All coordinates are on a 4 px grid. Ranks run top to bottom.
    */
   function computeLayout(graph) {
+    const plan = canvasPlan(graph);
+    if (plan) return computeCanvasLayout(graph, plan);
     const endIds = new Set(graph.nodes.filter((n) => n.kind === "end").map((n) => n.id));
     const errorNode = graph.nodes.find((n) => n.id === ERROR_NODE_ID) || null;
     const layoutNodes = graph.nodes.filter((n) => !endIds.has(n.id) && n.id !== ERROR_NODE_ID);
@@ -107,7 +143,7 @@ const AgentDiagram = (() => {
         id: n.id,
         node: n,
         rank: rank.get(n.id),
-        w: isStart ? START_W : NODE_W,
+        w: isStart ? GEN_START_W : NODE_W,
         h: isStart ? START_H : NODE_H,
       });
     });
@@ -277,6 +313,7 @@ const AgentDiagram = (() => {
         label: n.label,
         kind: n.kind,
         traced: n.traced,
+        variant: n.kind === "start" ? "start" : "wide",
         x: cx.get(n.id) - it.w / 2,
         y: rowTop[it.rank] + (NODE_H - it.h) / 2,
         w: it.w,
@@ -303,9 +340,113 @@ const AgentDiagram = (() => {
       : null;
     const height = snap((fin ? fin.y + fin.h : lastBottom) + MARGIN);
     const errorBox = hasError
-      ? { id: errorNode.id, label: errorNode.label, x: width - MARGIN - ERR_W, y: 16, w: ERR_W, h: ERR_H }
+      ? { id: errorNode.id, label: errorNode.label, x: width - MARGIN - ERR_W, y: 24, w: ERR_W, h: ERR_H }
       : null;
-    return { width, height, nodes, edges: outEdges, fin, errorBox, title: { x: MARGIN, y: 32 } };
+    return { width, height, nodes, edges: outEdges, fin, errorBox, title: { x: MARGIN, y: 30 } };
+  }
+
+  /**
+   * Recognises the shape of the main graph and returns its parts, or null.
+   *
+   * start -> entry; the entry fans out to one router and at most one "side"
+   * node that only ends; the router fans out to every other node (the leaves).
+   * Anything else (several entries, a deeper tree, unreachable nodes) falls back
+   * to the generic layered layout, so a changed topology still renders.
+   */
+  function canvasPlan(graph) {
+    const start = graph.nodes.find((n) => n.kind === "start");
+    if (!start) return null;
+    const core = graph.nodes.filter((n) => n.kind !== "end" && n.id !== ERROR_NODE_ID);
+    const known = new Set(core.map((n) => n.id));
+    const out = (id) => [...new Set(graph.edges.filter((e) => e.from === id && known.has(e.to) && e.to !== id).map((e) => e.to))];
+    const entries = out(start.id);
+    if (entries.length !== 1) return null;
+    const entry = entries[0];
+    const next = out(entry)
+      .map((id) => ({ id, out: out(id) }))
+      .sort((a, b) => b.out.length - a.out.length);
+    if (!next.length || next[0].out.length < 2 || next.length > 2) return null;
+    const router = next[0].id;
+    const side = next.length === 2 ? next[1].id : null;
+    if (side && next[1].out.length) return null;
+    const seen = new Set([router]);
+    const queue = [router];
+    while (queue.length) out(queue.shift()).forEach((id) => {
+      if (!seen.has(id)) {
+        seen.add(id);
+        queue.push(id);
+      }
+    });
+    seen.delete(router);
+    const fixed = [start.id, entry, router, ...(side ? [side] : [])];
+    if (fixed.some((id) => seen.has(id)) || fixed.length + seen.size !== core.length) return null;
+    const order = (id) => {
+      const i = LEAF_ORDER.indexOf(id);
+      return i === -1 ? LEAF_ORDER.length + core.findIndex((n) => n.id === id) : i;
+    };
+    const leaves = [...seen].sort((a, b) => order(a) - order(b));
+    return { start: start.id, entry, router, side, leaves };
+  }
+
+  // Fixed-coordinate layout of the canvas composition (1208x520 for ten leaves):
+  // the entry and the router on the middle band, the side node above the entry,
+  // one bus from the router down to a single row of tall leaf boxes, the "Fin"
+  // bar below and the error box at the top right.
+  function computeCanvasLayout(graph, plan) {
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    const m = CV.margin;
+    const place = (id, x, y, w, h, variant) => {
+      const n = byId.get(id);
+      return { id, label: n.label, kind: n.kind, traced: n.traced, variant, x, y, w, h };
+    };
+    const count = plan.leaves.length;
+    const leavesW = count * CV.tallW + (count - 1) * CV.tallGap;
+    const width = Math.max(CV.minWidth, 2 * m + leavesW);
+    const start = place(plan.start, m, CV.midY + (NODE_H - START_H) / 2, START_W, START_H, "start");
+    const entry = place(plan.entry, start.x + START_W + CV.colGap, CV.midY, NODE_W, NODE_H, "wide");
+    const router = place(plan.router, entry.x + NODE_W + CV.routerGap, CV.midY, NODE_W, NODE_H, "wide");
+    const nodes = [start, entry, router];
+    let side = null;
+    if (plan.side) {
+      side = place(plan.side, entry.x, CV.topY, NODE_W, NODE_H, "wide");
+      nodes.push(side);
+    }
+    const leaves = plan.leaves.map((id, i) =>
+      place(id, m + i * (CV.tallW + CV.tallGap), CV.leafY, CV.tallW, CV.tallH, "tall")
+    );
+    nodes.push(...leaves);
+    const midLine = CV.midY + NODE_H / 2;
+    const cx = (n) => n.x + n.w / 2;
+    const edges = [
+      { from: start.id, to: entry.id, points: [[start.x + start.w, midLine], [entry.x, midLine]] },
+      { from: entry.id, to: router.id, points: [[entry.x + NODE_W, midLine], [router.x, midLine]] },
+    ];
+    if (side) edges.push({ from: entry.id, to: side.id, points: [[cx(entry), entry.y], [cx(entry), side.y + side.h]] });
+    leaves.forEach((leaf) => {
+      edges.push({
+        from: router.id,
+        to: leaf.id,
+        points: simplify([
+          [cx(router), router.y + router.h],
+          [cx(router), CV.busY],
+          [cx(leaf), CV.busY],
+          [cx(leaf), leaf.y],
+        ]),
+      });
+    });
+    const errorNode = graph.nodes.find((n) => n.id === ERROR_NODE_ID) || null;
+    const hasEnd = graph.nodes.some((n) => n.kind === "end");
+    return {
+      width,
+      height: CV.height,
+      nodes,
+      edges,
+      fin: hasEnd ? { x: m, y: CV.finY, w: width - 2 * m, h: FIN_H } : null,
+      errorBox: errorNode
+        ? { id: errorNode.id, label: errorNode.label, x: width - m - ERR_W, y: CV.topY, w: ERR_W, h: ERR_H }
+        : null,
+      title: { x: m, y: 30 },
+    };
   }
 
   // Removes repeated points and the middle point of collinear triples.
@@ -323,9 +464,26 @@ const AgentDiagram = (() => {
     return out;
   }
 
+  // Splits `text` right after any character of `breakChars`. Equivalent to
+  // text.split(/(?<=[chars])/) without a lookbehind, which Safari before 16.4 rejects at
+  // parse time (that would break the whole page).
+  function splitAfter(text, breakChars) {
+    const out = [];
+    let cur = "";
+    for (const ch of text) {
+      cur += ch;
+      if (breakChars.includes(ch)) {
+        out.push(cur);
+        cur = "";
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
   // Splits a snake_case name into at most two lines of <= maxChars.
   function splitName(label, maxChars = 20) {
-    const parts = label.split(/(?<=_)/);
+    const parts = splitAfter(label, "_");
     const lines = [""];
     parts.forEach((p) => {
       const cur = lines[lines.length - 1];
@@ -333,6 +491,36 @@ const AgentDiagram = (() => {
       else lines[lines.length - 1] = cur + p;
     });
     return lines.map((l) => (l.length > maxChars + 2 ? l.slice(0, maxChars + 1) + "…" : l));
+  }
+
+  // Text width in px for the SVG labels. Uses an offscreen canvas with the same
+  // font as the page (an SVG that is display:none cannot be measured); without
+  // a canvas (Node, old engines) it falls back to a flat 7 px per character.
+  let measureCtx = null;
+  function textWidth(text, bold) {
+    try {
+      if (measureCtx === null) measureCtx = document.createElement("canvas").getContext("2d") || false;
+      if (measureCtx) {
+        const family = getComputedStyle(document.body).fontFamily || "sans-serif";
+        measureCtx.font = `${bold ? 600 : 400} 12px ${family}`;
+        return measureCtx.measureText(text).width;
+      }
+    } catch (e) {
+      measureCtx = false;
+    }
+    return text.length * 7;
+  }
+
+  // Greedy wrap of `text` into lines of at most `maxPx`, breaking after "_" (for
+  // ids) or at spaces (for prose). A single piece wider than maxPx stays whole.
+  function wrapText(text, maxPx, bold, breakChars = "_ ") {
+    const lines = [];
+    splitAfter(text, breakChars).forEach((piece) => {
+      const cur = lines[lines.length - 1];
+      if (cur !== undefined && textWidth((cur + piece).trimEnd(), bold) <= maxPx) lines[lines.length - 1] = cur + piece;
+      else lines.push(piece);
+    });
+    return lines.map((l) => l.trimEnd());
   }
 
   // ------------------------------------------------------------ formatting --
@@ -563,12 +751,12 @@ const AgentDiagram = (() => {
     const defs = svgEl("defs", {}, svg);
     const marker = svgEl(
       "marker",
-      { id: markerId, markerWidth: 8, markerHeight: 8, refX: 8, refY: 4, orient: "auto", markerUnits: "userSpaceOnUse" },
+      { id: markerId, markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: "auto", markerUnits: "userSpaceOnUse" },
       defs
     );
     svgEl("path", { class: "agd-arrow-head", d: "M0 0 L8 4 L0 8 Z" }, marker);
 
-    svgText(svg, "agd-title", layout.title.x, layout.title.y, `Grafo · ${graph.label}`).setAttribute(
+    svgText(svg, "agd-title", layout.title.x, layout.title.y, `Grafo ${graph.label.toLowerCase()}`).setAttribute(
       "text-anchor",
       "start"
     );
@@ -576,11 +764,7 @@ const AgentDiagram = (() => {
     const edgeLayer = svgEl("g", { class: "agd-edges" }, svg);
     layout.edges.forEach((e) => {
       const d = e.points.map((p, i) => `${i ? "L" : "M"} ${p[0]} ${p[1]}`).join(" ");
-      svgEl(
-        "path",
-        { class: `agd-edge${e.conditional ? " agd-edge-cond" : ""}`, d, "marker-end": `url(#${markerId})` },
-        edgeLayer
-      );
+      svgEl("path", { class: "agd-edge", d, "marker-end": `url(#${markerId})` }, edgeLayer);
     });
 
     if (layout.fin) {
@@ -606,7 +790,7 @@ const AgentDiagram = (() => {
       const g = svgEl(
         "g",
         {
-          class: "agd-node agd-error agd-s-nodata",
+          class: "agd-node agd-error",
           transform: `translate(${b.x} ${b.y})`,
           "data-node-id": b.id,
           tabindex: 0,
@@ -615,9 +799,13 @@ const AgentDiagram = (() => {
         svg
       );
       svgEl("rect", { width: b.w, height: b.h, rx: 8 }, g);
-      svgText(g, "agd-name", b.w / 2, 24, b.label);
-      svgText(g, "agd-metric", b.w / 2, 40, "Recibe el error de");
-      svgText(g, "agd-metric", b.w / 2, 56, "cualquier nodo");
+      const note = wrapText("Recibe el error de cualquier nodo", b.w - 16, false);
+      let ey = (b.h - (note.length + 1) * 16) / 2 + 12;
+      svgText(g, "agd-name", b.w / 2, ey, b.label);
+      note.forEach((line) => {
+        ey += 16;
+        svgText(g, "agd-metric", b.w / 2, ey, line);
+      });
       caption = svgText(svg, "agd-caption", b.x + b.w / 2, b.y + b.h + 20, "—");
       views.set(b.id, { g, caption, isError: true, traced: false, label: b.label });
     }
@@ -637,8 +825,11 @@ const AgentDiagram = (() => {
       parent
     );
     svgEl("rect", { width: n.w, height: n.h, rx: 8 }, g);
-    const nameLines = splitName(n.label);
-    const total = nameLines.length + 2;
+    // Wide boxes show "metric · ● state" on one line (as on the canvas); the
+    // tall leaf boxes and the untraced ones use one line for each.
+    const oneLine = n.variant !== "tall" && n.traced;
+    const nameLines = wrapText(n.label, n.w - (n.variant === "tall" ? 12 : 16), true, "_");
+    const total = nameLines.length + (oneLine ? 1 : 2);
     let y = (n.h - total * 16) / 2 + 12;
     const cx = n.w / 2;
     nameLines.forEach((line) => {
@@ -646,19 +837,29 @@ const AgentDiagram = (() => {
       y += 16;
     });
     let metric = null;
-    if (n.traced) {
-      metric = svgText(g, "agd-metric", cx, y, "…");
+    let sep = null;
+    let state;
+    if (oneLine) {
+      state = svgEl("text", { class: "agd-state", x: cx, y, "text-anchor": "middle" }, g);
+      metric = svgEl("tspan", { class: "agd-metric" }, state);
+      sep = svgEl("tspan", { class: "agd-metric" }, state);
+      metric.textContent = "…";
+      sep.textContent = " · ";
     } else {
-      svgText(g, "agd-badge", cx, y, "interno, sin trazado");
+      if (n.traced) {
+        metric = svgText(g, "agd-metric", cx, y, "…");
+      } else {
+        svgText(g, "agd-badge", cx, y, "interno, sin trazado");
+      }
+      y += 16;
+      state = svgEl("text", { class: "agd-state", x: cx, y, "text-anchor": "middle" }, g);
     }
-    y += 16;
-    const state = svgEl("text", { class: "agd-state", x: cx, y, "text-anchor": "middle" }, g);
     const dot = svgEl("tspan", { class: "agd-dot" }, state);
     const label = svgEl("tspan", { class: "agd-state-text", dx: 4 }, state);
     dot.textContent = "○";
     label.textContent = n.traced ? "Cargando" : "Sin datos de nodo";
     if (!n.traced) g.setAttribute("class", "agd-node agd-s-nodata");
-    return { g, metric, dot, label, traced: n.traced, name: n.label };
+    return { g, metric, sep, dot, label, traced: n.traced, name: n.label };
   }
 
   // Derives what a node should show from its state entry (or lack of one).
@@ -688,6 +889,7 @@ const AgentDiagram = (() => {
     const keepSelected = view.g.classList.contains("agd-selected") ? " agd-selected" : "";
     view.g.setAttribute("class", `agd-node agd-s-${d.cls}${keepSelected}`);
     if (view.metric && view.metric.textContent !== d.metric) view.metric.textContent = d.metric;
+    if (view.sep) view.sep.textContent = d.metric ? " · " : "";
     if (view.dot.textContent !== d.dot) view.dot.textContent = d.dot;
     if (view.label.textContent !== d.text) view.label.textContent = d.text;
     view.g.setAttribute("aria-label", aria);
@@ -791,6 +993,22 @@ const AgentDiagram = (() => {
     return S.built.get(graph.id);
   }
 
+  // The stage keeps its natural size and scrolls inside its panel. Only when it
+  // is just a little wider than the panel (down to 92%, text still >= 11 px) it
+  // is scaled to fit, to avoid a scrollbar for a few pixels; below that, shrinking
+  // would make the 12 px labels unreadable, so the panel scrolls instead.
+  const FIT_MIN_SCALE = 0.92;
+
+  function fitStage() {
+    const b = S.built.get(activeGraph().id);
+    if (!b) return;
+    const avail = Math.floor($("agd-canvas").clientWidth);
+    const { width, height } = b.layout;
+    const scale = avail > 0 && avail < width && avail / width >= FIT_MIN_SCALE ? avail / width : 1;
+    b.svg.style.width = scale === 1 ? "" : `${avail}px`;
+    b.svg.style.height = scale === 1 ? "" : `${Math.round(height * scale)}px`;
+  }
+
   function setActive(index) {
     const n = S.graphs.length;
     S.active = ((index % n) + n) % n;
@@ -804,6 +1022,7 @@ const AgentDiagram = (() => {
     const focused = document.activeElement;
     if (focused && focused.closest && focused.closest("svg[hidden]")) focused.blur();
     syncTabs();
+    fitStage();
     renderDetail();
     rearm(); // any graph change (manual or automatic) restarts the 8 s timer
     writeHash();
@@ -846,14 +1065,14 @@ const AgentDiagram = (() => {
         const text = loading
           ? "—"
           : failedTotal === 0
-            ? "Sin fallos en la ventana"
-            : `${plural(failedTotal, "fallo", "fallos")} en la ventana`;
+            ? "Sin errores en la ventana"
+            : `${plural(failedTotal, "error", "errores")} en la ventana`;
         if (view.caption.textContent !== text) view.caption.textContent = text;
         view.g.setAttribute(
           "aria-label",
           loading
             ? `${view.label}, cargando`
-            : `${view.label}, ${failedTotal === 0 ? "sin fallos" : plural(failedTotal, "fallo", "fallos")} en la ventana`
+            : `${view.label}, ${failedTotal === 0 ? "sin errores" : plural(failedTotal, "error", "errores")} en la ventana`
         );
         return;
       }
@@ -1435,6 +1654,8 @@ const AgentDiagram = (() => {
       if (g) pin(g.getAttribute("data-node-id"));
     };
     canvas.addEventListener("click", pick);
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => S.graphs.length && fitStage()).observe(canvas);
+    else window.addEventListener("resize", () => S.graphs.length && fitStage());
     canvas.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();

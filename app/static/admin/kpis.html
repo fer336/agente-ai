@@ -8,17 +8,23 @@
 </head>
 <body class="kpi-page">
   <header class="topbar">
-    <nav>
-      <a href="/admin/conversations">Conversaciones</a>
-      <a href="/admin/errors">Errores</a>
-      <a href="/admin/agent">Agente</a>
-      <a href="/admin/kpis" class="active">KPIs</a>
-      <a href="/admin/agent-control">Control</a>
-      <a href="/admin/llm-config">Configuración LLM</a>
-    </nav>
-    <div class="who">
-      <span id="who-label"></span>
-      <button id="logout-btn">Salir</button>
+    <div class="page-id">
+      <h1>KPIs</h1>
+      <span class="page-sub">Turnos tomados y cancelados por el bot, y los más pedidos.</span>
+    </div>
+    <div class="page-nav">
+      <nav aria-label="Secciones">
+        <a href="/admin/conversations">Conversaciones</a>
+        <a href="/admin/errors">Errores</a>
+        <a href="/admin/agent">Agente</a>
+        <a href="/admin/kpis" class="active" aria-current="page">KPIs</a>
+        <a href="/admin/agent-control">Control</a>
+        <a href="/admin/llm-config">Configuración LLM</a>
+      </nav>
+      <div class="who">
+        <span id="who-label"></span>
+        <button id="logout-btn" type="button">Salir</button>
+      </div>
     </div>
   </header>
   <main class="kpi-main" id="kpi-main" aria-busy="true">
@@ -36,11 +42,6 @@
       </p>
     </header>
 
-    <div class="kpi-head">
-      <h1>KPIs</h1>
-      <span class="muted">Turnos tomados y cancelados por el bot, y los más pedidos.</span>
-    </div>
-
     <div class="kpi-toolbar">
       <div class="kpi-period">
         <div class="kpi-seg" id="kpi-presets" role="group" aria-label="Período">
@@ -52,7 +53,6 @@
         <span class="kpi-period-text" id="kpi-period-text"></span>
       </div>
       <div class="kpi-actions">
-        <span class="kpi-updated" id="kpi-updated" role="status"></span>
         <span class="kpi-export-hint" id="kpi-export-hint"></span>
         <button type="button" id="kpi-refresh" class="kpi-btn-quiet">Actualizar</button>
         <button type="button" id="kpi-export" class="kpi-btn-primary" aria-disabled="true" aria-describedby="kpi-export-hint">Exportar PDF</button>
@@ -79,7 +79,10 @@
     <div class="kpi-notice kpi-notice-warn" id="kpi-stale" role="status" hidden>
       <span id="kpi-stale-text"></span>
     </div>
-    <div class="kpi-notice" role="note">Datos registrados por el bot; no incluye turnos cargados o cancelados directamente en Dentalink.</div>
+    <div class="kpi-notice" role="note">
+      <span>Datos registrados por el bot; no incluye turnos cargados o cancelados directamente en Dentalink.</span>
+      <span class="kpi-updated" id="kpi-updated" role="status"></span>
+    </div>
 
     <div class="kpi-cards" id="kpi-cards">
       <div class="kpi-card kpi-sk" aria-hidden="true"><i></i><i></i><i></i></div>

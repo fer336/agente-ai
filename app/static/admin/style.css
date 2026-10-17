@@ -1,14 +1,28 @@
+/* Admin panel styles. Tokens, sizes and spacing follow the approved Claude
+   Design canvas (Main / Kpis / KpisPrint .dc.html): dark panel surfaces on
+   #0f1115, 1px #2a2e38 borders, 8px controls, 10px panels, 12-14px body text. */
+
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   --bg: #0f1115;
   --panel: #171a21;
   --border: #2a2e38;
   --text: #e6e8ec;
   --muted: #9aa0ac;
   --accent: #4f8cff;
+  --accent-hover: #8bb2ff;
   --ok: #3ecf8e;
   --warn: #f0b429;
   --err: #f0576a;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gutter: 32px;
+  --content-max: 1280px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 16px;
+  }
 }
 
 * {
@@ -19,64 +33,157 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font);
   font-size: 14px;
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Page shell: header (title left, nav right) + content column ---- */
+
+header.topbar,
+main {
+  width: min(100% - 2 * var(--gutter), var(--content-max));
+  margin-left: auto;
+  margin-right: auto;
 }
 
 header.topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  gap: 12px 24px;
+  margin-top: 24px;
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
-  background: var(--panel);
+}
+
+.page-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.page-id h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+.page-sub {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+}
+
+.page-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+header.topbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 20px;
+  font-size: 14px;
 }
 
 header.topbar nav a {
   color: var(--muted);
   text-decoration: none;
-  margin-right: 16px;
-  font-weight: 600;
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
 }
 
-header.topbar nav a:hover,
-header.topbar nav a.active {
+header.topbar nav a:hover {
   color: var(--text);
 }
 
+header.topbar nav a.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
 header.topbar .who {
-  color: var(--muted);
   display: flex;
   align-items: center;
   gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
-header.topbar button {
-  background: none;
+header.topbar .who button {
+  min-height: 28px;
+  padding: 0 12px;
+  background: transparent;
   border: 1px solid var(--border);
-  color: var(--muted);
   border-radius: 6px;
-  padding: 4px 10px;
-  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+header.topbar .who button:hover {
+  color: var(--text);
+}
+
+@media (max-width: 1100px) {
+  .page-nav {
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  header.topbar nav {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  header.topbar .who button {
+    min-height: 44px;
+  }
 }
 
 main {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 24px 20px;
+  margin-top: 20px;
+  padding-bottom: 48px;
 }
 
 h1 {
-  font-size: 18px;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
   margin: 0 0 16px;
 }
 
 h2 {
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
   margin: 24px 0 8px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 table {
@@ -84,7 +191,7 @@ table {
   border-collapse: collapse;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
 }
 
@@ -99,8 +206,7 @@ td {
 th {
   color: var(--muted);
   font-weight: 600;
-  font-size: 12px;
-  text-transform: uppercase;
+  font-size: 13px;
 }
 
 tbody tr:last-child td {
@@ -151,8 +257,8 @@ tbody tr.clickable:hover {
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 10px;
+  padding: 20px 24px;
   margin-bottom: 16px;
 }
 
@@ -165,7 +271,6 @@ tbody tr.clickable:hover {
 .field-grid dt {
   color: var(--muted);
   font-size: 12px;
-  text-transform: uppercase;
   margin-bottom: 2px;
 }
 
@@ -200,7 +305,7 @@ tbody tr.clickable:hover {
 
 .message .meta {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 4px;
 }
 
@@ -229,7 +334,6 @@ tbody tr.clickable:hover {
 }
 
 a.link {
-  color: var(--accent);
   text-decoration: none;
 }
 
@@ -237,24 +341,38 @@ a.link:hover {
   text-decoration: underline;
 }
 
+/* Buttons: primary = accent fill with dark ink (6:1), quiet = panel + border. */
+button.primary,
+button.danger,
+button.quiet {
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 button.primary {
   background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 14px;
-  cursor: pointer;
-  font-weight: 600;
+  color: var(--bg);
+  border: 0;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+button.quiet {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-weight: 400;
 }
 
 button.danger {
   background: transparent;
   color: var(--err);
   border: 1px solid var(--err);
-  border-radius: 6px;
-  padding: 8px 14px;
-  cursor: pointer;
-  font-weight: 600;
 }
 
 button:disabled {
@@ -277,10 +395,12 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px var(--gutter);
 }
 
 .login-card {
-  width: 320px;
+  width: 100%;
+  max-width: 360px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -294,17 +414,19 @@ button:disabled {
 .login-card label {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   margin: 12px 0 4px;
 }
 
 .login-card input {
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
   border: 1px solid var(--border);
-  background: #0b0d11;
+  background: var(--bg);
   color: var(--text);
+  font: inherit;
 }
 
 .login-card button {
@@ -327,7 +449,7 @@ button:disabled {
 .form-card label {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   margin: 16px 0 4px;
 }
 
@@ -336,7 +458,7 @@ button:disabled {
 }
 
 .form-card .hint {
-  font-size: 12px;
+  font-size: 13px;
   margin: 0 0 4px;
 }
 
@@ -344,13 +466,13 @@ button:disabled {
 .form-card input[type="number"],
 .form-card textarea {
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
   border: 1px solid var(--border);
-  background: #0b0d11;
+  background: var(--bg);
   color: var(--text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .form-card textarea {
@@ -367,21 +489,9 @@ button:disabled {
   --agd-edge: #6b7280; /* edge/arrow stroke; no existing token is dim enough */
   --agd-idle: #6b7280; /* "no data" dot */
   --agd-dash: #3a3f4b;
-  max-width: 1400px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.agd-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.agd-head h1 {
-  font-size: 22px;
-  margin: 0;
+  gap: 20px;
 }
 
 .agd-toolbar {
@@ -587,17 +697,23 @@ button:disabled {
   cursor: default;
 }
 
+/* The status message lives in the gap above the diagram: it takes no space of
+   its own (negative margins cancel its height and the flex gap), so it never
+   shifts the diagram when it appears or goes away. */
 .agd-status {
-  min-height: 18px; /* reserved so the message appearing never shifts the diagram */
-  margin: -8px 0;
+  height: 18px;
+  margin: -20px 0 -18px;
   font-size: 13px;
+  line-height: 18px;
   color: var(--muted);
 }
 
 .agd-stage {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  overflow: hidden;
 }
 
 .agd-canvas {
@@ -625,12 +741,9 @@ button:disabled {
 .agd-edge {
   fill: none;
   stroke: var(--agd-edge);
-  stroke-width: 1.5;
+  stroke-width: 2;
+  stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.agd-edge-cond {
-  stroke-dasharray: 6 4;
 }
 
 .agd-arrow-head {
@@ -640,7 +753,7 @@ button:disabled {
 .agd-fin rect {
   fill: none;
   stroke: var(--agd-dash);
-  stroke-dasharray: 4 4;
+  stroke-dasharray: 3 3;
 }
 
 .agd-fin-text,
@@ -691,12 +804,12 @@ button:disabled {
 
 .agd-node.agd-error rect {
   stroke: var(--err);
-  stroke-dasharray: 4 3;
+  stroke-dasharray: 3 3;
 }
 
 .agd-name {
   fill: var(--text);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .agd-badge {
@@ -902,21 +1015,9 @@ button:disabled {
 /* ---- KPIs page (/admin/kpis) ---- */
 
 .kpi-main {
-  max-width: 1400px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.kpi-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.kpi-head h1 {
-  font-size: 22px;
-  margin: 0;
+  gap: 20px;
 }
 
 .kpi-toolbar {
@@ -974,8 +1075,8 @@ button:disabled {
 .kpi-btn-primary,
 .kpi-btn-quiet,
 .kpi-banner button {
-  min-height: 36px;
-  padding: 0 16px;
+  min-height: 44px;
+  padding: 0 20px;
   border-radius: 8px;
   font: inherit;
   font-size: 14px;
@@ -991,7 +1092,7 @@ button:disabled {
 
 .kpi-btn-quiet,
 .kpi-banner button {
-  background: none;
+  background: var(--panel);
   border: 1px solid var(--border);
   color: var(--text);
 }
@@ -1007,6 +1108,11 @@ button:disabled {
   font-size: 13px;
   line-height: 20px;
   color: var(--muted);
+}
+
+/* Short wording of the printed report; see kpis.js renderCards. */
+.kpi-print-only {
+  display: none;
 }
 
 .kpi-export-hint:empty {
@@ -1082,6 +1188,10 @@ button:disabled {
 }
 
 .kpi-notice {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 24px;
   padding: 12px 16px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1140,7 +1250,7 @@ button:disabled {
 .kpi-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .kpi-busy .kpi-cards,
@@ -1213,7 +1323,7 @@ button:disabled {
 
 .kpi-axis text {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .kpi-line-taken,
@@ -1262,7 +1372,7 @@ button:disabled {
 
 .kpi-bar-row {
   display: grid;
-  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) minmax(32px, auto);
   align-items: center;
   gap: 12px;
   font-size: 14px;
@@ -1304,11 +1414,20 @@ button:disabled {
 }
 
 .kpi-heat {
+  background: none;
+  border: 0;
+  border-radius: 0;
   border-collapse: separate;
   border-spacing: 3px;
   min-width: 540px;
   width: 100%;
   table-layout: fixed;
+}
+
+.kpi-heat th,
+.kpi-heat td {
+  padding: 0;
+  border: 0;
 }
 
 .kpi-heat th {
@@ -1365,6 +1484,9 @@ button:disabled {
 
 .kpi-table {
   width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 0;
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -1372,6 +1494,7 @@ button:disabled {
 .kpi-table th,
 .kpi-table td {
   padding: 8px 12px;
+  vertical-align: middle;
   border-bottom: 1px solid var(--border);
   text-align: left;
 }
@@ -1449,12 +1572,13 @@ button:disabled {
 }
 
 /* ---- KPIs page: A4 print layout (browser "Save as PDF") ----
-   Light theme whatever the screen theme is. The content box of the page is
-   186mm x 273mm (about 703 x 1032 CSS px); the standard 30-day report is
-   sized to fit it on one sheet. Type is 12px or larger, rules 1px or thicker. */
+   Mirrors KpisPrint.dc.html: light theme whatever the screen theme is, content
+   box of 698 x 1027 CSS px (A4 minus a 48 px margin); the standard 30-day
+   report is sized to fit it on one sheet. Type is 12px or larger, rules 1px
+   or thicker. */
 @page {
   size: A4;
-  margin: 12mm;
+  margin: 48px; /* 0.5 in: the canvas page is 794 x 1123 px with 48 px padding */
 }
 
 @media print {
@@ -1481,7 +1605,6 @@ button:disabled {
      error states, the on-screen notices (the footer carries the same text)
      and every interactive affordance. */
   .kpi-page .topbar,
-  .kpi-page .kpi-head,
   .kpi-page .kpi-toolbar,
   .kpi-page .kpi-custom,
   .kpi-page .kpi-banner,
@@ -1494,10 +1617,17 @@ button:disabled {
   }
 
   .kpi-page main.kpi-main {
+    width: auto;
     max-width: none;
     margin: 0;
     padding: 0;
-    gap: 14px;
+    gap: 18px;
+  }
+
+  /* Tall enough to push the footer to the bottom, short enough (the content box
+     is 1027 px) never to open a second sheet by itself. */
+  .kpi-page main.kpi-printable {
+    min-height: 1000px;
   }
 
   .kpi-page .kpi-busy .kpi-cards,
@@ -1508,6 +1638,10 @@ button:disabled {
   }
 
   /* Header */
+  .kpi-page .kpi-print-only {
+    display: inline;
+  }
+
   .kpi-page .kpi-print-head {
     display: flex;
     align-items: flex-end;
@@ -1559,7 +1693,7 @@ button:disabled {
 
   .kpi-page .kpi-card {
     gap: 2px;
-    padding: 10px 12px;
+    padding: 12px;
     border: 1px solid #c9cdd4;
     border-radius: 6px;
     break-inside: avoid;
@@ -1592,7 +1726,7 @@ button:disabled {
 
   /* Sections: no boxes, a heading and its figure kept together */
   .kpi-page .kpi-content {
-    gap: 14px;
+    gap: 18px;
   }
 
   .kpi-page .kpi-panel {
@@ -1770,7 +1904,7 @@ button:disabled {
   /* Footer: scope note, evidence caveat, truncation notice */
   .kpi-page .kpi-print-foot {
     display: block;
-    margin-top: 4px;
+    margin-top: auto; /* pinned to the bottom of the sheet, as on the canvas */
     padding-top: 8px;
     border-top: 1px solid #c9cdd4;
     font-size: 12px;
@@ -1803,45 +1937,79 @@ button:disabled {
 /* ---- Agent control page (/admin/agent-control) and paused banner ---- */
 
 .pause-banner {
-  background: rgba(240, 180, 41, 0.14);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px 8px;
+  padding: 10px var(--gutter);
+  /* Opaque warning surface: the link contrast below is computed against it. */
+  background: #2f2818;
   border-bottom: 1px solid var(--warn);
   color: var(--text);
-  padding: 8px 20px;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Lighter accent tint (the canvas link hover colour): 6.9:1 on the surface above,
+   where the plain accent is only 4.5:1. Underlined so it never relies on colour. */
+.pause-banner a {
+  color: var(--accent-hover);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.pause-banner a:hover {
+  color: #ffffff;
 }
 
 .ctl-status {
-  border: 1px solid var(--border);
-  border-left-width: 6px;
-  border-radius: 8px;
-  background: var(--panel);
-  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   margin-bottom: 20px;
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
-.ctl-status.is-active {
-  border-left-color: var(--ok);
-}
-
+/* The state is always written out ("Agente activo" / "Agente PAUSADO"); the
+   coloured dot and border only reinforce it. */
 .ctl-status.is-paused {
-  border-left-color: var(--warn);
-  background: rgba(240, 180, 41, 0.08);
+  border-color: var(--warn);
 }
 
 .ctl-status-title {
+  margin: 0;
   font-size: 24px;
-  font-weight: 700;
-  margin: 0 0 6px;
+  line-height: 28px;
+  font-weight: 600;
 }
 
-.ctl-status-detail {
-  margin: 0 0 16px;
+.ctl-status-title::before {
+  content: "●" / "";
+  margin-right: 10px;
+  font-size: 18px;
+  vertical-align: 2px;
   color: var(--muted);
 }
 
-.ctl-toggle {
-  font-size: 15px;
-  padding: 10px 18px;
+.ctl-status.is-active .ctl-status-title::before {
+  color: var(--ok);
+}
+
+.ctl-status.is-paused .ctl-status-title::before {
+  color: var(--warn);
+}
+
+.ctl-status-detail {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--muted);
 }
 
 .ctl-section {
@@ -1856,28 +2024,35 @@ button:disabled {
   display: block;
   margin: 12px 0 4px;
   color: var(--muted);
-  font-size: 12px;
-}
-
-.ctl-section select {
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: #0b0d11;
-  color: var(--text);
   font-size: 13px;
 }
 
+.ctl-section select {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
 .ctl-help {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 20px;
   color: var(--muted);
   margin: 6px 0;
 }
 
 .ctl-feedback {
-  min-height: 18px;
+  min-height: 20px;
   margin-top: 10px;
   font-size: 13px;
+  line-height: 20px;
+}
+
+.ctl-status .ctl-feedback {
+  margin-top: 0;
 }
 
 .ctl-feedback.is-ok {
