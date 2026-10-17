@@ -71,3 +71,17 @@ async def test_get_first_returns_the_earliest_referral_of_the_conversation():
     assert first is not None
     assert first.id == "early"
     assert await repository.get_first_for_conversation(ConversationId("other")) is None
+
+
+@pytest.mark.asyncio
+async def test_get_latest_returns_the_most_recent_referral_of_the_conversation():
+    repository = FakeConversationAdReferralRepository()
+    await repository.save_if_new(_referral("late", source_id="b", first_seen_at=_NOW))
+    await repository.save_if_new(
+        _referral("early", source_id="a", first_seen_at=_NOW - timedelta(minutes=5))
+    )
+
+    latest = await repository.get_latest_for_conversation(ConversationId("conv-1"))
+
+    assert latest is not None
+    assert latest.id == "late"

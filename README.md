@@ -331,6 +331,22 @@ from the panel and can restrict it to or exclude specific contacts.
   only matters if the row is edited directly in the database.
 - While paused, every admin page shows a "El agente está pausado" banner.
 
+## Click-to-WhatsApp ad attribution
+
+When a patient writes after clicking a Facebook/Instagram Click-to-WhatsApp ad, Meta
+attaches a `referral` object to the first message. The webhook stores it in
+`conversation_ad_referrals` (one row per conversation and ad id, with the bounded raw
+object) so ads can later be tied to bookings.
+
+- The YCloud nesting is unverified. It is read from `whatsappInboundMessage.referral`
+  (then `context.referral`) and never rejects a message; check the `raw` column of the
+  first real ad lead to confirm the shape. Run `alembic upgrade head` (migration 0024).
+- Storing the referral never changes the bot's reply and never blocks the message.
+- Meta's own ad welcome message is not sent by the bot. If it arrives as a business-sent
+  echo within 60 s of the lead's first ad message, it is ignored instead of pausing the
+  bot (staff `/bot` and `/adm` still work). This guard rests on an unverified assumption
+  about the echo payload.
+
 ## Documentation
 
 | File | What it is |

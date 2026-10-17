@@ -101,3 +101,16 @@ async def test_get_first_returns_the_earliest(db_session, conversation_id):
 
     assert first is not None
     assert first.id == "early"
+
+
+async def test_get_latest_returns_the_most_recent(db_session, conversation_id):
+    repository = SqlAlchemyConversationAdReferralRepository(db_session)
+    await repository.save_if_new(_referral("late", conversation_id, "b", _NOW))
+    await repository.save_if_new(
+        _referral("early", conversation_id, "a", _NOW - timedelta(minutes=5))
+    )
+
+    latest = await repository.get_latest_for_conversation(ConversationId(conversation_id))
+
+    assert latest is not None
+    assert latest.id == "late"

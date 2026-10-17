@@ -49,11 +49,22 @@ class SqlAlchemyConversationAdReferralRepository:
     async def get_first_for_conversation(
         self, conversation_id: ConversationId
     ) -> ConversationAdReferral | None:
+        return await self._get_one(conversation_id, descending=False)
+
+    async def get_latest_for_conversation(
+        self, conversation_id: ConversationId
+    ) -> ConversationAdReferral | None:
+        return await self._get_one(conversation_id, descending=True)
+
+    async def _get_one(
+        self, conversation_id: ConversationId, *, descending: bool
+    ) -> ConversationAdReferral | None:
         model_class = ConversationAdReferralModel
+        order = model_class.first_seen_at.desc() if descending else model_class.first_seen_at.asc()
         model = await self._session.scalar(
             select(model_class)
             .where(model_class.conversation_id == str(conversation_id))
-            .order_by(model_class.first_seen_at.asc())
+            .order_by(order)
             .limit(1)
         )
         if model is None:

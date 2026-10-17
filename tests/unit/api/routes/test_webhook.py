@@ -12,6 +12,7 @@ from app.api.dependencies.errors import (
 from app.api.dependencies.gateways import get_messaging_gateway, get_mirror_to_chatwoot_use_case
 from app.api.dependencies.repositories import (
     get_committing_conversation_repository,
+    get_conversation_ad_referral_repository,
     get_conversation_repository,
 )
 from app.api.dependencies.use_cases import get_ingest_message_use_case
@@ -19,6 +20,7 @@ from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.config.settings import Settings, get_settings
 from app.domain.entities.admin_user import ADMIN_TECHNICAL
+from app.domain.entities.conversation_ad_referral import ConversationAdReferral
 from app.domain.entities.sent_message import SentMessage
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
@@ -29,6 +31,9 @@ from app.infrastructure.database.fake_chatwoot_mapping_repository import (
     FakeChatwootMappingRepository,
 )
 from app.infrastructure.database.fake_contact_repository import FakeContactRepository
+from app.infrastructure.database.fake_conversation_ad_referral_repository import (
+    FakeConversationAdReferralRepository,
+)
 from app.infrastructure.database.fake_conversation_repository import FakeConversationRepository
 from app.infrastructure.database.fake_error_repository import FakeErrorRepository
 from app.infrastructure.database.fake_message_repository import FakeMessageRepository
@@ -294,13 +299,18 @@ class _TagWebhookFakes:
     messaging_gateway: FakeYCloudMessagingGateway
     conversation_repository: FakeConversationRepository
     chatwoot_gateway: FakeChatwootGateway
+    ad_referral_repository: FakeConversationAdReferralRepository
 
 
 @pytest.fixture
 def _tag_webhook_fakes():
     messaging_gateway = FakeYCloudMessagingGateway()
     conversation_repository = FakeConversationRepository()
+    ad_referral_repository = FakeConversationAdReferralRepository()
     app.dependency_overrides[get_messaging_gateway] = lambda: messaging_gateway
+    app.dependency_overrides[get_conversation_ad_referral_repository] = lambda: (
+        ad_referral_repository
+    )
     # The webhook route now rides the committing dependency (its writes must
     # outlive the request); override BOTH so tests keep using this fake for
     # either wiring.
@@ -326,8 +336,10 @@ def _tag_webhook_fakes():
         messaging_gateway=messaging_gateway,
         conversation_repository=conversation_repository,
         chatwoot_gateway=chatwoot_gateway,
+        ad_referral_repository=ad_referral_repository,
     )
 
+    del app.dependency_overrides[get_conversation_ad_referral_repository]
     del app.dependency_overrides[get_mirror_to_chatwoot_use_case]
     del app.dependency_overrides[get_messaging_gateway]
     del app.dependency_overrides[get_conversation_repository]
@@ -374,6 +386,44 @@ async def test_tag_change_for_unresolvable_contact_acked_not_500(_tag_webhook_fa
 
     assert response.status_code == 200
     assert response.json() == {"status": "ignored"}
+
+
+@pytest.mark.asyncio
+async def test_smb_echo_right_after_an_ad_first_message_does_not_pause_the_bot(
+    _tag_webhook_fakes,
+):
+    # Meta's CTWA welcome message is business-sent; if YCloud echoes it, it must not
+    # be read as a staff takeover of the ad lead's conversation.
+    fakes = _tag_webhook_fakes
+    patient_phone = "+15555550125"
+    conversation_id = f"ycloud-{patient_phone}"
+    await fakes.conversation_repository.save(make_conversation(id_=conversation_id, mode="agent"))
+    await fakes.ad_referral_repository.save_if_new(
+        ConversationAdReferral(
+            id="r1",
+            conversation_id=conversation_id,
+            contact_id="contact-1",
+            source_id="120239003788760630",
+            source_type="ad",
+            source_url=None,
+            headline=None,
+            ctwa_clid=None,
+            raw={},
+            first_seen_at=datetime.now(UTC),
+            message_external_id="wamid.1",
+        )
+    )
+
+    response = await _post_webhook(
+        make_ycloud_smb_echo_payload(
+            patient_phone=patient_phone, text_body="¡Hola! ¿Cómo podemos ayudarte?"
+        )
+    )
+
+    assert response.status_code == 200
+    conversation = await fakes.conversation_repository.get_by_id(ConversationId(conversation_id))
+    assert conversation is not None
+    assert conversation.mode == "agent"
 
 
 @pytest.mark.asyncio

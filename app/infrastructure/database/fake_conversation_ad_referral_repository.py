@@ -23,3 +23,9 @@ class FakeConversationAdReferralRepository:
     ) -> ConversationAdReferral | None:
         rows = [row for row in self._rows if row.conversation_id == str(conversation_id)]
         return min(rows, key=lambda row: row.first_seen_at, default=None)
+
+    async def get_latest_for_conversation(
+        self, conversation_id: ConversationId
+    ) -> ConversationAdReferral | None:
+        rows = [row for row in self._rows if row.conversation_id == str(conversation_id)]
+        return max(rows, key=lambda row: row.first_seen_at, default=None)

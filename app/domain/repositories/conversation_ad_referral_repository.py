@@ -19,3 +19,9 @@ class ConversationAdReferralRepository(Protocol):
     ) -> ConversationAdReferral | None:
         """The earliest referral (by `first_seen_at`) of the conversation, if any."""
         ...
+
+    async def get_latest_for_conversation(
+        self, conversation_id: ConversationId
+    ) -> ConversationAdReferral | None:
+        """The most recent referral (by `first_seen_at`) of the conversation, if any."""
+        ...

@@ -23,6 +23,9 @@ from app.config.settings import get_settings
 from app.domain.entities.appointment_reminder import AppointmentReminder
 from app.domain.repositories.chatwoot_mapping_repository import ChatwootMappingRepository
 from app.domain.repositories.contact_repository import ContactRepository
+from app.domain.repositories.conversation_ad_referral_repository import (
+    ConversationAdReferralRepository,
+)
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import TemplateMessage
 from app.domain.repositories.incident_repository import IncidentRepository
@@ -134,6 +137,17 @@ def get_committing_conversation_repository(
     because the injected repo rode a non-committing session.
     """
     return SqlAlchemyConversationRepository(session)
+
+
+def get_conversation_ad_referral_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> ConversationAdReferralRepository:
+    """FastAPI dependency providing the `ConversationAdReferralRepository` port.
+
+    Read-only on the webhook route (the echo handler asks whether a conversation
+    came from an ad), so the plain non-committing session is enough.
+    """
+    return SqlAlchemyConversationAdReferralRepository(session)
 
 
 @asynccontextmanager

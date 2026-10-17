@@ -13,7 +13,10 @@ from app.api.dependencies.gateways import (
     get_messaging_gateway,
     get_mirror_to_chatwoot_use_case,
 )
-from app.api.dependencies.repositories import get_committing_conversation_repository
+from app.api.dependencies.repositories import (
+    get_committing_conversation_repository,
+    get_conversation_ad_referral_repository,
+)
 from app.api.dependencies.use_cases import get_ingest_message_use_case
 from app.application.conversations.handle_smb_message_echo import HandleSmbMessageEchoUseCase
 from app.application.errors.error_service import ErrorService
@@ -21,6 +24,9 @@ from app.application.errors.error_types import YCLOUD_SEND_FAILURE
 from app.application.messages.ingest_message import IngestMessageUseCase
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.config.settings import Settings, get_settings
+from app.domain.repositories.conversation_ad_referral_repository import (
+    ConversationAdReferralRepository,
+)
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.gateways import MessagingGateway
 from app.domain.repositories.sent_message_repository import SentMessageRepository
@@ -87,6 +93,9 @@ async def receive_ycloud_webhook(
     sent_message_repository: SentMessageRepository = Depends(
         get_committing_sent_message_repository
     ),
+    ad_referral_repository: ConversationAdReferralRepository = Depends(
+        get_conversation_ad_referral_repository
+    ),
     error_service: ErrorService = Depends(get_committing_error_service),
 ) -> WebhookAckResponse:
     """YCloud is the sole webhook counterparty (WhatsApp -> YCloud -> us).
@@ -133,10 +142,13 @@ async def receive_ycloud_webhook(
 
         staff_command = extract_staff_command(echo_payload)
         is_reactivation_command = staff_command == "bot"
-        handle_echo = HandleSmbMessageEchoUseCase(conversation_repository)
+        handle_echo = HandleSmbMessageEchoUseCase(conversation_repository, ad_referral_repository)
+        ignored_as_ad_welcome = False
         try:
-            await handle_echo.execute(
-                patient_phone, is_reactivation_command=is_reactivation_command
+            ignored_as_ad_welcome = await handle_echo.execute(
+                patient_phone,
+                is_reactivation_command=is_reactivation_command,
+                is_staff_command=staff_command is not None,
             )
         except Exception:
             # Best-effort, same ack-and-drop stance as the tag branch above
@@ -184,13 +196,15 @@ async def receive_ycloud_webhook(
                             patient_phone,
                             echo_text,
                         )
-                    # Any staff message (or `/adm`) pauses the bot, so the label says so too.
-                    background_tasks.add_task(
-                        mirror_to_chatwoot.escalate_to_administracion,
-                        echo_conversation_id,
-                        echo_phone,
-                        patient_phone,
-                    )
+                    # Any staff message (or `/adm`) pauses the bot, so the label says so too,
+                    # except Meta's ad welcome, which left the bot active.
+                    if not ignored_as_ad_welcome:
+                        background_tasks.add_task(
+                            mirror_to_chatwoot.escalate_to_administracion,
+                            echo_conversation_id,
+                            echo_phone,
+                            patient_phone,
+                        )
         return WebhookAckResponse(status="accepted")
 
     if is_message_status_event(event_type):
