@@ -37,8 +37,8 @@ def _override_llm_config_dependencies():
     audit_log_repository = FakeAdminAuditLogRepository()
 
     app.dependency_overrides[get_runtime_config_service] = lambda: runtime_config_service
-    app.dependency_overrides[get_committing_admin_audit_log_repository] = (
-        lambda: audit_log_repository
+    app.dependency_overrides[get_committing_admin_audit_log_repository] = lambda: (
+        audit_log_repository
     )
 
     yield runtime_config_service, audit_log_repository

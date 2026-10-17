@@ -29,7 +29,9 @@ async def test_sends_chat_id_and_text_to_the_send_message_endpoint(
 ) -> None:
     captured = _capture_requests(monkeypatch, httpx.Response(200, json={"ok": True}))
     notifier = TelegramAlertNotifier(
-        base_url="https://api.telegram.org", bot_token="secret-token", chat_id="chat-1",
+        base_url="https://api.telegram.org",
+        bot_token="secret-token",
+        chat_id="chat-1",
         timeout_seconds=10,
     )
 
@@ -46,7 +48,9 @@ async def test_sends_chat_id_and_text_to_the_send_message_endpoint(
 async def test_raises_on_non_2xx(monkeypatch: pytest.MonkeyPatch) -> None:
     _capture_requests(monkeypatch, httpx.Response(401, text="unauthorized"))
     notifier = TelegramAlertNotifier(
-        base_url="https://api.telegram.org", bot_token="bad-token", chat_id="chat-1",
+        base_url="https://api.telegram.org",
+        bot_token="bad-token",
+        chat_id="chat-1",
         timeout_seconds=10,
     )
 
@@ -68,7 +72,9 @@ async def test_raises_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(notifier_module.httpx, "AsyncClient", patched_async_client)
     notifier = TelegramAlertNotifier(
-        base_url="https://api.telegram.org", bot_token="token", chat_id="chat-1",
+        base_url="https://api.telegram.org",
+        bot_token="token",
+        chat_id="chat-1",
         timeout_seconds=10,
     )
 

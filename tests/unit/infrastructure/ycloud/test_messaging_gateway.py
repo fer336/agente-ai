@@ -156,9 +156,7 @@ async def test_send_flow_delegates_to_client_with_stringified_phone():
         flow_token="ycloud-+5491122334455",
     )
 
-    external_id = await gateway.send_flow(
-        PhoneNumber("+5491122334455"), "Verificá tus datos", flow
-    )
+    external_id = await gateway.send_flow(PhoneNumber("+5491122334455"), "Verificá tus datos", flow)
 
     assert client.flow_calls == [
         (

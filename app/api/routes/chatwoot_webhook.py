@@ -135,8 +135,7 @@ async def receive_chatwoot_webhook(
                 )
             else:
                 logger.info(
-                    "chatwoot_webhook.staff_command_applied "
-                    "chatwoot_conversation_id=%s command=%s",
+                    "chatwoot_webhook.staff_command_applied chatwoot_conversation_id=%s command=%s",
                     chatwoot_conversation_id,
                     staff_command,
                 )

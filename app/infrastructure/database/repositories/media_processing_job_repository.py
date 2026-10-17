@@ -21,9 +21,7 @@ class SqlAlchemyMediaProcessingJobRepository:
 
     async def get_by_message_id(self, message_id: str) -> MediaProcessingJob | None:
         result = await self._session.execute(
-            select(MediaProcessingJobModel).where(
-                MediaProcessingJobModel.message_id == message_id
-            )
+            select(MediaProcessingJobModel).where(MediaProcessingJobModel.message_id == message_id)
         )
         model = result.scalar_one_or_none()
         if model is None:

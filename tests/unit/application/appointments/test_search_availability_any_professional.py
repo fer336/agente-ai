@@ -16,9 +16,7 @@ class _RecordingGateway:
     exactly as the real gateway's server-side `id_especialidad` filter would,
     sorted and cut at `limit`."""
 
-    def __init__(
-        self, slots: list[AppointmentSlot], professionals: list[Professional]
-    ) -> None:
+    def __init__(self, slots: list[AppointmentSlot], professionals: list[Professional]) -> None:
         self._slots = slots
         self._professionals = professionals
         self.calls: list[tuple[str, DateTimeRange, int]] = []

@@ -17,9 +17,7 @@ _CACHE_KEY = "runtime_agent_config"
 #: `IngestMessageUseCase.repositories_provider`) — an async-context-manager
 #: factory, so a fresh session is opened per call rather than held open for
 #: this service's lifetime.
-RuntimeConfigRepositoryProvider = Callable[
-    [], AbstractAsyncContextManager[RuntimeConfigRepository]
-]
+RuntimeConfigRepositoryProvider = Callable[[], AbstractAsyncContextManager[RuntimeConfigRepository]]
 
 
 class RuntimeConfigService:

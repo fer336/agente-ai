@@ -1,8 +1,13 @@
 import pytest
 
-from app.agent.nodes.fallback import create_fallback_node
+from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE, create_fallback_node
+from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.repositories.llm_provider import ResponseContext
-from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+)
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 from app.infrastructure.llm.exceptions import LLMTimeoutError
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
@@ -10,95 +15,66 @@ from tests.fixtures.agent_state import make_agent_state
 
 
 @pytest.mark.asyncio
-async def test_fallback_node_shows_the_book_and_administracion_buttons():
+async def test_out_of_scope_reply_is_the_approved_fixed_text():
+    node = create_fallback_node(FakeLLMProvider())
+
+    result = await node(make_agent_state(user_message="asdkjaslkdj"))
+
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
+    assert OUT_OF_SCOPE_MESSAGE == (
+        "Disculpame, con eso no te puedo ayudar por acá 🙏 Solo puedo guiarte con la "
+        "información del menú principal.\n"
+        "Si querés sacar un turno, tocá *Agendar una cita*. Y si necesitás otra cosa, "
+        "escribile a *Administración* o volvé al *Menú*."
+    )
+    assert result["requires_handoff"] is False
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_reply_has_exactly_the_three_buttons():
     node = create_fallback_node(FakeLLMProvider())
 
     result = await node(make_agent_state(user_message="asdkjaslkdj"))
 
     buttons = result["response_buttons"]
-    assert [button.id for button in buttons] == [
-        OPERATION_CREATE_PAYLOAD,
-        MENU_ADMIN_PAYLOAD,
+    assert [(button.id, button.title) for button in buttons] == [
+        (OPERATION_CREATE_PAYLOAD, "📅 Agendar una cita"),
+        (MENU_ADMIN_PAYLOAD, "💬 Administración"),
+        (MENU_MAIN_PAYLOAD, "📋 Menú principal"),
     ]
-    assert [button.title for button in buttons] == ["📅 Agendar una cita", "💬 Administración"]
-    assert result["requires_handoff"] is False
+    # WhatsApp: at most 3 reply buttons, titles up to 20 characters.
+    assert len(buttons) <= 3
+    assert all(len(button.title.encode("utf-16-le")) // 2 <= 20 for button in buttons)
 
 
 @pytest.mark.asyncio
-async def test_fallback_node_uses_the_llm_generated_text():
-    class _StubLLMProvider(FakeLLMProvider):
-        async def generate_response(self, context: ResponseContext) -> str:
-            return "Che, no te entendí bien. ¿Me marcás una opción?"
-
-    node = create_fallback_node(_StubLLMProvider())
-
-    result = await node(make_agent_state(user_message="asdkjaslkdj"))
-
-    assert result["response_text"] == "Che, no te entendí bien. ¿Me marcás una opción?"
-    assert result["response_buttons"] is not None
-
-
-@pytest.mark.asyncio
-async def test_fallback_node_forwards_recent_messages_and_contact_memory_to_the_llm():
-    # Regression: this used to build `ResponseContext` with no conversation
-    # history, so a fallback reply had no way to know it (or the patient)
-    # had just spoken one message ago.
-    captured: list[ResponseContext] = []
-
-    class _CapturingLLMProvider(FakeLLMProvider):
-        async def generate_response(self, context: ResponseContext) -> str:
-            captured.append(context)
-            return "ok"
-
-    node = create_fallback_node(_CapturingLLMProvider())
-    recent = [{"role": "user", "content": "asdkjaslkdj"}]
-
-    await node(
-        make_agent_state(
-            user_message="asdkjaslkdj",
-            recent_messages=recent,
-            contact_memory_summary="Paciente frecuente.",
-        )
-    )
-
-    assert captured[0].recent_messages == recent
-    assert captured[0].contact_memory == "Paciente frecuente."
-
-
-@pytest.mark.asyncio
-async def test_fallback_node_tells_the_llm_to_invite_tapping_a_menu_button():
-    # Regression: the LLM-worded fallback reply used to leave the 3 main-
-    # menu buttons with no inviting text at all — an explicit instruction
-    # to do so must reach the prompt.
-    captured: list[ResponseContext] = []
-
-    class _CapturingLLMProvider(FakeLLMProvider):
-        async def generate_response(self, context: ResponseContext) -> str:
-            captured.append(context)
-            return "ok"
-
-    node = create_fallback_node(_CapturingLLMProvider())
-
-    await node(make_agent_state(user_message="asdkjaslkdj"))
-
-    assert "instruccion" in captured[0].collected_data
-
-
-@pytest.mark.asyncio
-async def test_fallback_node_falls_back_to_a_static_message_when_the_llm_provider_fails():
+async def test_out_of_scope_reply_never_calls_the_llm_for_text():
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def generate_response(self, context: ResponseContext) -> str:
-            raise LLMTimeoutError("boom")
+            raise AssertionError("the out-of-scope text is fixed: no LLM text generation")
 
     node = create_fallback_node(_ExplodingLLMProvider())
 
-    result = await node(make_agent_state(user_message="asdkjaslkdj"))
+    for count in (0, 1, 5):
+        result = await node(
+            make_agent_state(
+                user_message="dame una receta", collected_data={"fallback_count": count}
+            )
+        )
+        assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
 
-    assert result["response_text"]
-    assert [button.id for button in result["response_buttons"]] == [
-        OPERATION_CREATE_PAYLOAD,
-        MENU_ADMIN_PAYLOAD,
-    ]
+
+@pytest.mark.asyncio
+async def test_the_main_menu_button_carries_the_payload_that_routes_to_the_main_menu():
+    node = create_fallback_node(FakeLLMProvider())
+    result = await node(make_agent_state(user_message="asdkjaslkdj"))
+    resolver = create_resolve_interaction_node(FakeLLMProvider())
+
+    tapped = next(b for b in result["response_buttons"] if b.title == "📋 Menú principal")
+    routed = await resolver(make_agent_state(button_payload=tapped.id))
+
+    assert tapped.id == MENU_MAIN_PAYLOAD
+    assert routed["intent"] == "appointment"
 
 
 @pytest.mark.asyncio
@@ -140,42 +116,6 @@ async def test_a_pending_answer_is_delivered_instead_of_the_did_not_understand_t
     # the escalate-to-administración counter.
     assert "fallback_count" not in result["collected_data"]
     assert "pending_answer" not in result["collected_data"]
-
-
-@pytest.mark.asyncio
-async def test_first_fallback_never_tells_the_llm_to_escalate():
-    # Seen live: the very first "Hola" came back as "ya intentamos un par
-    # de veces...", because the escalation instruction was handed to the
-    # model on every turn, not only on a repeat miss.
-    seen: list[ResponseContext] = []
-
-    class _RecordingLLMProvider(FakeLLMProvider):
-        async def generate_response(self, context: ResponseContext) -> str:
-            seen.append(context)
-            return "ok"
-
-    node = create_fallback_node(_RecordingLLMProvider())
-
-    await node(make_agent_state(user_message="Hola", collected_data={}))
-
-    assert seen[0].collected_data["intentos_seguidos_sin_resolver"] == 1
-    assert not any("administración" in str(value) for value in seen[0].collected_data.values())
-
-
-@pytest.mark.asyncio
-async def test_repeat_fallback_does_tell_the_llm_to_escalate():
-    seen: list[ResponseContext] = []
-
-    class _RecordingLLMProvider(FakeLLMProvider):
-        async def generate_response(self, context: ResponseContext) -> str:
-            seen.append(context)
-            return "ok"
-
-    node = create_fallback_node(_RecordingLLMProvider())
-
-    await node(make_agent_state(user_message="???", collected_data={"fallback_count": 1}))
-
-    assert any("administración" in str(value) for value in seen[0].collected_data.values())
 
 
 @pytest.mark.asyncio
@@ -222,23 +162,6 @@ async def test_a_location_question_clears_a_stale_pending_answer():
 
 
 @pytest.mark.asyncio
-async def test_fallback_node_tells_the_llm_how_many_consecutive_attempts_happened():
-    seen_contexts: list[ResponseContext] = []
-
-    class _RecordingLLMProvider(FakeLLMProvider):
-        async def generate_response(self, context: ResponseContext) -> str:
-            seen_contexts.append(context)
-            return "ok"
-
-    node = create_fallback_node(_RecordingLLMProvider())
-
-    await node(make_agent_state(user_message="asdkjaslkdj", collected_data={"fallback_count": 1}))
-
-    assert seen_contexts[0].intent == "fallback"
-    assert seen_contexts[0].collected_data["intentos_seguidos_sin_resolver"] == 2
-
-
-@pytest.mark.asyncio
 async def test_fallback_delivers_a_pending_answer_without_a_mid_conversation_greeting():
     node = create_fallback_node(FakeLLMProvider())
     state = make_agent_state(
@@ -257,8 +180,6 @@ async def test_fallback_delivers_a_pending_answer_without_a_mid_conversation_gre
 
 @pytest.mark.asyncio
 async def test_fallback_answer_offering_administration_carries_the_handoff_buttons():
-    from app.domain.value_objects.menu_payloads import MENU_MAIN_PAYLOAD
-
     node = create_fallback_node(FakeLLMProvider())
     state = make_agent_state(
         collected_data={
@@ -303,11 +224,11 @@ async def test_after_the_welcome_menu_the_llm_is_told_to_ask_for_a_menu_option()
 
 
 @pytest.mark.asyncio
-async def test_without_a_recent_welcome_menu_the_generic_situation_is_kept():
+async def test_without_a_recent_welcome_menu_the_out_of_scope_text_is_used():
     captured: list[ResponseContext] = []
     node = create_fallback_node(_capturing_provider(captured))
 
-    await node(
+    result = await node(
         make_agent_state(
             user_message="Holaa",
             recent_messages=[
@@ -319,7 +240,9 @@ async def test_without_a_recent_welcome_menu_the_generic_situation_is_kept():
         )
     )
 
-    assert "menú de bienvenida" not in str(captured[0].collected_data["situacion"])
+    assert captured == []
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
+    assert result.get("response_list") is None
 
 
 @pytest.mark.asyncio

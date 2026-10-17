@@ -50,9 +50,7 @@ class SqlAlchemyScheduledActionRepository:
         )
         return [_to_entity(model) for model in result.scalars()]
 
-    async def get_scheduled_by_conversation_id(
-        self, conversation_id: str
-    ) -> list[ScheduledAction]:
+    async def get_scheduled_by_conversation_id(self, conversation_id: str) -> list[ScheduledAction]:
         result = await self._session.execute(
             select(ScheduledActionModel).where(
                 ScheduledActionModel.conversation_id == conversation_id,

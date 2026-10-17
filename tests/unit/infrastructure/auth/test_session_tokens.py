@@ -16,6 +16,7 @@ def _signed_token(body: str, secret: str) -> str:
     body_b64 = base64.urlsafe_b64encode(body.encode("utf-8")).decode("ascii")
     return f"{body_b64}.{signature}"
 
+
 _SECRET = "test-session-secret"
 _NOW = datetime(2026, 8, 30, 9, 0, tzinfo=UTC)
 

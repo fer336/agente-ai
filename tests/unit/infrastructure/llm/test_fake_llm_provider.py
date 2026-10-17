@@ -61,9 +61,7 @@ async def test_classify_intent_prioritizes_handoff_over_appointment_keywords():
     # el paciente indique que llegará tarde. Ese caso siempre se deriva."
     provider = make_llm_provider()
 
-    result = await provider.classify_intent(
-        "Voy a llegar tarde a mi turno de hoy", context={}
-    )
+    result = await provider.classify_intent("Voy a llegar tarde a mi turno de hoy", context={})
 
     assert result.intent == "handoff"
 
@@ -115,9 +113,7 @@ async def test_extract_information_rejects_casual_chatter_as_a_full_name():
 async def test_extract_information_finds_a_dni_digit_run():
     provider = make_llm_provider()
 
-    result = await provider.extract_information(
-        "mi dni es 30123456", required_fields=["dni"]
-    )
+    result = await provider.extract_information("mi dni es 30123456", required_fields=["dni"])
 
     assert result == ExtractionResult(fields={"dni": "30123456"}, missing_fields=[])
 

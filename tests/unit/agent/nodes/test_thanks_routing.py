@@ -167,9 +167,7 @@ async def test_a_bare_acknowledgement_while_idle_gets_the_thanks_reply(message):
 async def test_thanks_is_not_intercepted_in_the_data_collection_stages(stage):
     node = create_resolve_interaction_node(FakeLLMProvider())
 
-    result = await node(
-        make_agent_state(user_message="gracias", collected_data={"stage": stage})
-    )
+    result = await node(make_agent_state(user_message="gracias", collected_data={"stage": stage}))
 
     assert result["intent"] == "appointment"
     assert "response_text" not in result
