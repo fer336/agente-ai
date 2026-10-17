@@ -44,9 +44,7 @@ async def test_node_returns_empty_slots_when_gateway_has_no_availability():
 async def test_node_preserves_existing_collected_data_keys():
     gateway = FakeDentalinkGateway(available_slots=[])
     node = create_search_availability_node(gateway)
-    state = make_agent_state(
-        intent="schedule_appointment", collected_data={"patient_name": "Jane"}
-    )
+    state = make_agent_state(intent="schedule_appointment", collected_data={"patient_name": "Jane"})
 
     result = await node(state)
 

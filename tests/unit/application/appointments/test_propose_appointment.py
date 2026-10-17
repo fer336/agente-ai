@@ -75,9 +75,7 @@ async def test_execute_creates_a_matching_scheduled_action():
 
     pending_action = await use_case.execute(ConversationId("conv-1"), "create_appointment", {})
 
-    due = await scheduled_action_repository.get_due(
-        pending_action.expires_at, limit=10
-    )
+    due = await scheduled_action_repository.get_due(pending_action.expires_at, limit=10)
     matching = [sa for sa in due if sa.pending_action_id == pending_action.id]
     assert len(matching) == 1
     scheduled_action = matching[0]
@@ -162,7 +160,9 @@ async def test_execute_writes_all_three_records_atomically_via_the_same_provider
             await self._inner.mark_processed(event_id)
 
     use_case, _, _, _ = _build_use_case(
-        pending_action_repository=_TrackingPendingActionRepository(make_pending_action_repository()),
+        pending_action_repository=_TrackingPendingActionRepository(
+            make_pending_action_repository()
+        ),
         scheduled_action_repository=_TrackingScheduledActionRepository(
             make_scheduled_action_repository()
         ),

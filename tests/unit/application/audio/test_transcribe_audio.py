@@ -626,3 +626,36 @@ async def test_fallback_reply_still_succeeds_when_the_chatwoot_mirror_fails():
     await asyncio.sleep(0.05)
 
     assert len(messaging_gateway.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_paused_agent_suppresses_the_fallback_reply_but_still_fails_the_job():
+    from tests.fixtures.gateways import make_runtime_config_service
+
+    config_service = make_runtime_config_service(debounce_seconds=0.05)
+    config = await config_service.get_config()
+    config.agent_paused = True
+    await config_service.save_config(config)
+    job_repository = make_media_processing_job_repository()
+    await job_repository.save(_job())
+    message_repository = FakeMessageRepository()
+    await message_repository.save(_audio_message())
+    ingest = make_ingest_message_use_case(
+        conversation_repository=make_conversation_repository(),
+        runtime_config_service=config_service,
+        debounce_seconds=0.05,
+    )
+    use_case, *_2, messaging_gateway, _ = _build_use_case(
+        job_repository=job_repository,
+        message_repository=message_repository,
+        transcription_gateway=FakeTranscriptionGateway(transcript="   "),
+        ingest_message_use_case=ingest,
+    )
+
+    await use_case.execute("job-1")
+    await asyncio.sleep(0.1)
+
+    job = await job_repository.get_by_id("job-1")
+    assert job is not None
+    assert job.status == "completed"
+    assert messaging_gateway.sent_messages == []

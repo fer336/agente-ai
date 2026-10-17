@@ -45,9 +45,7 @@ def postgres_reachable() -> None:
             "persistent .env that also holds real credentials)."
         )
     try:
-        with socket.create_connection(
-            (settings.postgres_host, settings.postgres_port), timeout=1
-        ):
+        with socket.create_connection((settings.postgres_host, settings.postgres_port), timeout=1):
             return
     except OSError as exc:
         pytest.skip(f"Postgres not reachable for migration test: {exc}")
@@ -70,8 +68,6 @@ def test_every_revision_id_fits_the_alembic_version_column() -> None:
     # the migration files themselves, so it always runs in CI.
     script = ScriptDirectory.from_config(_alembic_config())
     too_long = [
-        revision.revision
-        for revision in script.walk_revisions()
-        if len(revision.revision) > 32
+        revision.revision for revision in script.walk_revisions() if len(revision.revision) > 32
     ]
     assert not too_long, f"revision id(s) exceed alembic_version's VARCHAR(32): {too_long}"

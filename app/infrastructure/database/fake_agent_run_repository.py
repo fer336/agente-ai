@@ -15,9 +15,7 @@ class FakeAgentRunRepository:
         self._by_id[agent_run.id] = agent_run
 
     async def get_by_conversation_id(self, conversation_id: ConversationId) -> list[AgentRun]:
-        matches = [
-            run for run in self._by_id.values() if run.conversation_id == conversation_id
-        ]
+        matches = [run for run in self._by_id.values() if run.conversation_id == conversation_id]
         return sorted(matches, key=lambda r: r.started_at, reverse=True)
 
     async def get_latest_by_conversation_id(

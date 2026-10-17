@@ -38,6 +38,7 @@ from app.domain.repositories.media_processing_job_repository import MediaProcess
 from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.pending_action_repository import PendingActionRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
+from app.domain.rules.agent_gate import agent_may_respond
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
@@ -281,7 +282,9 @@ class IngestMessageUseCase:
                 repositories.scheduled_actions, self._conversation_idle_reset_delay_seconds
             ).reconcile(conversation.id)
 
-            if welcome_first_contact:
+            # Agent pause / contact filter: the inbound message below is still
+            # persisted, only the welcome (an unsolicited agent send) is gated.
+            if welcome_first_contact and await self._agent_may_respond(dto.from_phone):
                 # Sent synchronously, inline in this same request — NOT
                 # fire-and-forget — so a delivery failure surfaces as this
                 # request's own error (and gets retried by the caller's
@@ -425,6 +428,7 @@ class IngestMessageUseCase:
             message.text,
             dto.button_payload,
             str(external_message_id),
+            str(dto.from_phone),
         )
 
     @staticmethod
@@ -540,17 +544,23 @@ class IngestMessageUseCase:
         conversation_key = str(conversation_id)
         async with self._repositories_provider() as repositories:
             conversation = await repositories.conversations.get_by_id(conversation_id)
+            contact = (
+                await repositories.contacts.get_by_id(conversation.contact_id)
+                if conversation is not None
+                else None
+            )
         if conversation is not None and conversation.mode == "human":
             return
         if conversation is None:
             return
+        contact_phone = contact.phone.value if contact is not None else ""
         workflow_key = f"{conversation_key}:session:{conversation.workflow_session_generation}"
 
         # No wamid to thread through here — a transcript has no inbound
         # webhook payload of its own, and the typing indicator is a
         # best-effort nicety (skipped, not worth a repository round-trip
         # to look one up for the audio-resume path specifically).
-        await self._schedule_processing(workflow_key, message_id, text, None, None)
+        await self._schedule_processing(workflow_key, message_id, text, None, None, contact_phone)
 
     async def _schedule_processing(
         self,
@@ -559,7 +569,14 @@ class IngestMessageUseCase:
         text: str,
         button_payload: str | None,
         wamid: str | None,
+        contact_phone: str,
     ) -> None:
+        if not await self._agent_may_respond(contact_phone):
+            # Paused agent or filtered contact: the message is already
+            # persisted, so it stays in the history for when the agent
+            # resumes. Nothing is queued, scheduled or sent.
+            logger.info("ingest_message.agent_gated conversation=%s", conversation_key)
+            return
         self._pending_messages.setdefault(conversation_key, []).append(
             (message_id, text, button_payload, wamid)
         )
@@ -582,18 +599,44 @@ class IngestMessageUseCase:
         # only thing that still pays for the window.
         task = asyncio.create_task(
             self._debounce_and_process(
-                conversation_key, token, skip_debounce=button_payload is not None
+                conversation_key,
+                token,
+                contact_phone=contact_phone,
+                skip_debounce=button_payload is not None,
             )
         )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    async def _agent_may_respond(self, contact_phone: object) -> bool:
+        return await self.agent_may_respond_to(str(contact_phone))
+
+    async def agent_may_respond_to(self, contact_phone: str) -> bool:
+        """Whether the agent may currently send anything to this phone.
+
+        Reads the live runtime config (pause switch + contact filter); shared
+        with collaborators that send on their own, e.g. the audio fallback.
+        """
+        config = await self._runtime_config_service.get_config()
+        return agent_may_respond(config, contact_phone)
+
     async def _debounce_and_process(
-        self, conversation_key: str, token: str, *, skip_debounce: bool = False
+        self,
+        conversation_key: str,
+        token: str,
+        *,
+        contact_phone: str,
+        skip_debounce: bool = False,
     ) -> None:
         config = await self._runtime_config_service.get_config()
         if not skip_debounce:
             await asyncio.sleep(config.debounce_seconds)
+
+        if not await self._agent_may_respond(contact_phone):
+            # Paused (or the contact got filtered) while this run was waiting
+            # out the debounce window: drop the queued group, send nothing.
+            self._pending_messages.pop(conversation_key, None)
+            return
 
         if await self._debounce_tracker.is_stale(conversation_key, token):
             # A newer message re-touched the window; the newer scheduled

@@ -415,3 +415,91 @@ async def test_record_sent_runs_before_the_review_cleanup():
     )
 
     assert order == ["record", "cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_gated_reminder_is_left_pending_untouched_and_nothing_is_sent():
+    row = reminder()
+    repository, messaging = ReminderRepository([row]), Messaging()
+
+    async def gate(phone: str) -> bool:
+        return False
+
+    handled = await deliver_due_reminders(
+        repository,
+        Appointments([appointment()]),
+        Patients(patient()),
+        messaging,
+        NOW,
+        settings(),
+        agent_gate=gate,
+    )
+
+    assert handled == 0
+    assert row.status == "pending"
+    assert row.attempts == 0
+    assert messaging.sent == []
+
+
+@pytest.mark.asyncio
+async def test_reminder_is_sent_once_the_gate_opens_again():
+    row = reminder()
+    repository, messaging = ReminderRepository([row]), Messaging()
+    allowed = {"value": False}
+
+    async def gate(phone: str) -> bool:
+        return allowed["value"]
+
+    args = (repository, Appointments([appointment()]), Patients(patient()), messaging, NOW)
+    await deliver_due_reminders(*args, settings(), agent_gate=gate)
+    allowed["value"] = True
+    await deliver_due_reminders(*args, settings(), agent_gate=gate)
+
+    assert row.status == "sent"
+    assert len(messaging.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_gate_only_blocks_the_filtered_recipient():
+    blocked = reminder("r-blocked")
+    blocked.recipient_phone = "+5491100000000"
+    allowed_row = reminder("r-allowed")
+    repository, messaging = ReminderRepository([blocked, allowed_row]), Messaging()
+
+    async def gate(phone: str) -> bool:
+        return phone != "+5491100000000"
+
+    await deliver_due_reminders(
+        repository,
+        Appointments([appointment()]),
+        Patients(patient()),
+        messaging,
+        NOW,
+        settings(),
+        agent_gate=gate,
+    )
+
+    assert blocked.status == "pending"
+    assert allowed_row.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_pending_reminder_for_an_appointment_that_already_started_is_retired():
+    # After a long pause the appointment may already be over: never send a
+    # reminder for the past.
+    row = reminder()
+    row.appointment_starts_at = NOW - timedelta(hours=1)
+    repository, messaging = ReminderRepository([row]), Messaging()
+
+    await deliver_due_reminders(
+        repository,
+        Appointments([appointment()]),
+        Patients(patient()),
+        messaging,
+        NOW,
+        settings(),
+    )
+
+    assert row.status == "skipped"
+    assert row.last_error == "appointment_started"
+    assert messaging.sent == []

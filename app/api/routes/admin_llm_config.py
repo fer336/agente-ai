@@ -123,9 +123,9 @@ async def update_llm_config(
     """`ADMIN_TECHNICAL`-only and CSRF-checked, same posture as this
     panel's other mutating routes (`reset_conversation`, `resolve_error`).
 
-    Preserves `debounce_seconds` from the existing config — it isn't part
-    of this request's scope (model + prompts only), so a save here must
-    never silently reset it to some default.
+    Preserves `debounce_seconds` and the agent pause / contact filter state
+    from the existing config — they aren't part of this request's scope
+    (model + prompts only), so a save here must never silently reset them.
     """
     _validate_prompts(body)
 
@@ -140,6 +140,11 @@ async def update_llm_config(
         generate_response_prompt=body.generate_response_prompt,
         updated_at=datetime.now(UTC),
         updated_by=session.username,
+        agent_paused=existing.agent_paused,
+        paused_by=existing.paused_by,
+        paused_at=existing.paused_at,
+        contact_filter_mode=existing.contact_filter_mode,
+        contact_filter_phones=existing.contact_filter_phones,
     )
     await runtime_config_service.save_config(updated)
 

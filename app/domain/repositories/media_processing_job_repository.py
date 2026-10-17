@@ -24,9 +24,7 @@ class MediaProcessingJobRepository(Protocol):
         """
         ...
 
-    async def transition_status(
-        self, job_id: str, *, from_status: str, to_status: str
-    ) -> bool:
+    async def transition_status(self, job_id: str, *, from_status: str, to_status: str) -> bool:
         """Atomically moves status from `from_status` to `to_status`.
 
         Returns True if this call performed the transition, False if the

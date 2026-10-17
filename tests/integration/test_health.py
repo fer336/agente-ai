@@ -59,9 +59,9 @@ async def _override_db_session_failing() -> AsyncGenerator[_FailingSession, None
     yield _FailingSession()
 
 
-async def _override_db_session_missing_schema() -> (
-    AsyncGenerator[_ReachableButMissingSchemaSession, None]
-):
+async def _override_db_session_missing_schema() -> AsyncGenerator[
+    _ReachableButMissingSchemaSession, None
+]:
     yield _ReachableButMissingSchemaSession()
 
 

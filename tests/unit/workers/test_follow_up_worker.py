@@ -3,7 +3,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.application.appointments.schedule_follow_up import APPOINTMENT_FLOW_FOLLOW_UP_RESET
+from app.application.appointments.schedule_follow_up import (
+    APPOINTMENT_FLOW_FOLLOW_UP_PROMPT,
+    APPOINTMENT_FLOW_FOLLOW_UP_RESET,
+)
 from app.application.conversations.schedule_conversation_reset import (
     CONVERSATION_IDLE_RESET_ACTION,
     ScheduleConversationResetUseCase,
@@ -452,3 +455,74 @@ async def test_run_follow_up_loop_builds_the_cleanup_use_case_per_tick():
 
     assert len(built) == 2
     assert all(isinstance(repositories, FollowUpWorkerRepositories) for repositories, _ in built)
+
+
+async def _tick_with_gate(action_type: str, allowed: bool):
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(mode="agent"))
+    contact_repository = make_contact_repository()
+    await contact_repository.save(make_contact())
+    message_repository = make_message_repository()
+    await message_repository.save(
+        Message(
+            id="msg-1",
+            conversation_id=ConversationId("ycloud-+5491122334455"),
+            external_message_id=ExternalMessageId("wamid.agent-1"),
+            direction="outbound",
+            text="¿Seguís ahí?",
+            created_at=datetime.now(UTC),
+            role=ROLE_ASSISTANT,
+        )
+    )
+    scheduled_action_repository = FakeScheduledActionRepository()
+    await scheduled_action_repository.save(_due_action(action_type))
+    messaging_gateway = make_ycloud_messaging_gateway()
+    seen_phones: list[str] = []
+
+    async def gate(phone: str) -> bool:
+        seen_phones.append(phone)
+        return allowed
+
+    await run_follow_up_tick(
+        scheduled_action_repository,
+        message_repository,
+        conversation_repository,
+        contact_repository,
+        make_send_reply_use_case(messaging_gateway=messaging_gateway),
+        None,
+        now=datetime.now(UTC),
+        limit=50,
+        reset_delay_seconds=1200,
+        agent_gate=gate,
+    )
+    action = await scheduled_action_repository.get_by_id("action-1")
+    conversation = await conversation_repository.get_by_id(ConversationId("ycloud-+5491122334455"))
+    return messaging_gateway, action, conversation, seen_phones
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_type", [APPOINTMENT_FLOW_FOLLOW_UP_PROMPT, APPOINTMENT_FLOW_FOLLOW_UP_RESET]
+)
+async def test_gated_follow_up_sends_nothing_and_is_cancelled_not_executed(action_type: str):
+    messaging_gateway, action, conversation, seen_phones = await _tick_with_gate(
+        action_type, allowed=False
+    )
+
+    assert messaging_gateway.sent_messages == []
+    assert action is not None
+    assert action.status == "cancelled"
+    assert conversation is not None
+    assert conversation.workflow_session_generation == 1
+    assert seen_phones == ["+5491122334455"]
+
+
+@pytest.mark.asyncio
+async def test_ungated_follow_up_still_sends_and_executes():
+    messaging_gateway, action, _, _ = await _tick_with_gate(
+        APPOINTMENT_FLOW_FOLLOW_UP_PROMPT, allowed=True
+    )
+
+    assert len(messaging_gateway.sent_messages) == 1
+    assert action is not None
+    assert action.status == "executed"

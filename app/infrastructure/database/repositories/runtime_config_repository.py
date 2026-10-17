@@ -41,6 +41,11 @@ class SqlAlchemyRuntimeConfigRepository:
         model.generate_response_prompt = config.generate_response_prompt
         model.updated_at = config.updated_at
         model.updated_by = config.updated_by
+        model.agent_paused = config.agent_paused
+        model.paused_by = config.paused_by
+        model.paused_at = config.paused_at
+        model.contact_filter_mode = config.contact_filter_mode
+        model.contact_filter_phones = list(config.contact_filter_phones)
         await self._session.flush()
 
 
@@ -55,4 +60,9 @@ def _to_entity(model: RuntimeAgentConfigModel) -> RuntimeAgentConfig:
         generate_response_prompt=model.generate_response_prompt,
         updated_at=model.updated_at,
         updated_by=model.updated_by,
+        agent_paused=model.agent_paused,
+        paused_by=model.paused_by,
+        paused_at=model.paused_at,
+        contact_filter_mode=model.contact_filter_mode,
+        contact_filter_phones=tuple(model.contact_filter_phones or ()),
     )

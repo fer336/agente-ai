@@ -26,6 +26,4 @@ async def test_handle_records_the_button_payload():
 
     await invoker.handle(conversation_id, ["msg-1"], "✅ Confirmar", "CONFIRM_APPOINTMENT")
 
-    assert invoker.calls == [
-        (conversation_id, ["msg-1"], "✅ Confirmar", "CONFIRM_APPOINTMENT")
-    ]
+    assert invoker.calls == [(conversation_id, ["msg-1"], "✅ Confirmar", "CONFIRM_APPOINTMENT")]

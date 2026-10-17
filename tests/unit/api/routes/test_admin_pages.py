@@ -40,6 +40,7 @@ async def test_admin_root_redirects_to_conversations():
         "/admin/errors/err-1",
         "/admin/agent",
         "/admin/kpis",
+        "/admin/agent-control",
         "/admin/runs/run-1",
     ],
 )
@@ -53,7 +54,9 @@ async def test_page_serves_html_with_no_auth_dependency(path: str):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("asset", ["app.js", "style.css", "agent-diagram.js", "kpis.js"])
+@pytest.mark.parametrize(
+    "asset", ["app.js", "style.css", "agent-diagram.js", "kpis.js", "agent-control.js"]
+)
 async def test_static_asset_serves(asset: str):
     response = await _get(f"/admin/static/{asset}")
 
@@ -83,6 +86,7 @@ _NAV_LINKS = [
     '<a href="/admin/errors"',
     '<a href="/admin/agent"',
     '<a href="/admin/kpis"',
+    '<a href="/admin/agent-control"',
     '<a href="/admin/llm-config"',
 ]
 
@@ -97,6 +101,7 @@ _NAV_LINKS = [
         "/admin/errors/err-1",
         "/admin/agent",
         "/admin/kpis",
+        "/admin/agent-control",
         "/admin/llm-config",
         "/admin/runs/run-1",
     ],
@@ -146,3 +151,22 @@ async def test_stylesheet_has_an_a4_print_layout_for_the_kpis_page():
     assert "@page" in css and "size: A4" in css
     assert "@media print" in css
     assert "print-color-adjust: exact" in css
+
+
+@pytest.mark.asyncio
+async def test_agent_control_page_has_its_script_and_controls():
+    response = await _get("/admin/agent-control")
+
+    html = response.text
+    assert "/admin/static/agent-control.js" in html
+    for hook in ("ctl-status", "ctl-toggle", "ctl-filter-form", "ctl-mode", "ctl-phones"):
+        assert f'id="{hook}"' in html
+    assert "Filtro por contacto" in html
+
+
+@pytest.mark.asyncio
+async def test_app_js_defines_the_paused_banner_pointing_at_the_control_page():
+    response = await _get("/admin/static/app.js")
+
+    assert "/agent-control" in response.text
+    assert "El agente está pausado" in response.text

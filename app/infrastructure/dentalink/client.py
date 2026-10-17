@@ -115,5 +115,3 @@ class DentalinkClient:
             raise DentalinkInvalidResponseError(
                 f"Dentalink response for {path} was not valid JSON"
             ) from exc
-
-

@@ -87,5 +87,35 @@ const ADMIN = (() => {
     window.location.href = "/admin/login";
   }
 
+  // Shows a banner under the top bar while the agent is paused. Purely
+  // informational and defensive: it uses a plain fetch (not apiFetch, so a
+  // 401 never redirects), skips pages without a top bar (login) and the
+  // control page itself, and swallows every error.
+  async function showPausedBanner() {
+    try {
+      const topbar = document.querySelector(".topbar");
+      if (!topbar || window.location.pathname === "/admin/agent-control") return;
+      const response = await fetch(API_BASE + "/agent-control", { credentials: "include" });
+      if (!response.ok) return;
+      const state = await response.json();
+      if (!state || state.agent_paused !== true) return;
+      const banner = document.createElement("div");
+      banner.className = "pause-banner";
+      banner.setAttribute("role", "status");
+      banner.innerHTML =
+        "<strong>El agente está pausado.</strong> No envía mensajes automáticos. " +
+        '<a href="/admin/agent-control">Ir al control del agente</a>';
+      topbar.insertAdjacentElement("afterend", banner);
+    } catch (error) {
+      // Never break a page because the banner could not be shown.
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", showPausedBanner);
+  } else {
+    showPausedBanner();
+  }
+
   return { apiFetch, requireAuth, escapeHtml, formatDateTime, qs, logout };
 })();

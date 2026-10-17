@@ -65,3 +65,8 @@ async def admin_run_detail_page(agent_run_id: str) -> FileResponse:
 @router.get("/llm-config")
 async def admin_llm_config_page() -> FileResponse:
     return FileResponse(_STATIC_DIR / "llm-config.html")
+
+
+@router.get("/agent-control")
+async def admin_agent_control_page() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "agent-control.html")

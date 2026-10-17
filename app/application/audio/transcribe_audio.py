@@ -32,8 +32,7 @@ _FALLBACK_EMPTY_TRANSCRIPT = (
     "No pude entender el audio. Podés escribir tu consulta o enviar un nuevo audio?"
 )
 _FALLBACK_TRANSCRIPTION_FAILED = (
-    "No pude procesar tu audio en este momento. Podés escribir tu consulta o "
-    "enviar un nuevo audio?"
+    "No pude procesar tu audio en este momento. Podés escribir tu consulta o enviar un nuevo audio?"
 )
 _FALLBACK_REJECTED = (
     "No pude procesar ese audio (formato, tamaño o duración no soportados). "
@@ -118,9 +117,7 @@ class TranscribeAudioUseCase:
             message = await repositories.messages.get_by_id(job.message_id)
 
         if message is None:
-            await self._finish(
-                job_id, job_status=JOB_FAILED, last_error="message not found"
-            )
+            await self._finish(job_id, job_status=JOB_FAILED, last_error="message not found")
             return
 
         if job.media_mime_type not in self._allowed_mime_types:
@@ -153,9 +150,7 @@ class TranscribeAudioUseCase:
 
             try:
                 transcript = await asyncio.wait_for(
-                    self._transcription_gateway.transcribe(
-                        downloaded.path, job.media_mime_type
-                    ),
+                    self._transcription_gateway.transcribe(downloaded.path, job.media_mime_type),
                     timeout=self._transcription_timeout_seconds,
                 )
             except TimeoutError:
@@ -208,9 +203,7 @@ class TranscribeAudioUseCase:
         )
         await self._send_fallback(message, _FALLBACK_REJECTED)
 
-    async def _fail(
-        self, job_id: str, message: Message, reason: str, fallback_text: str
-    ) -> None:
+    async def _fail(self, job_id: str, message: Message, reason: str, fallback_text: str) -> None:
         await self._finish(
             job_id,
             job_status=JOB_FAILED,
@@ -301,6 +294,14 @@ class TranscribeAudioUseCase:
         # reversed here rather than plumbing a separate phone lookup just
         # for this fallback-reply path.
         phone = str(message.conversation_id).removeprefix("ycloud-")
+        if not await self._ingest_message_use_case.agent_may_respond_to(phone):
+            # Agent paused (or this contact is filtered): the failure is
+            # already recorded on the job/message, only the unsolicited
+            # fallback reply is suppressed.
+            logger.info(
+                "transcribe_audio.fallback_reply_gated conversation=%s", message.conversation_id
+            )
+            return
         try:
             await self._messaging_gateway.send_text_message(PhoneNumber(phone), text)
         except Exception:  # noqa: BLE001 - never let a fallback-reply failure crash the worker

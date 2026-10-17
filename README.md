@@ -309,6 +309,28 @@ How the KPIs are counted (the bot's own data only, never Dentalink):
   deletes its tool evidence but keeps its pending actions. Review the numbers
   against real data before relying on them.
 
+## Agent pause switch
+
+`/admin/agent-control` (API: `GET/PUT /admin/api/agent-control`) stops the agent
+from the panel and can restrict it to or exclude specific contacts.
+
+- Pausing is global. While paused the agent sends nothing on its own: no replies,
+  welcome, audio fallback, follow-ups or appointment reminders. Inbound messages
+  are still saved, so the agent has the full history on resume. Nothing pending
+  is sent retroactively when it resumes. Human staff replies forwarded from
+  Chatwoot are not blocked.
+- Roles: `ADMIN_TECHNICAL` and `ADMIN_CLINIC` can change it, `READ_ONLY` can only
+  read. Changes need CSRF and are audited (`agent_paused`, `agent_resumed`,
+  `agent_contact_filter_updated`); phone numbers are never written to the audit log.
+- Contact filter, one list of numbers and a mode: `off` (no filter), `deny` (those
+  numbers get no agent answers) or `allow` (only those numbers get answers; an empty
+  list is rejected because it would silence everybody). Numbers are compared by
+  digits only (8 to 15 digits, up to 500). The global pause overrides the filter.
+- State lives in the runtime agent config row. Saving invalidates the Redis cache,
+  so the bot and admin containers see a change immediately; the 10 s cache TTL
+  only matters if the row is edited directly in the database.
+- While paused, every admin page shows a "El agente está pausado" banner.
+
 ## Documentation
 
 | File | What it is |

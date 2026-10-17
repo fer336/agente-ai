@@ -25,3 +25,10 @@ class RuntimeAgentConfig:
     generate_response_prompt: str
     updated_at: datetime
     updated_by: str
+    #: Global kill switch: while True the agent sends nothing on its own.
+    agent_paused: bool = False
+    paused_by: str | None = None
+    paused_at: datetime | None = None
+    #: `off` | `deny` | `allow`; phones are stored as digits only.
+    contact_filter_mode: str = "off"
+    contact_filter_phones: tuple[str, ...] = ()

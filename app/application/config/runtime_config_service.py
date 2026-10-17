@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 
 from app.domain.entities.runtime_agent_config import RuntimeAgentConfig
 from app.domain.repositories.runtime_config_repository import RuntimeConfigRepository
+from app.domain.rules.agent_gate import agent_may_respond
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,7 @@ _CACHE_KEY = "runtime_agent_config"
 #: `IngestMessageUseCase.repositories_provider`) — an async-context-manager
 #: factory, so a fresh session is opened per call rather than held open for
 #: this service's lifetime.
-RuntimeConfigRepositoryProvider = Callable[
-    [], AbstractAsyncContextManager[RuntimeConfigRepository]
-]
+RuntimeConfigRepositoryProvider = Callable[[], AbstractAsyncContextManager[RuntimeConfigRepository]]
 
 
 class RuntimeConfigService:
@@ -63,6 +62,10 @@ class RuntimeConfigService:
         await self._write_cache(config)
         return config
 
+    async def agent_may_respond(self, phone: str) -> bool:
+        """Live pause / contact-filter decision for one recipient phone."""
+        return agent_may_respond(await self.get_config(), phone)
+
     async def save_config(self, config: RuntimeAgentConfig) -> None:
         async with self._repositories_provider() as repository:
             await repository.save(config)
@@ -99,6 +102,13 @@ class RuntimeConfigService:
             generate_response_prompt=payload["generate_response_prompt"],
             updated_at=datetime.fromisoformat(payload["updated_at"]),
             updated_by=payload["updated_by"],
+            agent_paused=payload.get("agent_paused", False),
+            paused_by=payload.get("paused_by"),
+            paused_at=(
+                datetime.fromisoformat(payload["paused_at"]) if payload.get("paused_at") else None
+            ),
+            contact_filter_mode=payload.get("contact_filter_mode", "off"),
+            contact_filter_phones=tuple(payload.get("contact_filter_phones", ())),
         )
 
     async def _write_cache(self, config: RuntimeAgentConfig) -> None:
@@ -114,6 +124,11 @@ class RuntimeConfigService:
             "generate_response_prompt": config.generate_response_prompt,
             "updated_at": config.updated_at.isoformat(),
             "updated_by": config.updated_by,
+            "agent_paused": config.agent_paused,
+            "paused_by": config.paused_by,
+            "paused_at": config.paused_at.isoformat() if config.paused_at else None,
+            "contact_filter_mode": config.contact_filter_mode,
+            "contact_filter_phones": list(config.contact_filter_phones),
         }
         try:
             await self._redis_client.set(

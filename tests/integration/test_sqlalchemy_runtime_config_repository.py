@@ -47,3 +47,23 @@ async def test_save_overwrites_the_single_row(db_session):
     fetched = await repository.get()
     assert fetched is not None
     assert fetched.model == "second-model"
+
+
+async def test_pause_and_filter_fields_round_trip(db_session):
+    repository = SqlAlchemyRuntimeConfigRepository(db_session)
+    config = _config()
+    config.agent_paused = True
+    config.paused_by = "ana"
+    config.paused_at = datetime(2026, 10, 17, 8, 0, tzinfo=UTC)
+    config.contact_filter_mode = "allow"
+    config.contact_filter_phones = ("5491112345678",)
+
+    await repository.save(config)
+    fetched = await repository.get()
+
+    assert fetched is not None
+    assert fetched.agent_paused is True
+    assert fetched.paused_by == "ana"
+    assert fetched.paused_at == config.paused_at
+    assert fetched.contact_filter_mode == "allow"
+    assert fetched.contact_filter_phones == ("5491112345678",)

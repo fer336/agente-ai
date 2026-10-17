@@ -25,7 +25,9 @@ def _capture_requests(monkeypatch: pytest.MonkeyPatch, response: httpx.Response)
 
 def _gateway() -> LinearIncidentGateway:
     return LinearIncidentGateway(
-        base_url="https://api.linear.app", api_key="secret-key", team_id="team-1",
+        base_url="https://api.linear.app",
+        api_key="secret-key",
+        team_id="team-1",
         timeout_seconds=10,
     )
 

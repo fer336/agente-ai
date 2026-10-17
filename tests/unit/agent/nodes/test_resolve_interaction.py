@@ -388,9 +388,7 @@ async def test_reminder_machine_payloads_route_to_reminder_action_before_active_
 
     node = create_resolve_interaction_node(_ExplodingLLMProvider())
 
-    result = await node(
-        make_agent_state(button_payload=payload, collected_data=collected_data)
-    )
+    result = await node(make_agent_state(button_payload=payload, collected_data=collected_data))
 
     assert result["intent"] == "reminder_action"
 

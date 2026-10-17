@@ -24,9 +24,7 @@ class FakeScheduledActionRepository:
         due.sort(key=lambda scheduled_action: scheduled_action.scheduled_for)
         return due[:limit]
 
-    async def get_scheduled_by_conversation_id(
-        self, conversation_id: str
-    ) -> list[ScheduledAction]:
+    async def get_scheduled_by_conversation_id(self, conversation_id: str) -> list[ScheduledAction]:
         return [
             scheduled_action
             for scheduled_action in self._by_id.values()

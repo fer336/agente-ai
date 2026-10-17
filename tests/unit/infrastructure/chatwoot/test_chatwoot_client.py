@@ -146,6 +146,7 @@ async def test_update_contact_name_sends_a_put_with_the_new_name(
     assert captured[0].url == f"{_BASE_URL}/api/v1/accounts/{_ACCOUNT_ID}/contacts/7"
     assert json.loads(captured[0].content) == {"name": "Alejandro Marinkovic"}
 
+
 async def test_get_conversation_sends_a_get_and_returns_the_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

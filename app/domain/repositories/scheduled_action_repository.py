@@ -14,9 +14,7 @@ class ScheduledActionRepository(Protocol):
 
     async def get_due(self, now: datetime, limit: int) -> list[ScheduledAction]: ...
 
-    async def get_scheduled_by_conversation_id(
-        self, conversation_id: str
-    ) -> list[ScheduledAction]:
+    async def get_scheduled_by_conversation_id(self, conversation_id: str) -> list[ScheduledAction]:
         """All rows still `status == "scheduled"` for one conversation.
 
         Lets a caller cancel every still-pending follow-up for a
@@ -28,9 +26,7 @@ class ScheduledActionRepository(Protocol):
         """
         ...
 
-    async def get_by_pending_action_id(
-        self, pending_action_id: str
-    ) -> ScheduledAction | None:
+    async def get_by_pending_action_id(self, pending_action_id: str) -> ScheduledAction | None:
         """Finds the (at most one) `ScheduledAction` tied to a `PendingAction`.
 
         Needed to cancel the follow-up timeout once the patient confirms,

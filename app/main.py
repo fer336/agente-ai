@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies.checkpointer import close_agent_checkpointer, get_agent_checkpointer
+from app.api.dependencies.config import get_runtime_config_service
 from app.api.dependencies.gateways import (
     get_messaging_gateway,
     get_mirror_to_chatwoot_use_case,
@@ -22,6 +23,7 @@ from app.api.dependencies.repositories import (
 )
 from app.api.dependencies.session_cleanup import build_idle_cleanup_use_case
 from app.api.routes.admin import router as admin_router
+from app.api.routes.admin_agent_control import router as admin_agent_control_router
 from app.api.routes.admin_auth import router as admin_auth_router
 from app.api.routes.admin_docs import router as admin_docs_router
 from app.api.routes.admin_llm_config import router as admin_llm_config_router
@@ -69,6 +71,7 @@ def start_appointment_reminder_worker(settings: Settings) -> asyncio.Task[None] 
             get_messaging_gateway(),
             settings,
             interval_seconds=_REMINDER_WORKER_INTERVAL_SECONDS,
+            agent_gate=get_runtime_config_service().agent_may_respond,
         )
     )
 
@@ -107,6 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             batch_limit=settings.follow_up_worker_batch_limit,
             reset_delay_seconds=settings.appointment_follow_up_reset_delay_seconds,
             cleanup_factory=build_idle_cleanup_use_case,
+            agent_gate=get_runtime_config_service().agent_may_respond,
         )
     )
     reminder_task = start_appointment_reminder_worker(settings)
@@ -171,6 +175,7 @@ def create_app(role: str = "all") -> FastAPI:
         app.include_router(admin_auth_router)
         app.include_router(admin_router)
         app.include_router(admin_llm_config_router)
+        app.include_router(admin_agent_control_router)
         app.include_router(admin_docs_router)
         app.include_router(admin_pages_router)
     if serves_bot:

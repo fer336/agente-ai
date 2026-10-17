@@ -14,9 +14,7 @@ class SqlAlchemyChatwootMappingRepository:
         self._session = session
 
     async def save(self, mapping: ChatwootConversationMapping) -> None:
-        model = await self._session.get(
-            ChatwootConversationMappingModel, mapping.conversation_id
-        )
+        model = await self._session.get(ChatwootConversationMappingModel, mapping.conversation_id)
         if model is None:
             model = ChatwootConversationMappingModel(conversation_id=mapping.conversation_id)
             self._session.add(model)

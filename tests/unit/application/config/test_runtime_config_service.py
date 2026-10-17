@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -147,3 +148,47 @@ async def test_invalidate_cache_with_no_redis_client_is_a_noop():
     service, _ = _build_service(redis_client=None)
 
     await service.invalidate_cache()
+
+
+@pytest.mark.asyncio
+async def test_pause_and_filter_state_survives_the_redis_cache_round_trip():
+    repository = FakeRuntimeConfigRepository()
+    paused_at = datetime(2026, 10, 17, 8, 0, tzinfo=UTC)
+    await repository.save(
+        _config(
+            agent_paused=True,
+            paused_by="ana",
+            paused_at=paused_at,
+            contact_filter_mode="allow",
+            contact_filter_phones=("5491112345678", "5491100000000"),
+        )
+    )
+    redis = InMemoryFakeRedis()
+    service, _ = _build_service(repository=repository, redis_client=redis)
+    await service.get_config()  # warms the cache
+
+    cached = await service.get_config()  # served from Redis
+
+    assert cached.agent_paused is True
+    assert cached.paused_by == "ana"
+    assert cached.paused_at == paused_at
+    assert cached.contact_filter_mode == "allow"
+    assert cached.contact_filter_phones == ("5491112345678", "5491100000000")
+
+
+@pytest.mark.asyncio
+async def test_cache_entry_without_pause_fields_reads_as_not_paused():
+    redis = InMemoryFakeRedis()
+    service, _ = _build_service(redis_client=redis)
+    await service.get_config()
+    raw = json.loads(await redis.get("runtime_agent_config"))
+    for key in ("agent_paused", "paused_by", "paused_at", "contact_filter_mode"):
+        raw.pop(key)
+    raw.pop("contact_filter_phones")
+    await redis.set("runtime_agent_config", json.dumps(raw))
+
+    config = await service.get_config()
+
+    assert config.agent_paused is False
+    assert config.contact_filter_mode == "off"
+    assert config.contact_filter_phones == ()
