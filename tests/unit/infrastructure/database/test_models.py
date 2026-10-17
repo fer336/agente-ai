@@ -27,6 +27,7 @@ _EXPECTED_TABLES = {
     "contact_memories",
     "sent_messages",
     "chatwoot_conversation_mappings",
+    "conversation_ad_referrals",
 }
 
 

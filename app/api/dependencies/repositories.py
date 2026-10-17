@@ -44,6 +44,9 @@ from app.infrastructure.database.repositories.contact_memory_repository import (
     SqlAlchemyContactMemoryRepository,
 )
 from app.infrastructure.database.repositories.contact_repository import SqlAlchemyContactRepository
+from app.infrastructure.database.repositories.conversation_ad_referral_repository import (
+    SqlAlchemyConversationAdReferralRepository,
+)
 from app.infrastructure.database.repositories.conversation_repository import (
     SqlAlchemyConversationRepository,
 )
@@ -161,6 +164,7 @@ async def open_sqlalchemy_message_repositories() -> AsyncIterator[MessageReposit
             media_processing_jobs=SqlAlchemyMediaProcessingJobRepository(session),
             scheduled_actions=SqlAlchemyScheduledActionRepository(session),
             pending_actions=SqlAlchemyPendingActionRepository(session),
+            ad_referrals=SqlAlchemyConversationAdReferralRepository(session),
         )
         await session.commit()
 

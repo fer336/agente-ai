@@ -27,12 +27,17 @@ from app.application.messages.inbound_message_dto import InboundMessageDTO
 from app.application.messages.mirror_to_chatwoot import MirrorMessageToChatwootUseCase
 from app.application.messages.send_reply import SendReplyUseCase
 from app.application.reminders.action_payloads import parse_reminder_action
+from app.domain.entities.contact import Contact
 from app.domain.entities.conversation import Conversation
+from app.domain.entities.conversation_ad_referral import ConversationAdReferral
 from app.domain.entities.media_processing_job import PENDING as JOB_PENDING
 from app.domain.entities.media_processing_job import MediaProcessingJob
 from app.domain.entities.message import MEDIA_PENDING, Message
 from app.domain.repositories.agent_invoker import AgentInvoker
 from app.domain.repositories.contact_repository import ContactRepository
+from app.domain.repositories.conversation_ad_referral_repository import (
+    ConversationAdReferralRepository,
+)
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.repositories.media_processing_job_repository import MediaProcessingJobRepository
 from app.domain.repositories.message_repository import MessageRepository
@@ -82,6 +87,8 @@ class MessageRepositories:
     #: Lets a rotation expire parked actions in THIS unit of work. `None` keeps the rotation
     #: on `workflow_session_repositories_provider` (a separate session).
     pending_actions: PendingActionRepository | None = None
+    #: Where the Click-to-WhatsApp ad referral of a lead is stored. `None` skips it.
+    ad_referrals: ConversationAdReferralRepository | None = None
 
 
 # A zero-arg async context manager factory yielding a fresh `MessageRepositories`
@@ -189,6 +196,7 @@ class IngestMessageUseCase:
                 repositories.conversations, dto.from_phone, contact.id
             )
             conversation_key = str(conversation.id)
+            await self._save_ad_referral(repositories, dto, conversation, contact)
             # A reminder button tap is an answer to a message we sent, not a first
             # contact: the welcome menu would bury it and its action must still run.
             welcome_first_contact = is_new_conversation and not _is_reminder_action(
@@ -430,6 +438,52 @@ class IngestMessageUseCase:
             str(external_message_id),
             str(dto.from_phone),
         )
+
+    @staticmethod
+    async def _save_ad_referral(
+        repositories: MessageRepositories,
+        dto: InboundMessageDTO,
+        conversation: Conversation,
+        contact: Contact,
+    ) -> None:
+        """Stores the lead's Click-to-WhatsApp ad referral, once per conversation and ad.
+
+        Attribution is a side record: a failure to store it is logged and must
+        never stop the message from being processed or change the bot's reply.
+        """
+        referral = dto.referral
+        if repositories.ad_referrals is None or referral is None:
+            return
+        if not (
+            referral.source_id
+            or referral.source_url
+            or referral.ctwa_clid
+            or referral.headline
+            or referral.raw
+        ):
+            return
+        try:
+            await repositories.ad_referrals.save_if_new(
+                ConversationAdReferral(
+                    id=str(uuid4()),
+                    conversation_id=str(conversation.id),
+                    contact_id=str(contact.id),
+                    source_id=referral.source_id,
+                    source_type=referral.source_type,
+                    source_url=referral.source_url,
+                    headline=referral.headline,
+                    ctwa_clid=referral.ctwa_clid,
+                    raw=referral.raw,
+                    first_seen_at=datetime.now(UTC),
+                    message_external_id=dto.external_message_id,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "ingest_message.ad_referral_save_failed conversation=%s",
+                conversation.id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _rotate_in_unit_of_work(
