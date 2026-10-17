@@ -464,9 +464,26 @@ const AgentDiagram = (() => {
     return out;
   }
 
+  // Splits `text` right after any character of `breakChars`. Equivalent to
+  // text.split(/(?<=[chars])/) without a lookbehind, which Safari before 16.4 rejects at
+  // parse time (that would break the whole page).
+  function splitAfter(text, breakChars) {
+    const out = [];
+    let cur = "";
+    for (const ch of text) {
+      cur += ch;
+      if (breakChars.includes(ch)) {
+        out.push(cur);
+        cur = "";
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
   // Splits a snake_case name into at most two lines of <= maxChars.
   function splitName(label, maxChars = 20) {
-    const parts = label.split(/(?<=_)/);
+    const parts = splitAfter(label, "_");
     const lines = [""];
     parts.forEach((p) => {
       const cur = lines[lines.length - 1];
@@ -496,9 +513,9 @@ const AgentDiagram = (() => {
 
   // Greedy wrap of `text` into lines of at most `maxPx`, breaking after "_" (for
   // ids) or at spaces (for prose). A single piece wider than maxPx stays whole.
-  function wrapText(text, maxPx, bold, breakAfter = /(?<=[_ ])/) {
+  function wrapText(text, maxPx, bold, breakChars = "_ ") {
     const lines = [];
-    text.split(breakAfter).forEach((piece) => {
+    splitAfter(text, breakChars).forEach((piece) => {
       const cur = lines[lines.length - 1];
       if (cur !== undefined && textWidth((cur + piece).trimEnd(), bold) <= maxPx) lines[lines.length - 1] = cur + piece;
       else lines.push(piece);
@@ -811,7 +828,7 @@ const AgentDiagram = (() => {
     // Wide boxes show "metric · ● state" on one line (as on the canvas); the
     // tall leaf boxes and the untraced ones use one line for each.
     const oneLine = n.variant !== "tall" && n.traced;
-    const nameLines = wrapText(n.label, n.w - (n.variant === "tall" ? 12 : 16), true, /(?<=_)/);
+    const nameLines = wrapText(n.label, n.w - (n.variant === "tall" ? 12 : 16), true, "_");
     const total = nameLines.length + (oneLine ? 1 : 2);
     let y = (n.h - total * 16) / 2 + 12;
     const cx = n.w / 2;
