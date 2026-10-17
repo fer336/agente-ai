@@ -18,7 +18,7 @@ local coverage-dataset commits cherry-picked from the old branch. Not pushed, no
 - [x] T1 (E) Re-check the pause/contact gate right before the outbound send in `LangGraphAgentInvoker`; nothing sent when gated.
 - [x] T2 (A+D) Greeting shows the welcome menu again; FAQ menu only for programmed topics.
 - [x] T3 (B+C) Deterministic urgent-wording pre-check routing to `handoff`; empty list body check.
-- [ ] T4 (F) Dataset expectation fixes, README/docs, scaffold lists consistent.
+- [x] T4 (F) Dataset expectation fixes, README/docs, scaffold lists consistent.
 
 ## Authorized scope
 app/agent/**, app/application/messages/**, app/infrastructure/agent/**, app/infrastructure/llm/**,
@@ -38,8 +38,12 @@ T2 changes: `app/agent/greetings.py` (strict whole-message greeting detector), `
 T3 changes (B): `automatic_handoff._is_emergency` extends the single deterministic pre-check already used by `resolve_interaction` (it runs before the LLM, in every stage; the existing `sangr\w*` rule already covered "sangra mucho"/"sangrado que no para", the fake LLM never routed it). New: no puedo/me cuesta/dificultad para respirar, me falta el aire, desmayo, traumatismo, golpe fuerte en la cabeza, dolor insoportable, swollen face/neck + fever, a blow + tooth lost/moved. Negations ("sin desmayos", "no tengo dolor insoportable") do not fire. The new unit cases were written together with the code (the sangrado ones passed before it); the genuinely new wording is covered by `tests/unit/agent/test_automatic_handoff.py`.
 T3 (C): the list body CAN be empty at send time (`specialties` returned `response_text=None` and the invoker passes `""`; YCloud rejects a list with an empty body). Fixed at both layers: the specialties node now sets `CHOOSE_SPECIALTY_PROMPT` (new public constant in `paginated_list.py`, same wording as the appointment flow) and the back-to-menu list sends `WELCOME_TEXT`; `SendReplyUseCase` falls back to "Elegí una opción de la lista:" for any list with a blank body.
 
+T4 changes (F): `custom.js` gets `isWelcomeMenuReply` and `replyIsHealthy` also accepts `reply_kind: list` with non-empty `list_rows` (scaffold helper list, helper tests and README updated). Dataset: greetings (cap-082..089, fmt-004, chat-024/025) expect the welcome menu; urgent cases sec-027..031 expect node `handoff` and status `handoff`; sec-011/013/014 expect the fixed out-of-scope reply; sec-012/026 expect the appointment node and no decoy values. The off-topic cases (oos-031/040/047 and the photo-diagnosis one) already expected the out-of-scope text and now pass by the T2 routing change.
+
 ## Verification
-(filled per task)
+- `uv run pytest tests/unit -q --deselect tests/unit/evals/test_dataset_replay.py`: 3957 passed, 3 failed (the pre-existing `test_gateway_dependency.py` ones).
+- `test_dataset_replay.py` per case with `-k "current_flow and <dataset>"` for audio, flows_view_appointment, location, out_of_scope: each passed (a full run fails with event-loop errors, flaky also on main).
+- `uv run ruff check app tests`: all checks passed. `uv run ruff format --check app tests`: 690 files already formatted. `uv run mypy app`: no issues in 373 files.
 
 ## Not run
 Nothing was run against the real Gemini model. The parent re-runs the 281-case promptfoo suite.

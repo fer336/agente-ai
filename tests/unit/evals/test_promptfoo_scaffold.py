@@ -191,6 +191,7 @@ def test_custom_assertions_js_exports_the_expected_functions():
         "handoffOfferHasButtons",
         "isOutOfScopeReply",
         "isNotOutOfScopeReply",
+        "isWelcomeMenuReply",
         "replyIsHealthy",
     }
 
@@ -386,6 +387,24 @@ def test_out_of_scope_helpers_accept_only_the_fixed_text_with_its_three_buttons(
     assert _run_helper("isOutOfScopeReply", other_text)["pass"] is False
     assert _run_helper("isNotOutOfScopeReply", good)["pass"] is False
     assert _run_helper("isNotOutOfScopeReply", other_text)["pass"] is True
+
+
+def test_welcome_menu_helper_accepts_only_the_welcome_text_with_its_list():
+    from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
+
+    good = {
+        "reply_text": WELCOME_TEXT,
+        "reply_kind": "list",
+        "list_rows": [{"id": row.id, "title": row.title} for row in WELCOME_LIST.rows],
+    }
+    other_text = {**good, "reply_text": "Hola, ¿en qué te ayudo?"}
+    no_list = {**good, "reply_kind": "text", "list_rows": []}
+    out_of_scope = {**good, "reply_text": "Disculpame, con eso no te puedo ayudar por acá 🙏"}
+
+    assert _run_helper("isWelcomeMenuReply", good)["pass"] is True
+    assert _run_helper("isWelcomeMenuReply", other_text)["pass"] is False
+    assert _run_helper("isWelcomeMenuReply", no_list)["pass"] is False
+    assert _run_helper("isWelcomeMenuReply", out_of_scope)["pass"] is False
 
 
 def test_intro_helper_flags_a_repeated_intro_within_one_conversation():
@@ -649,7 +668,13 @@ def test_reply_is_healthy_helper_checks_status_text_and_technical_error():
     empty = {**ok, "reply_text": "  "}
     card = {**empty, "reply_kind": "location"}
     technical = {**ok, "reply_text": "Tuvimos un problema técnico procesando tu mensaje."}
+    # A list message has no text of its own when the node only offers rows ("🦷").
+    rows = [{"id": "SPECIALTY:1", "title": "General", "description": None}]
+    list_reply = {**empty, "reply_kind": "list", "list_rows": rows}
+    empty_list = {**empty, "reply_kind": "list", "list_rows": []}
 
+    assert _run_helper("replyIsHealthy", list_reply)["pass"] is True
+    assert _run_helper("replyIsHealthy", empty_list)["pass"] is False
     assert _run_helper("replyIsHealthy", ok)["pass"] is True
     assert _run_helper("replyIsHealthy", handoff)["pass"] is True
     assert _run_helper("replyIsHealthy", handoff, {"statuses": ["completed"]})["pass"] is False

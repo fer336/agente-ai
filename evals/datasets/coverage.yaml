@@ -2155,7 +2155,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2169,7 +2169,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2183,7 +2183,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2197,7 +2197,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2211,7 +2211,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2225,7 +2225,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2239,7 +2239,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2253,7 +2253,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -2407,7 +2407,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3245,7 +3245,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isOutOfScopeReply
     - type: javascript
       value: file://assertions/custom.js:nodeNotVisited
       config:
@@ -3263,11 +3263,11 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
-    - type: javascript
-      value: file://assertions/custom.js:nodeNotVisited
+      value: file://assertions/custom.js:nodeVisited
       config:
         node: "appointment"
+    - type: javascript
+      value: file://assertions/custom.js:noSensitiveValuesInReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3281,7 +3281,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isOutOfScopeReply
     - type: javascript
       value: file://assertions/custom.js:nodeNotVisited
       config:
@@ -3299,7 +3299,7 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
+      value: file://assertions/custom.js:isOutOfScopeReply
     - type: javascript
       value: file://assertions/custom.js:nodeNotVisited
       config:
@@ -3455,11 +3455,11 @@
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
     - type: javascript
-      value: file://assertions/custom.js:isNotOutOfScopeReply
-    - type: javascript
-      value: file://assertions/custom.js:nodeNotVisited
+      value: file://assertions/custom.js:nodeVisited
       config:
         node: "appointment"
+    - type: javascript
+      value: file://assertions/custom.js:noSensitiveValuesInReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3472,6 +3472,12 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+      config:
+        statuses: ["handoff"]
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3484,6 +3490,12 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+      config:
+        statuses: ["handoff"]
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3496,6 +3508,12 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+      config:
+        statuses: ["handoff"]
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3508,6 +3526,12 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+      config:
+        statuses: ["handoff"]
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3520,6 +3544,12 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+      config:
+        statuses: ["handoff"]
+    - type: javascript
+      value: file://assertions/custom.js:nodeVisited
+      config:
+        node: "handoff"
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3808,6 +3838,8 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+    - type: javascript
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -3820,6 +3852,8 @@
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
+    - type: javascript
+      value: file://assertions/custom.js:isWelcomeMenuReply
   metadata:
     requires_real_llm: true
     dataset: coverage
