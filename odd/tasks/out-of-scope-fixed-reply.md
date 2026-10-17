@@ -34,6 +34,8 @@ shows only two buttons. The clinic wants a stable, approved wording and a way ba
 - [x] T1 Tests first (RED), then fixed text + 3 buttons in the generic branch; update old tests. Route: inline (single file + its test, already understood).
 - [x] T2 Promptfoo dataset `evals/datasets/out_of_scope.yaml`, registered in config and in the scaffold/replay tests; evals README section. Route: inline.
 
+- [x] T3 Free-text questions that are not a programmed capability never get an LLM-composed answer (fixed text + 3 buttons). Route: inline by the single writer (one behavior, 2 source files + tests).
+
 ## Acceptance criteria
 - Exact text match; exactly 3 buttons with the right ids/titles; no LLM text call on this path.
 - `MENU_MAIN` payload still routes to the main menu (existing tests in `test_resolve_interaction.py` and `test_langgraph_agent_invoker.py`, plus a new assertion tying the button id to it).
@@ -56,6 +58,30 @@ shows only two buttons. The clinic wants a stable, approved wording and a way ba
   (113 passed). Full `uv run pytest tests/unit -q`: 3809 passed, 3 failed (known pre-existing
   `test_gateway_dependency.py`). ruff check, ruff format --check, mypy app clean.
 - Commit T2: see git log (`test(evals): add out-of-scope dataset`).
+
+## T3 map: how a free-text message became `pending_answer` (before the change)
+- Prompt/schema: `DEFAULT_UNDERSTAND_PROMPT` and its "answer" field (`app/infrastructure/llm/openai_compatible_llm_provider.py:101-178`, "answer" at :149); `UnderstandingResult.answer`/`handoff_offer` (`app/domain/repositories/llm_provider.py`). Fake: `app/infrastructure/llm/fake_llm_provider.py:274-292` (payment keywords return intent=question + answer).
+- Router: `_carried_understanding` stores `result.answer` as `pending_answer` and `handoff_offer` as `HANDOFF_OFFER_FLAG_KEY` (`app/agent/nodes/resolve_interaction.py:272-292`); `_ROUTABLE_INTENTS`/`_INFORMATION_INTENTS` include `question` (:155, :243).
+- Graph: intent `question` -> `QUESTION_NODE` (`app/agent/graph.py:130`); any other unrouted intent -> `FALLBACK_NODE` (:140).
+- Consumers: `question.py` (old: off-topic regex, payment override, `guard_free_text_answer`, LLM "question_unknown_answer") and the `pending_answer` branch of `fallback.py` (old :101-135, payment override + `_ANSWERED_QUESTION_BUTTONS`).
+
+## T3 change
+- `app/agent/nodes/question.py`: rewritten. Never delivers the model answer or calls the LLM. Payment wording (in the user message or in the dropped model answer) -> `PAYMENT_ADMIN_STATIC_MESSAGE` + handoff offer buttons (unchanged behavior); everything else -> `OUT_OF_SCOPE_MESSAGE` + 3 buttons. `stage` and other `collected_data` are kept so an appointment resumes. `llm_provider` kept only for the factory signature.
+- `app/agent/nodes/fallback.py`: the `pending_answer` branch no longer delivers the answer; it is dropped and the turn continues to the existing branches (welcome reminder via LLM, else fixed text). Payment wording still gets the fixed Administración redirect. `_OUT_OF_SCOPE_BUTTONS` renamed public `OUT_OF_SCOPE_BUTTONS` (reused by `question.py`); `_ANSWERED_QUESTION_BUTTONS` removed.
+- Deliberately left: understand prompt and structured-output schema (still asks for `answer`; it is simply ignored, so no schema or admin-prompt migration); `resolve_interaction` still carries `pending_answer` (used only as a payment signal) and `HANDOFF_OFFER_FLAG_KEY`; location, faq_topic, payment_admin, handoff, welcome menu and reminder nodes untouched. Unused-by-these-nodes helpers (`guard_free_text_answer`, `answer_offers_handoff`) remain for other callers.
+- Behavior note: previously the "horarios de atención / extracciones" style questions were answered by the model; they now get the fixed text (no clinic facts are programmed for them).
+
+## T3 tests
+- RED: new/updated node tests fail against the old app code (24 failed with the app changes stashed), GREEN after.
+- Tests that asserted the OLD free-answer behavior and were rewritten: `tests/unit/agent/nodes/test_question_node.py` (whole file), `test_fallback_node.py` (pending_answer delivery/greeting/handoff-offer tests), `test_no_premature_action_claims.py` (question/fallback claim + diagnosis tests), `tests/unit/agent/test_handoff_offer_flag.py` (delivery + audit replay + guard-replaced tests), `tests/unit/infrastructure/agent/test_langgraph_agent_invoker.py::test_a_handoff_offer_has_buttons_and_a_free_text_yes_hands_over_to_administration` (now drives the payment-redirect offer).
+- New: parametrized node test (diagnosis/price/medication/joke/insult/hours/empty answer -> fixed text + exactly 3 buttons, LLM text generation forbidden) and a full-graph invoker test where the fake LLM returns a free-form answer for a question and the sent message is still `OUT_OF_SCOPE_MESSAGE` with the three buttons.
+- Evals: `evals/datasets/out_of_scope.yaml` case "pide hablar con el doctor ya" (routed to the booking flow by design) moved to the in-scope controls asserting `isNotOutOfScopeReply` only; README text updated. `custom.js` unchanged (the fixed text did not change).
+- Commits: `a998250` (feat(agent): answer free questions with the fixed out-of-scope text instead of the model's reply), `c39e56e` (test(evals): move the doctor-now case to the in-scope controls).
+
+## T3 verification and caveats
+- `uv run pytest tests/unit -q` (gateway_dependency deselected): 3771 passed, 4 failed, all `tests/unit/evals/test_dataset_replay.py` parametrized cases (audio, flows_view_appointment, location, out_of_scope). On the base commit the same file also fails 3 of its cases in a full-file run here ("attached to a different loop" / handled_error in the replay harness, environmental flakiness); every one of those four cases passes when run alone with `-k` on this branch.
+- ruff check, ruff format --check, mypy app: clean.
+- NOT verified: no real-LLM run. The real model may still return non-`question` intents for chit-chat (those reach `fallback`, now also fixed text) or route some topics to `handoff`/`appointment`; the parent must run the promptfoo suite against Gemini.
 
 ## Next step
 Hand the branch to the user; push and PR are theirs.
