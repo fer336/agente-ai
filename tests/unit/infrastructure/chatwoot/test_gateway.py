@@ -239,6 +239,7 @@ async def test_rename_contact_if_unnamed_never_overwrites_a_name_set_by_staff():
 
     assert client.name_updates == []
 
+
 async def test_find_conversation_contact_reads_the_sender_from_meta():
     client = _StubChatwootClient(
         conversations={

@@ -22,9 +22,7 @@ class PendingActionModel(Base):
     confirmation_token: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    workflow_generation: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, server_default="1"
-    )
+    workflow_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

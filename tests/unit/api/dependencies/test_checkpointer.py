@@ -63,9 +63,7 @@ async def test_get_agent_checkpointer_caches_across_calls(monkeypatch: pytest.Mo
     async def fake_create_checkpointer(pool):
         return _FakeSaver()
 
-    monkeypatch.setattr(
-        checkpointer_module, "create_postgres_checkpointer_pool", fake_pool_factory
-    )
+    monkeypatch.setattr(checkpointer_module, "create_postgres_checkpointer_pool", fake_pool_factory)
     monkeypatch.setattr(checkpointer_module, "create_checkpointer", fake_create_checkpointer)
 
     first = await get_agent_checkpointer()

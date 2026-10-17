@@ -237,6 +237,7 @@ def test_get_human_handoff_gateway_stays_a_fake_even_when_ycloud_is_configured(m
 
     assert isinstance(gateway, FakeYCloudHandoffGateway)
 
+
 def test_get_patient_gateway_returns_a_fake_patient_gateway_by_default(monkeypatch):
     monkeypatch.setattr(
         "app.api.dependencies.gateways.get_settings", lambda: Settings(_env_file=None)
@@ -413,9 +414,7 @@ def test_get_telegram_notifier_returns_the_same_cached_instance_across_calls(mon
 def test_get_telegram_notifier_returns_a_real_notifier_when_bot_token_is_configured(monkeypatch):
     monkeypatch.setattr(
         "app.api.dependencies.gateways.get_settings",
-        lambda: Settings(
-            _env_file=None, telegram_bot_token="bot-token", telegram_chat_id="12345"
-        ),
+        lambda: Settings(_env_file=None, telegram_bot_token="bot-token", telegram_chat_id="12345"),
     )
 
     notifier = get_telegram_notifier()

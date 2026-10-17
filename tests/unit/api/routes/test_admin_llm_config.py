@@ -37,8 +37,8 @@ def _override_llm_config_dependencies():
     audit_log_repository = FakeAdminAuditLogRepository()
 
     app.dependency_overrides[get_runtime_config_service] = lambda: runtime_config_service
-    app.dependency_overrides[get_committing_admin_audit_log_repository] = (
-        lambda: audit_log_repository
+    app.dependency_overrides[get_committing_admin_audit_log_repository] = lambda: (
+        audit_log_repository
     )
 
     yield runtime_config_service, audit_log_repository
@@ -299,3 +299,35 @@ async def test_a_rejected_update_writes_no_audit_log_entry(
     )
 
     assert audit_log_repository.all() == []
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_the_pause_and_contact_filter_state(
+    _override_llm_config_dependencies,
+):
+    runtime_config_service, _ = _override_llm_config_dependencies
+    existing = await runtime_config_service.get_config()
+    paused_at = datetime(2026, 10, 17, 8, 0, tzinfo=UTC)
+    existing.agent_paused = True
+    existing.paused_by = "ana"
+    existing.paused_at = paused_at
+    existing.contact_filter_mode = "deny"
+    existing.contact_filter_phones = ("5491112345678",)
+    await runtime_config_service.save_config(existing)
+    cookies = _session_cookies(ADMIN_TECHNICAL)
+
+    response = await _put(
+        "/admin/api/llm-config",
+        json=_VALID_UPDATE,
+        cookies=cookies,
+        headers={"x-csrf-token": cookies["admin_csrf"]},
+    )
+
+    assert response.status_code == 200
+    config = await runtime_config_service.get_config()
+    assert config.model == "gpt-new"
+    assert config.agent_paused is True
+    assert config.paused_by == "ana"
+    assert config.paused_at == paused_at
+    assert config.contact_filter_mode == "deny"
+    assert config.contact_filter_phones == ("5491112345678",)

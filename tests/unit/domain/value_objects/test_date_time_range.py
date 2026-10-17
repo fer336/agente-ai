@@ -35,7 +35,12 @@ def test_rejects_start_after_end():
 
 
 def test_duration_returns_time_delta_between_start_and_end():
-    date_range = DateTimeRange(start=_dt(9), end=_dt(10, ))
+    date_range = DateTimeRange(
+        start=_dt(9),
+        end=_dt(
+            10,
+        ),
+    )
 
     assert date_range.duration() == timedelta(hours=1)
 

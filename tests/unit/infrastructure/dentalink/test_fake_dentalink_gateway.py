@@ -212,20 +212,32 @@ async def test_search_specialty_availability_returns_the_specialtys_soonest_slot
     # Free-slot rows from the real API carry no specialty id: the fake must
     # resolve the specialty through the professional, like the server does.
     later = make_slot(
-        id_="later", professional_id="endo-1", specialty_id="",
-        start=datetime(2026, 8, 3, 9, 0), end=datetime(2026, 8, 3, 9, 30),
+        id_="later",
+        professional_id="endo-1",
+        specialty_id="",
+        start=datetime(2026, 8, 3, 9, 0),
+        end=datetime(2026, 8, 3, 9, 30),
     )
     sooner = make_slot(
-        id_="sooner", professional_id="endo-1", specialty_id="",
-        start=datetime(2026, 8, 2, 9, 0), end=datetime(2026, 8, 2, 9, 30),
+        id_="sooner",
+        professional_id="endo-1",
+        specialty_id="",
+        start=datetime(2026, 8, 2, 9, 0),
+        end=datetime(2026, 8, 2, 9, 30),
     )
     other = make_slot(
-        id_="other", professional_id="gen-1", specialty_id="",
-        start=datetime(2026, 8, 2, 8, 0), end=datetime(2026, 8, 2, 8, 30),
+        id_="other",
+        professional_id="gen-1",
+        specialty_id="",
+        start=datetime(2026, 8, 2, 8, 0),
+        end=datetime(2026, 8, 2, 8, 30),
     )
     outside = make_slot(
-        id_="outside", professional_id="endo-1", specialty_id="",
-        start=datetime(2026, 9, 2, 9, 0), end=datetime(2026, 9, 2, 9, 30),
+        id_="outside",
+        professional_id="endo-1",
+        specialty_id="",
+        start=datetime(2026, 9, 2, 9, 0),
+        end=datetime(2026, 9, 2, 9, 30),
     )
     gateway = FakeDentalinkGateway(
         available_slots=[later, other, outside, sooner],

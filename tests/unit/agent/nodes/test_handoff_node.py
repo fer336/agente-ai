@@ -25,9 +25,7 @@ async def test_handoff_node_requests_handoff_and_sets_conversation_to_human():
     assert result["requires_handoff"] is True
     assert "asesor" in result["response_text"]
     assert "administración" not in result["response_text"].lower()
-    assert handoff_gateway.handoff_requests == [
-        (ConversationId("conv-1"), "Voy a llegar tarde")
-    ]
+    assert handoff_gateway.handoff_requests == [(ConversationId("conv-1"), "Voy a llegar tarde")]
     updated = await conversation_repository.get_by_id(ConversationId("conv-1"))
     assert updated is not None
     assert updated.mode == "human"
@@ -86,9 +84,7 @@ async def test_handoff_node_does_not_always_reply_the_same_text_by_default():
 async def test_handoff_node_escalates_the_conversation_to_administracion_in_chatwoot():
     handoff_gateway = make_ycloud_handoff_gateway()
     conversation_repository = FakeConversationRepository()
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+5491122334455", mode="agent")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     chatwoot_gateway = FakeChatwootGateway()
     mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(chatwoot_gateway)
     node = create_handoff_node(handoff_gateway, conversation_repository, mirror_to_chatwoot)
@@ -109,9 +105,7 @@ async def test_handoff_node_still_escalates_locally_when_the_chatwoot_mirror_fai
     # handoff to a human.
     handoff_gateway = make_ycloud_handoff_gateway()
     conversation_repository = FakeConversationRepository()
-    await conversation_repository.save(
-        make_conversation(id_="ycloud-+5491122334455", mode="agent")
-    )
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
     mirror_to_chatwoot = make_mirror_to_chatwoot_use_case(FakeChatwootGateway(fail=True))
     node = create_handoff_node(handoff_gateway, conversation_repository, mirror_to_chatwoot)
 

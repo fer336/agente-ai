@@ -61,8 +61,18 @@ def build_template_message(
 
 def spanish_date(value: datetime) -> str:
     months = (
-        "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
-        "septiembre", "octubre", "noviembre", "diciembre",
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
     )
     weekdays = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
     return f"{weekdays[value.weekday()]} {value.day} de {months[value.month - 1]}"

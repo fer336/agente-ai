@@ -20,6 +20,4 @@ class FakeIncidentRepository:
         self._by_id[incident.id] = incident
 
     async def list_open(self) -> list[Incident]:
-        return [
-            incident for incident in self._by_id.values() if incident.status == INCIDENT_OPEN
-        ]
+        return [incident for incident in self._by_id.values() if incident.status == INCIDENT_OPEN]

@@ -14,9 +14,7 @@ class ToolExecutionModel(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     agent_run_id: Mapped[str] = mapped_column(String, ForeignKey("agent_runs.id"), nullable=False)
-    node_execution_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("node_executions.id")
-    )
+    node_execution_id: Mapped[str | None] = mapped_column(String, ForeignKey("node_executions.id"))
     tool_name: Mapped[str] = mapped_column(String, nullable=False)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     operation: Mapped[str] = mapped_column(String, nullable=False)

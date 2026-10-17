@@ -38,9 +38,7 @@ async def test_lock_failure_does_not_raise():
     await holder.acquire()
 
     try:
-        async with redis_lock(
-            redis, "lock:conversation:conv-1", timeout=30, blocking_timeout=0.05
-        ):
+        async with redis_lock(redis, "lock:conversation:conv-1", timeout=30, blocking_timeout=0.05):
             pass
     except Exception as exc:  # noqa: BLE001 — asserting NO exception is the point of this test
         pytest.fail(f"redis_lock raised on acquisition failure instead of dropping: {exc}")

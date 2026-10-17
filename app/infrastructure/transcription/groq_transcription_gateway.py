@@ -50,9 +50,7 @@ class GroqTranscriptionGateway:
     fake-by-default swap-point convention in this codebase.
     """
 
-    def __init__(
-        self, base_url: str, api_key: str, model: str, timeout_seconds: float
-    ) -> None:
+    def __init__(self, base_url: str, api_key: str, model: str, timeout_seconds: float) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
@@ -77,9 +75,7 @@ class GroqTranscriptionGateway:
                 ) from exc
 
             if response.status_code in (401, 403):
-                raise TranscriptionAuthError(
-                    f"Groq rejected credentials ({response.status_code})"
-                )
+                raise TranscriptionAuthError(f"Groq rejected credentials ({response.status_code})")
             if response.is_error:
                 raise TranscriptionAPIError(response.status_code, response.text)
 

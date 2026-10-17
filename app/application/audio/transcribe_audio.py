@@ -32,8 +32,7 @@ _FALLBACK_EMPTY_TRANSCRIPT = (
     "No pude entender el audio. Podés escribir tu consulta o enviar un nuevo audio?"
 )
 _FALLBACK_TRANSCRIPTION_FAILED = (
-    "No pude procesar tu audio en este momento. Podés escribir tu consulta o "
-    "enviar un nuevo audio?"
+    "No pude procesar tu audio en este momento. Podés escribir tu consulta o enviar un nuevo audio?"
 )
 _FALLBACK_REJECTED = (
     "No pude procesar ese audio (formato, tamaño o duración no soportados). "
@@ -118,9 +117,7 @@ class TranscribeAudioUseCase:
             message = await repositories.messages.get_by_id(job.message_id)
 
         if message is None:
-            await self._finish(
-                job_id, job_status=JOB_FAILED, last_error="message not found"
-            )
+            await self._finish(job_id, job_status=JOB_FAILED, last_error="message not found")
             return
 
         if job.media_mime_type not in self._allowed_mime_types:
@@ -153,9 +150,7 @@ class TranscribeAudioUseCase:
 
             try:
                 transcript = await asyncio.wait_for(
-                    self._transcription_gateway.transcribe(
-                        downloaded.path, job.media_mime_type
-                    ),
+                    self._transcription_gateway.transcribe(downloaded.path, job.media_mime_type),
                     timeout=self._transcription_timeout_seconds,
                 )
             except TimeoutError:
@@ -208,9 +203,7 @@ class TranscribeAudioUseCase:
         )
         await self._send_fallback(message, _FALLBACK_REJECTED)
 
-    async def _fail(
-        self, job_id: str, message: Message, reason: str, fallback_text: str
-    ) -> None:
+    async def _fail(self, job_id: str, message: Message, reason: str, fallback_text: str) -> None:
         await self._finish(
             job_id,
             job_status=JOB_FAILED,

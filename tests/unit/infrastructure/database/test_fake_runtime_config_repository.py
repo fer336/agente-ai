@@ -11,7 +11,7 @@ from app.infrastructure.database.fake_runtime_config_repository import (
 _NOW = datetime(2026, 9, 4, 9, 0, tzinfo=UTC)
 
 
-def _config(model: str = "gemini/gemini-3.7-flash") -> RuntimeAgentConfig:
+def _config(model: str = "gemini/gemini-3.7-flash", **extra: object) -> RuntimeAgentConfig:
     return RuntimeAgentConfig(
         id="default",
         model=model,
@@ -22,6 +22,7 @@ def _config(model: str = "gemini/gemini-3.7-flash") -> RuntimeAgentConfig:
         generate_response_prompt="respond to {intent} with {collected_data}",
         updated_at=_NOW,
         updated_by="admin-1",
+        **extra,  # type: ignore[arg-type]
     )
 
 
@@ -55,3 +56,27 @@ async def test_save_then_get_round_trips():
 
 def test_fake_runtime_config_repository_satisfies_runtime_config_repository_protocol():
     assert isinstance(FakeRuntimeConfigRepository(), RuntimeConfigRepository)
+
+
+@pytest.mark.asyncio
+async def test_pause_and_filter_fields_round_trip():
+    repository = FakeRuntimeConfigRepository()
+    paused_at = datetime(2026, 10, 17, 8, 0, tzinfo=UTC)
+
+    await repository.save(
+        _config(
+            agent_paused=True,
+            paused_by="ana",
+            paused_at=paused_at,
+            contact_filter_mode="deny",
+            contact_filter_phones=("5491112345678",),
+        )
+    )
+
+    config = await repository.get()
+    assert config is not None
+    assert config.agent_paused is True
+    assert config.paused_by == "ana"
+    assert config.paused_at == paused_at
+    assert config.contact_filter_mode == "deny"
+    assert config.contact_filter_phones == ("5491112345678",)

@@ -131,9 +131,7 @@ async def test_reminder_location_tap_sends_the_clinic_image_prompt_when_configur
     assert result["response_image_url"] == "https://example.test/clinic.jpg"
     assert result["response_location"] is None
     assert result["response_text"] is not None
-    assert result["response_buttons"] == [
-        InteractiveButton(LOCATION_DETAIL_PAYLOAD, "Cómo llegar")
-    ]
+    assert result["response_buttons"] == [InteractiveButton(LOCATION_DETAIL_PAYLOAD, "Cómo llegar")]
 
 
 @pytest.mark.asyncio
@@ -149,11 +147,13 @@ async def test_reminder_action_node_fails_closed_without_dependency_or_resolutio
     missing: str,
 ) -> None:
     actions = _confirmed_actions()
-    conversations = None if missing == "conversations" else _Conversations(
-        None if missing == "conversation" else _conversation()
+    conversations = (
+        None
+        if missing == "conversations"
+        else _Conversations(None if missing == "conversation" else _conversation())
     )
-    contacts = None if missing == "contacts" else _Contacts(
-        None if missing == "contact" else _contact()
+    contacts = (
+        None if missing == "contacts" else _Contacts(None if missing == "contact" else _contact())
     )
     node = create_reminder_action_node(actions, conversations, contacts)
 

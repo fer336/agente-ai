@@ -73,8 +73,7 @@ class ReactivateBotFromChatwootUseCase:
             await self._chatwoot_gateway.assign_bot(chatwoot_conversation_id)
         except Exception:  # noqa: BLE001 - label sync is best-effort
             logger.warning(
-                "reactivate_bot_from_chatwoot.label_sync_failed "
-                "chatwoot_conversation_id=%s",
+                "reactivate_bot_from_chatwoot.label_sync_failed chatwoot_conversation_id=%s",
                 chatwoot_conversation_id,
                 exc_info=True,
             )

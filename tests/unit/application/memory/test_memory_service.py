@@ -185,7 +185,9 @@ async def test_build_agent_context_falls_back_to_direction_when_role_is_none():
     )
     await message_repository.save(
         _message(
-            "msg-2", "hola, en que te ayudo", datetime(2026, 8, 31, 9, 1, tzinfo=UTC),
+            "msg-2",
+            "hola, en que te ayudo",
+            datetime(2026, 8, 31, 9, 1, tzinfo=UTC),
             direction="outbound",
         )
     )
@@ -207,8 +209,11 @@ async def test_build_agent_context_uses_explicit_role_over_direction():
     message_repository = FakeMessageRepository()
     await message_repository.save(
         _message(
-            "msg-1", "hola", datetime(2026, 8, 31, 9, 0, tzinfo=UTC),
-            direction="inbound", role=ROLE_ASSISTANT,
+            "msg-1",
+            "hola",
+            datetime(2026, 8, 31, 9, 0, tzinfo=UTC),
+            direction="inbound",
+            role=ROLE_ASSISTANT,
         )
     )
     service, _, _ = _build_service(message_repository=message_repository)

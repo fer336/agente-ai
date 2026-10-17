@@ -17,9 +17,7 @@ _CACHE_KEY = "runtime_agent_config"
 #: `IngestMessageUseCase.repositories_provider`) — an async-context-manager
 #: factory, so a fresh session is opened per call rather than held open for
 #: this service's lifetime.
-RuntimeConfigRepositoryProvider = Callable[
-    [], AbstractAsyncContextManager[RuntimeConfigRepository]
-]
+RuntimeConfigRepositoryProvider = Callable[[], AbstractAsyncContextManager[RuntimeConfigRepository]]
 
 
 class RuntimeConfigService:
@@ -99,6 +97,13 @@ class RuntimeConfigService:
             generate_response_prompt=payload["generate_response_prompt"],
             updated_at=datetime.fromisoformat(payload["updated_at"]),
             updated_by=payload["updated_by"],
+            agent_paused=payload.get("agent_paused", False),
+            paused_by=payload.get("paused_by"),
+            paused_at=(
+                datetime.fromisoformat(payload["paused_at"]) if payload.get("paused_at") else None
+            ),
+            contact_filter_mode=payload.get("contact_filter_mode", "off"),
+            contact_filter_phones=tuple(payload.get("contact_filter_phones", ())),
         )
 
     async def _write_cache(self, config: RuntimeAgentConfig) -> None:
@@ -114,6 +119,11 @@ class RuntimeConfigService:
             "generate_response_prompt": config.generate_response_prompt,
             "updated_at": config.updated_at.isoformat(),
             "updated_by": config.updated_by,
+            "agent_paused": config.agent_paused,
+            "paused_by": config.paused_by,
+            "paused_at": config.paused_at.isoformat() if config.paused_at else None,
+            "contact_filter_mode": config.contact_filter_mode,
+            "contact_filter_phones": list(config.contact_filter_phones),
         }
         try:
             await self._redis_client.set(

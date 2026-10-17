@@ -8,9 +8,7 @@ class FakeAdminUserRepository:
         self._by_id: dict[str, AdminUser] = {}
 
     async def get_by_username(self, username: str) -> AdminUser | None:
-        return next(
-            (user for user in self._by_id.values() if user.username == username), None
-        )
+        return next((user for user in self._by_id.values() if user.username == username), None)
 
     async def get_by_id(self, admin_user_id: str) -> AdminUser | None:
         return self._by_id.get(admin_user_id)

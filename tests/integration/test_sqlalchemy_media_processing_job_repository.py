@@ -72,9 +72,7 @@ async def test_get_by_message_id_returns_none_when_no_job_exists(db_session):
     assert await repository.get_by_message_id("no-such-message") is None
 
 
-async def test_transition_status_succeeds_when_status_matches_from_status(
-    db_session, message_id
-):
+async def test_transition_status_succeeds_when_status_matches_from_status(db_session, message_id):
     repository = SqlAlchemyMediaProcessingJobRepository(db_session)
     await repository.save(_job(message_id, "job-3", "pending"))
 

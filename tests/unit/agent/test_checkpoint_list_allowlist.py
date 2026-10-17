@@ -136,9 +136,7 @@ def test_old_professional_selection_checkpoint_resumes_without_new_persisted_sta
     loaded_professionals = loaded["collected_data"]["professional_options"]
     assert isinstance(loaded_professionals[0], Professional)
     assert loaded_professionals[0].full_name == "Dra. Laura Pérez"
-    assert (
-        decision_entry_node_for_stage(loaded["collected_data"]["stage"]) == "choose_professional"
-    )
+    assert decision_entry_node_for_stage(loaded["collected_data"]["stage"]) == "choose_professional"
 
 
 def test_old_slot_selection_checkpoint_resumes_without_new_persisted_state():
