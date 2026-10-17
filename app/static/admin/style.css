@@ -1015,21 +1015,9 @@ button:disabled {
 /* ---- KPIs page (/admin/kpis) ---- */
 
 .kpi-main {
-  max-width: 1400px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.kpi-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.kpi-head h1 {
-  font-size: 22px;
-  margin: 0;
+  gap: 20px;
 }
 
 .kpi-toolbar {
@@ -1087,8 +1075,8 @@ button:disabled {
 .kpi-btn-primary,
 .kpi-btn-quiet,
 .kpi-banner button {
-  min-height: 36px;
-  padding: 0 16px;
+  min-height: 44px;
+  padding: 0 20px;
   border-radius: 8px;
   font: inherit;
   font-size: 14px;
@@ -1104,7 +1092,7 @@ button:disabled {
 
 .kpi-btn-quiet,
 .kpi-banner button {
-  background: none;
+  background: var(--panel);
   border: 1px solid var(--border);
   color: var(--text);
 }
@@ -1120,6 +1108,11 @@ button:disabled {
   font-size: 13px;
   line-height: 20px;
   color: var(--muted);
+}
+
+/* Short wording of the printed report; see kpis.js renderCards. */
+.kpi-print-only {
+  display: none;
 }
 
 .kpi-export-hint:empty {
@@ -1195,6 +1188,10 @@ button:disabled {
 }
 
 .kpi-notice {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 24px;
   padding: 12px 16px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1253,7 +1250,7 @@ button:disabled {
 .kpi-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
 .kpi-busy .kpi-cards,
@@ -1326,7 +1323,7 @@ button:disabled {
 
 .kpi-axis text {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .kpi-line-taken,
@@ -1375,7 +1372,7 @@ button:disabled {
 
 .kpi-bar-row {
   display: grid;
-  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) minmax(32px, auto);
   align-items: center;
   gap: 12px;
   font-size: 14px;
@@ -1417,11 +1414,20 @@ button:disabled {
 }
 
 .kpi-heat {
+  background: none;
+  border: 0;
+  border-radius: 0;
   border-collapse: separate;
   border-spacing: 3px;
   min-width: 540px;
   width: 100%;
   table-layout: fixed;
+}
+
+.kpi-heat th,
+.kpi-heat td {
+  padding: 0;
+  border: 0;
 }
 
 .kpi-heat th {
@@ -1478,6 +1484,9 @@ button:disabled {
 
 .kpi-table {
   width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 0;
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -1485,6 +1494,7 @@ button:disabled {
 .kpi-table th,
 .kpi-table td {
   padding: 8px 12px;
+  vertical-align: middle;
   border-bottom: 1px solid var(--border);
   text-align: left;
 }
@@ -1562,12 +1572,13 @@ button:disabled {
 }
 
 /* ---- KPIs page: A4 print layout (browser "Save as PDF") ----
-   Light theme whatever the screen theme is. The content box of the page is
-   186mm x 273mm (about 703 x 1032 CSS px); the standard 30-day report is
-   sized to fit it on one sheet. Type is 12px or larger, rules 1px or thicker. */
+   Mirrors KpisPrint.dc.html: light theme whatever the screen theme is, content
+   box of 698 x 1027 CSS px (A4 minus a 48 px margin); the standard 30-day
+   report is sized to fit it on one sheet. Type is 12px or larger, rules 1px
+   or thicker. */
 @page {
   size: A4;
-  margin: 12mm;
+  margin: 48px; /* 0.5 in: the canvas page is 794 x 1123 px with 48 px padding */
 }
 
 @media print {
@@ -1594,7 +1605,6 @@ button:disabled {
      error states, the on-screen notices (the footer carries the same text)
      and every interactive affordance. */
   .kpi-page .topbar,
-  .kpi-page .kpi-head,
   .kpi-page .kpi-toolbar,
   .kpi-page .kpi-custom,
   .kpi-page .kpi-banner,
@@ -1607,10 +1617,17 @@ button:disabled {
   }
 
   .kpi-page main.kpi-main {
+    width: auto;
     max-width: none;
     margin: 0;
     padding: 0;
-    gap: 14px;
+    gap: 18px;
+  }
+
+  /* Tall enough to push the footer to the bottom, short enough (the content box
+     is 1027 px) never to open a second sheet by itself. */
+  .kpi-page main.kpi-printable {
+    min-height: 1000px;
   }
 
   .kpi-page .kpi-busy .kpi-cards,
@@ -1621,6 +1638,10 @@ button:disabled {
   }
 
   /* Header */
+  .kpi-page .kpi-print-only {
+    display: inline;
+  }
+
   .kpi-page .kpi-print-head {
     display: flex;
     align-items: flex-end;
@@ -1672,7 +1693,7 @@ button:disabled {
 
   .kpi-page .kpi-card {
     gap: 2px;
-    padding: 10px 12px;
+    padding: 12px;
     border: 1px solid #c9cdd4;
     border-radius: 6px;
     break-inside: avoid;
@@ -1705,7 +1726,7 @@ button:disabled {
 
   /* Sections: no boxes, a heading and its figure kept together */
   .kpi-page .kpi-content {
-    gap: 14px;
+    gap: 18px;
   }
 
   .kpi-page .kpi-panel {
@@ -1883,7 +1904,7 @@ button:disabled {
   /* Footer: scope note, evidence caveat, truncation notice */
   .kpi-page .kpi-print-foot {
     display: block;
-    margin-top: 4px;
+    margin-top: auto; /* pinned to the bottom of the sheet, as on the canvas */
     padding-top: 8px;
     border-top: 1px solid #c9cdd4;
     font-size: 12px;

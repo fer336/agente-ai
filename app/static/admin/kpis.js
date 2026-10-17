@@ -127,9 +127,16 @@ const Kpis = (() => {
     return `${d}/${m}/${y}`;
   }
 
-  // Short axis label: "16/09"
+  const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+  // Short axis label: "16 sep"
   function fmtDayMonth(iso) {
-    return isIsoDate(iso) ? fmtDate(iso).slice(0, 5) : "";
+    return isIsoDate(iso) ? `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}` : "";
+  }
+
+  // "2026-09-16" -> "16 sep 2026"
+  function fmtDateLong(iso) {
+    return isIsoDate(iso) ? `${fmtDayMonth(iso)} ${iso.slice(0, 4)}` : "—";
   }
 
   // One KPI card's comparison line. `change_pct` is null when the previous
@@ -138,11 +145,11 @@ const Kpis = (() => {
     const previous = total.previous;
     const pct = total.change_pct;
     if (pct === null || pct === undefined) {
-      return { dir: "none", text: `Sin dato comparable (período anterior: ${fmtInt(previous)})` };
+      return { dir: "none", text: `Sin dato comparable (período anterior: ${fmtInt(previous)})`, print: `Sin dato comparable (antes ${fmtInt(previous)})` };
     }
-    if (pct > 0) return { dir: "up", text: `▲ ${fmtPct(pct)} más que el período anterior (${fmtInt(previous)})` };
-    if (pct < 0) return { dir: "down", text: `▼ ${fmtPct(Math.abs(pct))} menos que el período anterior (${fmtInt(previous)})` };
-    return { dir: "flat", text: `= Igual que el período anterior (${fmtInt(previous)})` };
+    if (pct > 0) return { dir: "up", text: `▲ ${fmtPct(pct)} más que el período anterior (${fmtInt(previous)})`, print: `▲ ${fmtPct(pct)} (antes ${fmtInt(previous)})` };
+    if (pct < 0) return { dir: "down", text: `▼ ${fmtPct(Math.abs(pct))} menos que el período anterior (${fmtInt(previous)})`, print: `▼ ${fmtPct(Math.abs(pct))} (antes ${fmtInt(previous)})` };
+    return { dir: "flat", text: `= Igual que el período anterior (${fmtInt(previous)})`, print: `= Igual (antes ${fmtInt(previous)})` };
   }
 
   // ------------------------------------------------------- chart geometry
@@ -327,13 +334,16 @@ const Kpis = (() => {
     return `KPIs-${period.date_from}_${period.date_to}`;
   }
 
-  // "Período: 16/09/2026 al 15/10/2026"
+  // "Período: 16 sep al 15 oct 2026" (the year is written on both ends only
+  // when the period crosses a year).
   function printPeriodText(period) {
     if (!period || !isIsoDate(period.date_from) || !isIsoDate(period.date_to)) return "";
-    return `Período: ${fmtDate(period.date_from)} al ${fmtDate(period.date_to)}`;
+    const sameYear = period.date_from.slice(0, 4) === period.date_to.slice(0, 4);
+    const from = sameYear ? fmtDayMonth(period.date_from) : fmtDateLong(period.date_from);
+    return `Período: ${from} al ${fmtDateLong(period.date_to)}`;
   }
 
-  // "15/10/2026 11:30" in the given IANA time zone (the clinic's). Hand
+  // "15 oct 2026, 11:30" in the given IANA time zone (the clinic's). Hand
   // assembled from Intl parts so the result does not depend on the browser's
   // es-AR separators. Returns "" for an unparsable timestamp; an unknown zone
   // falls back to the browser's own.
@@ -348,7 +358,7 @@ const Kpis = (() => {
       formatter = new Intl.DateTimeFormat("es-AR", options);
     }
     const part = Object.fromEntries(formatter.formatToParts(date).map((p) => [p.type, p.value]));
-    return `${part.day}/${part.month}/${part.year} ${part.hour}:${part.minute}`;
+    return `${Number(part.day)} ${MONTHS[Number(part.month) - 1]} ${part.year}, ${part.hour}:${part.minute}`;
   }
 
   function printGeneratedText(iso, timeZone) {
@@ -399,20 +409,32 @@ const Kpis = (() => {
     const without = data.evidence.taken_without;
     const exact = isEvidenceExact(data);
     const takenTotal = t.taken.current;
-    const card = (label, value, sub, opts = {}) =>
+    // The printed report (KpisPrint.dc.html) uses shorter wording than the
+    // screen: `print` is the short form, shown by the @media print rules only.
+    const both = (screen, print) =>
+      `<span class="kpi-screen-only">${esc(screen)}</span><span class="kpi-print-only">${esc(print)}</span>`;
+    const card = (label, printLabel, value, sub, printSub, opts = {}) =>
       `<div class="kpi-card${opts.warn ? " kpi-card-warn" : ""}">
-        <span class="kpi-card-label">${esc(label)}</span>
+        <span class="kpi-card-label">${both(label, printLabel)}</span>
         <span class="kpi-card-value${opts.warn ? " kpi-warn-text" : ""}">${esc(typeof value === "string" ? value : fmtInt(value))}</span>
-        <span class="kpi-card-sub${opts.dir ? " kpi-dir-" + opts.dir : ""}">${esc(sub)}</span>
+        <span class="kpi-card-sub${opts.dir ? " kpi-dir-" + opts.dir : ""}">${both(sub, printSub)}</span>
       </div>`;
     return (
-      card("Turnos tomados por el bot", t.taken.current, taken.text, { dir: taken.dir }) +
-      card("Turnos cancelados (vía bot)", t.cancelled.current, cancelled.text) +
-      card("Turnos reprogramados (vía bot)", t.rescheduled.current, "Se cuentan aparte de los tomados") +
+      card("Turnos tomados por el bot", "Tomados por el bot", t.taken.current, taken.text, taken.print, { dir: taken.dir }) +
+      card("Turnos cancelados (vía bot)", "Cancelados (vía bot)", t.cancelled.current, cancelled.text, cancelled.print) +
+      card(
+        "Turnos reprogramados (vía bot)",
+        "Reprogramados (vía bot)",
+        t.rescheduled.current,
+        "Se cuentan aparte de los tomados",
+        "Aparte de los tomados"
+      ) +
       card(
         "Tomados sin evidencia registrada",
+        "Sin evidencia registrada",
         evidenceCountText(without, exact),
         `de ${fmtInt(takenTotal)} tomados: sin registro de la herramienta de Dentalink`,
+        `de los ${fmtInt(takenTotal)} tomados`,
         { warn: without > 0 }
       )
     );
@@ -447,8 +469,8 @@ const Kpis = (() => {
       <div class="kpi-panel-head">
         <h2 id="kpi-h-perday">Turnos por día</h2>
         <div class="kpi-legend">
-          <span><svg class="kpi-swatch" viewBox="0 0 28 8" aria-hidden="true"><line class="kpi-line-taken" x1="0" y1="4" x2="28" y2="4"></line></svg> Tomados (línea continua)</span>
-          <span><svg class="kpi-swatch" viewBox="0 0 28 8" aria-hidden="true"><line class="kpi-line-cancelled" x1="0" y1="4" x2="28" y2="4"></line></svg> Cancelados vía bot (línea punteada)</span>
+          <span><svg class="kpi-swatch" viewBox="0 0 28 8" aria-hidden="true"><line class="kpi-line-taken" x1="0" y1="4" x2="28" y2="4"></line></svg> Tomados</span>
+          <span><svg class="kpi-swatch" viewBox="0 0 28 8" aria-hidden="true"><line class="kpi-line-cancelled" x1="0" y1="4" x2="28" y2="4"></line></svg> Cancelados (vía bot)</span>
         </div>
       </div>
       <svg class="kpi-svg" viewBox="0 0 ${CHART_BOX.width} ${CHART_BOX.height}" role="img" aria-label="${escAttr(label)}">
@@ -515,7 +537,7 @@ const Kpis = (() => {
     return `<section class="kpi-panel" aria-labelledby="kpi-h-heat">
       <div class="kpi-panel-head">
         <h2 id="kpi-h-heat">Día y hora de los turnos tomados</h2>
-        <span class="kpi-muted">Hora de la clínica. Cada celda indica la cantidad de turnos; más oscuro, más turnos.</span>
+        <span class="kpi-muted"><span class="kpi-screen-only">Hora de la clínica (Buenos Aires). Cada celda indica la cantidad de turnos; más oscuro, más turnos.</span><span class="kpi-print-only">Hora de la clínica. Cada celda: cantidad de turnos.</span></span>
       </div>
       <div class="kpi-scroll" role="region" aria-labelledby="kpi-h-heat" tabindex="0">
         <table class="kpi-heat">
@@ -661,10 +683,13 @@ const Kpis = (() => {
   function syncPeriodText(data) {
     const el = $("kpi-period-text");
     if (!data) {
-      el.textContent = S.range ? `${fmtDate(S.range.from)} al ${fmtDate(S.range.to)}` : "";
+      el.textContent = S.range ? `${fmtDateLong(S.range.from)} al ${fmtDateLong(S.range.to)}` : "";
+      el.removeAttribute("title");
       return;
     }
-    el.textContent = `${fmtDate(data.period.date_from)} al ${fmtDate(data.period.date_to)} · Comparado con el período anterior (${fmtDate(data.previous_period.date_from)} al ${fmtDate(data.previous_period.date_to)})`;
+    el.textContent = `${fmtDateLong(data.period.date_from)} al ${fmtDateLong(data.period.date_to)} · Comparado con el período anterior`;
+    // The earlier period's own dates, for whoever wants them.
+    el.title = `Período anterior: ${fmtDateLong(data.previous_period.date_from)} al ${fmtDateLong(data.previous_period.date_to)}`;
   }
 
   // `range` null means "no explicit period": ask the API for its default (the
@@ -809,6 +834,7 @@ const Kpis = (() => {
     fmtInt,
     fmtPct,
     fmtDate,
+    fmtDateLong,
     fmtDayMonth,
     describeChange,
     niceScale,
