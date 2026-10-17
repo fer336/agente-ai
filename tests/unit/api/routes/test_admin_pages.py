@@ -170,3 +170,34 @@ async def test_app_js_defines_the_paused_banner_pointing_at_the_control_page():
 
     assert "/agent-control" in response.text
     assert "El agente está pausado" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/admin/agent", "/admin/kpis", "/admin/login"])
+async def test_pages_always_revalidate(path: str):
+    response = await _get(path)
+
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers.get("etag")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asset", ["style.css", "app.js", "agent-diagram.js"])
+async def test_static_assets_always_revalidate(asset: str):
+    response = await _get(f"/admin/static/{asset}")
+
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers.get("etag")
+
+
+@pytest.mark.asyncio
+async def test_static_asset_revalidation_answers_304_when_unchanged():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get("/admin/static/style.css")
+        second = await client.get(
+            "/admin/static/style.css", headers={"If-None-Match": first.headers["etag"]}
+        )
+
+    assert second.status_code == 304
+    assert second.headers["cache-control"] == "no-cache"
