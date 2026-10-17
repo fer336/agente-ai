@@ -1,6 +1,8 @@
 import pytest
 
+from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS, HANDOFF_OFFER_KEY
 from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE, create_fallback_node
+from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.repositories.llm_provider import ResponseContext
 from app.domain.value_objects.menu_payloads import (
@@ -91,12 +93,11 @@ async def test_fallback_node_tracks_consecutive_attempts_in_collected_data():
 
 
 @pytest.mark.asyncio
-async def test_a_pending_answer_is_delivered_instead_of_the_did_not_understand_text():
-    # `resolve_interaction` already had the model answer the question; this
-    # node just delivers it, keeping the menu buttons as a way forward.
+async def test_a_pending_answer_is_dropped_and_the_fixed_out_of_scope_text_is_sent():
+    # The model's free-form answer is never delivered: only programmed capabilities answer.
     class _ExplodingLLMProvider(FakeLLMProvider):
         async def generate_response(self, context: ResponseContext) -> str:
-            raise AssertionError("must not re-generate when an answer is already available")
+            raise AssertionError("the out-of-scope text is fixed: no LLM text generation")
 
     node = create_fallback_node(_ExplodingLLMProvider())
 
@@ -107,14 +108,29 @@ async def test_a_pending_answer_is_delivered_instead_of_the_did_not_understand_t
         )
     )
 
-    assert result["response_text"] == "Sí, atendemos los sábados a la mañana."
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
     assert [button.id for button in result["response_buttons"]] == [
         OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
+        MENU_MAIN_PAYLOAD,
     ]
-    # Answering a question is not a failed turn: it must not count towards
-    # the escalate-to-administración counter.
-    assert "fallback_count" not in result["collected_data"]
+    assert "pending_answer" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_a_payment_message_keeps_the_fixed_administration_redirect():
+    node = create_fallback_node(FakeLLMProvider())
+
+    result = await node(
+        make_agent_state(
+            user_message="¿puedo pagar en cuotas?",
+            collected_data={"pending_answer": "Sí, hasta 6 cuotas."},
+        )
+    )
+
+    assert result["response_text"] == PAYMENT_ADMIN_STATIC_MESSAGE
+    assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
+    assert result["collected_data"][HANDOFF_OFFER_KEY] is True
     assert "pending_answer" not in result["collected_data"]
 
 
@@ -159,38 +175,6 @@ async def test_a_location_question_clears_a_stale_pending_answer():
 
     assert "pending_answer" not in result["collected_data"]
     assert result["response_location"] is not None
-
-
-@pytest.mark.asyncio
-async def test_fallback_delivers_a_pending_answer_without_a_mid_conversation_greeting():
-    node = create_fallback_node(FakeLLMProvider())
-    state = make_agent_state(
-        recent_messages=[
-            {"role": "user", "content": "Hola"},
-            {"role": "assistant", "content": "Hola! Soy el asistente."},
-            {"role": "user", "content": "¿atienden particulares?"},
-        ],
-        collected_data={"pending_answer": "Hola! Sí, atendemos particulares."},
-    )
-
-    result = await node(state)
-
-    assert result["response_text"] == "Sí, atendemos particulares."
-
-
-@pytest.mark.asyncio
-async def test_fallback_answer_offering_administration_carries_the_handoff_buttons():
-    node = create_fallback_node(FakeLLMProvider())
-    state = make_agent_state(
-        collected_data={
-            "pending_answer": "Si querés, puedo pasarte con administración. ¿Te parece bien?"
-        },
-    )
-
-    result = await node(state)
-
-    assert [b.id for b in result["response_buttons"]] == [MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD]
-    assert result["collected_data"]["handoff_offer_pending"] is True
 
 
 def _capturing_provider(captured: list[ResponseContext]) -> FakeLLMProvider:

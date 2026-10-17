@@ -1,17 +1,12 @@
 from typing import cast
 
-from app.agent.action_claims import guard_free_text_answer
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
-    answer_offers_handoff,
     normalize_text,
 )
-from app.agent.nodes.llm_response import (
-    generate_or_fallback,
-    without_mid_conversation_greeting,
-)
+from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.location import asks_for_location, clinic_location_reply
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
@@ -45,16 +40,10 @@ _CHOOSE_FROM_MENU_MESSAGE = (
 #: welcome list's "📅 Agendar una cita" row), talk to a human, or back to the main menu.
 #: `MENU_APPOINTMENT_PAYLOAD`/`MENU_SPECIALTIES_PAYLOAD` stay routable in
 #: `resolve_interaction.py` for old chat history, this reply never sends them.
-_OUT_OF_SCOPE_BUTTONS = [
+OUT_OF_SCOPE_BUTTONS = [
     InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
     InteractiveButton(id=MENU_MAIN_PAYLOAD, title="📋 Menú principal"),
-]
-#: Buttons kept under an answered free question (`pending_answer`): the answer is in scope,
-#: so it keeps the two-way "book or talk to a human" follow-up.
-_ANSWERED_QUESTION_BUTTONS = [
-    InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
-    InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
 ]
 
 
@@ -78,7 +67,7 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
     """Offers a direct way out for an unrecognized/low-confidence turn (PRD.md §8, §29).
 
     A turn outside what the bot supports gets the fixed `OUT_OF_SCOPE_MESSAGE` and the three
-    static `_OUT_OF_SCOPE_BUTTONS`, with no LLM call: the wording is clinic-approved and the
+    static `OUT_OF_SCOPE_BUTTONS`, with no LLM call: the wording is clinic-approved and the
     fallback's whole job is to be a reliable safety net. The LLM is still used for the reminder
     right after the welcome menu (the patient typed instead of tapping). `fallback_count` keeps
     tracking consecutive unresolved turns.
@@ -98,40 +87,24 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
             return {**clinic_location_reply(), "collected_data": remaining}
 
+        # The model's free-form answer (`pending_answer`, from `understand`) is never
+        # delivered: only programmed capabilities answer. It is dropped here and, at most,
+        # used as a signal that the patient is asking about payments.
         pending_answer = collected_data.get("pending_answer")
-        if isinstance(pending_answer, str) and pending_answer.strip():
-            # `resolve_interaction` already had the model answer a genuine
-            # question, so there is nothing to be confused about — deliver
-            # it, keep the menu as a way forward, and do NOT count this
-            # turn as a failed one.
-            flagged_offer = collected_data.get(HANDOFF_OFFER_FLAG_KEY)
-            remaining = {
-                k: v
-                for k, v in collected_data.items()
-                if k not in {"pending_answer", HANDOFF_OFFER_FLAG_KEY}
-            }
-            model_answer = without_mid_conversation_greeting(
-                pending_answer, state["recent_messages"]
-            )
-            answer = guard_free_text_answer(model_answer)
-            if answer != model_answer:
-                # The guard swapped the answer for a safe one: the flag described the
-                # discarded text, not this one.
-                flagged_offer = None
-            if asks_about_payments(answer):
-                # Payments and prices belong to Administración: never improvised.
-                answer = PAYMENT_ADMIN_STATIC_MESSAGE
-                flagged_offer = True
-            offers_handoff = answer_offers_handoff(answer, flagged=flagged_offer)
-            if offers_handoff:
-                remaining[HANDOFF_OFFER_KEY] = True
+        collected_data = {
+            k: v
+            for k, v in collected_data.items()
+            if k not in {"pending_answer", HANDOFF_OFFER_FLAG_KEY}
+        }
+        if asks_about_payments(state["user_message"]) or (
+            isinstance(pending_answer, str) and asks_about_payments(pending_answer)
+        ):
+            # Payments and prices belong to Administración: fixed text, never improvised.
             return {
-                "response_text": answer,
-                "response_buttons": (
-                    HANDOFF_OFFER_BUTTONS if offers_handoff else _ANSWERED_QUESTION_BUTTONS
-                ),
+                "response_text": PAYMENT_ADMIN_STATIC_MESSAGE,
+                "response_buttons": HANDOFF_OFFER_BUTTONS,
                 "requires_handoff": False,
-                "collected_data": remaining,
+                "collected_data": {**collected_data, HANDOFF_OFFER_KEY: True},
             }
 
         fallback_count = cast(int, collected_data.get("fallback_count", 0)) + 1
@@ -175,7 +148,7 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
 
         return {
             "response_text": OUT_OF_SCOPE_MESSAGE,
-            "response_buttons": _OUT_OF_SCOPE_BUTTONS,
+            "response_buttons": OUT_OF_SCOPE_BUTTONS,
             "requires_handoff": False,
             "collected_data": {**collected_data, "fallback_count": fallback_count},
         }

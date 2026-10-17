@@ -1,13 +1,70 @@
 import pytest
 
+from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS, HANDOFF_OFFER_KEY
+from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE
+from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
 from app.agent.nodes.question import create_question_node
+from app.domain.repositories.llm_provider import ResponseContext
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+)
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 
+_THREE_BUTTONS = [
+    (OPERATION_CREATE_PAYLOAD, "📅 Agendar una cita"),
+    (MENU_ADMIN_PAYLOAD, "💬 Administración"),
+    (MENU_MAIN_PAYLOAD, "📋 Menú principal"),
+]
+
+
+class _ExplodingLLM(FakeLLMProvider):
+    async def generate_response(self, context: ResponseContext) -> str:
+        raise AssertionError("a free question never gets LLM-composed text")
+
 
 @pytest.mark.asyncio
-async def test_question_delivers_answer_without_destroying_active_stage():
-    node = create_question_node(FakeLLMProvider())
+@pytest.mark.parametrize(
+    ("user_message", "free_answer"),
+    [
+        (
+            "Me duele una muela, ¿qué tengo?",
+            "Por lo que describís, podría tratarse de una caries o una sensibilidad profunda.",
+        ),
+        (
+            "¿Cuánto sale una cirugía de encías?",
+            "Los costos de una cirugía de encías pueden variar.",
+        ),
+        ("¿Qué antibiótico me tomo?", "No puedo recetar medicamentos, consultá a un profesional."),
+        ("Contame un chiste", "¿Por qué el dentista fue al banco? Para sacar una muela."),
+        ("Son unos inútiles", "Lamento que te sientas así, entiendo tu frustración."),
+        ("¿Atienden los sábados?", "Sí, atendemos los sábados a la mañana."),
+        ("", ""),
+    ],
+)
+async def test_a_free_question_gets_the_fixed_out_of_scope_text_never_the_models_answer(
+    user_message, free_answer
+):
+    node = create_question_node(_ExplodingLLM())
+    state = make_agent_state(
+        user_message=user_message,
+        collected_data={"stage": None, "pending_answer": free_answer} if free_answer else {},
+    )
+
+    result = await node(state)
+
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
+    assert free_answer not in result["response_text"] or not free_answer
+    assert [(b.id, b.title) for b in result["response_buttons"]] == _THREE_BUTTONS
+    assert result["requires_handoff"] is False
+    assert "pending_answer" not in result["collected_data"]
+
+
+@pytest.mark.asyncio
+async def test_question_keeps_the_active_stage_so_an_appointment_can_resume():
+    node = create_question_node(_ExplodingLLM())
     state = make_agent_state(
         collected_data={
             "stage": "awaiting_slot_selection",
@@ -18,146 +75,38 @@ async def test_question_delivers_answer_without_destroying_active_stage():
 
     result = await node(state)
 
-    assert result["response_text"] == "Sí, atendemos los sábados."
-    assert result["response_buttons"] is None
     assert result["collected_data"]["stage"] == "awaiting_slot_selection"
     assert result["collected_data"]["chosen_professional_id"] == "p1"
     assert "pending_answer" not in result["collected_data"]
+    assert HANDOFF_OFFER_KEY not in result["collected_data"]
 
 
 @pytest.mark.asyncio
-async def test_question_discards_a_pending_answer_that_looks_like_code():
-    # Regression, confirmed live (screenshot): a prompt-injection attempt
-    # asking for a recursive Python function talked `understand()`'s
-    # "answer" field into acting as a general-purpose coding assistant.
-    # This deterministic backstop must never relay that verbatim, no
-    # matter what the LLM produced.
-    node = create_question_node(FakeLLMProvider())
+async def test_a_code_request_answer_never_reaches_the_patient():
+    node = create_question_node(_ExplodingLLM())
     state = make_agent_state(
-        collected_data={
-            "stage": None,
-            "pending_answer": "def sumar(n):\n    if n == 1:\n        return 1\n"
-            "    return n + sumar(n - 1)\n\nprint(sumar(36))",
-        }
+        collected_data={"pending_answer": "def sumar(n):\n    return n\n\nprint(sumar(36))"}
     )
 
     result = await node(state)
 
-    assert result["response_text"] == (
-        "Solo puedo ayudarte con turnos, especialidades, obra social y datos de la clínica. "
-        "Si necesitás otra cosa, te comunico con administración."
-    )
-    assert "def " not in result["response_text"]
-    assert "pending_answer" not in result["collected_data"]
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
 
 
 @pytest.mark.asyncio
-async def test_question_fails_closed_through_the_llm_when_no_answer_is_available():
-    # Regression: an absent `pending_answer` used to return a hardcoded
-    # string directly — now it's LLM-worded too (with a static fallback
-    # for when the LLM call itself fails), same "no hardcoded default"
-    # direction as every other node in this session.
-    node = create_question_node(FakeLLMProvider())
-    state = make_agent_state(collected_data={"stage": None})
-
-    result = await node(state)
-
-    assert result["response_text"] == "[fake-response for intent=question_unknown_answer]"
-    assert result["response_buttons"] is None
-
-
-_STARTED = [
-    {"role": "user", "content": "Hola"},
-    {"role": "assistant", "content": "Hola! Soy el asistente de Smiling Pilar."},
-    {"role": "user", "content": "¿atienden particulares?"},
-]
-
-
-@pytest.mark.asyncio
-async def test_question_answer_never_greets_mid_conversation():
-    # Chat A regression (live): "Para un tratamiento particular" got
-    # "¡Hola! Sí, atendemos pacientes particulares. Si querés, puedo pasarte con
-    # administración…" in the middle of a conversation.
-    node = create_question_node(FakeLLMProvider())
-    state = make_agent_state(
-        recent_messages=_STARTED,
-        collected_data={"pending_answer": "¡Hola! Sí, atendemos pacientes particulares."},
-    )
-
-    result = await node(state)
-
-    assert result["response_text"] == "Sí, atendemos pacientes particulares."
-
-
-@pytest.mark.asyncio
-async def test_question_answer_may_greet_on_the_first_turn():
-    node = create_question_node(FakeLLMProvider())
-    state = make_agent_state(
-        recent_messages=[{"role": "user", "content": "Hola, ¿atienden particulares?"}],
-        collected_data={"pending_answer": "¡Hola! Sí, atendemos pacientes particulares."},
-    )
-
-    result = await node(state)
-
-    assert result["response_text"] == "¡Hola! Sí, atendemos pacientes particulares."
-
-
-_PARTICULARES_ANSWER = (
-    "Sí, atendemos pacientes particulares. Si querés, puedo pasarte con administración "
-    "para que te confirmen los valores. ¿Te parece bien?"
+@pytest.mark.parametrize(
+    ("user_message", "free_answer"),
+    [
+        ("¿Se puede pagar en cuotas?", None),
+        ("hola", "Podés pagar en 6 cuotas con tarjeta."),
+    ],
 )
-
-
-@pytest.mark.asyncio
-async def test_an_answer_that_offers_administration_carries_the_two_handoff_buttons():
-    from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, MENU_MAIN_PAYLOAD
-
-    node = create_question_node(FakeLLMProvider())
-    state = make_agent_state(collected_data={"pending_answer": _PARTICULARES_ANSWER})
-
-    result = await node(state)
-
-    assert [(b.id, b.title) for b in result["response_buttons"]] == [
-        (MENU_ADMIN_PAYLOAD, "💬 Administración"),
-        (MENU_MAIN_PAYLOAD, "Menú principal"),
-    ]
-    assert result["collected_data"]["handoff_offer_pending"] is True
-
-
-@pytest.mark.asyncio
-async def test_an_answer_without_a_handoff_offer_has_no_buttons():
-    node = create_question_node(FakeLLMProvider())
-    state = make_agent_state(collected_data={"pending_answer": "Atendemos de lunes a viernes."})
-
-    result = await node(state)
-
-    assert result["response_buttons"] is None
-    assert "handoff_offer_pending" not in result["collected_data"]
-
-
-@pytest.mark.asyncio
-async def test_the_unknown_answer_offering_administration_carries_the_handoff_buttons():
-    class _OfferingLLM(FakeLLMProvider):
-        async def generate_response(self, context):
-            return "Ese dato no lo tengo. Si querés, te paso con administración."
-
-    node = create_question_node(_OfferingLLM())
-
-    result = await node(make_agent_state(collected_data={}))
-
-    assert result["response_buttons"] is not None
-    assert result["collected_data"]["handoff_offer_pending"] is True
-
-
-@pytest.mark.asyncio
-async def test_question_replaces_an_llm_answer_that_improvises_about_payments():
-    from app.agent.handoff_offer import HANDOFF_OFFER_BUTTONS, HANDOFF_OFFER_KEY
-    from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
-
-    node = create_question_node(FakeLLMProvider())
-    state = make_agent_state(
-        collected_data={"stage": None, "pending_answer": "Podés pagar en 6 cuotas con tarjeta."}
-    )
+async def test_payment_questions_keep_the_fixed_administration_redirect(user_message, free_answer):
+    node = create_question_node(_ExplodingLLM())
+    collected_data = {"stage": None}
+    if free_answer:
+        collected_data["pending_answer"] = free_answer
+    state = make_agent_state(user_message=user_message, collected_data=collected_data)
 
     result = await node(state)
 

@@ -8,10 +8,14 @@ from app.agent.nodes.appointment import (
     _CONFIRMATION_REMINDER,
     STAGE_AWAITING_CONFIRMATION,
 )
-from app.agent.nodes.fallback import create_fallback_node
+from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE, create_fallback_node
 from app.agent.nodes.question import create_question_node
 from app.domain.repositories.llm_provider import ResponseContext
-from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+)
 from app.infrastructure.llm.fake_llm_provider import FakeLLMProvider
 from tests.fixtures.agent_state import make_agent_state
 from tests.fixtures.appointment_node import make_node_and_conversation
@@ -91,8 +95,10 @@ async def test_a_collection_prompt_never_claims_a_cancellation_that_did_not_run(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("claim", [_CONFIRM_CLAIM, _CANCEL_CLAIM])
-async def test_the_question_node_never_relays_an_action_claim(claim):
-    node = create_question_node(FakeLLMProvider())
+@pytest.mark.parametrize("node_factory", [create_question_node, create_fallback_node])
+async def test_a_free_form_action_claim_never_reaches_the_patient(node_factory, claim):
+    # Every free-form model answer is dropped for the fixed out-of-scope text.
+    node = node_factory(FakeLLMProvider())
     state = make_agent_state(
         collected_data={"stage": STAGE_AWAITING_CONFIRMATION, "pending_answer": claim},
         pending_action_id="pa-1",
@@ -100,25 +106,12 @@ async def test_the_question_node_never_relays_an_action_claim(claim):
 
     result = await node(state)
 
-    assert result["response_text"] != claim
-    assert "te lo confirmo" not in result["response_text"]
-    assert "te lo cancelo" not in result["response_text"]
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
     assert result["collected_data"]["stage"] == STAGE_AWAITING_CONFIRMATION
-    assert result["response_buttons"] is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("claim", [_CONFIRM_CLAIM, _CANCEL_CLAIM])
-async def test_the_fallback_node_never_relays_an_action_claim_and_keeps_its_buttons(claim):
-    node = create_fallback_node(FakeLLMProvider())
-    state = make_agent_state(collected_data={"pending_answer": claim})
-
-    result = await node(state)
-
-    assert result["response_text"] != claim
     assert [button.id for button in result["response_buttons"]] == [
         OPERATION_CREATE_PAYLOAD,
         MENU_ADMIN_PAYLOAD,
+        MENU_MAIN_PAYLOAD,
     ]
 
 
@@ -129,8 +122,9 @@ _DIAGNOSIS = (
 
 
 @pytest.mark.asyncio
-async def test_the_question_node_never_relays_a_diagnosis():
-    node = create_question_node(FakeLLMProvider())
+@pytest.mark.parametrize("node_factory", [create_question_node, create_fallback_node])
+async def test_a_free_form_diagnosis_never_reaches_the_patient(node_factory):
+    node = node_factory(_ScriptedLLM(_DIAGNOSIS))
     state = make_agent_state(
         user_message="Me duele una muela y tiene una mancha oscura, ¿qué tengo?",
         collected_data={"stage": None, "pending_answer": _DIAGNOSIS},
@@ -138,37 +132,17 @@ async def test_the_question_node_never_relays_a_diagnosis():
 
     result = await node(state)
 
-    assert result["response_text"] == (
-        "No puedo darte un diagnóstico por acá: lo tiene que evaluar un profesional. "
-        "¿Querés sacar un turno para que te revisen?"
-    )
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
     assert "caries" not in result["response_text"]
     assert "pending_answer" not in result["collected_data"]
 
 
 @pytest.mark.asyncio
-async def test_the_fallback_node_never_relays_a_diagnosis_and_keeps_its_buttons():
-    node = create_fallback_node(FakeLLMProvider())
-    state = make_agent_state(collected_data={"pending_answer": _DIAGNOSIS})
-
-    result = await node(state)
-
-    assert "caries" not in result["response_text"]
-    assert [button.id for button in result["response_buttons"]] == [
-        OPERATION_CREATE_PAYLOAD,
-        MENU_ADMIN_PAYLOAD,
-    ]
-
-
-@pytest.mark.asyncio
-async def test_a_diagnosis_from_generate_response_is_blocked():
-    # The question node's no-answer branch words the reply through `generate_response`.
+async def test_the_question_node_does_not_call_generate_response_without_an_answer():
     llm = _ScriptedLLM(_DIAGNOSIS)
     node = create_question_node(llm)
 
     result = await node(make_agent_state(collected_data={"stage": None}))
 
-    assert llm.calls
-    assert result["response_text"] == (
-        "Ese dato no lo tengo confirmado. Si querés, te comunico con administración para revisarlo."
-    )
+    assert llm.calls == []
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
