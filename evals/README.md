@@ -133,6 +133,25 @@ DNI 39000111, two upcoming appointments; `app/infrastructure/dentalink/eval_seed
 deriving to administración. Five cases are `requires_real_llm: true` (a paraphrased price
 question, a payment paraphrase, a booking phrase and the two-turn insurance scenario). Figures in the texts are pending the clinic's confirmation.
 
+`datasets/out_of_scope.yaml` covers requests the bot does not support (a diagnosis, an unlisted
+price, small talk, "the doctor right now", insults, a recipe, a medication question, worry about
+a mild pain, a joke, the weather): the reply must be the fixed text of `OUT_OF_SCOPE_MESSAGE`
+(`app/agent/nodes/fallback.py`) with exactly the buttons Agendar una cita / Administración / Menú
+principal, checked by the deterministic `isOutOfScopeReply` helper (also mirrored in
+`assertions/custom.js`: change both together). Three in-scope controls (book, "cómo llego",
+cancel) must not get it. All cases are `requires_real_llm: false` and use no `llm-rubric`, so
+they need no grader key. Text that states an emergency is deliberately routed to a human
+handoff instead and is not part of this dataset. Run only this dataset:
+
+```bash
+npx promptfoo@0.124.0 eval -c evals/promptfooconfig.yaml --no-cache \
+  --filter-metadata requires_real_llm=false --filter-pattern "Fuera de alcance|Control en alcance"
+```
+
+`promptfooconfig.yaml` loads every dataset, so other datasets' `llm-rubric` cases (if not filtered
+out) use the grader: configure it with `EVAL_GRADER_BASE_URL` and `EVAL_GRADER_MODEL`; the key is
+read from `EVAL_GRADER_API_KEY` in the environment at run time and is never stored in the repo.
+
 ## Production audits
 
 The production endpoint (`https://agent.qeva-ai.com`) is an always-on posture, not a

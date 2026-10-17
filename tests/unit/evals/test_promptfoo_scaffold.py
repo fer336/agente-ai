@@ -32,6 +32,7 @@ _DATASET_NAMES = [
     "clinic_topics",
     "location",
     "thanks",
+    "out_of_scope",
 ]
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
@@ -187,6 +188,8 @@ def test_custom_assertions_js_exports_the_expected_functions():
         "introDiffersFromPreviousAsk",
         "onlyOptionIds",
         "handoffOfferHasButtons",
+        "isOutOfScopeReply",
+        "isNotOutOfScopeReply",
     }
 
 
@@ -359,6 +362,28 @@ def test_handoff_offer_helper_fails_only_when_an_offer_carries_no_admin_button()
     assert _run_helper("handoffOfferHasButtons", other_buttons)["pass"] is False
     assert _run_helper("handoffOfferHasButtons", old_wording)["pass"] is False
     assert _run_helper("handoffOfferHasButtons", plain)["pass"] is True
+
+
+def test_out_of_scope_helpers_accept_only_the_fixed_text_with_its_three_buttons():
+    from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE
+
+    good = {
+        "reply_text": OUT_OF_SCOPE_MESSAGE,
+        "reply_kind": "buttons",
+        "buttons": [
+            {"id": "OPERATION_CREATE", "title": "📅 Agendar una cita"},
+            {"id": "MENU_ADMIN", "title": "💬 Administración"},
+            {"id": "MENU_MAIN", "title": "📋 Menú principal"},
+        ],
+    }
+    two_buttons = {**good, "buttons": good["buttons"][:2]}
+    other_text = {**good, "reply_text": "Hola"}
+
+    assert _run_helper("isOutOfScopeReply", good)["pass"] is True
+    assert _run_helper("isOutOfScopeReply", two_buttons)["pass"] is False
+    assert _run_helper("isOutOfScopeReply", other_text)["pass"] is False
+    assert _run_helper("isNotOutOfScopeReply", good)["pass"] is False
+    assert _run_helper("isNotOutOfScopeReply", other_text)["pass"] is True
 
 
 def test_intro_helper_flags_a_repeated_intro_within_one_conversation():

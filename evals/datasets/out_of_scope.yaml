@@ -1,0 +1,199 @@
+# Scenarios for requests outside what the bot supports: the patient asks for a diagnosis, an
+# unlisted price, small talk, a doctor "right now", insults, a recipe or emergency-sounding
+# advice. The reply must be the FIXED approved text (`OUT_OF_SCOPE_MESSAGE` in
+# app/agent/nodes/fallback.py) with exactly three buttons: Agendar una cita (OPERATION_CREATE),
+# Administración (MENU_ADMIN) and Menú principal (MENU_MAIN). The in-scope controls at the end
+# must NOT get that reply. Every case is deterministic (custom JS asserts, no llm-rubric) and
+# holds with the fake LLM; each case is its own conversation.
+
+- description: "Fuera de alcance: diagnóstico médico: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-01"
+    message: "¿Me podés dar un diagnóstico? Me duele una muela hace dos días"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: precio de un tratamiento sin listar: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-02"
+    message: "¿Cuánto sale una cirugía de encías?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: charla ajena a la clínica: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-03"
+    message: "¿Qué opinás del partido de ayer?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: pide hablar con el doctor ya: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-04"
+    message: "Necesito que me atienda el doctor ahora mismo"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: insulto: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-05"
+    message: "Sos un inútil, no servís para nada"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: pedido de receta de cocina: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-06"
+    message: "Pasame una receta de milanesas"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: pregunta de dolor con tono de preocupación: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-07"
+    message: "¿Me tengo que preocupar por un dolor leve en la muela?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: consulta de medicación: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-08"
+    message: "¿Qué medicamento me recomendás para el dolor de muelas?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: pedido de un chiste: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-09"
+    message: "Contame un chiste"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Fuera de alcance: clima: texto fijo y 3 botones"
+  vars:
+    conversation_id: "eval-oos-10"
+    message: "¿Cómo está el clima hoy en Pilar?"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:hasOptionIds
+      config:
+        ids: ["OPERATION_CREATE", "MENU_ADMIN", "MENU_MAIN"]
+        exact: true
+  metadata:
+    requires_real_llm: false
+
+- description: "Control en alcance: pide un turno: no recibe el texto fijo de fuera de alcance"
+  vars:
+    conversation_id: "eval-oos-11"
+    message: "quiero sacar un turno"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isNotOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "fallback"
+  metadata:
+    requires_real_llm: false
+
+- description: "Control en alcance: pregunta cómo llegar: no recibe el texto fijo de fuera de alcance"
+  vars:
+    conversation_id: "eval-oos-12"
+    message: "cómo llego"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isNotOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "fallback"
+  metadata:
+    requires_real_llm: false
+
+- description: "Control en alcance: quiere cancelar su turno: no recibe el texto fijo de fuera de alcance"
+  vars:
+    conversation_id: "eval-oos-13"
+    message: "cancelar mi turno"
+  assert:
+    - type: javascript
+      value: file://assertions/custom.js:isNotOutOfScopeReply
+    - type: javascript
+      value: file://assertions/custom.js:nodeNotVisited
+      config:
+        node: "fallback"
+  metadata:
+    requires_real_llm: false

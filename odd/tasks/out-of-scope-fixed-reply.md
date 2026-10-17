@@ -40,12 +40,22 @@ shows only two buttons. The clinic wants a stable, approved wording and a way ba
 - `uv run pytest tests/unit -q`, ruff check, ruff format --check, mypy app pass (3 known failures in `test_gateway_dependency.py` accepted).
 
 ## Progress / evidence
+- Commit T1: `375f78d` (feat(agent): reply to out-of-scope requests with a fixed text and three buttons).
 - T1 (inline): RED = new tests import `OUT_OF_SCOPE_MESSAGE` -> ImportError at collection of
   `tests/unit/agent/nodes/test_fallback_node.py`. GREEN: `fallback.py` generic branch returns the
   fixed text + 3 buttons; 21 passed. Removed LLM-wording tests of the generic branch (forwarding
   recent messages, instruction, escalation, attempts count) since that path no longer calls the LLM;
   added exact-text, 3-button, no-LLM and MENU_MAIN routing tests. `uv run pytest tests/unit -q`
   (gateway_dependency deselected): 3769 passed. ruff check/format and mypy app clean.
+- T2 (inline): added `evals/datasets/out_of_scope.yaml` (10 out-of-scope cases + 3 in-scope
+  controls, all deterministic, `requires_real_llm: false`), helpers `isOutOfScopeReply` /
+  `isNotOutOfScopeReply` in `custom.js`, registered in `promptfooconfig.yaml` and the two eval
+  test lists, README section. A first draft of the "emergency" case (heavy bleeding) is routed to
+  human handoff by design, so it was reworded to a mild-pain worry question. Evals were NOT run
+  (no network/keys); structure and deterministic replay verified with `uv run pytest tests/unit/evals`
+  (113 passed). Full `uv run pytest tests/unit -q`: 3809 passed, 3 failed (known pre-existing
+  `test_gateway_dependency.py`). ruff check, ruff format --check, mypy app clean.
+- Commit T2: see git log (`test(evals): add out-of-scope dataset`).
 
 ## Next step
 Hand the branch to the user; push and PR are theirs.
