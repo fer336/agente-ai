@@ -40,6 +40,7 @@ _DATASETS = [
     "clinic_topics",
     "location",
     "thanks",
+    "out_of_scope",
 ]
 
 

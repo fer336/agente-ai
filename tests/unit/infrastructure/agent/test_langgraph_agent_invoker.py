@@ -1182,18 +1182,18 @@ async def test_a_verified_patient_is_remembered_across_a_main_menu_reset_until_t
 
 
 class _ParticularesLLM(make_llm_provider().__class__):
-    """Answers the particulares question the way the live model did in Chat A."""
+    """Answers a payment question as a free-form handoff offer, the way the live model did."""
 
     async def understand(self, message, context):
         from app.domain.repositories.llm_provider import UnderstandingResult
 
-        if "particular" in message.lower():
+        if "cuotas" in message.lower():
             return UnderstandingResult(
                 intent="question",
                 confidence=0.95,
                 answer=(
-                    "¡Hola! Sí, atendemos pacientes particulares. Si querés, puedo pasarte "
-                    "con administración para que te confirmen los valores. ¿Te parece bien?"
+                    "¡Hola! Eso lo ve administración. Si querés, puedo pasarte "
+                    "con administración. ¿Te parece bien?"
                 ),
             )
         return await super().understand(message, context)
@@ -1223,7 +1223,7 @@ async def test_a_handoff_offer_has_buttons_and_a_free_text_yes_hands_over_to_adm
     )
     conversation_id = ConversationId("conv-1")
 
-    await invoker.handle(conversation_id, ["m1"], "Para un tratamiento particular", None)
+    await invoker.handle(conversation_id, ["m1"], "¿Se puede pagar en cuotas?", None)
 
     _, text, buttons, _ = messaging_gateway.sent_buttons[0]
     assert not text.startswith("¡Hola")
@@ -1234,6 +1234,71 @@ async def test_a_handoff_offer_has_buttons_and_a_free_text_yes_hands_over_to_adm
     conversation = await conversation_repository.get_by_id(conversation_id)
     assert conversation is not None
     assert conversation.mode == "human"
+
+
+class _FreeAnswerLLM(make_llm_provider().__class__):
+    """Routes every unscheduled topic to `question` with a free-form answer, like the live model."""
+
+    async def understand(self, message, context):
+        from app.domain.repositories.llm_provider import UnderstandingResult
+
+        if message.startswith("[free]"):
+            return UnderstandingResult(
+                intent="question",
+                confidence=0.95,
+                answer="Los costos de una cirugía de encías pueden variar; tomá ibuprofeno.",
+            )
+        return await super().understand(message, context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "[free] Me duele una muela, ¿qué tengo?",
+        "[free] ¿Cuánto sale una cirugía de encías?",
+        "[free] ¿Qué medicamento me tomo?",
+        "[free] Contame un chiste",
+        "[free] Son unos inútiles",
+    ],
+)
+async def test_a_free_question_ends_in_the_fixed_text_with_three_buttons_not_the_models_answer(
+    message,
+):
+    from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE
+    from app.domain.value_objects.menu_payloads import (
+        MENU_ADMIN_PAYLOAD,
+        MENU_MAIN_PAYLOAD,
+        OPERATION_CREATE_PAYLOAD,
+    )
+
+    conversation_repository = make_conversation_repository()
+    contact_repository = make_contact_repository()
+    message_repository = make_message_repository()
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+    await message_repository.save(
+        make_message(id_="m0", conversation_id="conv-1", direction="outbound")
+    )
+    invoker, _, _, messaging_gateway, _ = _make_invoker(
+        conversation_repository=conversation_repository,
+        contact_repository=contact_repository,
+        message_repository=message_repository,
+        llm_provider=_FreeAnswerLLM(),
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["m1"], message, None)
+
+    _, text, buttons, _ = messaging_gateway.sent_buttons[0]
+    assert text == OUT_OF_SCOPE_MESSAGE
+    assert [button.id for button in buttons] == [
+        OPERATION_CREATE_PAYLOAD,
+        MENU_ADMIN_PAYLOAD,
+        MENU_MAIN_PAYLOAD,
+    ]
+    assert "ibuprofeno" not in text
 
 
 @pytest.mark.asyncio

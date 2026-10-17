@@ -8,7 +8,7 @@ from app.agent.handoff_offer import (
     HANDOFF_OFFER_KEY,
     offers_administration_handoff,
 )
-from app.agent.nodes.fallback import create_fallback_node
+from app.agent.nodes.fallback import OUT_OF_SCOPE_MESSAGE, create_fallback_node
 from app.agent.nodes.question import create_question_node
 from app.agent.nodes.resolve_interaction import create_resolve_interaction_node
 from app.domain.repositories.llm_provider import UnderstandingResult
@@ -92,12 +92,16 @@ async def test_a_stale_flag_never_outlives_its_turn():
 @pytest.mark.parametrize(
     ("answer", "flag"),
     [
-        (_UNDETECTABLE_OFFER, True),  # flag path
-        (_AUDIT_ANSWER, False),  # detector path (the audit miss)
+        (_UNDETECTABLE_OFFER, True),
+        (_AUDIT_ANSWER, False),
         (_AUDIT_ANSWER, True),
     ],
 )
-async def test_an_answer_that_offers_a_handoff_shows_the_offer_buttons(node_factory, answer, flag):
+async def test_a_model_answer_that_offers_a_handoff_is_replaced_by_the_fixed_text(
+    node_factory, answer, flag
+):
+    # The model never composes the reply anymore: its handoff offer is dropped with it, and
+    # the fixed out-of-scope text already carries the Administración button.
     node = node_factory(FakeLLMProvider())
     collected_data = {"pending_answer": answer}
     if flag:
@@ -105,26 +109,11 @@ async def test_an_answer_that_offers_a_handoff_shows_the_offer_buttons(node_fact
 
     result = await node(make_agent_state(user_message="hola", collected_data=collected_data))
 
-    assert result["response_text"] == answer
-    assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
-    assert result["collected_data"][HANDOFF_OFFER_KEY] is True
-    assert HANDOFF_OFFER_FLAG_KEY not in result["collected_data"]
-    assert "pending_answer" not in result["collected_data"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("node_factory", [create_question_node, create_fallback_node])
-async def test_an_ordinary_answer_shows_no_offer_buttons(node_factory):
-    node = node_factory(FakeLLMProvider())
-
-    result = await node(
-        make_agent_state(
-            user_message="hola", collected_data={"pending_answer": "Atendemos de 9 a 18."}
-        )
-    )
-
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
     assert result["response_buttons"] != HANDOFF_OFFER_BUTTONS
     assert HANDOFF_OFFER_KEY not in result["collected_data"]
+    assert HANDOFF_OFFER_FLAG_KEY not in result["collected_data"]
+    assert "pending_answer" not in result["collected_data"]
 
 
 @pytest.mark.asyncio
@@ -137,24 +126,5 @@ async def test_audit_replay_through_the_router_and_the_question_node():
     result = await question({**state, **routed})  # type: ignore[typeddict-item]
 
     assert routed["intent"] == "question"
-    assert result["response_buttons"] == HANDOFF_OFFER_BUTTONS
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("node_factory", [create_question_node, create_fallback_node])
-async def test_the_flag_is_ignored_when_the_guard_replaced_the_answer(node_factory):
-    node = node_factory(FakeLLMProvider())
-
-    result = await node(
-        make_agent_state(
-            user_message="hola",
-            collected_data={
-                "pending_answer": "Dale, ahí te lo confirmo. ¿Querés hablar con alguien?",
-                HANDOFF_OFFER_FLAG_KEY: True,
-            },
-        )
-    )
-
-    assert "Todavía no se hizo ningún cambio" in result["response_text"]
+    assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
     assert result["response_buttons"] != HANDOFF_OFFER_BUTTONS
-    assert HANDOFF_OFFER_KEY not in result["collected_data"]

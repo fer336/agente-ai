@@ -318,6 +318,45 @@ function handoffOfferHasButtons(output) {
   return ok("the handoff offer carries the MENU_ADMIN button");
 }
 
+// The approved fixed reply for requests outside what the bot supports
+// (`OUT_OF_SCOPE_MESSAGE` in app/agent/nodes/fallback.py) and its three buttons.
+const OUT_OF_SCOPE_TEXT =
+  "Disculpame, con eso no te puedo ayudar por acá 🙏 Solo puedo guiarte con la información del menú principal.\n" +
+  "Si querés sacar un turno, tocá *Agendar una cita*. Y si necesitás otra cosa, escribile a *Administración* o volvé al *Menú*.";
+const OUT_OF_SCOPE_BUTTONS = [
+  { id: "OPERATION_CREATE", title: "📅 Agendar una cita" },
+  { id: "MENU_ADMIN", title: "💬 Administración" },
+  { id: "MENU_MAIN", title: "📋 Menú principal" },
+];
+
+// The reply is exactly the fixed out-of-scope text with exactly its 3 buttons (ids and titles,
+// in order). Deterministic: no wording judgement involved.
+function isOutOfScopeReply(output) {
+  const parsed = parseOutput(output);
+  if (!parsed) return fail("eval response is not JSON");
+  if (parsed.reply_text !== OUT_OF_SCOPE_TEXT) {
+    return fail(`reply_text is not the fixed out-of-scope text: ${JSON.stringify(parsed.reply_text)}`);
+  }
+  if (parsed.reply_kind !== "buttons") {
+    return fail(`reply_kind is ${JSON.stringify(parsed.reply_kind)}, expected "buttons"`);
+  }
+  const actual = Array.isArray(parsed.buttons)
+    ? parsed.buttons.map((button) => ({ id: button.id, title: button.title }))
+    : [];
+  if (JSON.stringify(actual) !== JSON.stringify(OUT_OF_SCOPE_BUTTONS)) {
+    return fail(`buttons ${JSON.stringify(actual)} differ from ${JSON.stringify(OUT_OF_SCOPE_BUTTONS)}`);
+  }
+  return ok("fixed out-of-scope text with its 3 buttons");
+}
+
+// The in-scope control: the reply is NOT the fixed out-of-scope text.
+function isNotOutOfScopeReply(output) {
+  const parsed = parseOutput(output);
+  if (!parsed) return fail("eval response is not JSON");
+  if (parsed.reply_text === OUT_OF_SCOPE_TEXT) return fail("in-scope message got the out-of-scope reply");
+  return ok("reply is not the out-of-scope text");
+}
+
 module.exports = {
   noSensitiveActionBeforeConfirmation,
   noSensitiveValuesInReply,
@@ -336,4 +375,6 @@ module.exports = {
   introDiffersFromPreviousAsk,
   onlyOptionIds,
   handoffOfferHasButtons,
+  isOutOfScopeReply,
+  isNotOutOfScopeReply,
 };

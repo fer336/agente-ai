@@ -1,17 +1,12 @@
 from typing import cast
 
-from app.agent.action_claims import guard_free_text_answer
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_FLAG_KEY,
     HANDOFF_OFFER_KEY,
-    answer_offers_handoff,
     normalize_text,
 )
-from app.agent.nodes.llm_response import (
-    generate_or_fallback,
-    without_mid_conversation_greeting,
-)
+from app.agent.nodes.llm_response import generate_or_fallback
 from app.agent.nodes.location import asks_for_location, clinic_location_reply
 from app.agent.nodes.node_protocol import AgentNode
 from app.agent.nodes.payment_admin import PAYMENT_ADMIN_STATIC_MESSAGE
@@ -20,21 +15,20 @@ from app.agent.state import AgentState
 from app.domain.entities.message import ROLE_USER
 from app.domain.repositories.llm_provider import LLMProvider
 from app.domain.value_objects.interactive_button import InteractiveButton
-from app.domain.value_objects.menu_payloads import MENU_ADMIN_PAYLOAD, OPERATION_CREATE_PAYLOAD
+from app.domain.value_objects.menu_payloads import (
+    MENU_ADMIN_PAYLOAD,
+    MENU_MAIN_PAYLOAD,
+    OPERATION_CREATE_PAYLOAD,
+)
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 
-#: A confused patient gets exactly two ways forward (user decision, this
-#: session's brief): book directly (`OPERATION_CREATE_PAYLOAD`, the same
-#: payload `WELCOME_LIST`'s "📅 Agendar una cita" row carries — a tap opens
-#: the specialty list straight away) or talk to a human
-#: (`MENU_ADMIN_PAYLOAD`). The legacy "Turnos"/"Especialidades" buttons are
-#: gone — both were one extra tap away from a flow this reply can now open
-#: directly. `MENU_APPOINTMENT_PAYLOAD`/`MENU_SPECIALTIES_PAYLOAD` stay
-#: routable in `resolve_interaction.py` regardless (old chat history can
-#: still be tapped), this reply just never sends them again.
-_CONFUSED_PATIENT_MESSAGE = (
-    "Noto que las opciones que te dimos no son las que buscás. Tocá 📅 Agendar una cita si "
-    "querés sacar un turno, o 💬 Administración si preferís que te ayude alguien del consultorio."
+#: Approved fixed reply for anything outside what the bot supports. Never LLM-generated:
+#: the clinic signed off this exact wording.
+OUT_OF_SCOPE_MESSAGE = (
+    "Disculpame, con eso no te puedo ayudar por acá 🙏 Solo puedo guiarte con la "
+    "información del menú principal.\n"
+    "Si querés sacar un turno, tocá *Agendar una cita*. Y si necesitás otra cosa, "
+    "escribile a *Administración* o volvé al *Menú*."
 )
 #: Static wording for a patient who typed instead of tapping the welcome
 #: menu, used only when the LLM provider fails.
@@ -42,13 +36,14 @@ _CHOOSE_FROM_MENU_MESSAGE = (
     "Para poder continuar, elegí por favor una de las opciones del menú tocando el "
     "botón de abajo 👇"
 )
-#: A first miss gets a plain "no te entendí"; only a repeat one
-#: offers administración.
-_ESCALATE_AFTER_ATTEMPTS = 2
-
-_CONFUSED_PATIENT_BUTTONS = [
+#: Buttons of the out-of-scope reply: book (`OPERATION_CREATE_PAYLOAD`, the payload of the
+#: welcome list's "📅 Agendar una cita" row), talk to a human, or back to the main menu.
+#: `MENU_APPOINTMENT_PAYLOAD`/`MENU_SPECIALTIES_PAYLOAD` stay routable in
+#: `resolve_interaction.py` for old chat history, this reply never sends them.
+OUT_OF_SCOPE_BUTTONS = [
     InteractiveButton(id=OPERATION_CREATE_PAYLOAD, title="📅 Agendar una cita"),
     InteractiveButton(id=MENU_ADMIN_PAYLOAD, title="💬 Administración"),
+    InteractiveButton(id=MENU_MAIN_PAYLOAD, title="📋 Menú principal"),
 ]
 
 
@@ -71,20 +66,11 @@ def _welcome_menu_was_just_shown(recent_messages: list[dict[str, str]]) -> bool:
 def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
     """Offers a direct way out for an unrecognized/low-confidence turn (PRD.md §8, §29).
 
-    The wording is LLM-generated (this session's brief: a patient who keeps
-    missing the menu should never see the exact same canned sentence twice,
-    and a repeated miss should read as the bot noticing and offering
-    administración, not just repeating itself) — but the 2 buttons below it
-    are always the same static `_CONFUSED_PATIENT_BUTTONS`, never generated: a
-    fallback's whole job is to be a reliable safety net, so the one thing
-    that must never fail or drift is the patient's way back to a known
-    option. `collected_data["fallback_count"]` tracks how many consecutive
-    unresolved turns this conversation has had, told to the LLM so it can
-    escalate tone/offer administración more directly on a repeat miss. If
-    `generate_response` itself fails (timeout, auth, bad output), this node
-    falls back to the static `_CONFUSED_PATIENT_MESSAGE` rather than
-    propagating — unlike every other business node, a bug here has nowhere
-    softer to land.
+    A turn outside what the bot supports gets the fixed `OUT_OF_SCOPE_MESSAGE` and the three
+    static `OUT_OF_SCOPE_BUTTONS`, with no LLM call: the wording is clinic-approved and the
+    fallback's whole job is to be a reliable safety net. The LLM is still used for the reminder
+    right after the welcome menu (the patient typed instead of tapping). `fallback_count` keeps
+    tracking consecutive unresolved turns.
     """
 
     async def node(state: AgentState) -> dict[str, object]:
@@ -101,40 +87,24 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
             remaining = {k: v for k, v in collected_data.items() if k != "pending_answer"}
             return {**clinic_location_reply(), "collected_data": remaining}
 
+        # The model's free-form answer (`pending_answer`, from `understand`) is never
+        # delivered: only programmed capabilities answer. It is dropped here and, at most,
+        # used as a signal that the patient is asking about payments.
         pending_answer = collected_data.get("pending_answer")
-        if isinstance(pending_answer, str) and pending_answer.strip():
-            # `resolve_interaction` already had the model answer a genuine
-            # question, so there is nothing to be confused about — deliver
-            # it, keep the menu as a way forward, and do NOT count this
-            # turn as a failed one.
-            flagged_offer = collected_data.get(HANDOFF_OFFER_FLAG_KEY)
-            remaining = {
-                k: v
-                for k, v in collected_data.items()
-                if k not in {"pending_answer", HANDOFF_OFFER_FLAG_KEY}
-            }
-            model_answer = without_mid_conversation_greeting(
-                pending_answer, state["recent_messages"]
-            )
-            answer = guard_free_text_answer(model_answer)
-            if answer != model_answer:
-                # The guard swapped the answer for a safe one: the flag described the
-                # discarded text, not this one.
-                flagged_offer = None
-            if asks_about_payments(answer):
-                # Payments and prices belong to Administración: never improvised.
-                answer = PAYMENT_ADMIN_STATIC_MESSAGE
-                flagged_offer = True
-            offers_handoff = answer_offers_handoff(answer, flagged=flagged_offer)
-            if offers_handoff:
-                remaining[HANDOFF_OFFER_KEY] = True
+        collected_data = {
+            k: v
+            for k, v in collected_data.items()
+            if k not in {"pending_answer", HANDOFF_OFFER_FLAG_KEY}
+        }
+        if asks_about_payments(state["user_message"]) or (
+            isinstance(pending_answer, str) and asks_about_payments(pending_answer)
+        ):
+            # Payments and prices belong to Administración: fixed text, never improvised.
             return {
-                "response_text": answer,
-                "response_buttons": (
-                    HANDOFF_OFFER_BUTTONS if offers_handoff else _CONFUSED_PATIENT_BUTTONS
-                ),
+                "response_text": PAYMENT_ADMIN_STATIC_MESSAGE,
+                "response_buttons": HANDOFF_OFFER_BUTTONS,
                 "requires_handoff": False,
-                "collected_data": remaining,
+                "collected_data": {**collected_data, HANDOFF_OFFER_KEY: True},
             }
 
         fallback_count = cast(int, collected_data.get("fallback_count", 0)) + 1
@@ -176,42 +146,9 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
                 "collected_data": {**collected_data, "fallback_count": fallback_count},
             }
 
-        context: dict[str, object] = {
-            "situacion": (
-                "El paciente escribió algo que no coincide con ninguna opción "
-                "del menú principal de la clínica."
-            ),
-            "opciones_del_menu": ["📅 Agendar una cita", "💬 Administración"],
-            "instruccion": (
-                "Van a aparecer 2 botones debajo de tu mensaje: uno para agendar una cita y "
-                "otro para hablar con alguien del consultorio — cerrá el mensaje invitando a "
-                "tocar uno de ellos, sin listarlos ni repetir sus nombres."
-            ),
-            "intentos_seguidos_sin_resolver": fallback_count,
-        }
-        if fallback_count >= _ESCALATE_AFTER_ATTEMPTS:
-            # Only ever added on a REPEAT miss. Handing this instruction to
-            # the model on every turn made a patient's very first "Hola"
-            # come back as "ya intentamos un par de veces..." — the model
-            # follows the instruction whether or not it actually applies.
-            context["instruccion_extra"] = (
-                "Notá en el mensaje que ya lo intentamos antes y ofrecele con "
-                "calidez pasarlo directo con administración."
-            )
-
-        text = await generate_or_fallback(
-            llm_provider,
-            state["conversation_id"],
-            "fallback",
-            context,
-            _CONFUSED_PATIENT_MESSAGE,
-            state["recent_messages"],
-            state["contact_memory_summary"],
-        )
-
         return {
-            "response_text": text,
-            "response_buttons": _CONFUSED_PATIENT_BUTTONS,
+            "response_text": OUT_OF_SCOPE_MESSAGE,
+            "response_buttons": OUT_OF_SCOPE_BUTTONS,
             "requires_handoff": False,
             "collected_data": {**collected_data, "fallback_count": fallback_count},
         }
