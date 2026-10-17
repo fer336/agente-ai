@@ -85,3 +85,7 @@ shows only two buttons. The clinic wants a stable, approved wording and a way ba
 
 ## Next step
 Hand the branch to the user; push and PR are theirs.
+
+## Coverage dataset (follow-up)
+- eddb7cb `replyIsHealthy` helper + scaffold tests; c0567ba `evals/datasets/coverage.yaml` (281 single-turn real-LLM cases, 5 categories), config/README registration, replay skips it.
+- Not run against Gemini: the user runs the README command.
