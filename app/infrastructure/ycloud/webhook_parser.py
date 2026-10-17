@@ -1,9 +1,10 @@
 import dataclasses
 
 from app.application.messages.delivery_failure_dto import DeliveryFailureDTO
-from app.application.messages.inbound_message_dto import InboundMessageDTO
+from app.application.messages.inbound_message_dto import AdReferralDTO, InboundMessageDTO
 from app.domain.value_objects.flow_response import FLOW_RESPONSE_PAYLOAD_PREFIX
 from app.domain.value_objects.phone_number import PhoneNumber
+from app.infrastructure.ycloud.referral import normalize_referral
 from app.infrastructure.ycloud.schemas import (
     YCloudContactAttributesChangedEventPayload,
     YCloudInboundEventPayload,
@@ -95,7 +96,22 @@ def to_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessage
     dto = _build_inbound_message_dto(payload)
     profile = payload.whatsappInboundMessage.customerProfile
     profile_name = profile.name.strip() if profile is not None else ""
-    return dataclasses.replace(dto, profile_name=profile_name or None)
+    return dataclasses.replace(
+        dto, profile_name=profile_name or None, referral=_extract_referral(payload)
+    )
+
+
+def _extract_referral(payload: YCloudInboundEventPayload) -> AdReferralDTO | None:
+    """The ad referral of the message: `referral` first, then `context.referral`.
+
+    Those are the only two places read; the real YCloud nesting is unverified
+    and no other path is guessed.
+    """
+    message = payload.whatsappInboundMessage
+    referral = normalize_referral(message.referral)
+    if referral is None and message.context is not None:
+        referral = normalize_referral(message.context.get("referral"))
+    return referral
 
 
 def _build_inbound_message_dto(payload: YCloudInboundEventPayload) -> InboundMessageDTO:

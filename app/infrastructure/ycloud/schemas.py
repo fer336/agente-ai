@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # UNVERIFIED against a live YCloud account (no live credentials/sandbox in
 # this change) — field names follow YCloud's publicly documented WhatsApp
@@ -98,8 +100,20 @@ class YCloudInboundMessage(BaseModel):
     button: YCloudTemplateButton | None = None
     audio: YCloudAudioMessage | None = None
     customerProfile: YCloudCustomerProfile | None = None
+    #: Click-to-WhatsApp ad data Meta attaches to a lead's first message. The
+    #: exact YCloud shape is unverified, so it is kept as a raw mapping and
+    #: anything that is not a mapping is discarded instead of failing the
+    #: whole message (see `app.infrastructure.ycloud.referral`).
+    referral: dict[str, Any] | None = None
+    #: Only read for a nested `context.referral`; same tolerance as `referral`.
+    context: dict[str, Any] | None = None
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("referral", "context", mode="before")
+    @classmethod
+    def _ignore_non_mapping(cls, value: object) -> object:
+        return value if isinstance(value, dict) else None
 
 
 class YCloudInboundEventPayload(BaseModel):

@@ -1,6 +1,25 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.domain.value_objects.phone_number import PhoneNumber
+
+
+@dataclass(frozen=True, slots=True)
+class AdReferralDTO:
+    """Click-to-WhatsApp ad data Meta attaches to the first message of a lead.
+
+    Vendor-neutral view of the webhook's `referral` object: the fields we
+    attribute on, plus the bounded raw object so nothing is lost while the
+    real payload shape is still being learned.
+    """
+
+    source_id: str | None = None
+    source_type: str | None = None
+    source_url: str | None = None
+    headline: str | None = None
+    body: str | None = None
+    ctwa_clid: str | None = None
+    media_type: str | None = None
+    raw: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +47,9 @@ class InboundMessageDTO:
 
     `profile_name` is the sender's WhatsApp profile name when the vendor
     reports one, used to name the contact in Chatwoot; `None` otherwise.
+
+    `referral` is the Click-to-WhatsApp ad data, present only on the first
+    message of a lead that clicked an ad.
     """
 
     external_message_id: str
@@ -39,3 +61,4 @@ class InboundMessageDTO:
     media_mime_type: str | None = None
     media_sha256: str | None = None
     profile_name: str | None = None
+    referral: AdReferralDTO | None = None
