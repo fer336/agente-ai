@@ -40,9 +40,9 @@ specific contacts through a deny list or an allow list.
       model, repository, fake, migration, Redis (de)serialization, `PUT /llm-config` preserves them.
 - [x] T2 Gates (3b32756): ingest (welcome + before scheduling + re-check after the debounce sleep +
       audio resume), audio fallback message, follow-up worker, reminder delivery. Messages still saved.
-- [ ] T3 Admin API: `GET/PUT /admin/api/agent-control`, validation, roles, CSRF, audit constants,
+- [x] T3 Admin API (c19e771): `GET/PUT /admin/api/agent-control`, validation, roles, CSRF, audit constants,
       router registration for roles `bot|admin|all`, update `tests/unit/test_app_roles.py` route set.
-- [ ] T4 Admin UI: control page, pause/resume with confirmation, filter editor, banner on every
+- [x] T4 Admin UI (4b721da): control page, pause/resume with confirmation, filter editor, banner on every
       page when paused, nav links, README section.
 
 ## Acceptance
@@ -66,4 +66,10 @@ specific contacts through a deny list or an allow list.
   re-check). Wiring: `agent_gate=get_runtime_config_service().agent_may_respond` in `app/main.py`.
 - Verification: `pytest tests/unit` 3837 passed, 3 known failures; ruff check/format and mypy clean.
   Integration test for the SQL roundtrip added but not run (needs DB).
-- Next: T3 admin API.
+- T3 done (c19e771): `admin_agent_control.py` (GET all roles, PUT admin roles + CSRF), validation (mode, 8-15 digits,
+  dedupe, cap 500, allow+empty rejected), paused_by/at only on transitions, audit AGENT_PAUSED/RESUMED/CONTACT_FILTER_UPDATED
+  (no phones), router registered with the llm-config router.
+- T4 done (4b721da): `/admin/agent-control` page + JS, `.ctl-*` styles, Control nav link on every page, paused banner in app.js
+  (plain fetch, silent on errors, skipped on login and the control page), README section.
+- Verification: pytest tests/unit all pass except the 3 known failures; ruff check/format and mypy clean.
+- Next: final review / PR decision.
