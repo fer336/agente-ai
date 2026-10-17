@@ -33,6 +33,7 @@ _DATASET_NAMES = [
     "location",
     "thanks",
     "out_of_scope",
+    "coverage",
 ]
 _CUSTOM_JS = _EVALS_DIR / "assertions" / "custom.js"
 _HELPER_REFERENCE = re.compile(r"file://assertions/custom\.js:(\w+)")
@@ -190,6 +191,7 @@ def test_custom_assertions_js_exports_the_expected_functions():
         "handoffOfferHasButtons",
         "isOutOfScopeReply",
         "isNotOutOfScopeReply",
+        "replyIsHealthy",
     }
 
 
@@ -638,3 +640,48 @@ def test_datasets_no_longer_expect_the_old_slot_list_after_a_free_text_message()
                     assert not any(i.startswith("SELECT_SLOT:") for i in config["ids"]), test_case[
                         "description"
                     ]
+
+
+def test_reply_is_healthy_helper_checks_status_text_and_technical_error():
+    ok = {"reply_text": "Hola", "agent_run_status": "completed", "reply_kind": "text"}
+    handoff = {**ok, "agent_run_status": "handoff"}
+    failed = {**ok, "agent_run_status": "failed"}
+    empty = {**ok, "reply_text": "  "}
+    card = {**empty, "reply_kind": "location"}
+    technical = {**ok, "reply_text": "Tuvimos un problema técnico procesando tu mensaje."}
+
+    assert _run_helper("replyIsHealthy", ok)["pass"] is True
+    assert _run_helper("replyIsHealthy", handoff)["pass"] is True
+    assert _run_helper("replyIsHealthy", handoff, {"statuses": ["completed"]})["pass"] is False
+    assert _run_helper("replyIsHealthy", failed)["pass"] is False
+    assert _run_helper("replyIsHealthy", empty)["pass"] is False
+    assert _run_helper("replyIsHealthy", card)["pass"] is True
+    assert _run_helper("replyIsHealthy", technical)["pass"] is False
+
+
+_COVERAGE_CATEGORIES = {
+    "out_of_scope": "Cobertura fuera de alcance",
+    "capability": "Cobertura capacidad",
+    "edge_format": "Cobertura formato",
+    "safety": "Cobertura seguridad",
+    "smalltalk": "Cobertura charla",
+}
+
+
+def test_coverage_dataset_is_many_independent_single_turn_real_llm_cases():
+    dataset = _load_test_cases("coverage")
+
+    ids = [t["vars"]["conversation_id"] for t in dataset]
+    assert len(dataset) >= 200
+    assert len(set(ids)) == len(ids), "every case must be its own conversation"
+    for test_case in dataset:
+        metadata = test_case["metadata"]
+        assert metadata["requires_real_llm"] is True
+        assert metadata["dataset"] == "coverage"
+        assert test_case["description"].startswith(_COVERAGE_CATEGORIES[metadata["category"]])
+        assert not test_case["vars"].get("button_payload")
+        values = [a["value"] for a in test_case["assert"]]
+        assert "file://assertions/custom.js:replyIsHealthy" in values
+        assert all(a["type"] == "javascript" for a in test_case["assert"]), "no llm-rubric"
+        assert "{{" not in test_case["vars"]["message"], "promptfoo would template it"
+    assert {t["metadata"]["category"] for t in dataset} == set(_COVERAGE_CATEGORIES)

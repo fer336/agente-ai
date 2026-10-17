@@ -357,6 +357,28 @@ function isNotOutOfScopeReply(output) {
   return ok("reply is not the out-of-scope text");
 }
 
+// Generic robustness check for any reply: a non-empty answer (a text, or an image/location card
+// without text), a finished agent run (`completed`, or `handoff` when it was passed to a human;
+// override with `config.statuses`) and none of the technical-error text of the error node.
+const TECHNICAL_ERROR_TEXT = "Tuvimos un problema técnico";
+
+function replyIsHealthy(output, context) {
+  const parsed = parseOutput(output);
+  if (!parsed) return fail("eval response is not JSON");
+  const statuses = (context && context.config && context.config.statuses) || ["completed", "handoff"];
+  if (!statuses.includes(parsed.agent_run_status)) {
+    return fail(`agent_run_status is ${JSON.stringify(parsed.agent_run_status)}, expected one of ${JSON.stringify(statuses)}`);
+  }
+  const text = replyTextOf(parsed);
+  const hasText = text !== null && text.trim() !== "";
+  const hasCard = parsed.reply_kind === "location" || typeof parsed.image_url === "string";
+  if (!hasText && !hasCard) return fail("the reply is empty");
+  if (hasText && text.includes(TECHNICAL_ERROR_TEXT)) {
+    return fail(`the reply is the technical-error text: ${JSON.stringify(text.slice(0, 80))}`);
+  }
+  return ok("non-empty reply from a finished run, without the technical-error text");
+}
+
 module.exports = {
   noSensitiveActionBeforeConfirmation,
   noSensitiveValuesInReply,
@@ -377,4 +399,5 @@ module.exports = {
   handoffOfferHasButtons,
   isOutOfScopeReply,
   isNotOutOfScopeReply,
+  replyIsHealthy,
 };
