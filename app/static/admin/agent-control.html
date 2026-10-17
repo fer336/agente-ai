@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Control del agente — Admin</title>
+  <link rel="stylesheet" href="/admin/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="/admin/conversations">Conversaciones</a>
+      <a href="/admin/errors">Errores</a>
+      <a href="/admin/agent">Agente</a>
+      <a href="/admin/kpis">KPIs</a>
+      <a href="/admin/agent-control" class="active">Control</a>
+      <a href="/admin/llm-config">Configuración LLM</a>
+    </nav>
+    <div class="who">
+      <span id="who-label"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+  <main>
+    <h1>Control del agente</h1>
+    <p class="muted" id="ctl-readonly-note" hidden>Tu rol es de solo lectura: podés ver el estado, pero no cambiarlo.</p>
+
+    <section class="ctl-status" id="ctl-status" aria-live="polite">
+      <p class="ctl-status-title" id="ctl-status-title">Cargando…</p>
+      <p class="ctl-status-detail" id="ctl-status-detail"></p>
+      <button type="button" class="primary ctl-toggle" id="ctl-toggle" disabled>Pausar agente</button>
+      <div class="ctl-feedback" id="ctl-toggle-feedback" role="status"></div>
+    </section>
+
+    <section class="card form-card ctl-section">
+      <h2>Filtro por contacto</h2>
+      <form id="ctl-filter-form">
+        <label class="ctl-field" for="ctl-mode">Modo</label>
+        <select id="ctl-mode" name="mode">
+          <option value="off">Sin filtro</option>
+          <option value="deny">Bloquear estos números</option>
+          <option value="allow">Responder solo a estos números</option>
+        </select>
+
+        <label class="ctl-field" for="ctl-phones">Números (uno por línea o separados por coma)</label>
+        <textarea id="ctl-phones" name="phones" rows="8" placeholder="5491112345678"></textarea>
+        <p class="ctl-help">Incluí el código de país; los espacios, guiones y el signo + se ignoran. Máximo 500 números.</p>
+        <p class="ctl-help">«Bloquear» deja al agente sin responder a esos números. «Responder solo a» ignora a todos los demás y exige al menos un número. La pausa global tiene prioridad sobre el filtro: con el agente pausado no se responde a nadie. Los mensajes de contactos filtrados se siguen guardando.</p>
+
+        <button type="submit" class="primary" id="ctl-save">Guardar</button>
+        <div class="ctl-feedback" id="ctl-filter-feedback" role="status"></div>
+      </form>
+    </section>
+  </main>
+  <script src="/admin/static/app.js"></script>
+  <script src="/admin/static/agent-control.js"></script>
+</body>
+</html>

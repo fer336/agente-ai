@@ -46,6 +46,7 @@ ADMIN_PATHS = {
     "/admin/agent",
     "/admin/kpis",
     "/admin/llm-config",
+    "/admin/agent-control",
     "/admin/static",
 }
 

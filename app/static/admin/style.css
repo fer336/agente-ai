@@ -1799,3 +1799,97 @@ button:disabled {
     display: none;
   }
 }
+
+/* ---- Agent control page (/admin/agent-control) and paused banner ---- */
+
+.pause-banner {
+  background: rgba(240, 180, 41, 0.14);
+  border-bottom: 1px solid var(--warn);
+  color: var(--text);
+  padding: 8px 20px;
+  font-size: 13px;
+}
+
+.ctl-status {
+  border: 1px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.ctl-status.is-active {
+  border-left-color: var(--ok);
+}
+
+.ctl-status.is-paused {
+  border-left-color: var(--warn);
+  background: rgba(240, 180, 41, 0.08);
+}
+
+.ctl-status-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.ctl-status-detail {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+.ctl-toggle {
+  font-size: 15px;
+  padding: 10px 18px;
+}
+
+.ctl-section {
+  margin-bottom: 20px;
+}
+
+.ctl-section h2 {
+  margin-top: 0;
+}
+
+.ctl-field {
+  display: block;
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ctl-section select {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b0d11;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ctl-help {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0;
+}
+
+.ctl-feedback {
+  min-height: 18px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.ctl-feedback.is-ok {
+  color: var(--ok);
+}
+
+.ctl-feedback.is-error {
+  color: var(--err);
+}
+
+.ctl-readonly-note {
+  color: var(--warn);
+  font-size: 13px;
+  margin: 0 0 12px;
+}
