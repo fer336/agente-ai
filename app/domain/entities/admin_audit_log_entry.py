@@ -10,6 +10,9 @@ VIEW_CONVERSATION = "view_conversation"
 VIEW_ERROR = "view_error"
 RESOLVE_ERROR = "resolve_error"
 LLM_CONFIG_UPDATED = "llm_config_updated"
+AGENT_PAUSED = "agent_paused"
+AGENT_RESUMED = "agent_resumed"
+AGENT_CONTACT_FILTER_UPDATED = "agent_contact_filter_updated"
 
 
 @dataclass

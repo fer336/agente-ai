@@ -33,6 +33,7 @@ ADMIN_PATHS = {
     "/admin/api/flows/intake-draft",
     "/admin/api/flows/intake-draft/send",
     "/admin/api/llm-config",
+    "/admin/api/agent-control",
     "/admin/openapi.json",
     "/admin/docs",
     "/admin/redoc",
