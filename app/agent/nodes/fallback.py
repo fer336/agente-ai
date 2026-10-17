@@ -1,5 +1,6 @@
 from typing import cast
 
+from app.agent.greetings import is_greeting
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_FLAG_KEY,
@@ -144,6 +145,17 @@ def create_fallback_node(llm_provider: LLMProvider) -> AgentNode:
                 "response_list": WELCOME_LIST,
                 "requires_handoff": False,
                 "collected_data": {**collected_data, "fallback_count": fallback_count},
+            }
+
+        if is_greeting(state["user_message"]):
+            # A greeting is not out of scope and not a miss: show the welcome menu again,
+            # the same text and list as the first contact.
+            return {
+                "response_text": WELCOME_TEXT,
+                "response_buttons": None,
+                "response_list": WELCOME_LIST,
+                "requires_handoff": False,
+                "collected_data": collected_data,
             }
 
         return {

@@ -214,12 +214,12 @@ async def test_without_a_recent_welcome_menu_the_out_of_scope_text_is_used():
 
     result = await node(
         make_agent_state(
-            user_message="Holaa",
+            user_message="dame una receta",
             recent_messages=[
                 {"role": "assistant", "content": WELCOME_TEXT},
                 {"role": "user", "content": "quiero un turno"},
                 {"role": "assistant", "content": "Elegí una especialidad"},
-                {"role": "user", "content": "Holaa"},
+                {"role": "user", "content": "dame una receta"},
             ],
         )
     )

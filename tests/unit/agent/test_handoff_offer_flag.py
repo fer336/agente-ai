@@ -107,7 +107,9 @@ async def test_a_model_answer_that_offers_a_handoff_is_replaced_by_the_fixed_tex
     if flag:
         collected_data[HANDOFF_OFFER_FLAG_KEY] = True
 
-    result = await node(make_agent_state(user_message="hola", collected_data=collected_data))
+    result = await node(
+        make_agent_state(user_message="¿atienden particulares?", collected_data=collected_data)
+    )
 
     assert result["response_text"] == OUT_OF_SCOPE_MESSAGE
     assert result["response_buttons"] != HANDOFF_OFFER_BUTTONS

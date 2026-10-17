@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import re
 
@@ -9,6 +10,8 @@ from app.agent.clinic_topics import (
     match_clinic_topic,
     topic_by_id,
 )
+from app.agent.faq_scope import asks_about_programmed_faq
+from app.agent.greetings import is_greeting
 from app.agent.handoff_offer import (
     HANDOFF_OFFER_BUTTONS,
     HANDOFF_OFFER_FLAG_KEY,
@@ -611,6 +614,16 @@ async def _resolve(
             }
         return handoff
 
+    # A bare greeting is not out of scope: it shows the welcome menu again (the fallback node
+    # renders it). Mid-flow the active stage keeps the text, so only idle greetings count.
+    if not has_active_stage and is_greeting(state["user_message"]):
+        return {
+            "intent": "unknown",
+            "collected_data": {
+                key: value for key, value in collected_data.items() if key != "post_action_context"
+            },
+        }
+
     # A kinship claim ("soy familiar de...", "mi mamá tiene turno") never reaches
     # identification, registration or any lookup: the router answers it itself. A live
     # confirmation keeps its own gate, which never reads free text anyway.
@@ -713,6 +726,14 @@ async def _resolve(
             stage,
         )
         return {"intent": "appointment" if has_active_stage else "unknown"}
+    if (
+        result.intent == "faq_topic"
+        and topic_by_id(result.faq_topic_id) is None
+        and not asks_about_programmed_faq(state["user_message"])
+    ):
+        # The model stretched "faq_topic" to an off-topic question: the topic menu is only for
+        # the programmed topics, anything else is a plain question (fixed out-of-scope reply).
+        result = dataclasses.replace(result, intent="question", faq_topic_id=None)
     carried = _carried_understanding(result)
     if result.intent == "appointment" and not has_active_stage:
         # "Quiero un turno para consulta particular": a consulta particular is always

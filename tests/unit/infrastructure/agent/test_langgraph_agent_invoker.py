@@ -902,7 +902,7 @@ async def test_handle_records_an_agent_run_with_failed_status_when_a_node_raises
         make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
     )
 
-    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "quiero un turno", None)
 
     agent_runs = agent_run_repository.all()
     assert len(agent_runs) == 1
