@@ -691,10 +691,12 @@ async def test_understand_is_told_whether_the_conversation_already_started():
             return await super().understand(message, context)
 
     node = create_resolve_interaction_node(_CapturingLLMProvider())
-    first_turn = [{"role": "user", "content": "Hola"}]
+    first_turn = [{"role": "user", "content": "Quiero info del consultorio"}]
     later = [*first_turn, {"role": "assistant", "content": "Hola!"}]
 
-    await node(make_agent_state(user_message="Hola", recent_messages=first_turn))
+    await node(
+        make_agent_state(user_message="Quiero info del consultorio", recent_messages=first_turn)
+    )
     await node(make_agent_state(user_message="Quiero un turno", recent_messages=later))
 
     assert [context["conversation_started"] for context in contexts] == [False, True]

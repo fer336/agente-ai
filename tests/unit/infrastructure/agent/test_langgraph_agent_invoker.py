@@ -118,6 +118,7 @@ def _make_invoker(
     checkpointer=None,
     location_image_url="",
     aligners_image_url="",
+    agent_gate=None,
 ):
     conversation_repository = conversation_repository or make_conversation_repository()
     contact_repository = contact_repository or make_contact_repository()
@@ -170,6 +171,7 @@ def _make_invoker(
         checkpointer_provider=_make_checkpointer_provider(checkpointer),
         location_image_url=location_image_url,
         aligners_image_url=aligners_image_url,
+        agent_gate=agent_gate,
     )
     return (
         invoker,
@@ -266,6 +268,73 @@ async def test_handle_sends_the_graphs_response_to_the_contacts_phone():
     phone, text = messaging_gateway.sent_messages[0]
     assert phone == PhoneNumber("+5491122334455")
     assert "OSDE" in text
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_sent_when_the_agent_gets_paused_after_the_turn_started(caplog):
+    # The inbound gates ran before the turn; the admin paused the agent while the graph was
+    # running. The final re-check right before the send must hold the reply back.
+    checked: list[str] = []
+
+    async def paused_gate(phone: str) -> bool:
+        checked.append(phone)
+        return False
+
+    invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
+        agreement_gateway=make_agreement_gateway(agreements=[make_agreement(name="OSDE")]),
+        agent_gate=paused_gate,
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    with caplog.at_level("INFO"):
+        await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    assert checked == ["+5491122334455"]
+    assert messaging_gateway.sent_messages == []
+    assert "agent_gated_before_send" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_reply_is_sent_when_the_final_gate_check_allows_it():
+    async def open_gate(phone: str) -> bool:
+        return True
+
+    invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
+        agreement_gateway=make_agreement_gateway(agreements=[make_agreement(name="OSDE")]),
+        agent_gate=open_gate,
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    assert len(messaging_gateway.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_gate_check_does_not_swallow_the_reply():
+    # The re-check is a safety net: if the config cannot be read, the earlier gate already
+    # let the turn through, so the reply is still sent instead of being lost.
+    async def broken_gate(phone: str) -> bool:
+        raise RuntimeError("redis down")
+
+    invoker, conversation_repository, contact_repository, messaging_gateway, _ = _make_invoker(
+        agreement_gateway=make_agreement_gateway(agreements=[make_agreement(name="OSDE")]),
+        agent_gate=broken_gate,
+    )
+    await contact_repository.save(make_contact(id_="contact-1", phone="+5491122334455"))
+    await conversation_repository.save(
+        make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
+    )
+
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "¿Trabajan con OSDE?", None)
+
+    assert len(messaging_gateway.sent_messages) == 1
 
 
 @pytest.mark.asyncio
@@ -833,7 +902,7 @@ async def test_handle_records_an_agent_run_with_failed_status_when_a_node_raises
         make_conversation(id_="conv-1", contact_id="contact-1", mode="agent")
     )
 
-    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "hola", None)
+    await invoker.handle(ConversationId("conv-1"), ["msg-1"], "quiero un turno", None)
 
     agent_runs = agent_run_repository.all()
     assert len(agent_runs) == 1

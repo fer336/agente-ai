@@ -518,6 +518,7 @@ def _get_langgraph_agent_invoker() -> LangGraphAgentInvoker:
         location_image_url=get_settings().effective_location_image_url,
         aligners_image_url=get_settings().effective_aligners_image_url,
         clinic_timezone=get_settings().clinic_timezone,
+        agent_gate=get_runtime_config_service().agent_may_respond,
     )
 
 

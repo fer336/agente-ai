@@ -41,7 +41,11 @@ _DATASETS = [
     "location",
     "thanks",
     "out_of_scope",
+    "coverage",
 ]
+#: Single-turn datasets that only make sense against the real model: replaying their ~280
+#: conversations on the fake LLM takes minutes and asserts nothing, so they are not executed.
+_REAL_LLM_ONLY_DATASETS = {"coverage"}
 
 
 @pytest.fixture(autouse=True)
@@ -74,6 +78,8 @@ async def test_deterministic_cases_hold_against_the_current_flow(name: str):
     path = _EVALS_DIR / "datasets" / f"{name}.yaml"
     if not path.is_file():
         pytest.skip(f"{name}.yaml does not exist")
+    if name in _REAL_LLM_ONLY_DATASETS:
+        pytest.skip(f"{name}.yaml is meant for the real LLM only")
     provider = internal_eval.get_eval_use_case_provider()
     failures: list[str] = []
 
@@ -92,6 +98,7 @@ async def test_deterministic_cases_hold_against_the_current_flow(name: str):
             {
                 "reply_text": result.reply_text,
                 "reply_kind": result.reply_kind,
+                "agent_run_status": result.agent_run.status if result.agent_run else None,
                 "node_names": [n.node_name for n in result.node_executions],
                 "tool_names": [t.tool_name for t in result.tool_executions],
                 "image_url": result.image_url,

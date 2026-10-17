@@ -232,3 +232,67 @@ def test_a_negation_that_does_not_govern_the_verb_never_cancels_a_delay_notice(m
 )
 def test_a_directly_governing_negation_still_cancels_it(message):
     assert requires_automatic_handoff(message) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "No puedo respirar bien y me duele la muela",
+        "me cuesta respirar",
+        "Tengo dificultad para respirar",
+        "me falta el aire",
+        "Me sangra mucho la encía",
+        "tengo un sangrado que no para",
+        "Tengo la cara hinchada y fiebre",
+        "tengo el cuello inflamado y estoy con fiebre",
+        "Me desmayé hace un rato",
+        "se desmayó mi hijo",
+        "me di un golpe fuerte en la cabeza",
+        "tuve un traumatismo en la boca",
+        "Me golpeé y se me cayó un diente",
+        "se me salió un diente por un golpe",
+        "Tengo un dolor insoportable",
+        "me duele de forma insoportable",
+    ],
+)
+def test_clearly_urgent_wording_hands_off_without_the_model(message):
+    assert requires_automatic_handoff(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "me duele una muela",
+        "tengo una consulta de blanqueamiento",
+        "tengo la cara hinchada",
+        "tengo fiebre",
+        "se me cayó un diente de leche",
+        "me golpeé la rodilla",
+        "no tengo ningún desmayo ni mareos",
+        "sin dificultad para respirar",
+        "no tengo dolor insoportable, solo una molestia",
+        "Quiero un turno para una limpieza",
+        "puedo respirar tranquilo, quiero un turno",
+    ],
+)
+def test_ordinary_wording_does_not_hand_off(message):
+    assert requires_automatic_handoff(message) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message", ["No puedo respirar bien y me duele la muela", "Tengo la cara hinchada y fiebre"]
+)
+async def test_urgent_wording_routes_to_the_handoff_node_even_if_the_model_says_specialties(
+    message,
+):
+    class _SpecialtiesLLM(FakeLLMProvider):
+        async def understand(self, message, context):
+            return UnderstandingResult(intent="specialties", confidence=0.95)
+
+    resolve = create_resolve_interaction_node(_SpecialtiesLLM())
+
+    state = make_agent_state(user_message=message)
+    update = await resolve(state)
+
+    assert _route_after_resolve_interaction({**state, **update}) == HANDOFF_NODE  # type: ignore[typeddict-item]

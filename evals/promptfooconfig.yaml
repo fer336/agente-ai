@@ -87,3 +87,4 @@ tests:
   - file://datasets/location.yaml
   - file://datasets/thanks.yaml
   - file://datasets/out_of_scope.yaml
+  - file://datasets/coverage.yaml

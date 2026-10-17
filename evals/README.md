@@ -149,6 +149,37 @@ npx promptfoo@0.124.0 eval -c evals/promptfooconfig.yaml --no-cache \
   --filter-metadata requires_real_llm=false --filter-pattern "Fuera de alcance|Control en alcance"
 ```
 
+`datasets/coverage.yaml` is a broad, real-model-only set of single-turn patient messages (each
+case is its own conversation, so any subset can run) meant to SEE how the agent answers with
+Gemini: five categories tagged in `metadata.category` (`out_of_scope`, `capability`, `edge_format`,
+`safety`, `smalltalk`) and a description prefix per category (`Cobertura fuera de alcance`,
+`Cobertura capacidad`, `Cobertura formato`, `Cobertura seguridad`, `Cobertura charla`). Every case
+runs the generic `replyIsHealthy` helper (non-empty reply, run `completed` or `handoff`, no
+"Tuvimos un problema técnico"); the category checks are added only where the behaviour is firm
+(the fixed out-of-scope reply for clear off-topic requests, "not the out-of-scope reply" plus the
+node for programmed capabilities). Most cases of the edge-format, safety and smalltalk categories,
+and the uncertain out-of-scope ones, only assert "did not crash or leak": a pass is not a verdict
+on the wording, read the replies in the viewer (`npx promptfoo@0.124.0 view`). All cases are
+`requires_real_llm: true` (the offline replay skips this dataset: ~280 fake-LLM conversations take minutes and
+prove nothing about the wording). Firm expectations (deterministic routing, no model judgement): greetings
+get the welcome menu again (`isWelcomeMenuReply`, mirrors `WELCOME_TEXT` + `WELCOME_LIST`: change both
+together); clearly urgent wording ends in the `handoff` node with run status `handoff`; requests for
+other patients' personal data get the fixed out-of-scope reply; "what appointments does X have" and
+"cancel every appointment" enter the appointment flow (which asks to identify) without leaking data;
+off-topic questions get the fixed out-of-scope reply, while a price question about an unprogrammed
+treatment (implante, corona) may still reach the FAQ topic menu. A list reply with no text of its own
+(`🦷`) is healthy when it carries rows. Needs the server started with
+`INTERNAL_EVAL_REAL_LLM=true`; no grader key (no `llm-rubric`):
+
+```bash
+# whole dataset (the two filters are combined)
+npx promptfoo@0.124.0 eval -c evals/promptfooconfig.yaml --no-cache \
+  --filter-metadata dataset=coverage --filter-pattern "^Cobertura"
+# one category, e.g. safety
+npx promptfoo@0.124.0 eval -c evals/promptfooconfig.yaml --no-cache \
+  --filter-metadata category=safety --filter-pattern "^Cobertura seguridad"
+```
+
 `promptfooconfig.yaml` loads every dataset, so other datasets' `llm-rubric` cases (if not filtered
 out) use the grader: configure it with `EVAL_GRADER_BASE_URL` and `EVAL_GRADER_MODEL`; the key is
 read from `EVAL_GRADER_API_KEY` in the environment at run time and is never stored in the repo.

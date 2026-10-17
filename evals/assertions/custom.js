@@ -357,6 +357,48 @@ function isNotOutOfScopeReply(output) {
   return ok("reply is not the out-of-scope text");
 }
 
+// The welcome menu again (`WELCOME_TEXT` + `WELCOME_LIST` in app/domain/value_objects/welcome_menu.py):
+// a greeting is not out of scope. Checks the text's first line and that the list carries the
+// "Agendar una cita" row; the out-of-scope text and its buttons must not be there.
+const WELCOME_TEXT_START = "¡Hola! 👋 Bienvenido/a a *Smiling Pilar*";
+function isWelcomeMenuReply(output) {
+  const parsed = parseOutput(output);
+  if (!parsed) return fail("eval response is not JSON");
+  const text = replyTextOf(parsed);
+  if (text === null || !text.startsWith(WELCOME_TEXT_START)) {
+    return fail(`reply_text is not the welcome menu text: ${JSON.stringify(text && text.slice(0, 60))}`);
+  }
+  const rows = Array.isArray(parsed.list_rows) ? parsed.list_rows : [];
+  if (parsed.reply_kind !== "list" || !rows.some((row) => row.id === "OPERATION_CREATE")) {
+    return fail(`reply_kind ${JSON.stringify(parsed.reply_kind)} / rows ${JSON.stringify(rows.map((r) => r.id))} is not the welcome list`);
+  }
+  return ok("the welcome menu text with its list");
+}
+
+// Generic robustness check for any reply: a non-empty answer (a text, or an image/location card
+// without text), a finished agent run (`completed`, or `handoff` when it was passed to a human;
+// override with `config.statuses`) and none of the technical-error text of the error node.
+const TECHNICAL_ERROR_TEXT = "Tuvimos un problema técnico";
+
+function replyIsHealthy(output, context) {
+  const parsed = parseOutput(output);
+  if (!parsed) return fail("eval response is not JSON");
+  const statuses = (context && context.config && context.config.statuses) || ["completed", "handoff"];
+  if (!statuses.includes(parsed.agent_run_status)) {
+    return fail(`agent_run_status is ${JSON.stringify(parsed.agent_run_status)}, expected one of ${JSON.stringify(statuses)}`);
+  }
+  const text = replyTextOf(parsed);
+  const hasText = text !== null && text.trim() !== "";
+  const hasList =
+    parsed.reply_kind === "list" && Array.isArray(parsed.list_rows) && parsed.list_rows.length > 0;
+  const hasCard = parsed.reply_kind === "location" || typeof parsed.image_url === "string" || hasList;
+  if (!hasText && !hasCard) return fail("the reply is empty");
+  if (hasText && text.includes(TECHNICAL_ERROR_TEXT)) {
+    return fail(`the reply is the technical-error text: ${JSON.stringify(text.slice(0, 80))}`);
+  }
+  return ok("non-empty reply from a finished run, without the technical-error text");
+}
+
 module.exports = {
   noSensitiveActionBeforeConfirmation,
   noSensitiveValuesInReply,
@@ -377,4 +419,6 @@ module.exports = {
   handoffOfferHasButtons,
   isOutOfScopeReply,
   isNotOutOfScopeReply,
+  isWelcomeMenuReply,
+  replyIsHealthy,
 };
