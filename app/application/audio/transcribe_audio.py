@@ -294,6 +294,14 @@ class TranscribeAudioUseCase:
         # reversed here rather than plumbing a separate phone lookup just
         # for this fallback-reply path.
         phone = str(message.conversation_id).removeprefix("ycloud-")
+        if not await self._ingest_message_use_case.agent_may_respond_to(phone):
+            # Agent paused (or this contact is filtered): the failure is
+            # already recorded on the job/message, only the unsolicited
+            # fallback reply is suppressed.
+            logger.info(
+                "transcribe_audio.fallback_reply_gated conversation=%s", message.conversation_id
+            )
+            return
         try:
             await self._messaging_gateway.send_text_message(PhoneNumber(phone), text)
         except Exception:  # noqa: BLE001 - never let a fallback-reply failure crash the worker

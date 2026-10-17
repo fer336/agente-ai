@@ -56,6 +56,7 @@ async def run_appointment_reminder_tick(
     start_fresh_session: StartFreshSessionUseCase | None = None,
     record_sent: ReminderSentRecorder | None = None,
     now: datetime | None = None,
+    agent_gate: Callable[[str], Awaitable[bool]] | None = None,
 ) -> tuple[int, int]:
     """Run bounded scheduling then delivery once."""
     if not settings.appointment_reminders_recipient_policy.can_run(
@@ -101,6 +102,7 @@ async def run_appointment_reminder_tick(
         ),
         on_sent=_review_sent_hook(start_fresh_session),
         record_sent=record_sent,
+        agent_gate=agent_gate,
     )
     return scheduled, delivered
 
@@ -131,6 +133,7 @@ async def run_appointment_reminder_loop(
     *,
     interval_seconds: int,
     max_iterations: int | None = None,
+    agent_gate: Callable[[str], Awaitable[bool]] | None = None,
 ) -> None:
     """Poll reminders with a fresh repository session each tick.
 
@@ -151,6 +154,7 @@ async def run_appointment_reminder_loop(
                     start_fresh_session=repositories.start_fresh_session,
                     record_sent=repositories.record_sent,
                     now=datetime.now(UTC),
+                    agent_gate=agent_gate,
                 )
                 logger.info(
                     "appointment_reminder_worker.tick_completed scheduled=%d delivered=%d",

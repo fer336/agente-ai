@@ -103,6 +103,7 @@ def _build_use_case(
     welcome_image_url: str | None = None,
     conversation_idle_reset_delay_seconds: int = 7200,
     mirror_to_chatwoot=None,
+    runtime_config_service=None,
 ) -> IngestMessageUseCase:
     message_repository = (
         message_repository if message_repository is not None else make_message_repository()
@@ -166,7 +167,11 @@ def _build_use_case(
         debounce_tracker=debounce_tracker,
         redis_client=redis_client,
         agent_invoker=agent_invoker,
-        runtime_config_service=make_runtime_config_service(debounce_seconds=debounce_seconds),
+        runtime_config_service=(
+            runtime_config_service
+            if runtime_config_service is not None
+            else make_runtime_config_service(debounce_seconds=debounce_seconds)
+        ),
         send_reply=send_reply,
         audio_rate_limit_per_minute=audio_rate_limit_per_minute,
         welcome_image_url=welcome_image_url,
@@ -1258,3 +1263,165 @@ async def test_ingestion_succeeds_even_when_the_chatwoot_mirror_fails():
     await asyncio.sleep(0.05)
 
     assert len(message_repository._messages_by_id) == 1
+
+
+# --- agent pause switch / contact filter ------------------------------------
+
+
+async def _gated_config_service(debounce_seconds: float = 0.01, **gate: object):
+    """Runtime config service whose stored config carries the given gate state."""
+    service = make_runtime_config_service(debounce_seconds=debounce_seconds)
+    config = await service.get_config()
+    for key, value in gate.items():
+        setattr(config, key, value)
+    await service.save_config(config)
+    return service
+
+
+@pytest.mark.asyncio
+async def test_paused_agent_saves_the_inbound_message_but_never_runs():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    message_repository = make_message_repository()
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        message_repository=message_repository,
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        runtime_config_service=await _gated_config_service(agent_paused=True),
+    )
+
+    await use_case.execute(_make_dto(external_message_id="wamid.paused"))
+    await asyncio.sleep(0.05)
+
+    saved = await message_repository.get_by_conversation_id(ConversationId("ycloud-+5491122334455"))
+    assert [m.external_message_id.value for m in saved if m.direction == "inbound"] == [
+        "wamid.paused"
+    ]
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_pause_set_during_the_debounce_sleep_prevents_the_reply():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    config_service = await _gated_config_service(debounce_seconds=0.1)
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        runtime_config_service=config_service,
+    )
+
+    await use_case.execute(_make_dto())
+    config = await config_service.get_config()
+    config.agent_paused = True
+    await config_service.save_config(config)
+    await asyncio.sleep(0.25)
+
+    assert agent_invoker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_resuming_answers_the_next_message_with_only_that_group():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    config_service = await _gated_config_service(agent_paused=True)
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        runtime_config_service=config_service,
+    )
+    await use_case.execute(_make_dto(external_message_id="wamid.1", text="while paused"))
+    config = await config_service.get_config()
+    config.agent_paused = False
+    await config_service.save_config(config)
+
+    await use_case.execute(_make_dto(external_message_id="wamid.2", text="after resume"))
+    await asyncio.sleep(0.05)
+
+    assert len(agent_invoker.calls) == 1
+    assert "while paused" not in str(agent_invoker.calls[0])
+
+
+@pytest.mark.asyncio
+async def test_deny_list_silences_only_the_listed_contact():
+    conversation_repository = make_conversation_repository()
+    for phone in ("+5491122334455", "+5491199998888"):
+        await conversation_repository.save(
+            make_conversation(id_=f"ycloud-{phone}", contact_id=f"c-{phone}", mode="agent")
+        )
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        runtime_config_service=await _gated_config_service(
+            contact_filter_mode="deny", contact_filter_phones=("5491122334455",)
+        ),
+    )
+
+    await use_case.execute(_make_dto(external_message_id="wamid.a", from_phone="+5491122334455"))
+    await use_case.execute(_make_dto(external_message_id="wamid.b", from_phone="+5491199998888"))
+    await asyncio.sleep(0.05)
+
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_allow_list_answers_only_the_listed_contact():
+    conversation_repository = make_conversation_repository()
+    for phone in ("+5491122334455", "+5491199998888"):
+        await conversation_repository.save(
+            make_conversation(id_=f"ycloud-{phone}", contact_id=f"c-{phone}", mode="agent")
+        )
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        runtime_config_service=await _gated_config_service(
+            contact_filter_mode="allow", contact_filter_phones=("5491199998888",)
+        ),
+    )
+
+    await use_case.execute(_make_dto(external_message_id="wamid.a", from_phone="+5491122334455"))
+    await use_case.execute(_make_dto(external_message_id="wamid.b", from_phone="+5491199998888"))
+    await asyncio.sleep(0.05)
+
+    assert len(agent_invoker.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_paused_agent_does_not_send_the_welcome_but_saves_the_message():
+    messaging_gateway = make_ycloud_messaging_gateway()
+    message_repository = make_message_repository()
+    use_case = _build_use_case(
+        message_repository=message_repository,
+        send_reply=make_send_reply_use_case(messaging_gateway),
+        runtime_config_service=await _gated_config_service(agent_paused=True),
+    )
+
+    await use_case.execute(_make_dto(external_message_id="wamid.first"))
+
+    assert messaging_gateway.sent_lists == []
+    saved = await message_repository.get_by_conversation_id(ConversationId("ycloud-+5491122334455"))
+    assert [m.external_message_id.value for m in saved] == ["wamid.first"]
+
+
+@pytest.mark.asyncio
+async def test_paused_agent_does_not_resume_processing_after_transcription():
+    conversation_repository = make_conversation_repository()
+    await conversation_repository.save(make_conversation(id_="ycloud-+5491122334455", mode="agent"))
+    agent_invoker = make_agent_invoker()
+    use_case = _build_use_case(
+        conversation_repository=conversation_repository,
+        agent_invoker=agent_invoker,
+        runtime_config_service=await _gated_config_service(agent_paused=True),
+    )
+
+    await use_case.resume_after_transcription(
+        ConversationId("ycloud-+5491122334455"), "msg-audio", "hola"
+    )
+    await asyncio.sleep(0.05)
+
+    assert agent_invoker.calls == []

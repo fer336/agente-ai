@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 
 from app.domain.entities.runtime_agent_config import RuntimeAgentConfig
 from app.domain.repositories.runtime_config_repository import RuntimeConfigRepository
+from app.domain.rules.agent_gate import agent_may_respond
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,10 @@ class RuntimeConfigService:
             config = self._default_config()
         await self._write_cache(config)
         return config
+
+    async def agent_may_respond(self, phone: str) -> bool:
+        """Live pause / contact-filter decision for one recipient phone."""
+        return agent_may_respond(await self.get_config(), phone)
 
     async def save_config(self, config: RuntimeAgentConfig) -> None:
         async with self._repositories_provider() as repository:

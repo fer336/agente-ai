@@ -55,10 +55,31 @@ async def deliver_due_reminders(
     utc_clock: Callable[[], datetime] | None = None,
     on_sent: ReviewRequestSentHook | None = None,
     record_sent: ReminderSentRecorder | None = None,
+    agent_gate: Callable[[str], Awaitable[bool]] | None = None,
 ) -> int:
     await repository.reclaim_stale_claims(now - timedelta(seconds=settings.claim_timeout_seconds))
     handled = 0
     for reminder in await repository.list_due(now, settings.batch_size):
+        if agent_gate is not None and not await agent_gate(reminder.recipient_phone):
+            # Agent paused or recipient filtered: leave the row pending and
+            # untouched (never claimed, sent or failed). It is picked up again
+            # when the agent resumes, unless the guard below finds it stale.
+            logger.info("appointment_reminder.gated reminder_id=%s", reminder.id)
+            continue
+        if (
+            reminder.kind != "review_request"
+            and reminder.appointment_starts_at is not None
+            and reminder.appointment_starts_at <= now
+        ):
+            # A long pause can leave pending reminders whose appointment has
+            # already started; delivery re-checks only appointment identity,
+            # so retire them instead of sending a reminder for the past.
+            await repository.skip_pending(reminder.id, reason="appointment_started", skipped_at=now)
+            logger.info(
+                "appointment_reminder.skipped reminder_id=%s reason=appointment_started",
+                reminder.id,
+            )
+            continue
         if not settings.recipient_policy.allows(reminder.recipient_phone):
             await repository.skip_pending(
                 reminder.id, reason="recipient_not_allowlisted", skipped_at=now

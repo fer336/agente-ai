@@ -50,6 +50,9 @@ _FOLLOW_UP_RESET_MESSAGE = (
     "contame qué necesitás."
 )
 
+#: Live "may the agent send to this phone?" decision (pause switch + contact filter).
+AgentGate = Callable[[str], Awaitable[bool]]
+
 _OWNED_ACTION_TYPES = frozenset(
     {
         APPOINTMENT_FLOW_FOLLOW_UP_PROMPT,
@@ -71,6 +74,7 @@ async def run_follow_up_tick(
     limit: int,
     reset_delay_seconds: int,
     cleanup_conversation_session: CleanupConversationSessionUseCase | None = None,
+    agent_gate: AgentGate | None = None,
 ) -> int:
     """Inactivity follow-up sweep — one poll tick (this session's own
     brief, no PRD.md section): claims up to `limit` due `ScheduledAction`s
@@ -147,6 +151,16 @@ async def run_follow_up_tick(
             conversation_repository, contact_repository, conversation_id
         )
         if contact is None:
+            await scheduled_action_repository.transition_status(
+                scheduled_action.id, from_status="processing", to_status="cancelled"
+            )
+            continue
+
+        if agent_gate is not None and not await agent_gate(contact.phone.value):
+            # Agent paused or this contact is filtered: cancel instead of
+            # leaving the row scheduled, so a nudge (or the "reinicié el
+            # trámite" reset) is never sent retroactively once the agent
+            # resumes. Nothing is sent and no workflow state is touched.
             await scheduled_action_repository.transition_status(
                 scheduled_action.id, from_status="processing", to_status="cancelled"
             )
@@ -333,6 +347,7 @@ async def run_follow_up_loop(
     reset_delay_seconds: int,
     max_iterations: int | None = None,
     cleanup_factory: CleanupFactory | None = None,
+    agent_gate: AgentGate | None = None,
 ) -> None:
     """Turns `run_follow_up_tick` into an actual running process — this
     module's own docstrings always claimed "`app.main`'s `lifespan` is what
@@ -373,6 +388,7 @@ async def run_follow_up_loop(
                         if cleanup_factory is not None
                         else None
                     ),
+                    agent_gate=agent_gate,
                 )
         except asyncio.CancelledError:
             raise
