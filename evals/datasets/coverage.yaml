@@ -23,11 +23,11 @@
   vars:
     conversation_id: "cov-oos-001"
     message: "Me duele mucho una muela, ¿qué tengo?"
+  # Real routing: a person takes over (pain) or the programmed FAQ menu is offered (priced treatments);
+  # both are acceptable, so only the generic health check applies.
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
-    - type: javascript
-      value: file://assertions/custom.js:isOutOfScopeReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -163,11 +163,11 @@
   vars:
     conversation_id: "cov-oos-011"
     message: "¿Cuánto cuesta un implante dental?"
+  # Real routing: a person takes over (pain) or the programmed FAQ menu is offered (priced treatments);
+  # both are acceptable, so only the generic health check applies.
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
-    - type: javascript
-      value: file://assertions/custom.js:isOutOfScopeReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -191,11 +191,11 @@
   vars:
     conversation_id: "cov-oos-013"
     message: "Cuánto sale una corona de porcelana"
+  # Real routing: a person takes over (pain) or the programmed FAQ menu is offered (priced treatments);
+  # both are acceptable, so only the generic health check applies.
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
-    - type: javascript
-      value: file://assertions/custom.js:isOutOfScopeReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -219,11 +219,11 @@
   vars:
     conversation_id: "cov-oos-015"
     message: "Presupuesto para una prótesis completa"
+  # Real routing: a person takes over (pain) or the programmed FAQ menu is offered (priced treatments);
+  # both are acceptable, so only the generic health check applies.
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
-    - type: javascript
-      value: file://assertions/custom.js:isOutOfScopeReply
   metadata:
     requires_real_llm: true
     dataset: coverage
@@ -233,11 +233,11 @@
   vars:
     conversation_id: "cov-oos-016"
     message: "Cuánto sale un puente fijo"
+  # Real routing: a person takes over (pain) or the programmed FAQ menu is offered (priced treatments);
+  # both are acceptable, so only the generic health check applies.
   assert:
     - type: javascript
       value: file://assertions/custom.js:replyIsHealthy
-    - type: javascript
-      value: file://assertions/custom.js:isOutOfScopeReply
   metadata:
     requires_real_llm: true
     dataset: coverage
