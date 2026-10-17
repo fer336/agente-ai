@@ -169,6 +169,7 @@ class LangGraphAgentInvoker:
         location_image_url: str = "",
         aligners_image_url: str = "",
         clinic_timezone: str = "America/Argentina/Buenos_Aires",
+        agent_gate: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
         self._appointment_gateway = appointment_gateway
         self._agreement_gateway = agreement_gateway
@@ -201,6 +202,10 @@ class LangGraphAgentInvoker:
         self._location_image_url = location_image_url
         self._aligners_image_url = aligners_image_url
         self._clinic_timezone = clinic_timezone
+        #: Live pause / contact-filter decision (`RuntimeConfigService.agent_may_respond`),
+        #: re-checked right before the outbound send: a turn already past the inbound gates
+        #: must not reply once the admin has paused the agent. `None` never gates.
+        self._agent_gate = agent_gate
 
     async def _with_reminder_context(
         self,
@@ -229,6 +234,29 @@ class LangGraphAgentInvoker:
         if not contact_memory_summary:
             return note
         return f"{contact_memory_summary}\n\n{note}"
+
+    async def _may_send(self, conversation_id: ConversationId, phone: PhoneNumber) -> bool:
+        """Final pause / contact-filter re-check for a turn that is about to reply.
+
+        A gate that cannot be read keeps the reply: the inbound gate already let this turn
+        through, and losing the patient's answer would be worse than the narrow race.
+        """
+        if self._agent_gate is None:
+            return True
+        try:
+            allowed = await self._agent_gate(str(phone))
+        except Exception:  # noqa: BLE001 - the re-check is a safety net, never a failure source
+            logger.warning(
+                "langgraph_agent_invoker.agent_gate_check_failed conversation=%s",
+                conversation_id,
+                exc_info=True,
+            )
+            return True
+        if not allowed:
+            logger.info(
+                "langgraph_agent_invoker.agent_gated_before_send conversation=%s", conversation_id
+            )
+        return allowed
 
     async def handle(
         self,
@@ -506,6 +534,9 @@ class LangGraphAgentInvoker:
                 if contact is None:
                     return
                 phone = contact.phone
+
+        if not await self._may_send(conversation_id, phone):
+            return
 
         try:
             await self._send_reply.execute(
