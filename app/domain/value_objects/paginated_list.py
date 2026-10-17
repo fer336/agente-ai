@@ -196,6 +196,10 @@ def professional_rows(
     return paginate_rows(rows, page, include_back)
 
 
+#: Body text of the specialty list: WhatsApp rejects an interactive list with no body.
+CHOOSE_SPECIALTY_PROMPT = "Para qué especialidad querés el turno? Elegí una opción de la lista:"
+
+
 def specialties_list_message(
     specialties: list[Specialty], page: int = 0, include_back: bool = False
 ) -> ListMessage:

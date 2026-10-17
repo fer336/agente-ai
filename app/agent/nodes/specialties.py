@@ -24,9 +24,10 @@ from app.domain.value_objects.menu_payloads import (
     SPECIALTY_PAYLOAD_PREFIX,
 )
 from app.domain.value_objects.paginated_list import (
+    CHOOSE_SPECIALTY_PROMPT,
     specialties_list_message,
 )
-from app.domain.value_objects.welcome_menu import WELCOME_LIST
+from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
 
 #: Graceful fallback for an empty/misconfigured catalog (PRD.md §18's
 #: analogous "no encontramos" pattern for agreements) — never crashes, never
@@ -109,7 +110,7 @@ def create_specialties_node(
         if button_payload == LIST_BACK_PAYLOAD:
             # Back from the catalog = back to the main menu.
             return {
-                "response_text": None,
+                "response_text": WELCOME_TEXT,
                 "response_buttons": None,
                 "response_list": WELCOME_LIST,
                 "requires_handoff": False,
@@ -158,7 +159,7 @@ def create_specialties_node(
                 # Plain catalog screen (page 0 on a fresh ask, `page` on a
                 # Ver más tap).
                 return {
-                    "response_text": None,
+                    "response_text": CHOOSE_SPECIALTY_PROMPT,
                     "response_buttons": None,
                     "response_list": specialties_list_message(
                         specialties, page=page, include_back=True
@@ -186,7 +187,7 @@ def create_specialties_node(
         chosen_index = row_tap_index if row_tap_index is not None else index
         if chosen_index is None:
             return {
-                "response_text": None,
+                "response_text": CHOOSE_SPECIALTY_PROMPT,
                 "response_buttons": None,
                 "response_list": specialties_list_message(
                     specialties, page=page, include_back=True

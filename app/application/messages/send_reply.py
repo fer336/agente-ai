@@ -17,6 +17,9 @@ from app.domain.value_objects.phone_number import PhoneNumber
 
 logger = logging.getLogger(__name__)
 
+#: Body of a list message whose node produced no text of its own.
+_DEFAULT_LIST_BODY = "Elegí una opción de la lista:"
+
 SentMessageRepositoriesProvider = Callable[[], AbstractAsyncContextManager["SentMessageRepository"]]
 
 
@@ -85,7 +88,9 @@ class SendReplyUseCase:
         elif location is not None:
             external_id = await self._messaging_gateway.send_location(to, location)
         elif list_message is not None:
-            external_id = await self._messaging_gateway.send_list(to, text, list_message)
+            # WhatsApp rejects an interactive list with an empty body.
+            body = text if text.strip() else _DEFAULT_LIST_BODY
+            external_id = await self._messaging_gateway.send_list(to, body, list_message)
         elif buttons:
             external_id = await self._send_buttons(to, text, buttons, image_url)
         else:

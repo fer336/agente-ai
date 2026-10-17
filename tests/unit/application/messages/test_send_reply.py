@@ -419,3 +419,18 @@ async def test_send_reply_still_returns_the_external_id_when_chatwoot_mirror_fai
     await asyncio.sleep(0.05)
 
     assert external_id == "fake-msg-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank", ["", "   "])
+async def test_a_list_message_never_goes_out_with_an_empty_body(blank):
+    messaging_gateway = FakeYCloudMessagingGateway()
+    use_case, _ = _make_use_case(messaging_gateway)
+    list_message = ListMessage(button_label="Opciones", rows=[ListRow(id="A", title="A")])
+
+    await use_case.execute(
+        _CONVERSATION_ID, PhoneNumber("+5491122334455"), blank, list_message=list_message
+    )
+
+    (_, body, _) = messaging_gateway.sent_lists[0]
+    assert body.strip()

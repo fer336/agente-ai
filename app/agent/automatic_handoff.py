@@ -53,6 +53,54 @@ _NEGATED_URGENCY = re.compile(
     r"(?:urgencia|urgente|mucho\s+dolor|reclamo|queja|dolor|sangrado)\b"
 )
 
+#: Clearly urgent wording (no LLM): breathing trouble, fainting, a head injury, unbearable
+#: pain. Matched on accent-free, case-free text; the conservative wording never fires on an
+#: ordinary "me duele una muela".
+_EMERGENCY = re.compile(
+    r"\b(?:"
+    r"no\s+puedo\s+respirar"
+    r"|(?:me\s+)?cuesta\s+(?:mucho\s+)?respirar"
+    r"|dificultad(?:es)?\s+(?:para|al)\s+respirar"
+    r"|me\s+falta\s+(?:el\s+)?(?:aire|aliento)"
+    r"|me\s+ahog\w*"
+    r"|desmay\w*"
+    r"|perd\w*\s+(?:el\s+)?(?:conocimiento|sentido)"
+    r"|traumatismo\w*"
+    r"|golpe\s+(?:muy\s+)?fuerte\s+en\s+(?:la\s+)?(?:cabeza|cara|mandibula)"
+    r"|(?:me\s+)?(?:pegu\w*|golpe\w*)\s+(?:muy\s+)?fuerte\s+(?:en\s+)?(?:la\s+)?cabeza"
+    r"|dolor\s+(?:es\s+)?insoportable"
+    r"|(?:me\s+duele|duele)\s+(?:de\s+forma\s+|de\s+manera\s+)?insoportable\w*"
+    r")\b"
+)
+#: A denial only cancels the symptom it directly governs ("sin desmayos", "no tengo dolor
+#: insoportable"). "no puedo respirar" is never denied: there the "no" is the symptom.
+_NEGATED_EMERGENCY = re.compile(
+    r"\b(?:no|sin|nunca)\s+(?:(?:tengo|tuve|hay|tiene|me|con)\s+)*(?:ningun\w*\s+)?"
+    r"(?:desmay\w*|dolor\s+insoportable|traumatismo\w*|"
+    r"dificultad(?:es)?\s+(?:para|al)\s+respirar)\b"
+)
+_SWELLING = re.compile(
+    r"\b(?:cara|cuello|rostro|cachete|mejilla|mandibula|cara)\b.{0,40}?"
+    r"\b(?:hinchad\w*|inflamad\w*|hinchazon)\b|\b(?:hinchazon|inflamacion)\b.{0,30}?"
+    r"\b(?:cara|cuello|rostro|mejilla)\b"
+)
+_FEVER = re.compile(r"\b(?:fiebre|febril)\b")
+_BLOW = re.compile(r"\b(?:golpe\w*|me\s+pegu\w*|accidente|caida|me\s+cai)\b")
+_TOOTH_LOST_OR_MOVED = re.compile(
+    r"\bdiente\w*\b.{0,30}?\b(?:cayo|salio|salido|rompio|roto|partio|partido|aflojo|movio|"
+    r"quebro|quebrado)\b|\b(?:cayo|salio|rompio|partio|aflojo|quebro)\w*\b.{0,30}?"
+    r"\bdiente\w*\b"
+)
+
+
+def _is_emergency(normalized: str) -> bool:
+    """Deterministic urgent-wording check over accent-free, case-free text."""
+    if _EMERGENCY.search(_NEGATED_EMERGENCY.sub(" ", normalized)):
+        return True
+    if _SWELLING.search(normalized) and _FEVER.search(normalized):
+        return True
+    return bool(_BLOW.search(normalized) and _TOOTH_LOST_OR_MOVED.search(normalized))
+
 
 def requires_automatic_handoff(text: str) -> bool:
     """True when the message is one of PRD.md §22's automatic-handoff phrases, an
@@ -65,6 +113,8 @@ def requires_automatic_handoff(text: str) -> bool:
             if _APPOINTMENT_PROBLEM.search(_NEGATED_OR_PURPOSE_DELAY.sub(" ", segment)):
                 return True
     if _URGENCY_OR_COMPLAINT.search(_NEGATED_URGENCY.sub(" ", normalized)):
+        return True
+    if _is_emergency(normalized):
         return True
     for clause in re.split(r"[.,;:!?\n]+", text):
         words = normalize_text(clause).split()

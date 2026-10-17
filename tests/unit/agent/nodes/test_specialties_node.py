@@ -240,3 +240,32 @@ async def test_never_crashes_on_an_empty_catalog():
 
     assert result["response_text"] == "[fake-response for intent=no_specialties]"
     assert result["requires_handoff"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_specialties_list_always_has_a_body_text():
+    # An interactive list needs a non-empty body: "🦷" used to arrive with no text at all.
+    from app.domain.value_objects.paginated_list import CHOOSE_SPECIALTY_PROMPT
+
+    node = _node(
+        specialties=[make_specialty(id_="spec-1", name="Ortodoncia")],
+        professionals=[
+            make_professional(id_="prof-1", full_name="Dra. Laura Pérez", specialty_id="spec-1"),
+        ],
+    )
+
+    result = await node(make_agent_state(user_message="🦷"))
+
+    assert result["response_list"] is not None
+    assert result["response_text"] == CHOOSE_SPECIALTY_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_back_from_the_catalog_shows_the_welcome_text_with_the_menu():
+    from app.domain.value_objects.menu_payloads import LIST_BACK_PAYLOAD
+    from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
+
+    result = await _node()(make_agent_state(button_payload=LIST_BACK_PAYLOAD))
+
+    assert result["response_list"] == WELCOME_LIST
+    assert result["response_text"] == WELCOME_TEXT
