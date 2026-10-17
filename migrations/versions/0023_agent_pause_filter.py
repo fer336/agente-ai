@@ -3,7 +3,7 @@
 Adds the global pause switch and the per-contact deny/allow list to the
 single-row runtime agent config.
 
-Revision ID: 0023_agent_pause_and_contact_filter
+Revision ID: 0023_agent_pause_filter
 Revises: 0022_reminder_drop_local_fks
 Create Date: 2026-10-17
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0023_agent_pause_and_contact_filter"
+revision: str = "0023_agent_pause_filter"
 down_revision: str | None = "0022_reminder_drop_local_fks"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

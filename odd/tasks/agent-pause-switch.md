@@ -24,7 +24,7 @@ specific contacts through a deny list or an allow list.
 ## Scope (allowed surfaces)
 - `app/domain/entities/runtime_agent_config.py`, new pure rule `app/domain/rules/agent_gate.py`
 - `app/infrastructure/database/models/runtime_agent_config.py`, its repository, fake, new migration
-  `migrations/versions/0023_agent_pause_and_contact_filter.py`
+  `migrations/versions/0023_agent_pause_filter.py`
 - `app/application/config/runtime_config_service.py` (cache read/write)
 - `app/application/messages/ingest_message.py`, `app/application/audio/transcribe_audio.py`,
   `app/workers/follow_up_worker.py`, `app/application/reminders/delivery.py`
