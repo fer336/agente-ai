@@ -134,12 +134,13 @@ deriving to administración. Five cases are `requires_real_llm: true` (a paraphr
 question, a payment paraphrase, a booking phrase and the two-turn insurance scenario). Figures in the texts are pending the clinic's confirmation.
 
 `datasets/out_of_scope.yaml` covers requests the bot does not support (a diagnosis, an unlisted
-price, small talk, "the doctor right now", insults, a recipe, a medication question, worry about
+price, small talk, insults, a recipe, a medication question, worry about
 a mild pain, a joke, the weather): the reply must be the fixed text of `OUT_OF_SCOPE_MESSAGE`
 (`app/agent/nodes/fallback.py`) with exactly the buttons Agendar una cita / Administración / Menú
 principal, checked by the deterministic `isOutOfScopeReply` helper (also mirrored in
-`assertions/custom.js`: change both together). Three in-scope controls (book, "cómo llego",
-cancel) must not get it. All cases are `requires_real_llm: false` and use no `llm-rubric`, so
+`assertions/custom.js`: change both together). Free-text questions that are not a programmed capability get this text even when the model
+would answer them itself (the router's free answer is dropped). Four in-scope controls (book,
+"cómo llego", cancel, "the doctor right now", which enters the booking flow) must not get it. All cases are `requires_real_llm: false` and use no `llm-rubric`, so
 they need no grader key. Text that states an emergency is deliberately routed to a human
 handoff instead and is not part of this dataset. Run only this dataset:
 
