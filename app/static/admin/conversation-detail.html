@@ -8,17 +8,23 @@
 </head>
 <body>
   <header class="topbar">
-    <nav>
-      <a href="/admin/conversations" class="active">Conversaciones</a>
-      <a href="/admin/errors">Errores</a>
-      <a href="/admin/agent">Agente</a>
-      <a href="/admin/kpis">KPIs</a>
-      <a href="/admin/agent-control">Control</a>
-      <a href="/admin/llm-config">Configuración LLM</a>
-    </nav>
-    <div class="who">
-      <span id="who-label"></span>
-      <button id="logout-btn">Salir</button>
+    <div class="page-id">
+      <h1>Conversación</h1>
+      <span class="page-sub">Mensajes, corridas y errores de la conversación.</span>
+    </div>
+    <div class="page-nav">
+      <nav aria-label="Secciones">
+        <a href="/admin/conversations" class="active" aria-current="page">Conversaciones</a>
+        <a href="/admin/errors">Errores</a>
+        <a href="/admin/agent">Agente</a>
+        <a href="/admin/kpis">KPIs</a>
+        <a href="/admin/agent-control">Control</a>
+        <a href="/admin/llm-config">Configuración LLM</a>
+      </nav>
+      <div class="who">
+        <span id="who-label"></span>
+        <button id="logout-btn" type="button">Salir</button>
+      </div>
     </div>
   </header>
   <main>

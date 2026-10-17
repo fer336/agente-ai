@@ -8,25 +8,26 @@
 </head>
 <body>
   <header class="topbar">
-    <nav>
-      <a href="/admin/conversations">Conversaciones</a>
-      <a href="/admin/errors">Errores</a>
-      <a href="/admin/agent" class="active">Agente</a>
-      <a href="/admin/kpis">KPIs</a>
-      <a href="/admin/agent-control">Control</a>
-      <a href="/admin/llm-config">Configuración LLM</a>
-    </nav>
-    <div class="who">
-      <span id="who-label"></span>
-      <button id="logout-btn">Salir</button>
+    <div class="page-id">
+      <h1>Agente</h1>
+      <span class="page-sub">Un solo diagrama que recorre los grafos del agente y muestra su estado.</span>
+    </div>
+    <div class="page-nav">
+      <nav aria-label="Secciones">
+        <a href="/admin/conversations">Conversaciones</a>
+        <a href="/admin/errors">Errores</a>
+        <a href="/admin/agent" class="active" aria-current="page">Agente</a>
+        <a href="/admin/kpis">KPIs</a>
+        <a href="/admin/agent-control">Control</a>
+        <a href="/admin/llm-config">Configuración LLM</a>
+      </nav>
+      <div class="who">
+        <span id="who-label"></span>
+        <button id="logout-btn" type="button">Salir</button>
+      </div>
     </div>
   </header>
   <main class="agd-main">
-    <div class="agd-head">
-      <h1>Agente</h1>
-      <span class="muted">Un solo diagrama que recorre los grafos del agente y muestra su estado.</span>
-    </div>
-
     <div class="agd-toolbar">
       <div class="agd-tabs-wrap">
         <button type="button" id="agd-prev" class="agd-icon-btn" aria-label="Grafo anterior">‹</button>

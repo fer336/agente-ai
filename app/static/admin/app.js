@@ -87,25 +87,53 @@ const ADMIN = (() => {
     window.location.href = "/admin/login";
   }
 
-  // Shows a banner under the top bar while the agent is paused. Purely
-  // informational and defensive: it uses a plain fetch (not apiFetch, so a
-  // 401 never redirects), skips pages without a top bar (login) and the
-  // control page itself, and swallows every error.
+  // Shows a strip at the very top of the page while the agent is paused. Purely
+  // informational and defensive: it uses a plain fetch (not apiFetch, so a 401
+  // never redirects), skips pages without a top bar (login) and the control page
+  // itself, and swallows every error.
+  //
+  // The fetch is asynchronous, so a banner that only appears after it would push
+  // the page down on every load. The last known state is therefore kept in
+  // sessionStorage and the strip is drawn at once from it; the fetch then
+  // confirms or removes it (the page only moves when the state actually changed).
+  const PAUSED_KEY = "admin_agent_paused";
+
+  function rememberPaused(paused) {
+    try {
+      sessionStorage.setItem(PAUSED_KEY, paused ? "1" : "0");
+    } catch (error) {
+      // Storage can be unavailable (private window, blocked site data).
+    }
+  }
+
+  function mountPausedBanner() {
+    if (document.querySelector(".pause-banner")) return;
+    const banner = document.createElement("div");
+    banner.className = "pause-banner";
+    banner.setAttribute("role", "status");
+    banner.innerHTML =
+      "<strong>El agente está pausado.</strong> <span>No envía mensajes automáticos.</span> " +
+      '<a href="/admin/agent-control">Ir al control del agente</a>';
+    document.body.insertAdjacentElement("afterbegin", banner);
+  }
+
   async function showPausedBanner() {
     try {
-      const topbar = document.querySelector(".topbar");
-      if (!topbar || window.location.pathname === "/admin/agent-control") return;
+      if (!document.querySelector(".topbar") || window.location.pathname === "/admin/agent-control") return;
+      let hinted = false;
+      try {
+        hinted = sessionStorage.getItem(PAUSED_KEY) === "1";
+      } catch (error) {
+        hinted = false;
+      }
+      if (hinted) mountPausedBanner();
       const response = await fetch(API_BASE + "/agent-control", { credentials: "include" });
       if (!response.ok) return;
       const state = await response.json();
-      if (!state || state.agent_paused !== true) return;
-      const banner = document.createElement("div");
-      banner.className = "pause-banner";
-      banner.setAttribute("role", "status");
-      banner.innerHTML =
-        "<strong>El agente está pausado.</strong> No envía mensajes automáticos. " +
-        '<a href="/admin/agent-control">Ir al control del agente</a>';
-      topbar.insertAdjacentElement("afterend", banner);
+      const paused = Boolean(state) && state.agent_paused === true;
+      rememberPaused(paused);
+      if (paused) mountPausedBanner();
+      else document.querySelectorAll(".pause-banner").forEach((node) => node.remove());
     } catch (error) {
       // Never break a page because the banner could not be shown.
     }
@@ -117,5 +145,5 @@ const ADMIN = (() => {
     showPausedBanner();
   }
 
-  return { apiFetch, requireAuth, escapeHtml, formatDateTime, qs, logout };
+  return { apiFetch, requireAuth, escapeHtml, formatDateTime, qs, logout, rememberPaused };
 })();

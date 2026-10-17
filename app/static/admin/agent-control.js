@@ -25,11 +25,12 @@
 
   function render() {
     const paused = state.agent_paused;
+    ADMIN.rememberPaused(paused); // the other pages draw their banner from it at once
     statusBox.classList.toggle("is-paused", paused);
     statusBox.classList.toggle("is-active", !paused);
     el("ctl-status-title").textContent = paused ? "Agente PAUSADO" : "Agente activo";
     el("ctl-status-detail").textContent = paused
-      ? `Pausado por ${state.paused_by || "—"} el ${ADMIN.formatDateTime(state.paused_at)}. No envía respuestas, seguimientos ni recordatorios.`
+      ? `Pausado por ${state.paused_by || "—"} (${ADMIN.formatDateTime(state.paused_at)}). No envía respuestas, seguimientos ni recordatorios.`
       : "Responde a los pacientes con normalidad.";
     toggle.textContent = paused ? "Reanudar agente" : "Pausar agente";
     toggle.disabled = !canEdit;

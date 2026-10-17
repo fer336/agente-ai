@@ -15,13 +15,15 @@ Plain HTML/JS/CSS, no build step. UI copy Spanish; code/comments/commits English
 
 ## Tasks
 - [x] T1 Cache revalidation for admin static files and pages (+ unit tests)
-- [ ] T2 Shared shell (header/nav, buttons, tab groups, cards, legible pause banner)
-- [ ] T3 Agent diagram: canvas composition and measures, scroll inside container
+- [x] T2 Shared shell (header/nav, buttons, tab groups, cards, legible pause banner)
+- [x] T3 Agent diagram: canvas composition and measures, scroll inside container
 - [ ] T4 KPI page + A4 print match canvas; PDF verified with Chromium
-- [ ] T5 Control page and banner in the same visual language
+- [x] T5 (banner + control; control verified visually, active/paused/390px) Control page and banner in the same visual language
 
 ## Acceptance
 Visual comparison against the canvas at 1363x691, 1440x900, 1024x768, 390x844; unit tests, ruff, mypy green; node --check on touched JS.
 
 ## Evidence / progress
 - T1: `RevalidatingStaticFiles` + `_page()` in admin_pages.py (Cache-Control: no-cache, ETag, 304 keeps header). pytest test_admin_pages + test_app_roles: 50 passed.
+- T2: header = title+subtitle left, nav (accent underline) + user/logout right on all pages; canvas tokens in `style.css`; banner strip at top, link #8bb2ff on #2f2818 = 6.9:1, drawn from a sessionStorage hint to avoid layout shift. Screens: scratchpad shots_ui/t2_*, t5_*.
+- T3: `canvasPlan` + `computeCanvasLayout` reproduce Main.dc.html (1208x520, boxes 176x64 / 112x96, pill, 191x64 dashed error + "N errores en la ventana", Fin bar); generic layered layout kept for the other graphs with the same measures; stage scrolls inside its panel; scales to fit only when within 92%. Screens: shots_ui/t3_*. No page-level h-scroll at 1363/1440/1250/1024/390.
