@@ -188,9 +188,10 @@
     conversation_id: "eval-oos-04"
     message: "Necesito que me atienda el doctor ahora mismo"
   assert:
-    # Observed behaviour: the router reads it as a booking request (first-visit question), so
-    # it is an in-scope programmed path and must not get the out-of-scope reply.
+    # Observed with the real model: the router reads it as a booking request (first-visit question),
+    # so it is an in-scope programmed path and must not get the out-of-scope reply. The fake LLM
+    # cannot reproduce that routing, hence the real-LLM-only flag.
     - type: javascript
       value: file://assertions/custom.js:isNotOutOfScopeReply
   metadata:
-    requires_real_llm: false
+    requires_real_llm: true
