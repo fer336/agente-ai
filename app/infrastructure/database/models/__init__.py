@@ -12,6 +12,9 @@ from app.infrastructure.database.models.chatwoot_conversation_mapping import (
 from app.infrastructure.database.models.contact import ContactModel
 from app.infrastructure.database.models.contact_memory import ContactMemoryModel
 from app.infrastructure.database.models.conversation import ConversationModel
+from app.infrastructure.database.models.conversation_ad_referral import (
+    ConversationAdReferralModel,
+)
 from app.infrastructure.database.models.error_record import ErrorModel
 from app.infrastructure.database.models.human_handoff import HumanHandoffModel
 from app.infrastructure.database.models.incident import IncidentModel
@@ -38,6 +41,7 @@ __all__ = [
     "ChatwootConversationMappingModel",
     "ContactMemoryModel",
     "ContactModel",
+    "ConversationAdReferralModel",
     "ConversationModel",
     "ErrorModel",
     "HumanHandoffModel",

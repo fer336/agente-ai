@@ -104,6 +104,7 @@ def _build_use_case(
     conversation_idle_reset_delay_seconds: int = 7200,
     mirror_to_chatwoot=None,
     runtime_config_service=None,
+    ad_referral_repository=None,
 ) -> IngestMessageUseCase:
     message_repository = (
         message_repository if message_repository is not None else make_message_repository()
@@ -143,6 +144,7 @@ def _build_use_case(
             conversations=conversation_repository,
             media_processing_jobs=media_processing_job_repository,
             scheduled_actions=scheduled_action_repository,
+            ad_referrals=ad_referral_repository,
         )
 
     # Only wired when a test explicitly opts in with a

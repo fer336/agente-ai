@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from app.application.conversations.set_conversation_input_state import (
     FREE_INPUT,
@@ -7,8 +8,26 @@ from app.application.conversations.set_conversation_input_state import (
 )
 from app.application.conversations.set_conversation_mode import SetConversationModeUseCase
 from app.domain.entities.conversation import Conversation
+from app.domain.repositories.conversation_ad_referral_repository import (
+    ConversationAdReferralRepository,
+)
 from app.domain.repositories.conversation_repository import ConversationRepository
 from app.domain.value_objects.conversation_id import ConversationId
+
+logger = logging.getLogger(__name__)
+
+#: How long after a lead's Click-to-WhatsApp ad message a business-sent echo is
+#: read as Meta's automatic ad welcome instead of a staff takeover.
+#:
+#: ASSUMPTION (unverified, no live payload yet): Meta sends the ad's welcome
+#: message from the business number right after the lead's first message, and on
+#: a Coexistence number YCloud may deliver it as `whatsapp.smb.message.echoes`.
+#: Treated as a staff reply it would flip every ad lead to human mode and silence
+#: the bot. The guard is deliberately narrow: only inside this window, only for a
+#: conversation that has an ad referral, and never for `/bot` or `/adm`. The cost
+#: of a false positive is that a staff reply typed within a minute of the lead's
+#: first ad message does not pause the bot.
+AD_WELCOME_ECHO_WINDOW = timedelta(seconds=60)
 
 
 class HandleSmbMessageEchoUseCase:
@@ -60,20 +79,40 @@ class HandleSmbMessageEchoUseCase:
     YCloud's webhook retry logic).
     """
 
-    def __init__(self, conversation_repository: ConversationRepository) -> None:
+    def __init__(
+        self,
+        conversation_repository: ConversationRepository,
+        ad_referral_repository: ConversationAdReferralRepository | None = None,
+    ) -> None:
         self._conversation_repository = conversation_repository
+        self._ad_referral_repository = ad_referral_repository
         self._set_conversation_mode = SetConversationModeUseCase(conversation_repository)
         self._set_conversation_input_state = SetConversationInputStateUseCase(
             conversation_repository
         )
 
-    async def execute(self, patient_phone: str, *, is_reactivation_command: bool) -> None:
+    async def execute(
+        self,
+        patient_phone: str,
+        *,
+        is_reactivation_command: bool,
+        is_staff_command: bool = False,
+    ) -> bool:
+        """Applies the echo. Returns `True` when it was ignored as Meta's ad
+        welcome message (see `AD_WELCOME_ECHO_WINDOW`), `False` otherwise.
+
+        `is_staff_command` is true for `/bot` and `/adm`: a deliberate command
+        is never mistaken for the ad welcome.
+        """
         conversation_id = ConversationId(f"ycloud-{patient_phone}")
         conversation = await self._conversation_repository.get_by_id(conversation_id)
         if conversation is None:
-            return
+            return False
 
         if conversation.mode == "agent" and not is_reactivation_command:
+            if not is_staff_command and await self._is_ad_welcome_echo(conversation_id):
+                logger.info("smb_echo.ignored_as_ad_welcome conversation=%s", conversation_id)
+                return True
             # Staff wrote from the WhatsApp Business app or WhatsApp Web: they took the
             # chat over, so the bot stops answering (same state as a handoff). `/bot` or
             # the lazy timeout hands it back.
@@ -82,7 +121,7 @@ class HandleSmbMessageEchoUseCase:
             paused = await self._conversation_repository.get_by_id(conversation_id)
             if paused is not None:
                 await self._touch_last_human_reply(paused)
-            return
+            return False
 
         if conversation.mode == "human":
             await self._touch_last_human_reply(conversation)
@@ -95,6 +134,27 @@ class HandleSmbMessageEchoUseCase:
             )
             if rotation_won:
                 await self._stamp_fresh_restart(conversation_id)
+        return False
+
+    async def _is_ad_welcome_echo(self, conversation_id: ConversationId) -> bool:
+        if self._ad_referral_repository is None:
+            return False
+        try:
+            referral = await self._ad_referral_repository.get_latest_for_conversation(
+                conversation_id
+            )
+        except Exception:
+            # Fail open to the established behavior: a lookup problem must not
+            # change how staff replies are handled.
+            logger.warning(
+                "smb_echo.ad_referral_lookup_failed conversation=%s",
+                conversation_id,
+                exc_info=True,
+            )
+            return False
+        if referral is None:
+            return False
+        return datetime.now(UTC) - referral.first_seen_at <= AD_WELCOME_ECHO_WINDOW
 
     async def _stamp_fresh_restart(self, conversation_id: ConversationId) -> None:
         conversation = await self._conversation_repository.get_by_id(conversation_id)
