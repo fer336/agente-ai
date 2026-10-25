@@ -82,7 +82,7 @@
         tr.className = "clickable";
         tr.innerHTML = `
           <td>${ADMIN.escapeHtml(row.patient_or_identifier)}</td>
-          <td>${ADMIN.modeBadge(row.mode)}</td>
+          <td>${ADMIN.modeBadge(row.mode)}${ADMIN.resetChip(row)}</td>
           <td>${row.last_message_text ? ADMIN.escapeHtml(row.last_message_text) : '<span class="muted">—</span>'}
             <div class="meta muted">${ADMIN.formatDateTime(row.last_message_at)}</div>
           </td>
@@ -94,6 +94,7 @@
         tbody.appendChild(tr);
       });
       content.replaceChildren(table);
+      ADMIN.tickResetChips();
       }
 
       await loadList();

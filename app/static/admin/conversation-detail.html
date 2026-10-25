@@ -122,6 +122,7 @@
         }
         const detail = await response.json();
         renderContent(detail);
+        ADMIN.tickResetChips();
         loadAllTraces(detail);
 
         const resetBtn = document.getElementById("reset-btn");
@@ -147,7 +148,7 @@
         <div class="card">
           <dl class="field-grid">
             <div><dt>ID</dt><dd>${ADMIN.escapeHtml(detail.conversation.id)}</dd></div>
-            <div><dt>Estado</dt><dd>${ADMIN.modeBadge(detail.conversation.mode)}</dd></div>
+            <div><dt>Estado</dt><dd>${ADMIN.modeBadge(detail.conversation.mode)}${ADMIN.resetChip(detail.conversation)}</dd></div>
             <div><dt>Input</dt><dd>${ADMIN.escapeHtml(detail.conversation.input_state)}</dd></div>
             <div><dt>Creada</dt><dd>${ADMIN.formatDateTime(detail.conversation.created_at)}</dd></div>
           </dl>
