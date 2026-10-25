@@ -50,6 +50,9 @@ from app.infrastructure.database.repositories.node_execution_repository import (
 from app.infrastructure.database.repositories.pending_action_repository import (
     SqlAlchemyPendingActionRepository,
 )
+from app.infrastructure.database.repositories.scheduled_action_repository import (
+    SqlAlchemyScheduledActionRepository,
+)
 from app.infrastructure.database.repositories.tool_execution_repository import (
     SqlAlchemyToolExecutionRepository,
 )
@@ -89,6 +92,7 @@ def get_conversation_query_service(
         messages=SqlAlchemyMessageRepository(session),
         agent_runs=SqlAlchemyAgentRunRepository(session),
         errors=SqlAlchemyErrorRepository(session),
+        scheduled_actions=SqlAlchemyScheduledActionRepository(session),
     )
 
 

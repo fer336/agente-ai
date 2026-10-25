@@ -40,6 +40,7 @@ from tests.fixtures.gateways import (
     make_message_repository,
     make_node_execution_repository,
     make_pending_action_repository,
+    make_scheduled_action_repository,
     make_tool_execution_repository,
 )
 from tests.fixtures.seed_objects import (
@@ -83,7 +84,9 @@ def _override_admin_dependencies() -> _AdminFakes:
     tool_executions = make_tool_execution_repository()
     pending_actions = make_pending_action_repository()
 
-    conversation_service = ConversationQueryService(conversations, messages, agent_runs, errors)
+    conversation_service = ConversationQueryService(
+        conversations, messages, agent_runs, errors, make_scheduled_action_repository()
+    )
     error_service = ErrorQueryService(errors)
     run_service = RunQueryService(agent_runs, node_executions, tool_executions)
     graph_state_service = GraphStateQueryService(node_executions)
@@ -235,6 +238,37 @@ async def test_get_conversation_detail_returns_messages_runs_and_errors(
     assert [m["id"] for m in body["messages"]] == ["msg-1"]
     assert [r["id"] for r in body["agent_runs"]] == ["run-1"]
     assert [e["id"] for e in body["errors"]] == ["err-1"]
+
+
+@pytest.mark.asyncio
+async def test_conversation_views_carry_the_reset_countdown(
+    _override_admin_dependencies: _AdminFakes,
+):
+    fakes = _override_admin_dependencies
+    replied = datetime.now(UTC) - timedelta(minutes=20)
+    await fakes.conversations.save(
+        make_conversation(id_="conv-1", mode="human", last_human_reply_at=replied)
+    )
+
+    listing = await _get("/admin/api/conversations", cookies=_session_cookies(READ_ONLY))
+    detail = await _get("/admin/api/conversations/conv-1", cookies=_session_cookies(READ_ONLY))
+
+    for countdown in (listing.json()[0], detail.json()["conversation"]):
+        assert countdown["reset_kind"] == "human_timeout"
+        assert countdown["reset_at"] is not None
+        assert 2390 <= countdown["reset_in_seconds"] <= 2400
+
+
+@pytest.mark.asyncio
+async def test_conversation_views_have_no_countdown_when_nothing_is_scheduled(
+    _override_admin_dependencies: _AdminFakes,
+):
+    await _override_admin_dependencies.conversations.save(make_conversation(id_="conv-1"))
+
+    listing = await _get("/admin/api/conversations", cookies=_session_cookies(READ_ONLY))
+
+    assert listing.json()[0]["reset_kind"] is None
+    assert listing.json()[0]["reset_in_seconds"] is None
 
 
 @pytest.mark.asyncio

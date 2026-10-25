@@ -17,7 +17,7 @@ from app.api.dependencies.admin import (
 )
 from app.api.dependencies.auth import require_csrf, require_role
 from app.api.dependencies.gateways import get_agreement_gateway, get_ycloud_client
-from app.application.admin.conversation_queries import ConversationQueryService
+from app.application.admin.conversation_queries import ConversationQueryService, ResetDeadline
 from app.application.admin.error_queries import ErrorQueryService
 from app.application.admin.graph_state_queries import GraphState, GraphStateQueryService
 from app.application.admin.graph_topology import GraphView, get_graph_topology
@@ -67,9 +67,24 @@ _NOT_FOUND_DETAIL = "Not found."
 _ANY_AUTHENTICATED_ROLE = tuple(ROLES)
 
 
-class ConversationSummaryResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class ResetCountdown(BaseModel):
+    """Countdown shown next to the control label. `reset_in_seconds` is measured when the
+    response is built (negative once the deadline passed but nothing has fired yet), so the
+    browser never depends on its own clock matching the server's."""
 
+    reset_at: datetime | None = None
+    reset_kind: str | None = None
+    reset_in_seconds: int | None = None
+
+    @classmethod
+    def from_deadline(cls, deadline: ResetDeadline | None) -> "ResetCountdown":
+        if deadline is None:
+            return cls()
+        remaining = (deadline.at - datetime.now(UTC)).total_seconds()
+        return cls(reset_at=deadline.at, reset_kind=deadline.kind, reset_in_seconds=int(remaining))
+
+
+class ConversationSummaryResponse(ResetCountdown):
     conversation_id: str
     patient_or_identifier: str
     mode: str
@@ -184,7 +199,7 @@ class ErrorResponse(BaseModel):
         )
 
 
-class ConversationResponse(BaseModel):
+class ConversationResponse(ResetCountdown):
     id: str
     contact_id: str
     mode: str
@@ -245,7 +260,19 @@ async def list_conversations(
     query_service: ConversationQueryService = Depends(get_conversation_query_service),
 ) -> list[ConversationSummaryResponse]:
     summaries = await query_service.list_conversations()
-    return [ConversationSummaryResponse.model_validate(s) for s in summaries]
+    return [
+        ConversationSummaryResponse(
+            conversation_id=s.conversation_id,
+            patient_or_identifier=s.patient_or_identifier,
+            mode=s.mode,
+            last_message_text=s.last_message_text,
+            last_message_at=s.last_message_at,
+            latest_run_status=s.latest_run_status,
+            error_count=s.error_count,
+            **ResetCountdown.from_deadline(s.reset_deadline).model_dump(),
+        )
+        for s in summaries
+    ]
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetailResponse)
@@ -265,6 +292,7 @@ async def get_conversation_detail(
             mode=detail.conversation.mode,
             input_state=detail.conversation.input_state,
             created_at=detail.conversation.created_at,
+            **ResetCountdown.from_deadline(detail.reset_deadline).model_dump(),
         ),
         messages=[MessageResponse.model_validate(m) for m in detail.messages],
         agent_runs=[AgentRunResponse.from_entity(r) for r in detail.agent_runs],
@@ -305,6 +333,7 @@ async def reset_conversation(
             mode=detail.conversation.mode,
             input_state=detail.conversation.input_state,
             created_at=detail.conversation.created_at,
+            **ResetCountdown.from_deadline(detail.reset_deadline).model_dump(),
         ),
         messages=[MessageResponse.model_validate(m) for m in detail.messages],
         agent_runs=[AgentRunResponse.from_entity(r) for r in detail.agent_runs],
