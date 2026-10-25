@@ -3,7 +3,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from redis.asyncio import Redis
@@ -44,6 +44,7 @@ from app.domain.repositories.message_repository import MessageRepository
 from app.domain.repositories.pending_action_repository import PendingActionRepository
 from app.domain.repositories.scheduled_action_repository import ScheduledActionRepository
 from app.domain.rules.agent_gate import agent_may_respond
+from app.domain.rules.conversation_timeouts import HUMAN_MODE_REACTIVATION_TIMEOUT
 from app.domain.value_objects.conversation_id import ConversationId
 from app.domain.value_objects.external_message_id import ExternalMessageId
 from app.domain.value_objects.welcome_menu import WELCOME_LIST, WELCOME_TEXT
@@ -56,23 +57,6 @@ logger = logging.getLogger(__name__)
 #: (PRD.md §24.3/§68 `AUDIO_RATE_LIMIT_PER_CONVERSATION_PER_MINUTE`).
 _AUDIO_RATE_LIMIT_KEY_PREFIX = "audio_rate_limit:conversation:"
 _AUDIO_RATE_LIMIT_WINDOW_SECONDS = 60
-
-#: How long a conversation stays parked in `mode="human"` after the LAST
-#: staff reply before this use case auto-reactivates the bot on the next
-#: inbound patient message — the "lazy timeout" half of the message-
-#: command + lazy-timeout handoff mechanism that replaces the unreliable
-#: YCloud tag toggle (see `app.application.conversations.
-#: handle_smb_message_echo` for the other half, the `/bot` command, and
-#: this PR's report for why the tag mechanism was abandoned: PATCH calls
-#: return 200 OK but don't persist on this account's Coexistence-connected
-#: contacts). "Lazy" means there is no scheduler/cron polling for expiry —
-#: the check only happens inline, on the next patient message that
-#: actually arrives while `mode="human"`, which is also the only moment
-#: this matters (PRD.md §23: an idle conversation costs nothing either
-#: way). Confirmed with the user: resets on EVERY staff reply, not just
-#: the initial handoff, and does NOT fire at all if the staff never
-#: replied even once (`conversation.last_human_reply_at is None`).
-_HUMAN_MODE_REACTIVATION_TIMEOUT = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -354,7 +338,7 @@ class IngestMessageUseCase:
             conversation_mode = conversation.mode
 
             if conversation_mode == "human" and self._human_mode_timeout_elapsed(conversation):
-                # Lazy timeout (see `_HUMAN_MODE_REACTIVATION_TIMEOUT`):
+                # Lazy timeout (see `HUMAN_MODE_REACTIVATION_TIMEOUT`):
                 # more than the threshold has passed since the staff's
                 # LAST reply, so this inbound message itself is the
                 # trigger that flips the conversation back to the bot —
@@ -523,7 +507,7 @@ class IngestMessageUseCase:
         if conversation.last_human_reply_at is None:
             return False
         elapsed = datetime.now(UTC) - conversation.last_human_reply_at
-        return elapsed > _HUMAN_MODE_REACTIVATION_TIMEOUT
+        return elapsed > HUMAN_MODE_REACTIVATION_TIMEOUT
 
     async def _ingest_audio_message(
         self,

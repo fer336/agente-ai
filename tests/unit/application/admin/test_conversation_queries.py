@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -10,21 +10,24 @@ from tests.fixtures.gateways import (
     make_conversation_repository,
     make_error_repository,
     make_message_repository,
+    make_scheduled_action_repository,
 )
 from tests.fixtures.seed_objects import (
     make_agent_run,
     make_conversation,
     make_error_record,
     make_message,
+    make_scheduled_action,
 )
 
 
-def _service(conversations=None, messages=None, agent_runs=None, errors=None):
+def _service(conversations=None, messages=None, agent_runs=None, errors=None, scheduled=None):
     return ConversationQueryService(
         conversations=conversations or make_conversation_repository(),
         messages=messages or make_message_repository(),
         agent_runs=agent_runs or make_agent_run_repository(),
         errors=errors or make_error_repository(),
+        scheduled_actions=scheduled or make_scheduled_action_repository(),
     )
 
 
@@ -108,3 +111,104 @@ async def test_get_conversation_detail_aggregates_messages_runs_and_errors():
     assert [m.id for m in detail.messages] == ["msg-1"]
     assert [r.id for r in detail.agent_runs] == ["run-1"]
     assert [e.id for e in detail.errors] == ["err-1"]
+
+
+def _idle_reset(conversation_id: str, at: datetime, **kwargs):
+    return make_scheduled_action(
+        id_=kwargs.pop("id_", "sa-idle"),
+        conversation_id=conversation_id,
+        pending_action_id=None,
+        action_type="conversation_idle_reset",
+        scheduled_for=at,
+        idempotency_key=kwargs.pop("idempotency_key", "idle-1"),
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_counts_down_to_the_scheduled_idle_cleanup():
+    conversations = make_conversation_repository()
+    await conversations.save(make_conversation(id_="c-1", mode="agent"))
+    scheduled = make_scheduled_action_repository()
+    due = datetime.now(UTC) + timedelta(hours=2)
+    await scheduled.save(_idle_reset("c-1", due))
+    service = _service(conversations=conversations, scheduled=scheduled)
+
+    detail = await service.get_conversation_detail(ConversationId("c-1"))
+    summaries = await service.list_conversations()
+
+    assert detail is not None
+    assert detail.reset_deadline is not None
+    assert (detail.reset_deadline.at, detail.reset_deadline.kind) == (due, "idle_cleanup")
+    assert summaries[0].reset_deadline == detail.reset_deadline
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_without_a_scheduled_cleanup_has_no_countdown():
+    conversations = make_conversation_repository()
+    await conversations.save(make_conversation(id_="c-1", mode="agent"))
+    service = _service(conversations=conversations)
+
+    detail = await service.get_conversation_detail(ConversationId("c-1"))
+
+    assert detail is not None
+    assert detail.reset_deadline is None
+
+
+@pytest.mark.asyncio
+async def test_other_scheduled_actions_do_not_drive_the_countdown():
+    conversations = make_conversation_repository()
+    await conversations.save(make_conversation(id_="c-1", mode="agent"))
+    scheduled = make_scheduled_action_repository()
+    await scheduled.save(make_scheduled_action(id_="sa-other", conversation_id="c-1"))
+    service = _service(conversations=conversations, scheduled=scheduled)
+
+    detail = await service.get_conversation_detail(ConversationId("c-1"))
+
+    assert detail is not None
+    assert detail.reset_deadline is None
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_cleanup_moves_the_countdown_with_it():
+    conversations = make_conversation_repository()
+    await conversations.save(make_conversation(id_="c-1", mode="agent"))
+    scheduled = make_scheduled_action_repository()
+    later = datetime.now(UTC) + timedelta(days=1)
+    await scheduled.save(_idle_reset("c-1", later))
+    service = _service(conversations=conversations, scheduled=scheduled)
+
+    detail = await service.get_conversation_detail(ConversationId("c-1"))
+
+    assert detail is not None
+    assert detail.reset_deadline is not None
+    assert detail.reset_deadline.at == later
+
+
+@pytest.mark.asyncio
+async def test_human_mode_counts_down_from_the_last_staff_reply():
+    conversations = make_conversation_repository()
+    replied = datetime.now(UTC) - timedelta(minutes=20)
+    await conversations.save(
+        make_conversation(id_="c-1", mode="human", last_human_reply_at=replied)
+    )
+    service = _service(conversations=conversations)
+
+    detail = await service.get_conversation_detail(ConversationId("c-1"))
+
+    assert detail is not None
+    assert detail.reset_deadline is not None
+    assert detail.reset_deadline.kind == "human_timeout"
+    assert detail.reset_deadline.at == replied + timedelta(hours=1)
+
+
+@pytest.mark.asyncio
+async def test_human_mode_without_a_staff_reply_never_expires():
+    conversations = make_conversation_repository()
+    await conversations.save(make_conversation(id_="c-1", mode="human", last_human_reply_at=None))
+    service = _service(conversations=conversations)
+
+    detail = await service.get_conversation_detail(ConversationId("c-1"))
+
+    assert detail is not None
+    assert detail.reset_deadline is None
