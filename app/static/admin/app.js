@@ -68,6 +68,50 @@ const ADMIN = (() => {
     return `<span class="badge mode-${isAgent ? "agent" : "human"}">${isAgent ? "Agente" : "Administración"}</span>`;
   }
 
+  const RESET_TITLES = {
+    idle_cleanup:
+      "Tiempo hasta el reinicio por inactividad: se borra la memoria de trabajo del agente y el próximo mensaje arranca desde el menú. Se pospone si el paciente tiene un recordatorio de turno pendiente.",
+    human_timeout:
+      "Tiempo hasta que el chat vuelve al agente. Se aplica con el próximo mensaje del paciente, no antes. Cada respuesta del equipo reinicia el conteo.",
+  };
+
+  // Countdown chip next to the control label. `item` carries `reset_kind` and
+  // `reset_in_seconds` from the API; the deadline is fixed against the browser clock when
+  // the row is rendered, and `tickResetChips` keeps the text current between refreshes.
+  function resetChip(item) {
+    if (!item || item.reset_in_seconds === null || item.reset_in_seconds === undefined) return "";
+    const deadline = Date.now() + item.reset_in_seconds * 1000;
+    const kind = escapeHtml(item.reset_kind);
+    return `<span class="reset-chip" data-deadline="${deadline}" data-kind="${kind}" title="${escapeHtml(RESET_TITLES[item.reset_kind] || "")}"></span>`;
+  }
+
+  function formatRemaining(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = total % 60;
+    if (h > 0) return `${h} h ${String(m).padStart(2, "0")} min`;
+    if (m > 0) return `${m} min ${String(sec).padStart(2, "0")} s`;
+    return `${sec} s`;
+  }
+
+  function tickResetChips() {
+    document.querySelectorAll(".reset-chip").forEach((chip) => {
+      const remaining = (Number(chip.dataset.deadline) - Date.now()) / 1000;
+      const due = remaining <= 0;
+      let state = "ok";
+      if (due) state = "due";
+      else if (remaining <= 1800) state = "warn";
+      chip.className = `reset-chip reset-${state}`;
+      if (due) {
+        chip.textContent = chip.dataset.kind === "human_timeout" ? "↻ vence con el próximo mensaje" : "↻ reiniciando…";
+      } else {
+        chip.textContent = `↻ ${formatRemaining(remaining)}`;
+      }
+    });
+  }
+  setInterval(tickResetChips, 1000);
+
   function formatDateTime(iso) {
     if (!iso) return "—";
     const date = new Date(iso);
@@ -152,5 +196,16 @@ const ADMIN = (() => {
     showPausedBanner();
   }
 
-  return { apiFetch, requireAuth, escapeHtml, formatDateTime, modeBadge, qs, logout, rememberPaused };
+  return {
+    apiFetch,
+    requireAuth,
+    escapeHtml,
+    formatDateTime,
+    modeBadge,
+    resetChip,
+    tickResetChips,
+    qs,
+    logout,
+    rememberPaused,
+  };
 })();
