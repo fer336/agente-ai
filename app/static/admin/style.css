@@ -255,6 +255,37 @@ tbody tr.clickable:hover {
   color: var(--accent);
 }
 
+/* Countdown next to the control label: green with time to spare, amber in the last 30
+   minutes, muted once the deadline passed and the reset has not fired yet. */
+.reset-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.reset-chip.reset-ok {
+  background: rgba(62, 207, 142, 0.12);
+  border-color: rgba(62, 207, 142, 0.35);
+  color: var(--ok);
+}
+
+.reset-chip.reset-warn {
+  background: rgba(240, 180, 41, 0.12);
+  border-color: rgba(240, 180, 41, 0.4);
+  color: var(--warn);
+}
+
+.reset-chip.reset-due {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
