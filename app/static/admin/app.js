@@ -61,6 +61,13 @@ const ADMIN = (() => {
     return div.innerHTML;
   }
 
+  // Control label of a conversation: "agent" = the bot answers, anything else = staff took
+  // over (Chatwoot's "administracion"). The text always accompanies the color.
+  function modeBadge(mode) {
+    const isAgent = mode === "agent";
+    return `<span class="badge mode-${isAgent ? "agent" : "human"}">${isAgent ? "Agente" : "Administración"}</span>`;
+  }
+
   function formatDateTime(iso) {
     if (!iso) return "—";
     const date = new Date(iso);
@@ -145,5 +152,5 @@ const ADMIN = (() => {
     showPausedBanner();
   }
 
-  return { apiFetch, requireAuth, escapeHtml, formatDateTime, qs, logout, rememberPaused };
+  return { apiFetch, requireAuth, escapeHtml, formatDateTime, modeBadge, qs, logout, rememberPaused };
 })();

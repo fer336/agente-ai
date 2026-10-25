@@ -13,6 +13,7 @@ LLM_CONFIG_UPDATED = "llm_config_updated"
 AGENT_PAUSED = "agent_paused"
 AGENT_RESUMED = "agent_resumed"
 AGENT_CONTACT_FILTER_UPDATED = "agent_contact_filter_updated"
+CONVERSATION_RETURNED_TO_AGENT = "conversation_returned_to_agent"
 
 
 @dataclass
