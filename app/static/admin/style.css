@@ -229,25 +229,26 @@ tbody tr.clickable:hover {
   font-weight: 600;
 }
 
-.badge.mode-bot,
 .badge.status-completed,
 .badge.status-ok {
   background: rgba(62, 207, 142, 0.15);
   color: var(--ok);
 }
 
-.badge.mode-human,
 .badge.status-handoff {
   background: rgba(240, 180, 41, 0.15);
   color: var(--warn);
 }
 
+/* Control label: agente = red, administración = blue (the label is always spelled out). */
+.badge.mode-agent,
 .badge.status-failed,
 .badge.status-error {
   background: rgba(240, 87, 106, 0.15);
   color: var(--err);
 }
 
+.badge.mode-human,
 .badge.status-running,
 .badge.status-pending {
   background: rgba(79, 140, 255, 0.15);

@@ -82,6 +82,20 @@
         `;
       }
 
+      async function returnToAgent() {
+        if (!confirm("El agente va a volver a responder en esta conversación. ¿Confirmás?")) {
+          return;
+        }
+        const response = await ADMIN.apiFetch(`/conversations/${encodeURIComponent(conversationId)}/return-to-agent`, {
+          method: "POST",
+        });
+        if (!response.ok) {
+          alert("No se pudo devolver la conversación al agente.");
+          return;
+        }
+        await refreshAll();
+      }
+
       async function resetConversation() {
         if (!confirm("Esto borra los mensajes, la memoria y el estado del flujo de esta conversación. ¿Confirmás?")) {
           return;
@@ -112,6 +126,8 @@
 
         const resetBtn = document.getElementById("reset-btn");
         if (resetBtn) resetBtn.addEventListener("click", resetConversation);
+        const returnBtn = document.getElementById("return-agent-btn");
+        if (returnBtn) returnBtn.addEventListener("click", returnToAgent);
       }
 
       function renderContent(detail) {
@@ -120,14 +136,22 @@
           ? `<button class="danger" id="reset-btn">Reiniciar conversación</button>`
           : "";
 
+      const canReturn =
+        detail.conversation.mode !== "agent" &&
+        (me.role === "ADMIN_TECHNICAL" || me.role === "ADMIN_CLINIC");
+      const returnButton = canReturn
+        ? `<button class="primary" id="return-agent-btn">Devolver al agente</button> `
+        : "";
+
       content.innerHTML = `
         <div class="card">
           <dl class="field-grid">
             <div><dt>ID</dt><dd>${ADMIN.escapeHtml(detail.conversation.id)}</dd></div>
-            <div><dt>Estado</dt><dd><span class="badge mode-${detail.conversation.mode}">${ADMIN.escapeHtml(detail.conversation.mode)}</span></dd></div>
+            <div><dt>Estado</dt><dd>${ADMIN.modeBadge(detail.conversation.mode)}</dd></div>
             <div><dt>Input</dt><dd>${ADMIN.escapeHtml(detail.conversation.input_state)}</dd></div>
             <div><dt>Creada</dt><dd>${ADMIN.formatDateTime(detail.conversation.created_at)}</dd></div>
           </dl>
+          ${returnButton}
           ${resetButton}
         </div>
 

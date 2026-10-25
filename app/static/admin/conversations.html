@@ -38,6 +38,10 @@
       document.getElementById("logout-btn").addEventListener("click", ADMIN.logout);
 
       const content = document.getElementById("content");
+
+      // Re-run every ~10s (and when the tab comes back) so a control-label change shows up
+      // without reloading. The new table replaces the old one in a single swap.
+      async function loadList() {
       const response = await ADMIN.apiFetch("/conversations");
       if (!response.ok) {
         content.innerHTML = `<p class="empty-state">No se pudo cargar la lista.</p>`;
@@ -78,7 +82,7 @@
         tr.className = "clickable";
         tr.innerHTML = `
           <td>${ADMIN.escapeHtml(row.patient_or_identifier)}</td>
-          <td><span class="badge mode-${row.mode}">${ADMIN.escapeHtml(row.mode)}</span></td>
+          <td>${ADMIN.modeBadge(row.mode)}</td>
           <td>${row.last_message_text ? ADMIN.escapeHtml(row.last_message_text) : '<span class="muted">—</span>'}
             <div class="meta muted">${ADMIN.formatDateTime(row.last_message_at)}</div>
           </td>
@@ -89,8 +93,15 @@
         });
         tbody.appendChild(tr);
       });
-      content.innerHTML = "";
-      content.appendChild(table);
+      content.replaceChildren(table);
+      }
+
+      await loadList();
+      const tick = () => {
+        if (document.visibilityState === "visible") loadList();
+      };
+      setInterval(tick, 10000);
+      document.addEventListener("visibilitychange", tick);
     })();
   </script>
 </body>
