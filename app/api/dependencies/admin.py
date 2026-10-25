@@ -7,6 +7,7 @@ from app.api.dependencies.checkpointer import get_agent_checkpointer
 from app.api.dependencies.db import get_committing_db_session, get_db_session
 from app.api.dependencies.gateways import (
     get_appointment_gateway,
+    get_chatwoot_gateway,
     get_llm_provider,
     get_specialty_gateway,
 )
@@ -19,6 +20,7 @@ from app.application.admin.kpi_names import KpiNameCatalog
 from app.application.admin.kpi_queries import KpiQueryService
 from app.application.admin.run_queries import RunQueryService
 from app.application.conversations.reset_conversation import ResetConversationUseCase
+from app.application.conversations.return_to_agent import ReturnConversationToAgentUseCase
 from app.application.memory.memory_service import MemoryService
 from app.config.settings import Settings, get_settings
 from app.domain.repositories.admin_audit_log_repository import AdminAuditLogRepository
@@ -30,6 +32,9 @@ from app.infrastructure.database.repositories.admin_user_repository import (
 )
 from app.infrastructure.database.repositories.agent_run_repository import (
     SqlAlchemyAgentRunRepository,
+)
+from app.infrastructure.database.repositories.chatwoot_mapping_repository import (
+    SqlAlchemyChatwootMappingRepository,
 )
 from app.infrastructure.database.repositories.contact_memory_repository import (
     SqlAlchemyContactMemoryRepository,
@@ -133,6 +138,17 @@ def get_kpi_name_catalog() -> KpiNameCatalog:
     return KpiNameCatalog(
         professionals=get_appointment_gateway().list_professionals,
         specialties=get_specialty_gateway().list_specialties,
+    )
+
+
+def get_return_to_agent_use_case(
+    session: AsyncSession = Depends(get_committing_db_session),
+) -> ReturnConversationToAgentUseCase:
+    """Committing session: the mode flip must survive past the request."""
+    return ReturnConversationToAgentUseCase(
+        conversation_repository=SqlAlchemyConversationRepository(session),
+        mapping_repository=SqlAlchemyChatwootMappingRepository(session),
+        chatwoot_gateway=get_chatwoot_gateway(),
     )
 
 

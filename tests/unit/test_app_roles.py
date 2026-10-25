@@ -21,6 +21,7 @@ ADMIN_PATHS = {
     "/admin/api/conversations",
     "/admin/api/conversations/{conversation_id}",
     "/admin/api/conversations/{conversation_id}/reset",
+    "/admin/api/conversations/{conversation_id}/return-to-agent",
     "/admin/api/errors",
     "/admin/api/errors/{error_id}",
     "/admin/api/errors/{error_id}/resolve",

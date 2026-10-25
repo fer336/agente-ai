@@ -25,6 +25,9 @@ from app.api.dependencies.session_cleanup import build_idle_cleanup_use_case
 from app.api.routes.admin import router as admin_router
 from app.api.routes.admin_agent_control import router as admin_agent_control_router
 from app.api.routes.admin_auth import router as admin_auth_router
+from app.api.routes.admin_conversation_control import (
+    router as admin_conversation_control_router,
+)
 from app.api.routes.admin_docs import router as admin_docs_router
 from app.api.routes.admin_llm_config import router as admin_llm_config_router
 from app.api.routes.admin_pages import RevalidatingStaticFiles
@@ -177,6 +180,7 @@ def create_app(role: str = "all") -> FastAPI:
         app.include_router(admin_router)
         app.include_router(admin_llm_config_router)
         app.include_router(admin_agent_control_router)
+        app.include_router(admin_conversation_control_router)
         app.include_router(admin_docs_router)
         app.include_router(admin_pages_router)
     if serves_bot:
